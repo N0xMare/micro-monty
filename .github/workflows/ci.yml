@@ -26,6 +26,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "26"
+      # .agents/setup installs CPython 3.14.7 with uv, which runners lack.
+      - uses: astral-sh/setup-uv@v6
       - name: Tools (.agents/setup)
         run: |
           ./.agents/setup
