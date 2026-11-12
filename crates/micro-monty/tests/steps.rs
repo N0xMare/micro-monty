@@ -770,9 +770,12 @@ const SITES: &[(Row, &str, &str, usize)] = &[
     ),
     // Ends at 224 of 256 MiB live, where collections used to run in full
     // (130-213 ms, 41-52 ms on f305b88); with too little room the mark is
-    // now held, a slice per step (spec §9.2): 25-32 ms, the operation's own
-    // steps [M]. Under incremental marks it raised `MemoryError` while a
-    // mark kept the mark stack at twice the objects it had to hold.
+    // now held, a slice per step (spec §9.2). Under incremental marks it
+    // raised `MemoryError` while a mark kept the mark stack at twice the
+    // objects it had to hold. Its worst steps were then the mark step
+    // after the result's 32 MiB of hashes, paced to mark all of the heap
+    // (30-35 ms), and the first inserts faulting those in (24-26 ms); now
+    // 21-23 ms, the discard steps [M].
     (
         Row::Bounded,
         "d = {i: i for i in range(2_000_000)}\ne = {(i, i) for i in range(1_000_000)}",

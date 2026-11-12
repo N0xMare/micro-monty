@@ -579,18 +579,24 @@ impl Heap {
         // allocated since the mark began, it finishes in this step.
         // Otherwise a step marks a slice plus a unit per word allocated
         // since the last one, so the mark keeps up with natives that
-        // allocate a lot in one step.
+        // allocate a lot in one step, but at most two slices more: the
+        // rest is owed to the next steps. A big table allocated in one
+        // step (a set's 32 MiB of hashes, nearly free unfilled) had the
+        // next step mark 4M units more, all of a 64 MiB heap: 30-35 ms
+        // [M]. If the room runs out first, the mark is held.
         let now = self.stats.allocated_since_gc;
         let during = now - self.inc.began;
         if self.mark_room() < limit / 128 || (!self.inc.verify && self.mark_room() <= during) {
             self.inc.mark = Mark::Held;
         }
         let mut budget = if self.inc.mark == Mark::Held || self.inc.verify {
+            self.inc.paced = now;
             self.inc.slice
         } else {
-            self.inc.slice + (now - self.inc.paced) / 8
+            let owed = ((now - self.inc.paced) / 8).min(2 * self.inc.slice);
+            self.inc.paced += owed * 8;
+            self.inc.slice + owed
         };
-        self.inc.paced = now;
         // A held mark never gives up: nothing writes while it goes on, and
         // a full collection would mark everything again, in one step.
         let held = self.inc.mark == Mark::Held;

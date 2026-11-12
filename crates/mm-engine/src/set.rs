@@ -1103,7 +1103,12 @@ impl Vm {
                     // Its new keys are still being marked empty
                     // (`set_keys_fill`): `j` counts the new table's slots.
                     None => b.j <= nk as u64,
-                    Some(n) => n == nk && b.j <= size as u64,
+                    // Its hashes are still being written
+                    // (`set_hashes_touch`, `n` slots left) before the
+                    // rebuild begins.
+                    Some(n) => {
+                        n == nk && b.j <= size as u64 && (b.n == 0 || b.j == 0 && b.n <= n as u64)
+                    }
                 };
         }
         let cap = nk / 2;
@@ -1192,7 +1197,9 @@ impl Vm {
                             *units += self.set_keys_fill(b.nk, &mut b.j, left);
                             continue;
                         }
-                        b.j = 0;
+                        // Then its hashes, written in order a slice per
+                        // step before the rebuild (`n` slots left).
+                        (b.j, b.n) = (0, size as u64);
                         self.set_hashes(size)?
                     } else {
                         Value::from_ref(self.dict_index_table(size / 2)?, ty::RAW as u8)
@@ -1201,6 +1208,10 @@ impl Vm {
                 continue;
             }
             if b.nk != Value::UNDEFINED {
+                if b.n != 0 && Self::is_set(out) {
+                    *units += self.set_hashes_touch(b, left);
+                    continue;
+                }
                 // `out`'s table is rebuilt a slice per step; the items wait.
                 *units += self.bulk_rebuild(b, out, left.min(REBUILD_SLICE));
                 continue;
@@ -1620,8 +1631,26 @@ impl Vm {
         } else {
             self.set_table(size)?
         };
-        (b.nk, b.nv, b.j) = (k, h, 0);
+        (b.nk, b.nv, b.j, b.n) = (k, h, 0, 0);
         Ok(())
+    }
+
+    /// Writes the last `n` slots of a big set's new hashes `nv`, at most
+    /// `left` units' worth (a unit per 8 slots), before the rebuild
+    /// probes them at random: zero as allocated, their pages faulted in
+    /// at random in the first step of inserts, 24-26 ms for 32 MiB [M].
+    /// The units done.
+    fn set_hashes_touch(&mut self, b: &mut Bulk, left: u64) -> u64 {
+        let Some(h) = b.nv.as_obj() else {
+            b.n = 0;
+            return 1;
+        };
+        let size = u64::from(self.obj_len(h));
+        let from = size.saturating_sub(b.n);
+        let to = from.saturating_add(left.max(1).saturating_mul(8)).min(size);
+        let _ = self.heap.touch_raw(h, from as u32, to as u32);
+        b.n = size - to;
+        (to - from).div_ceil(8).max(1)
     }
 
     /// Marks slots `j..` of new key table `k` empty, at most `left` units'

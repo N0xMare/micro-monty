@@ -799,7 +799,10 @@ under **Today**.
    a large list buffer, tuple or set key table comes unfilled from a
    fresh zeroed segment (`Heap::alloc_unfilled`), so its pages fault in
    as the steps write it, a set's keys are marked empty a slice per step
-   without the write barrier, a sort's second merge array comes in a
+   without the write barrier, then its hashes are written in order a slice
+   per step before the rebuild probes them at random (faulted in by the
+   first inserts, that step took 24–26 ms; now about 3.5 ms a step [M]),
+   a sort's second merge array comes in a
    step of its own, and a full list of 1M items or more grows a slice
    per step on `append` and `insert` [M: a 4M `sort(reverse=True)`
    36–39 → 11–14 ms, `a |= b` 26–30 → 12–14 ms, `xs += xs` 23 → under
@@ -1763,7 +1766,10 @@ timer deadlines.
   falls behind: building two 2M-item sets ended with a mark holding about
   190 MiB of garbage, and the next `a & b` raised `MemoryError`. A step
   therefore marks a slice plus a work unit per word allocated since the
-  last step, and a mark is held (below) from the step where the room left
+  last step, at most two slices more, the rest owed to the next steps (a
+  set's 32 MiB of hashes, allocated in one step, had the next mark 4M
+  units more, all of a 64 MiB heap: 30–35 ms, now at most three slices,
+  4–9 ms [M]), and a mark is held (below) from the step where the room left
   is no more than the bytes allocated since it began [M: `c = a & b`
   12.6 ms, `dict(zip())` of 2M pairs 28.5 ms, `a |= b` of 1.25M + 1.25M
   45.5 ms].

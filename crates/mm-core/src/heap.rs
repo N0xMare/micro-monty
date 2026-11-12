@@ -660,6 +660,30 @@ impl Heap {
         Ok(())
     }
 
+    /// Writes 0 to raw slots `from..to` of engine object `r` (raw slot 0
+    /// follows its value slots), validated once. A large block already
+    /// holds 0 there (`alloc_unfilled`): its pages fault in now, in order,
+    /// a slice at a time, not at random in the steps that then probe it
+    /// (a big set's hashes).
+    pub fn touch_raw(&mut self, r: Ref, from: u32, to: u32) -> Result<(), Error> {
+        let (s, off) = self.words.block_mut(r.0).ok_or(Error::BadRef)?;
+        let h = Header(s.data.read(off).ok_or(Error::BadRef)?);
+        if h.type_id() < types::FIRST_ENGINE {
+            return Err(Error::BadType);
+        }
+        let nraw = h.len() - h.nvals();
+        if from > to || to > nraw {
+            return Err(Error::BadSlot);
+        }
+        let base = off + 1 + h.nvals() as usize;
+        let slots = s
+            .data
+            .get_mut(base + from as usize..base + to as usize)
+            .ok_or(Error::BadSlot)?;
+        slots.fill(0);
+        Ok(())
+    }
+
     /// Moves value slots `from..from + n` of engine object `r` to `to..to +
     /// n` in place (overlap allowed, as `memmove`), validated once (write
     /// barrier): a list's items shifting for `insert` or `pop`.
