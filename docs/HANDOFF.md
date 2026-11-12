@@ -85,18 +85,24 @@ In this order of priority:
     first. Recording the retry mark in the image changes nothing (GC
     thread, measured). The fix (owner, option (a)): full retry coverage,
     an instruction-success hook so that every operation can be retried.
-    For the same reason, a snapshot inside an out-of-memory retry wait,
-    restored or not, can change the fuel total, once per wait: the
-    reviewer's `f(*big, **kw)` (guard-callex.py, 256 MiB) with a snapshot
-    and restore at every 50,003-unit park costs 4,478,475 units against
-    4,449,803 unparked (+28,672, +0.64%); parks 1 to 57 match, and the
-    slice after the snapshot at park 57, inside the wait, charges 296,969
-    against 268,297 [M]. One snapshot at park 57 with the session
-    continuing gives the same total, and finishing the retry's lazy sweep
-    before the rerun does not change it [M, GC thread]. 4b32aa2 has no
-    such difference (4,325,133 against 4,325,131). The GC thread finds
-    the cause and adds a fuel check for the `CALL_EX` shape to its
-    post-tag test.
+    For the same reason, the fuel total can change: an operation that
+    fails partway charges for the work it did, and a snapshot just before
+    it frees garbage that counted against the limit, so it gets further.
+    The reviewer's `f(*big, **kw)` (guard-callex.py, 256 MiB) with a
+    snapshot and restore at every 50,003-unit park costs 4,478,475 units
+    against 4,449,803 unparked (+28,672, +0.64%) [M]. The cause [M, GC
+    thread, on 1cfcde3]: park 57 comes just before the call, not inside
+    the retry wait. Unparked, the mark that started after `t = None` is
+    still running at the call, so `t`'s 2.4 MB of garbage counts, and the
+    first attempt allocates 10.69 MB of the `**kw` copy before
+    `MemoryError`; after the snapshot's collection it allocates 12.78 MB
+    and is charged for the extra entries. The rerun after the retry's
+    collection is the same in both runs. 4b32aa2 shows no difference
+    only because its first attempt fails after 10.77 MB either way [M]
+    (its allocator does not reuse the freed block there [E]). Equal fuel
+    needs a snapshot that does not collect, or a failing native charged
+    for its whole input up front, so the `CALL_EX` shape's fuel stays
+    unchecked in `a_restore_inside_a_retry_wait_reruns_the_instruction_once`.
 12. The reference wasm host's pooling allocator holds only for a while: at
     64 sessions with 128 slots, the swap cost creeps after about 6 minutes
     (6–12 ms, then 20–38 ms) while host malloc grows from 315 to 468 MiB

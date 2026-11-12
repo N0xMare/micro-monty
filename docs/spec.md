@@ -883,12 +883,12 @@ under **Today**.
    so an operation the engine does not run again after a collection
    (§9.2) can raise `MemoryError` unparked and succeed after a restore at
    a park just before it; operations that do run again give the same
-   outcome either way, and a snapshot taken inside an out-of-memory retry
-   wait, restored or not, can change the fuel total, bounded and once
-   per wait (+28,672 units, +0.64%, on the reviewer's `f(*big, **kw)`
-   [M]; docs/sdk.md, Other differences). Fuel totals can
-   also depend on restores when a cell indexes or searches a long
-   non-ASCII str: the char-position cache is not in the image, so the
+   outcome either way. An operation that fails partway near the limit
+   is charged for the work it did, so a snapshot just before it,
+   restored or not, can change the fuel total (+28,672 units, +0.64%, on
+   the reviewer's `f(*big, **kw)` [M]; docs/sdk.md, Other differences).
+   Fuel totals can also depend on restores when a cell indexes or
+   searches a long non-ASCII str: the char-position cache is not in the image, so the
    first walk after each restore is charged again (an index loop: 43,313
    units unparked, 8,687,009 with a restore at every 20,011-unit park
    [M]; docs/sdk.md, Other differences).

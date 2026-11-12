@@ -1854,11 +1854,12 @@ Each checked against CPython 3.14.7 at eb78933 \[M\]:
   a builtin that is not a method of an immutable type, and an instruction
   right after one that drew a one-shot iterator with no call or loop jump
   between. Operations that run again after a collection (spec §9.2) give
-  the same outcome either way. For the same reason, a snapshot taken
-  inside an out-of-memory retry wait, restored or not, can change the
-  fuel total, once per wait: `f(*big, **kw)` near a 256 MiB limit, with
-  a snapshot at every 50,003-unit park, costs 28,672 units (0.64%) more
-  than unparked \[M\]. To be narrowed in 0.0.2.
+  the same outcome either way. For the same reason, an operation that
+  fails partway near the limit is charged for the work it did before
+  failing, so a snapshot just before it, restored or not, can change the
+  fuel total: `f(*big, **kw)` near a 256 MiB limit, with a snapshot at
+  every 50,003-unit park, costs 28,672 units (0.64%) more than unparked
+  \[M\]. To be narrowed in 0.0.2.
 - **Fuel after a restore, long non-ASCII strs.** The char-position
   cache that makes indexing and searching a long non-ASCII str cheap is
   not in a snapshot, so the first walk after a restore is charged again.
