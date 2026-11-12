@@ -164,8 +164,7 @@ fn main() -> ExitCode {
 }
 
 /// Every local gate, as stages that run at the same time where they can
-/// (`check.rs`); `--release-gate` adds `wasm-host` and the codemode check,
-/// which the release workflow runs beside `check`.
+/// (`check.rs`); `--release-gate` adds `wasm-host` and the codemode check.
 ///
 /// Three things order the stages. Builds in one target directory take
 /// turns on cargo's lock, so the debug gates build in `target/check/debug`

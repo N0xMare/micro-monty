@@ -78,7 +78,7 @@ python3.14 conformance/codemode/run.py --check   # codemode workload outcomes un
 cargo xtask wasm-host               # shipped mm-wasm guests vs crates/mm-wasm-host tests (not in `check`)
 cargo xtask wasm-wall               # wasm wall time vs origin/main on wasmtime and V8 (not in `check`)
 uv run --with pyelftools python3 xtask/size_map.py   # size map of the shipped builds (docs/research/size-map.md; not in `check`)
-cargo deny --all-features check     # licenses, advisories, bans, sources (deny.toml; not in `check`; ci.yml)
+cargo deny --all-features check     # licenses, advisories, bans, sources (deny.toml; not in `check`; before a release tag)
 cargo deny --all-features --manifest-path fuzz/Cargo.toml check
 cargo deny --all-features --manifest-path crates/mm-wasm-host/Cargo.toml check
 ```
@@ -111,14 +111,13 @@ fixed by the paths it touches:
   at every host call.
 - **Release gate**, `cargo xtask check --release-gate` (22:18 warm [M]):
   those builds in `release` and `cargo test`'s profile, durability at
-  `1:1000`, plus `wasm-host` and the codemode check, the release workflow's
-  other two gates.
+  `1:1000`, plus `wasm-host` and the codemode check.
 
 Sizes, `embedding_bench`, the shipped builds and both halves of the
 step-time oracle build with `release` in both tiers; the oracle's fuel half
 (`slice_charges`) runs beside the other stages and only its wall-time half
 runs alone. The release gate is required, instead of the landing tier,
-before a release tag (ci.yml runs it on `v*` tags) and for any change whose
+before a release tag and for any change whose
 files since `origin/main` (`git diff --name-only origin/main...HEAD`, plus
 uncommitted ones) include `crates/mm-engine/src/interp.rs`, `snapshot.rs`
 or `nstep.rs`, `crates/mm-core/src/gc.rs` or `snapshot.rs`,
@@ -128,13 +127,14 @@ wasm crate (`crates/mm-wasm-*`), or a line of a `[profile.*]` table in
 rebased cleanly onto new commits reruns the tier it needs in the same
 checkout: the target directories are warm, so only what the rebase changed
 rebuilds. Every gate still runs: the combined tree is new.
-Verification is local: the GitHub
-workflow (`.github/workflows/ci.yml`) runs only on `v*` release tags and by
-manual dispatch. Besides `check` it runs `wasm-host`, the codemode check,
-the fuzz build, `wasm-wall` against the previous release tag and the three
-`cargo deny` checks (cargo-deny 0.20.2 from `.agents/setup`), which stay
-out of `check` because the advisory database is fetched over the network. Before tagging a release, run them, or the
-workflow by hand.
+Verification is local; GitHub runs no gates (owner, 2026-11-12). A `v*`
+tag runs only `.github/workflows/release.yml`, which builds the release
+artifacts and opens a draft release. Before tagging, run on the tagged tree:
+the release gate, the fuzz build (`cargo check --manifest-path
+fuzz/Cargo.toml --features memory-probes --bins`), `cargo xtask wasm-wall
+--base <previous v* tag>` when there is one, and the three `cargo deny`
+checks (cargo-deny 0.20.2 from `.agents/setup`), which stay out of `check`
+because the advisory database is fetched over the network.
 `python3.14` (CPython 3.14.7, installed by `.agents/setup` through uv; override
 with `PYTHON`) is the conformance oracle.
 

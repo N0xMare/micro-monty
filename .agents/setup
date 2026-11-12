@@ -74,7 +74,7 @@ if ! cargo +1.99.0 fuzz --version 2>/dev/null | grep -Fxq 'cargo-fuzz 0.13.2'; t
   time cargo +1.99.0 install cargo-fuzz --version 0.13.2 --locked
 fi
 
-step "cargo-deny (supply-chain check, deny.toml; CI on release tags)"
+step "cargo-deny (supply-chain check, deny.toml; before release tags)"
 if ! cargo +1.99.0 deny --version 2>/dev/null | grep -Fxq 'cargo-deny 0.20.2'; then
   time cargo +1.99.0 install cargo-deny --version 0.20.2 --locked
 fi
