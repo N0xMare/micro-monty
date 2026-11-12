@@ -23,6 +23,8 @@
 //!   snapshot round trip under wasmtime when it is installed.
 //! - `wasm-wall`: wasm wall time of the bench programs against a base
 //!   revision, on wasmtime and V8.
+//! - `wasm-ir`: wasmtime's guest instructions on the bench programs
+//!   against a base revision (callgrind; deterministic).
 //! - `gc-stress`: own cases, the corpus and durability on the own cases
 //!   with `MM_GC_STRESS=1` (a collection at every safepoint).
 //! - `difffuzz`: the differential fuzzer against CPython
@@ -32,9 +34,9 @@
 //!   memory-bound probes, the shipped own cases, wasm, conformance `--check`
 //!   on both engines and on mm for wasm32-wasip1, the real session replay,
 //!   durability (same-target, then native <-> wasm32-wasip1 on the own
-//!   cases), bench `--quick`) as stages run at the same time where they
-//!   can, then the step-time oracle alone (`check.rs`). The size ceilings
-//!   are in `xtask/size-ceilings.txt`.
+//!   cases), bench `--quick`, wasmtime's guest instructions) as stages
+//!   run at the same time where they can, then the step-time oracle alone
+//!   (`check.rs`). The size ceilings are in `xtask/size-ceilings.txt`.
 
 #![allow(
     clippy::doc_markdown,
@@ -50,6 +52,7 @@ mod durability;
 mod gc_stress;
 mod package;
 mod wasm;
+mod wasm_ir;
 mod wasm_wall;
 
 use check::Stage;
@@ -69,8 +72,8 @@ tasks:
                              conformance --check (both engines; micro-monty also
                              on wasm32-wasip1), the real session replay
                              (conformance/codemode/real/gate.py --check), durability,
-                             durability --cross-target, bench --quick; at the
-                             same time where they can, the step-time oracle
+                             durability --cross-target, bench --quick,
+                             wasm-ir (Linux); at the same time where they can, the step-time oracle
                              last and alone; logs in target/check/logs/
       --serial               one stage at a time, output on the terminal
       --release-gate         the full gate: release builds, durability at
@@ -111,12 +114,19 @@ tasks:
                              crates/mm-wasm-host's release tests, in that
                              separate workspace (not in check)
   wasm-wall [options]        wasm wall time of bench/*.py against a base
-                             revision, on wasmtime and V8 (not in check)
+                             revision, on wasmtime and V8 (advisory; not in
+                             check)
       --base <rev>           the revision to compare with (default origin/main)
       --rounds <n>           rounds, each running both builds (default 11)
       --pool <file>...       judge the rounds of several runs together
                              (target/wasm-wall/rounds/*.tsv, same base and
                              head); builds and times nothing
+  wasm-ir [options]          wasmtime guest instructions of bench/*.py against
+                             a base revision under callgrind, ±0.5% (in check;
+                             MM_WASM_IR_ACCEPT=<reason> passes a move)
+      --base <rev>           the revision to compare with (default origin/main)
+      --head <rev>           a revision instead of the working tree
+      --programs <a,b,..>    only these programs (default all)
   gc-stress                  collect at every safepoint (MM_GC_STRESS=1): own
                              cases must print what they print without, the
                              corpus keep its results, durability on the own
@@ -148,6 +158,7 @@ fn main() -> ExitCode {
         Some("wasm") => wasm::run(&rest),
         Some("wasm-host") if rest.is_empty() => wasm::host(),
         Some("wasm-wall") => wasm_wall::run(&rest),
+        Some("wasm-ir") => wasm_ir::run(&rest),
         Some("gc-stress") => gc_stress::run(&rest),
         Some("package") if rest.is_empty() => package::run(),
         Some("docs") if rest.is_empty() => docs::run(),
@@ -424,6 +435,13 @@ fn check(args: &[String]) -> Result<(), String> {
             .after(&["mm"])
             .run(release_cargo(&[&steps[..], &["--no-run"]].concat())),
     ];
+    // wasmtime's guest instructions against origin/main, ±0.5% (its own
+    // worktree and target directories under target/wasm-ir/).
+    if cfg!(target_os = "linux") {
+        stages.push(Stage::new("wasm-ir").run(task(&["wasm-ir"])));
+    } else {
+        println!("check: wasm-ir skipped: valgrind runs on Linux only");
+    }
     if release_gate {
         stages.push(
             Stage::new("wasm-host")

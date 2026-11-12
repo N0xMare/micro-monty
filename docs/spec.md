@@ -3044,12 +3044,16 @@ a constant of about 337K Ir, 0.10% of the smallest (owner decision
 - **Size CI:** `cargo xtask size` against the budget; report sections and a
   per-crate bloat diff on PRs.
 - **Bench CI:** the §12 programs, flag regressions above 5%. On wasm,
-  `cargo xtask wasm-wall` times them against a base revision on wasmtime and
-  V8 (steady state, `--no-liftoff`) in alternating rounds and fails on a
-  geomean of median ratios above 1.03 or a program above 1.05 (lower
-  quartile above 1); calibrated on the same build against itself at 0.991
-  and 0.999 [M]. Run before pushes that touch dispatch, the per-target
-  build or the wasm crates, and on release tags (AGENTS.md).
+  `cargo xtask wasm-ir` (in `check`) counts their wasmtime guest
+  instructions under callgrind, precompiled for x86-64's baseline ISA,
+  against a base revision, and fails on a program moving past ±0.5% either
+  way, as the native Ir rule, unless the move's reason is given; the count
+  is deterministic. `cargo xtask wasm-wall`, advisory, times them on
+  wasmtime and V8 (steady state, `--no-liftoff`) in alternating rounds and
+  fails on a geomean of median ratios above 1.03 or a program above 1.05
+  (lower quartile above 1); calibrated on the same build against itself at
+  0.991 and 0.999 [M]. It sees what the count does not, such as code
+  layout on the host's CPU; run it on release tags (AGENTS.md).
 
 ## 14. Milestones [E durations]
 

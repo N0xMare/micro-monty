@@ -101,22 +101,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let wasmtime = crate::wasm::tool("WASMTIME", "wasmtime")
         .ok_or("wasm-wall needs wasmtime ($WASMTIME, ~/.local/bin, PATH); run .agents/setup")?;
     let dir = root.join("target/wasm-wall");
-    let sha = git(
-        &root,
-        &["rev-parse", "--verify", &format!("{base}^{{commit}}")],
-    )?;
     let tree = dir.join("base-src");
-    if tree.join(".git").exists() {
-        git(&tree, &["checkout", "--quiet", "--detach", "--force", &sha])?;
-    } else {
-        let path = tree.to_string_lossy().into_owned();
-        git(
-            &root,
-            &[
-                "worktree", "add", "--quiet", "--detach", "--force", &path, &sha,
-            ],
-        )?;
-    }
+    let sha = checkout(&root, &tree, &base)?;
     println!(
         "wasm-wall: head = working tree, base = {base} ({})",
         &sha[..sha.len().min(10)]
@@ -139,6 +125,27 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             failures.join("; ")
         ))
     }
+}
+
+/// `rev` checked out (detached, forced) in the worktree `tree`; its full
+/// commit.
+pub(crate) fn checkout(root: &Path, tree: &Path, rev: &str) -> Result<String, String> {
+    let sha = git(
+        root,
+        &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
+    )?;
+    if tree.join(".git").exists() {
+        git(tree, &["checkout", "--quiet", "--detach", "--force", &sha])?;
+    } else {
+        let path = tree.to_string_lossy().into_owned();
+        git(
+            root,
+            &[
+                "worktree", "add", "--quiet", "--detach", "--force", &path, &sha,
+            ],
+        )?;
+    }
+    Ok(sha)
 }
 
 /// `rounds` rounds of every program on both engines, the builds alternating first.
@@ -280,7 +287,7 @@ const ENGINES: [&str; 3] = ["wasmtime", "v8", "v8-bundle"];
 
 /// The head's identity for a rounds file: its commit, plus a hash of
 /// `git diff HEAD` when the tree has uncommitted changes.
-fn head_id(root: &Path) -> Result<String, String> {
+pub(crate) fn head_id(root: &Path) -> Result<String, String> {
     let head = git(root, &["rev-parse", "HEAD"])?;
     if git(root, &["status", "--porcelain", "--untracked-files=no"])?.is_empty() {
         return Ok(head);
@@ -409,34 +416,24 @@ fn pool(files: &[PathBuf]) -> Result<(), String> {
 
 /// Builds `src`'s wasip1 `mm` and guest as shipped into `target`.
 fn build(src: &Path, target: &Path, wasmtime: &Path) -> Result<Build, String> {
+    let cwasm = build_mm(src, target, wasmtime, None)?;
     let target_dir = target.to_string_lossy().into_owned();
-    for (wasm_target, package) in [
-        ("wasm32-wasip1", "mm-cli"),
-        ("wasm32-unknown-unknown", "mm-wasm-guest"),
-    ] {
-        let status = crate::shipped_build(wasm_target)
-            .current_dir(src)
-            .args(["--quiet", "--package", package, "--target-dir", &target_dir])
-            .status()
-            .map_err(|error| format!("cannot run cargo: {error}"))?;
-        if !status.success() {
-            return Err(format!(
-                "shipped build of {package} for {wasm_target} in {} failed",
-                src.display()
-            ));
-        }
-    }
-    let mm = crate::wasm::optimize(&target.join("wasm32-wasip1/release/mm.wasm"))?;
-    let cwasm = mm.with_extension("cwasm");
-    let status = Command::new(wasmtime)
-        .arg("compile")
-        .arg(&mm)
-        .arg("-o")
-        .arg(&cwasm)
+    let status = crate::shipped_build("wasm32-unknown-unknown")
+        .current_dir(src)
+        .args([
+            "--quiet",
+            "--package",
+            "mm-wasm-guest",
+            "--target-dir",
+            &target_dir,
+        ])
         .status()
-        .map_err(|error| format!("cannot run {}: {error}", wasmtime.display()))?;
+        .map_err(|error| format!("cannot run cargo: {error}"))?;
     if !status.success() {
-        return Err(format!("wasmtime compile of {} failed", mm.display()));
+        return Err(format!(
+            "shipped build of mm-wasm-guest for wasm32-unknown-unknown in {} failed",
+            src.display()
+        ));
     }
     let guest =
         crate::wasm::optimize(&target.join("wasm32-unknown-unknown/release/mm_wasm_guest.wasm"))?;
@@ -456,6 +453,52 @@ fn build(src: &Path, target: &Path, wasmtime: &Path) -> Result<Build, String> {
         guest,
         bundle,
     })
+}
+
+/// `src`'s wasip1 `mm` built as shipped into `target` and precompiled for
+/// wasmtime: for this host's CPU, or for `isa` (a target triple, so for its
+/// baseline features); the `.cwasm` path.
+pub(crate) fn build_mm(
+    src: &Path,
+    target: &Path,
+    wasmtime: &Path,
+    isa: Option<&str>,
+) -> Result<PathBuf, String> {
+    let target_dir = target.to_string_lossy().into_owned();
+    let status = crate::shipped_build("wasm32-wasip1")
+        .current_dir(src)
+        .args([
+            "--quiet",
+            "--package",
+            "mm-cli",
+            "--target-dir",
+            &target_dir,
+        ])
+        .status()
+        .map_err(|error| format!("cannot run cargo: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "shipped build of mm-cli for wasm32-wasip1 in {} failed",
+            src.display()
+        ));
+    }
+    let mm = crate::wasm::optimize(&target.join("wasm32-wasip1/release/mm.wasm"))?;
+    let cwasm = mm.with_extension("cwasm");
+    let mut command = Command::new(wasmtime);
+    command.arg("compile");
+    if let Some(isa) = isa {
+        command.args(["--target", isa]);
+    }
+    let status = command
+        .arg(&mm)
+        .arg("-o")
+        .arg(&cwasm)
+        .status()
+        .map_err(|error| format!("cannot run {}: {error}", wasmtime.display()))?;
+    if !status.success() {
+        return Err(format!("wasmtime compile of {} failed", mm.display()));
+    }
+    Ok(cwasm)
 }
 
 /// One `mm run bench/STEM.py` under wasmtime; its wall time in ms.
