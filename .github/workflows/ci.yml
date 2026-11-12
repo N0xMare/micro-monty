@@ -34,6 +34,16 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true # a failed run still warms the next one
+      # The tests that compare against this runner's CPython, first: they
+      # depend on the host (libc, libm), not only on the commit, so they fail
+      # here in minutes instead of at the end of the release gate. Same
+      # target dir and profile as the gate's test stage, which reuses them.
+      - name: Host oracle smoke (conformance_own)
+        run: cargo test -p mm-cli --test conformance_own --locked
+        env:
+          CARGO_TARGET_DIR: target/check/debug
       # The release gate (AGENTS.md): check's stages in release profiles with
       # durability at 1:1000, plus the shipped mm-wasm guests against the
       # reference host (wasm-host) and the codemode workload outcomes.

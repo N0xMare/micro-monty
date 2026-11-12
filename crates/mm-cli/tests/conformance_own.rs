@@ -3,7 +3,8 @@
 //! `python3.14` on `PATH`); stdout, stderr and exit status must be identical
 //! after replacing the case's path with `<file>`. Both run with `TZ=UTC`.
 //! On macOS the cases in [`ORACLE_DIFFERS`] are not compared: CPython's
-//! output there comes from the host C library.
+//! output there comes from the host C library. Neither are [`LIBM_CASES`]
+//! on a host whose libm gives other last bits than mm's.
 //!
 //! `MM_CASE=<substring>` runs only matching cases. `MM=<path>` runs another
 //! `mm` binary instead of this package's: `cargo xtask check` runs the
@@ -96,6 +97,36 @@ const ORACLE_DIFFERS: &[(&str, &str)] = &[
 #[cfg(not(target_os = "macos"))]
 const ORACLE_DIFFERS: &[(&str, &str)] = &[];
 
+/// Cases whose CPython output comes from the host's libm. mm's libm gives
+/// glibc 2.36's results; newer glibc (2.39 on GitHub's ubuntu-latest,
+/// correctly rounded there) changes them in the last bit. They are compared
+/// only where CPython agrees with mm on [`LIBM_PROBE`].
+const LIBM_CASES: &[&str] = &[
+    "107_math.py",
+    "202_complex_cmath.py",
+    "442_float_special_values.py",
+    "456_numeric_edges_and_attribute_hints.py",
+    "458_number_specials_and_reordering.py",
+];
+const LIBM_PROBE: &str =
+    "import math, cmath\nprint(math.asinh(0.1), math.atanh(-0.5), cmath.acosh(1e300))\n";
+
+/// Why this host's libm is not the oracle for [`LIBM_CASES`], if it is not.
+fn libm_differs(py: &Path) -> Option<String> {
+    let probe = std::env::temp_dir().join(format!("mm-libm-probe-{}.py", std::process::id()));
+    std::fs::write(&probe, LIBM_PROBE).expect("probe written");
+    let mine = run(Command::new(mm()).arg("run").arg(&probe), &probe);
+    let theirs = run(oracle(py).arg(&probe), &probe);
+    let _ = std::fs::remove_file(&probe);
+    (mine.stdout != theirs.stdout).then(|| {
+        format!(
+            "this host's libm differs from mm's in the last bit: CPython {} mm {}",
+            theirs.stdout.trim(),
+            mine.stdout.trim()
+        )
+    })
+}
+
 /// CPython, with the main thread's stack at its hard limit on macOS: the
 /// 8 MiB default (64 MiB is the hard limit) is too small for CPython
 /// 3.14's own recursion guard on the deep cases (324), where Linux passes.
@@ -172,11 +203,22 @@ fn own_cases_match_cpython() {
         "no case matches MM_CASE"
     );
     let py = python();
+    let libm = libm_differs(&py);
+    let skip = |case: &Path| {
+        ORACLE_DIFFERS
+            .iter()
+            .find(|(name, _)| case.ends_with(name))
+            .map(|(_, why)| (*why).to_owned())
+            .or_else(|| {
+                libm.clone()
+                    .filter(|_| LIBM_CASES.iter().any(|name| case.ends_with(name)))
+            })
+    };
     let mut failures = Vec::new();
     // Both interpreters on every core, compared in name order.
     let runs = on_every_core(&cases, |case| {
         let mine = run(Command::new(mm()).arg("run").arg(case), case);
-        if ORACLE_DIFFERS.iter().any(|(name, _)| case.ends_with(name)) {
+        if skip(case).is_some() {
             return (mine, None);
         }
         let theirs = run(
@@ -192,7 +234,7 @@ fn own_cases_match_cpython() {
     });
     for (case, (mine, theirs)) in cases.iter().zip(runs) {
         let Some(theirs) = theirs else {
-            if let Some((_, why)) = ORACLE_DIFFERS.iter().find(|(name, _)| case.ends_with(name)) {
+            if let Some(why) = skip(case) {
                 eprintln!("{}: not compared on this host ({why})", case.display());
             }
             continue;
