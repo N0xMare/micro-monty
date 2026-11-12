@@ -98,8 +98,8 @@ const ORACLE_DIFFERS: &[(&str, &str)] = &[
 const ORACLE_DIFFERS: &[(&str, &str)] = &[];
 
 /// Cases whose CPython output comes from the host's libm. mm's libm gives
-/// glibc 2.36's results; newer glibc (2.39 on GitHub's ubuntu-latest,
-/// correctly rounded there) changes them in the last bit. They are compared
+/// glibc 2.36's results; newer glibc (GitHub's ubuntu-latest, correctly
+/// rounded there) changes them in the last bit. They are compared
 /// only where CPython agrees with mm on [`LIBM_PROBE`].
 const LIBM_CASES: &[&str] = &[
     "107_math.py",

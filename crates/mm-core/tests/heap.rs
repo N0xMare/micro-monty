@@ -59,6 +59,18 @@ fn objects_slots_and_headers() {
     heap.move_values(moved, 2, 0, 2).unwrap();
     heap.read_values(moved, 0, &mut four).unwrap();
     assert_eq!(four, [Value::TRUE, Value::FALSE, Value::TRUE, Value::FALSE]);
+    // A short move down over many chunks (`pop(0)` on a long list).
+    let ints: Vec<Value> = (0..600).map(|i| Value::int(i).unwrap()).collect();
+    let long = heap.alloc_init(T, 0, &ints, &[]).unwrap();
+    heap.move_values(long, 3, 1, 597).unwrap();
+    let mut got = vec![Value::UNDEFINED; 600];
+    heap.read_values(long, 0, &mut got).unwrap();
+    let want: Vec<Value> = (0..1)
+        .chain(3..600)
+        .chain(598..600)
+        .map(|i| Value::int(i).unwrap())
+        .collect();
+    assert_eq!(got, want);
     assert_eq!(heap.move_values(moved, 0, 1, 4), Err(Error::BadSlot));
     assert_eq!(heap.move_values(moved, u32::MAX, 0, 1), Err(Error::BadSlot));
     assert_eq!(heap.alloc(T, 0, 300, 1), Err(Error::BadType));

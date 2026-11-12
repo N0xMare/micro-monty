@@ -681,7 +681,21 @@ impl Heap {
             .data
             .get_mut(base..base + h.nvals() as usize)
             .ok_or(Error::BadSlot)?;
-        slots.copy_within(from as usize..(from + n) as usize, to as usize);
+        let (from, to, n) = (from as usize, to as usize, n as usize);
+        if to < from && from - to < 8 {
+            // A short move down (`pop(0)`, `del l[0]`) goes as memmoves of
+            // at most 2 KiB, below glibc's `rep movsb` threshold. On
+            // GitHub's runners one long move ran 16 times slower than the
+            // same move up [M], likely an overlapping `rep movsb` this
+            // close, which glibc avoids only on Intel [E]. Ascending chunks
+            // only overwrite slots already read.
+            for at in (0..n).step_by(256) {
+                let len = (n - at).min(256);
+                slots.copy_within(from + at..from + at + len, to + at);
+            }
+        } else {
+            slots.copy_within(from..from + n, to);
+        }
         s.dirty = space::DIRTY_REFS;
         Ok(())
     }
