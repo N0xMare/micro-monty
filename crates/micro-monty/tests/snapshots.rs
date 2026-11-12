@@ -276,34 +276,44 @@ fn a_retry_after_memory_error_does_not_depend_on_snapshots() {
 /// them, so a later instruction's `MemoryError` was retried only when a
 /// slice had ended in between (`ok` at slices of 1 to 3, `ME` unparked and
 /// at 7 to 100,000; the 4th-pass review [M]). Both marks now belong to the
-/// instruction that set them (`Vm::op_stamp`).
+/// instruction that set them (`Vm::op_stamp`). The second heap holds a
+/// 2,000,000-item list, so the retry's collection takes 9 steps, not 2,
+/// and the slices end inside its wait [M].
 #[test]
 fn a_retry_after_memory_error_does_not_depend_on_fuel_slices() {
-    for (gather, op, want) in [
-        (
-            "x = list(g); sorted([1], key=None)",
-            "s = b'a' * 3000000",
-            "ok 3000000\n",
-        ),
-        ("x = list(g)", "s = b'a'.ljust(3000000)", "ok 3000000\n"),
-        // A slice store that drew the iterator, with no call or backward
-        // jump before the operator: its mark still holds there.
-        ("x = [0]\nx[:] = g", "s = b'a' * 3000000", "ME\n"),
-    ] {
+    for (heap, (gather, op, want)) in [
+        "keep = [bytearray(1 << 20) for _ in range(236)]",
+        "keep = [bytearray(1 << 20) for _ in range(220)]\nobjs = list(range(2000000))",
+    ]
+    .into_iter()
+    .flat_map(|heap| {
+        [
+            (
+                "x = list(g); sorted([1], key=None)",
+                "s = b'a' * 3000000",
+                "ok 3000000\n",
+            ),
+            ("x = list(g)", "s = b'a'.ljust(3000000)", "ok 3000000\n"),
+            // A slice store that drew the iterator, with no call or backward
+            // jump before the operator: its mark still holds there.
+            ("x = [0]\nx[:] = g", "s = b'a' * 3000000", "ME\n"),
+        ]
+        .map(|case| (heap, case))
+    }) {
         let src = format!(
-            "import gc\nkeep = [bytearray(1 << 20) for _ in range(236)]\npad = bytearray(16500000)\n\
+            "import gc\n{heap}\npad = bytearray(16500000)\n\
              g = iter([1, 2, 3])\ngc.collect()\nt = [0] * 300000\nt = None\n{gather}\n\
              try:\n    {op}\n    print('ok', len(s))\nexcept MemoryError:\n    print('ME')\n"
         );
         let (unparked, _) = plain(&src, "slices.py");
-        assert_eq!(unparked, want, "{gather}: unparked");
+        assert_eq!(unparked, want, "{heap}; {gather}: unparked");
         for slice in [1, 2, 3, 7, 100, 1_000, 100_000] {
             let (sliced, _, _) = hopping(&src, "slices.py", slice, usize::MAX);
-            assert_eq!(sliced, want, "{op}: slices of {slice}");
+            assert_eq!(sliced, want, "{heap}; {op}: slices of {slice}");
         }
         let (restored, _, parks) = hopping(&src, "slices.py", 99_991, 1);
-        assert!(parks > 1, "{op}: {parks} parks");
-        assert_eq!(restored, want, "{op}: restored at every park");
+        assert!(parks > 1, "{heap}; {op}: {parks} parks");
+        assert_eq!(restored, want, "{heap}; {op}: restored at every park");
     }
 }
 
@@ -525,11 +535,16 @@ print('done')
 /// needs and the restore dropped the wait, so the rerun asked for a new
 /// collection, which parked again before it ended, at every park: with a
 /// restore at every park the cell never ended (the reviewer's H1 [M]).
-/// The heap holds a 900,000-item list, so the collection takes several
-/// steps, and the operation charges more than a slice, so the wait parks
-/// at once. Every run must print the unparked run's output and charge its
+/// In the first two shapes the heap holds a 900,000-item list, so the
+/// collection takes several steps, and the operation charges more than a
+/// slice, so the wait parks at once; the third needs the restored rerun
+/// mark. Every run must print the unparked run's output and charge its
 /// fuel.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "three programs, their runs and their modes"
+)]
 fn a_restore_inside_a_retry_wait_reruns_the_instruction_once() {
     let head = "\
 import gc
@@ -554,19 +569,53 @@ except MemoryError:
     st = 'ME'
 print(st, type(x).__name__, x is y, list.__len__(x), c)
 ";
-    for (setup, op, want) in [
+    // `f(*big, **kw)` (`CALL_EX`) builds its 1.6 MiB `*args` tuple before
+    // the copy of `kw` fails, so the rerun allocates over 1 MiB before it
+    // fails again: a rerun not marked as one retried again, after every
+    // restore (the reviewer's guard check [M]), and at slices of 50,003
+    // after every park, with no snapshot [M]. A snapshot just before the
+    // call frees the cell's garbage first, so the first attempt gets
+    // further before it fails and charges 28,672 units more [M]: its fuel
+    // is not compared (HANDOFF 0.0.2, a snapshot collects first).
+    let callex = "\
+import gc
+def f(*a, **k): return len(a) + len(k)
+big = list(range(200000))
+kw = {'k%d' % i: i for i in range(120000)}
+s = ','.join(['x' * 1000] * 3000)
+keep = [bytearray(1 << 20) for _ in range(200)]
+pad = bytearray(28000000)
+gc.collect()
+t = [0] * 300000
+t = None
+try:
+    r = f(*big, **kw)
+    st = 'ok'
+except MemoryError:
+    st = 'ME'
+print(st)
+";
+    for (src, op, want, same_fuel) in [
         (
-            "pad = bytearray(6000000)\nx = list(range(900000))\ny = x\nrhs = T(src)\n",
+            format!(
+                "{head}pad = bytearray(6000000)\nx = list(range(900000))\ny = x\nrhs = T(src)\n{}",
+                tail.replace("OP", "x += rhs")
+            ),
             "x += rhs",
             "ME list True 900000 {'i': 0, 'li': 0}\n",
+            true,
         ),
         (
-            "pad = bytearray(12000000)\nx = L(range(300000))\ny = x\nrhs = Idx()\n",
+            format!(
+                "{head}pad = bytearray(12000000)\nx = L(range(300000))\ny = x\nrhs = Idx()\n{}",
+                tail.replace("OP", "x *= rhs")
+            ),
             "x *= rhs",
             "ME L True 300000 {'i': 1, 'li': 0}\n",
+            true,
         ),
+        (callex.to_owned(), "f(*big, **kw)", "ME\n", false),
     ] {
-        let src = format!("{head}{setup}{}", tail.replace("OP", op));
         let run = |slice: Option<u64>, restore: bool, keep: bool, gc_yield: bool| {
             let e = engine();
             let out = Arc::new(Mutex::new(String::new()));
@@ -608,6 +657,7 @@ print(st, type(x).__name__, x is y, list.__len__(x), c)
             (Some(100_003), false, false, false),
             (Some(100_003), true, false, false),
             (Some(100_003), false, true, false),
+            (Some(50_003), false, false, false),
             (Some(50_003), false, false, true),
             (Some(50_003), true, false, true),
             (Some(50_003), false, true, true),
@@ -623,7 +673,10 @@ print(st, type(x).__name__, x is y, list.__len__(x), c)
             for (m, t) in runs {
                 let (got, charged) = t.join().expect("run");
                 assert_eq!(got, want, "{op} {m:?}");
-                assert_eq!(charged, fuel, "{op} {m:?}");
+                assert!(
+                    !same_fuel || charged == fuel,
+                    "{op} {m:?}: {charged} against {fuel}"
+                );
             }
         });
     }
