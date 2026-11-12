@@ -1,0 +1,21 @@
+[package]
+name = "mm-wasm-abi"
+description = "The micro-monty wasm guest interface (mm-wasm): constants and the binary encoding shared by the guest and wasm hosts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+exclude.workspace = true
+# Published together with `mm-wasm-host`, not before (docs/HANDOFF.md scope
+# decision 55).
+publish = false
+
+[dependencies]
+# Only for the facade's plain data types (HostValue, Progress, ...). No
+# features, so the guest decides on `test-hooks`.
+micro-monty.workspace = true
+
+[lints]
+workspace = true

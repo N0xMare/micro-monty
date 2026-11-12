@@ -1,0 +1,152 @@
+{
+ "empty": {
+  "image_bytes": 40816,
+  "zstd1_bytes": 7774,
+  "zstd1_prefix_bytes": 19,
+  "zstd1_prefix_decode_ns": 26292,
+  "fresh_ir_first": 490799,
+  "fresh_ir_steady": 489504,
+  "fresh_time": {
+   "first_ns": 188711,
+   "median_ns": 34238,
+   "min_ns": 33769
+  },
+  "fresh_rss_kib_per_session_n1": 1856.0,
+  "fresh_module_cache_bytes": 0,
+  "fresh_rss_kib_per_session_n8": 48.0,
+  "fresh_rss_kib_per_session_n40": 111.3,
+  "fresh_rss_kib_per_session": 111.3,
+  "restore_ir_first": 3111787,
+  "restore_ir_steady": 372545,
+  "restore_time": {
+   "first_ns": 709256,
+   "median_ns": 25110,
+   "min_ns": 24947
+  },
+  "restore_rss_kib_per_session_n1": 0.0,
+  "restore_module_cache_bytes": 0,
+  "restore_rss_kib_per_session_n8": 85.0,
+  "restore_rss_kib_per_session_n40": 71.3,
+  "restore_rss_kib_per_session": 71.3
+ },
+ "json": {
+  "image_bytes": 52250,
+  "zstd1_bytes": 11789,
+  "zstd1_prefix_bytes": 4350,
+  "zstd1_prefix_decode_ns": 46001,
+  "fresh_ir_first": 1822769,
+  "fresh_ir_steady": 1824106,
+  "fresh_time": {
+   "first_ns": 436816,
+   "median_ns": 174407,
+   "min_ns": 163776
+  },
+  "fresh_rss_kib_per_session_n1": 0.0,
+  "fresh_module_cache_bytes": 0,
+  "fresh_rss_kib_per_session_n8": 141.5,
+  "fresh_rss_kib_per_session_n40": 116.3,
+  "fresh_rss_kib_per_session": 116.3,
+  "restore_ir_first": 3527490,
+  "restore_ir_steady": 803712,
+  "restore_time": {
+   "first_ns": 824731,
+   "median_ns": 62754,
+   "min_ns": 58503
+  },
+  "restore_rss_kib_per_session_n1": 0.0,
+  "restore_module_cache_bytes": 0,
+  "restore_rss_kib_per_session_n8": 118.0,
+  "restore_rss_kib_per_session_n40": 97.7,
+  "restore_rss_kib_per_session": 97.7
+ },
+ "codemode": {
+  "image_bytes": 536255,
+  "zstd1_bytes": 132532,
+  "zstd1_prefix_bytes": 126424,
+  "zstd1_prefix_decode_ns": 799795,
+  "fresh_ir_first": 42277662,
+  "fresh_ir_steady": 42600025,
+  "fresh_time": {
+   "first_ns": 6621768,
+   "median_ns": 5119085,
+   "min_ns": 5027706
+  },
+  "fresh_rss_kib_per_session_n1": 836.0,
+  "fresh_module_cache_bytes": 0,
+  "fresh_rss_kib_per_session_n8": 1736.5,
+  "fresh_rss_kib_per_session_n40": 1855.7,
+  "fresh_rss_kib_per_session": 1855.7,
+  "restore_ir_first": 26325489,
+  "restore_ir_steady": 23748536,
+  "restore_time": {
+   "first_ns": 4030253,
+   "median_ns": 2678208,
+   "min_ns": 2618443
+  },
+  "restore_rss_kib_per_session_n1": 444.0,
+  "restore_module_cache_bytes": 0,
+  "restore_rss_kib_per_session_n8": 1713.0,
+  "restore_rss_kib_per_session_n40": 1847.4,
+  "restore_rss_kib_per_session": 1847.4
+ },
+ "codemode-tz": {
+  "image_bytes": 815351,
+  "zstd1_bytes": 207056,
+  "zstd1_prefix_bytes": 202550,
+  "zstd1_prefix_decode_ns": 1143447,
+  "fresh_ir_first": 85716852,
+  "fresh_ir_steady": 86868961,
+  "fresh_time": {
+   "first_ns": 14166909,
+   "median_ns": 11966788,
+   "min_ns": 11647351
+  },
+  "fresh_rss_kib_per_session_n1": 1580.0,
+  "fresh_module_cache_bytes": 0,
+  "fresh_rss_kib_per_session_n8": 3047.5,
+  "fresh_rss_kib_per_session_n40": 3236.9,
+  "fresh_rss_kib_per_session": 3236.9,
+  "restore_ir_first": 42100479,
+  "restore_ir_steady": 39533171,
+  "restore_time": {
+   "first_ns": 6514035,
+   "median_ns": 4472177,
+   "min_ns": 4396366
+  },
+  "restore_rss_kib_per_session_n1": 788.0,
+  "restore_module_cache_bytes": 0,
+  "restore_rss_kib_per_session_n8": 2936.5,
+  "restore_rss_kib_per_session_n40": 3176.0,
+  "restore_rss_kib_per_session": 3176.0
+ },
+ "heavy": {
+  "image_bytes": 1222722,
+  "zstd1_bytes": 290575,
+  "zstd1_prefix_bytes": 286107,
+  "zstd1_prefix_decode_ns": 1453551,
+  "fresh_ir_first": 212020841,
+  "fresh_ir_steady": 213520826,
+  "fresh_time": {
+   "first_ns": 34106984,
+   "median_ns": 31226947,
+   "min_ns": 30542886
+  },
+  "fresh_rss_kib_per_session_n1": 2960.0,
+  "fresh_module_cache_bytes": 0,
+  "fresh_rss_kib_per_session_n8": 5254.0,
+  "fresh_rss_kib_per_session_n40": 5492.6,
+  "fresh_rss_kib_per_session": 5492.6,
+  "restore_ir_first": 62773985,
+  "restore_ir_steady": 60215284,
+  "restore_time": {
+   "first_ns": 10026293,
+   "median_ns": 7008005,
+   "min_ns": 6886744
+  },
+  "restore_rss_kib_per_session_n1": 1844.0,
+  "restore_module_cache_bytes": 0,
+  "restore_rss_kib_per_session_n8": 4990.0,
+  "restore_rss_kib_per_session_n40": 5332.7,
+  "restore_rss_kib_per_session": 5332.7
+ }
+}

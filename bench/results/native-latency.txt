@@ -1,0 +1,174 @@
+# [M] Public-facade latency, 2026-11-02, continuation orb, Rust 1.99.0.
+# Source and reproduction commands: bench/latency.rs. Release libraries,
+# panic=abort, normal mm-cli stdlib features (including fractions/statistics/uuid).
+# CPU affinity 2,3 for the process and requester thread; otherwise idle.
+# Baseline: 0ae428cb2cc2d31c275efa1dc05cb8e3081ff255.
+# After: native-work polling independent of fuel, plus sort comparison charging.
+# One warmup, seven recorded samples per case, fresh native-operation sessions.
+# Runs are sequential, not alternating. This measures responsiveness, not
+# a throughput regression threshold, scheduling guarantee, or worst-case bound.
+# A host event also returns control: distinguish stop=host from stop=requested.
+# The initial exploratory run stopped at an unsupported gc import in the driver;
+# the recorded runs both completed every result assertion. GC is included in
+# start/snapshot timings, not separately isolated. An intermediate after run used
+# default-only stdlib features and is excluded from this matched comparison.
+# Median request-to-control ms, before -> after:
+# loop           0.002323 ->   0.002588
+# repr          45.501952 ->  55.407464
+# join           3.927847 ->   7.893816
+# replace      134.527952 -> 138.788594
+# json          20.803042 ->  19.863266
+# sort          11.494313 ->  12.389762
+# sort-repeat 1328.309938 ->  12.298336
+# Before, sort and sort-repeat returned a host event rather than observing the
+# park flag. After, both park after the first sort. A single native operation
+# still runs to completion. The other changes between runs are not attributed
+# to this fix; noisy timings require alternating throughput measurements.
+# Baseline median lifecycle ms at 1000 / 10000 / 100000 persistent dict rows:
+# start:    0.056409 / 0.185360 / 1.765379
+# snapshot: 0.098783 / 0.314708 / 2.401507 (includes GC)
+# restore:  0.242441 / 0.373395 / 1.914931
+# These graph shapes share string values; they do not bound all persistent heaps.
+# Raw records below: first complete block is baseline, second is after.
+[M] request case=loop sample=1 resume_ns=1101857 request_after_ns=1099534 stop=requested response_ns=Some(2323)
+[M] request case=loop sample=2 resume_ns=1120184 request_after_ns=1117889 stop=requested response_ns=Some(2295)
+[M] request case=loop sample=3 resume_ns=1118431 request_after_ns=1117117 stop=requested response_ns=Some(1314)
+[M] request case=loop sample=4 resume_ns=1120093 request_after_ns=1117336 stop=requested response_ns=Some(2757)
+[M] request case=loop sample=5 resume_ns=1118721 request_after_ns=1114993 stop=requested response_ns=Some(3728)
+[M] request case=loop sample=6 resume_ns=2161418 request_after_ns=2159124 stop=requested response_ns=Some(2294)
+[M] request case=loop sample=7 resume_ns=1127355 request_after_ns=1124697 stop=requested response_ns=Some(2658)
+[M] request case=repr sample=1 resume_ns=52454318 request_after_ns=1153138 stop=requested response_ns=Some(51301180)
+[M] request case=repr sample=2 resume_ns=44816969 request_after_ns=1151218 stop=requested response_ns=Some(43665751)
+[M] request case=repr sample=3 resume_ns=44414498 request_after_ns=1151587 stop=requested response_ns=Some(43262911)
+[M] request case=repr sample=4 resume_ns=46979586 request_after_ns=1163414 stop=requested response_ns=Some(45816172)
+[M] request case=repr sample=5 resume_ns=46489393 request_after_ns=1195088 stop=requested response_ns=Some(45294305)
+[M] request case=repr sample=6 resume_ns=46686158 request_after_ns=1184206 stop=requested response_ns=Some(45501952)
+[M] request case=repr sample=7 resume_ns=47064535 request_after_ns=1235455 stop=requested response_ns=Some(45829080)
+[M] request case=join sample=1 resume_ns=5185491 request_after_ns=1163499 stop=requested response_ns=Some(4021992)
+[M] request case=join sample=2 resume_ns=5081275 request_after_ns=1153428 stop=requested response_ns=Some(3927847)
+[M] request case=join sample=3 resume_ns=5060027 request_after_ns=1139606 stop=requested response_ns=Some(3920421)
+[M] request case=join sample=4 resume_ns=5113663 request_after_ns=1193454 stop=requested response_ns=Some(3920209)
+[M] request case=join sample=5 resume_ns=5155467 request_after_ns=1134892 stop=requested response_ns=Some(4020575)
+[M] request case=join sample=6 resume_ns=5051302 request_after_ns=1293883 stop=requested response_ns=Some(3757419)
+[M] request case=join sample=7 resume_ns=5142351 request_after_ns=1196955 stop=requested response_ns=Some(3945396)
+[M] request case=replace sample=1 resume_ns=133872116 request_after_ns=1175344 stop=requested response_ns=Some(132696772)
+[M] request case=replace sample=2 resume_ns=131641895 request_after_ns=1210499 stop=requested response_ns=Some(130431396)
+[M] request case=replace sample=3 resume_ns=141534605 request_after_ns=1229046 stop=requested response_ns=Some(140305559)
+[M] request case=replace sample=4 resume_ns=134758281 request_after_ns=1188316 stop=requested response_ns=Some(133569965)
+[M] request case=replace sample=5 resume_ns=142378679 request_after_ns=1173712 stop=requested response_ns=Some(141204967)
+[M] request case=replace sample=6 resume_ns=139326312 request_after_ns=1291270 stop=requested response_ns=Some(138035042)
+[M] request case=replace sample=7 resume_ns=135858246 request_after_ns=1330294 stop=requested response_ns=Some(134527952)
+[M] request case=json sample=1 resume_ns=22079540 request_after_ns=1186469 stop=requested response_ns=Some(20893071)
+[M] request case=json sample=2 resume_ns=22167263 request_after_ns=1231657 stop=requested response_ns=Some(20935606)
+[M] request case=json sample=3 resume_ns=22529337 request_after_ns=1331231 stop=requested response_ns=Some(21198106)
+[M] request case=json sample=4 resume_ns=21870087 request_after_ns=1209420 stop=requested response_ns=Some(20660667)
+[M] request case=json sample=5 resume_ns=21554651 request_after_ns=1224798 stop=requested response_ns=Some(20329853)
+[M] request case=json sample=6 resume_ns=21453093 request_after_ns=1186791 stop=requested response_ns=Some(20266302)
+[M] request case=json sample=7 resume_ns=21993044 request_after_ns=1190002 stop=requested response_ns=Some(20803042)
+[M] request case=sort sample=1 resume_ns=12617628 request_after_ns=1205529 stop=host response_ns=Some(11412099)
+[M] request case=sort sample=2 resume_ns=12680609 request_after_ns=1180382 stop=host response_ns=Some(11500227)
+[M] request case=sort sample=3 resume_ns=12634960 request_after_ns=1185954 stop=host response_ns=Some(11449006)
+[M] request case=sort sample=4 resume_ns=12675390 request_after_ns=1181077 stop=host response_ns=Some(11494313)
+[M] request case=sort sample=5 resume_ns=12619800 request_after_ns=1200922 stop=host response_ns=Some(11418878)
+[M] request case=sort sample=6 resume_ns=12766170 request_after_ns=1154709 stop=host response_ns=Some(11611461)
+[M] request case=sort sample=7 resume_ns=12713188 request_after_ns=1211706 stop=host response_ns=Some(11501482)
+[M] request case=sort-repeat sample=1 resume_ns=1337660857 request_after_ns=1203052 stop=host response_ns=Some(1336457805)
+[M] request case=sort-repeat sample=2 resume_ns=1334130163 request_after_ns=1200556 stop=host response_ns=Some(1332929607)
+[M] request case=sort-repeat sample=3 resume_ns=1377964442 request_after_ns=1210834 stop=host response_ns=Some(1376753608)
+[M] request case=sort-repeat sample=4 resume_ns=1329471235 request_after_ns=1161297 stop=host response_ns=Some(1328309938)
+[M] request case=sort-repeat sample=5 resume_ns=1316270934 request_after_ns=1165837 stop=host response_ns=Some(1315105097)
+[M] request case=sort-repeat sample=6 resume_ns=1318286992 request_after_ns=1162269 stop=host response_ns=Some(1317124723)
+[M] request case=sort-repeat sample=7 resume_ns=1315463727 request_after_ns=1225426 stop=host response_ns=Some(1314238301)
+[M] lifecycle rows=1000 sample=1 start_ns=60086 snapshot_with_gc_ns=90544 restore_ns=288910 snapshot_bytes=160706
+[M] lifecycle rows=1000 sample=2 start_ns=56409 snapshot_with_gc_ns=102377 restore_ns=286323 snapshot_bytes=160706
+[M] lifecycle rows=1000 sample=3 start_ns=59367 snapshot_with_gc_ns=101890 restore_ns=242441 snapshot_bytes=160706
+[M] lifecycle rows=1000 sample=4 start_ns=56481 snapshot_with_gc_ns=98783 restore_ns=281004 snapshot_bytes=160706
+[M] lifecycle rows=1000 sample=5 start_ns=53911 snapshot_with_gc_ns=87893 restore_ns=236872 snapshot_bytes=160706
+[M] lifecycle rows=1000 sample=6 start_ns=54029 snapshot_with_gc_ns=96120 restore_ns=240312 snapshot_bytes=160706
+[M] lifecycle rows=1000 sample=7 start_ns=56133 snapshot_with_gc_ns=142212 restore_ns=237879 snapshot_bytes=160706
+[M] lifecycle rows=10000 sample=1 start_ns=220409 snapshot_with_gc_ns=345220 restore_ns=394367 snapshot_bytes=715641
+[M] lifecycle rows=10000 sample=2 start_ns=185360 snapshot_with_gc_ns=306219 restore_ns=390633 snapshot_bytes=715641
+[M] lifecycle rows=10000 sample=3 start_ns=186707 snapshot_with_gc_ns=293681 restore_ns=373395 snapshot_bytes=715641
+[M] lifecycle rows=10000 sample=4 start_ns=184553 snapshot_with_gc_ns=294377 restore_ns=375003 snapshot_bytes=715641
+[M] lifecycle rows=10000 sample=5 start_ns=187227 snapshot_with_gc_ns=316605 restore_ns=347080 snapshot_bytes=715641
+[M] lifecycle rows=10000 sample=6 start_ns=184855 snapshot_with_gc_ns=324653 restore_ns=342884 snapshot_bytes=715641
+[M] lifecycle rows=10000 sample=7 start_ns=184179 snapshot_with_gc_ns=314708 restore_ns=342061 snapshot_bytes=715641
+[M] lifecycle rows=100000 sample=1 start_ns=1785525 snapshot_with_gc_ns=2597618 restore_ns=1914931 snapshot_bytes=5953243
+[M] lifecycle rows=100000 sample=2 start_ns=1750076 snapshot_with_gc_ns=2412907 restore_ns=1902317 snapshot_bytes=5953243
+[M] lifecycle rows=100000 sample=3 start_ns=1765379 snapshot_with_gc_ns=2369719 restore_ns=1904364 snapshot_bytes=5953243
+[M] lifecycle rows=100000 sample=4 start_ns=1728022 snapshot_with_gc_ns=2401507 restore_ns=1955709 snapshot_bytes=5953243
+[M] lifecycle rows=100000 sample=5 start_ns=1732181 snapshot_with_gc_ns=2392301 restore_ns=1952578 snapshot_bytes=5953243
+[M] lifecycle rows=100000 sample=6 start_ns=1792894 snapshot_with_gc_ns=2424774 restore_ns=1946446 snapshot_bytes=5953243
+[M] lifecycle rows=100000 sample=7 start_ns=1778994 snapshot_with_gc_ns=2361354 restore_ns=1899509 snapshot_bytes=5953243
+latency probes: every result assertion passed
+[M] request case=loop sample=1 resume_ns=1125110 request_after_ns=1124080 stop=requested response_ns=Some(1030)
+[M] request case=loop sample=2 resume_ns=1122661 request_after_ns=1120494 stop=requested response_ns=Some(2167)
+[M] request case=loop sample=3 resume_ns=1125500 request_after_ns=1121693 stop=requested response_ns=Some(3807)
+[M] request case=loop sample=4 resume_ns=1122080 request_after_ns=1116174 stop=requested response_ns=Some(5906)
+[M] request case=loop sample=5 resume_ns=1116503 request_after_ns=1115683 stop=requested response_ns=Some(820)
+[M] request case=loop sample=6 resume_ns=1120510 request_after_ns=1116355 stop=requested response_ns=Some(4155)
+[M] request case=loop sample=7 resume_ns=1134868 request_after_ns=1132280 stop=requested response_ns=Some(2588)
+[M] request case=repr sample=1 resume_ns=59019982 request_after_ns=1395530 stop=requested response_ns=Some(57624452)
+[M] request case=repr sample=2 resume_ns=53146279 request_after_ns=1203800 stop=requested response_ns=Some(51942479)
+[M] request case=repr sample=3 resume_ns=53215164 request_after_ns=1238044 stop=requested response_ns=Some(51977120)
+[M] request case=repr sample=4 resume_ns=56606638 request_after_ns=1199174 stop=requested response_ns=Some(55407464)
+[M] request case=repr sample=5 resume_ns=54193283 request_after_ns=1219938 stop=requested response_ns=Some(52973345)
+[M] request case=repr sample=6 resume_ns=65212246 request_after_ns=1222600 stop=requested response_ns=Some(63989646)
+[M] request case=repr sample=7 resume_ns=58732518 request_after_ns=1174186 stop=requested response_ns=Some(57558332)
+[M] request case=join sample=1 resume_ns=12953185 request_after_ns=2773092 stop=requested response_ns=Some(10180093)
+[M] request case=join sample=2 resume_ns=9111336 request_after_ns=1217520 stop=requested response_ns=Some(7893816)
+[M] request case=join sample=3 resume_ns=8682843 request_after_ns=1244749 stop=requested response_ns=Some(7438094)
+[M] request case=join sample=4 resume_ns=8766799 request_after_ns=1196820 stop=requested response_ns=Some(7569979)
+[M] request case=join sample=5 resume_ns=9812959 request_after_ns=1315680 stop=requested response_ns=Some(8497279)
+[M] request case=join sample=6 resume_ns=9041290 request_after_ns=1209057 stop=requested response_ns=Some(7832233)
+[M] request case=join sample=7 resume_ns=9706488 request_after_ns=1273456 stop=requested response_ns=Some(8433032)
+[M] request case=replace sample=1 resume_ns=139106245 request_after_ns=1187190 stop=requested response_ns=Some(137919055)
+[M] request case=replace sample=2 resume_ns=147268648 request_after_ns=1169989 stop=requested response_ns=Some(146098659)
+[M] request case=replace sample=3 resume_ns=140996397 request_after_ns=1282379 stop=requested response_ns=Some(139714018)
+[M] request case=replace sample=4 resume_ns=139838333 request_after_ns=1184883 stop=requested response_ns=Some(138653450)
+[M] request case=replace sample=5 resume_ns=139977159 request_after_ns=1188565 stop=requested response_ns=Some(138788594)
+[M] request case=replace sample=6 resume_ns=141109911 request_after_ns=1168408 stop=requested response_ns=Some(139941503)
+[M] request case=replace sample=7 resume_ns=139875571 request_after_ns=1156976 stop=requested response_ns=Some(138718595)
+[M] request case=json sample=1 resume_ns=21461853 request_after_ns=1172473 stop=requested response_ns=Some(20289380)
+[M] request case=json sample=2 resume_ns=20917715 request_after_ns=1170719 stop=requested response_ns=Some(19746996)
+[M] request case=json sample=3 resume_ns=20675373 request_after_ns=1182772 stop=requested response_ns=Some(19492601)
+[M] request case=json sample=4 resume_ns=21021635 request_after_ns=1158369 stop=requested response_ns=Some(19863266)
+[M] request case=json sample=5 resume_ns=20853002 request_after_ns=1141606 stop=requested response_ns=Some(19711396)
+[M] request case=json sample=6 resume_ns=22017526 request_after_ns=1151400 stop=requested response_ns=Some(20866126)
+[M] request case=json sample=7 resume_ns=22371433 request_after_ns=1137611 stop=requested response_ns=Some(21233822)
+[M] request case=sort sample=1 resume_ns=13406249 request_after_ns=1131705 stop=requested response_ns=Some(12274544)
+[M] request case=sort sample=2 resume_ns=13476251 request_after_ns=1121290 stop=requested response_ns=Some(12354961)
+[M] request case=sort sample=3 resume_ns=13564873 request_after_ns=1136528 stop=requested response_ns=Some(12428345)
+[M] request case=sort sample=4 resume_ns=13733451 request_after_ns=1167960 stop=requested response_ns=Some(12565491)
+[M] request case=sort sample=5 resume_ns=13828093 request_after_ns=1156471 stop=requested response_ns=Some(12671622)
+[M] request case=sort sample=6 resume_ns=13554180 request_after_ns=1164418 stop=requested response_ns=Some(12389762)
+[M] request case=sort sample=7 resume_ns=13341444 request_after_ns=1149084 stop=requested response_ns=Some(12192360)
+[M] request case=sort-repeat sample=1 resume_ns=13815039 request_after_ns=1167810 stop=requested response_ns=Some(12647229)
+[M] request case=sort-repeat sample=2 resume_ns=13651452 request_after_ns=1185590 stop=requested response_ns=Some(12465862)
+[M] request case=sort-repeat sample=3 resume_ns=13534931 request_after_ns=1189154 stop=requested response_ns=Some(12345777)
+[M] request case=sort-repeat sample=4 resume_ns=13453744 request_after_ns=1155408 stop=requested response_ns=Some(12298336)
+[M] request case=sort-repeat sample=5 resume_ns=13235674 request_after_ns=1171328 stop=requested response_ns=Some(12064346)
+[M] request case=sort-repeat sample=6 resume_ns=13421628 request_after_ns=1196764 stop=requested response_ns=Some(12224864)
+[M] request case=sort-repeat sample=7 resume_ns=13448767 request_after_ns=1190647 stop=requested response_ns=Some(12258120)
+[M] lifecycle rows=1000 sample=1 start_ns=58450 snapshot_with_gc_ns=91538 restore_ns=288444 snapshot_bytes=160706
+[M] lifecycle rows=1000 sample=2 start_ns=59565 snapshot_with_gc_ns=106991 restore_ns=325443 snapshot_bytes=160706
+[M] lifecycle rows=1000 sample=3 start_ns=56414 snapshot_with_gc_ns=97839 restore_ns=301512 snapshot_bytes=160706
+[M] lifecycle rows=1000 sample=4 start_ns=57017 snapshot_with_gc_ns=124622 restore_ns=249459 snapshot_bytes=160706
+[M] lifecycle rows=1000 sample=5 start_ns=53719 snapshot_with_gc_ns=140515 restore_ns=250593 snapshot_bytes=160706
+[M] lifecycle rows=1000 sample=6 start_ns=52643 snapshot_with_gc_ns=91589 restore_ns=242547 snapshot_bytes=160706
+[M] lifecycle rows=1000 sample=7 start_ns=99872 snapshot_with_gc_ns=96848 restore_ns=247147 snapshot_bytes=160706
+[M] lifecycle rows=10000 sample=1 start_ns=197240 snapshot_with_gc_ns=397122 restore_ns=409767 snapshot_bytes=715641
+[M] lifecycle rows=10000 sample=2 start_ns=189113 snapshot_with_gc_ns=389487 restore_ns=419060 snapshot_bytes=715641
+[M] lifecycle rows=10000 sample=3 start_ns=234260 snapshot_with_gc_ns=357846 restore_ns=360611 snapshot_bytes=715641
+[M] lifecycle rows=10000 sample=4 start_ns=186180 snapshot_with_gc_ns=311110 restore_ns=434797 snapshot_bytes=715641
+[M] lifecycle rows=10000 sample=5 start_ns=181727 snapshot_with_gc_ns=302982 restore_ns=409742 snapshot_bytes=715641
+[M] lifecycle rows=10000 sample=6 start_ns=188049 snapshot_with_gc_ns=336668 restore_ns=364385 snapshot_bytes=715641
+[M] lifecycle rows=10000 sample=7 start_ns=184289 snapshot_with_gc_ns=344013 restore_ns=367623 snapshot_bytes=715641
+[M] lifecycle rows=100000 sample=1 start_ns=1801906 snapshot_with_gc_ns=2583299 restore_ns=2103643 snapshot_bytes=5953243
+[M] lifecycle rows=100000 sample=2 start_ns=1825189 snapshot_with_gc_ns=2619734 restore_ns=2122796 snapshot_bytes=5953243
+[M] lifecycle rows=100000 sample=3 start_ns=1810728 snapshot_with_gc_ns=2702696 restore_ns=2137312 snapshot_bytes=5953243
+[M] lifecycle rows=100000 sample=4 start_ns=1842466 snapshot_with_gc_ns=2690727 restore_ns=2191569 snapshot_bytes=5953243
+[M] lifecycle rows=100000 sample=5 start_ns=1855560 snapshot_with_gc_ns=2647787 restore_ns=2239639 snapshot_bytes=5953243
+[M] lifecycle rows=100000 sample=6 start_ns=1852483 snapshot_with_gc_ns=2653460 restore_ns=2198434 snapshot_bytes=5953243
+[M] lifecycle rows=100000 sample=7 start_ns=1920924 snapshot_with_gc_ns=2641271 restore_ns=2205314 snapshot_bytes=5953243
+latency probes: every result assertion passed

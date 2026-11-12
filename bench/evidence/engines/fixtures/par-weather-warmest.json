@@ -1,0 +1,130 @@
+{
+ "calls": [
+  {
+   "args": {
+    "city": "London"
+   },
+   "name": "get_weather",
+   "ok": {
+    "city": "London",
+    "condition": "cloudy",
+    "humidity": 81,
+    "temp_c": 11.2
+   }
+  },
+  {
+   "args": {
+    "city": "Paris"
+   },
+   "name": "get_weather",
+   "ok": {
+    "city": "Paris",
+    "condition": "rain",
+    "humidity": 77,
+    "temp_c": 13.5
+   }
+  },
+  {
+   "args": {
+    "city": "Berlin"
+   },
+   "name": "get_weather",
+   "ok": {
+    "city": "Berlin",
+    "condition": "cloudy",
+    "humidity": 70,
+    "temp_c": 9.8
+   }
+  },
+  {
+   "args": {
+    "city": "Madrid"
+   },
+   "name": "get_weather",
+   "ok": {
+    "city": "Madrid",
+    "condition": "sunny",
+    "humidity": 41,
+    "temp_c": 19.4
+   }
+  },
+  {
+   "args": {
+    "city": "Rome"
+   },
+   "name": "get_weather",
+   "ok": {
+    "city": "Rome",
+    "condition": "sunny",
+    "humidity": 55,
+    "temp_c": 17.1
+   }
+  },
+  {
+   "args": {
+    "city": "Oslo"
+   },
+   "name": "get_weather",
+   "ok": {
+    "city": "Oslo",
+    "condition": "snow",
+    "humidity": 88,
+    "temp_c": 2.3
+   }
+  },
+  {
+   "args": {
+    "city": "Tokyo"
+   },
+   "name": "get_weather",
+   "ok": {
+    "city": "Tokyo",
+    "condition": "clear",
+    "humidity": 60,
+    "temp_c": 14.9
+   }
+  },
+  {
+   "args": {
+    "city": "Sydney"
+   },
+   "name": "get_weather",
+   "ok": {
+    "city": "Sydney",
+    "condition": "sunny",
+    "humidity": 52,
+    "temp_c": 24.6
+   }
+  },
+  {
+   "args": {
+    "coldest": "Oslo",
+    "mean_temp_c": 14.1,
+    "warmest": "Sydney"
+   },
+   "name": "submit_answer",
+   "ok": "ok"
+  }
+ ],
+ "category": "parallel-gather",
+ "stdout": "Sydney Oslo 14.1\n",
+ "task": "par-weather-warmest",
+ "tools": [
+  {
+   "description": "Current weather for a city.",
+   "name": "get_weather",
+   "params": [
+    "city"
+   ]
+  },
+  {
+   "description": "Submit the final answer of this task. Call it once, at the end.",
+   "name": "submit_answer",
+   "params": [
+    "warmest",
+    "coldest",
+    "mean_temp_c"
+   ]
+  }
+ ]
+}

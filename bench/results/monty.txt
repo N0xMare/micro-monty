@@ -1,0 +1,17 @@
+# [M] machine: Intel(R) Xeon(R) Processor @ 2.60GHz, nproc 16, Linux 6.1.189+; 2026-11-04; pinned with taskset -c 2
+# engine: monty-runtime 1.4.0
+# wall clock per process (spawn to exit), 10 timed reps after 1 warm-up
+# program median_ms min_ms
+startup 4.2 3.9
+fib 103.8 103.0
+loop 245.8 242.5
+dict 192.0 185.9
+str 73.4 72.8
+json 228.1 225.1
+closure 179.2 160.7
+classes 414.3 374.2
+fmt 172.5 167.6
+sort 372.9 355.3
+interp 420.3 371.6
+# unsupported generators: NotImplementedError: The monty syntax parser does not yet support yield expressions
+# unsupported exceptions: NotImplementedError: The monty syntax parser does not yet support class inheritance and metaclasses

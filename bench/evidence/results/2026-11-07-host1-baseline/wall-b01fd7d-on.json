@@ -1,0 +1,110 @@
+{
+ "-": {
+  "first_ns": 115986,
+  "median_ns": 20197,
+  "min_ns": 20067,
+  "rss_kib": 64.9
+ },
+ "json": {
+  "first_ns": 249334,
+  "median_ns": 60753,
+  "min_ns": 59520,
+  "rss_kib": 95.2
+ },
+ "re": {
+  "first_ns": 823943,
+  "median_ns": 202807,
+  "min_ns": 194442,
+  "rss_kib": 258.4
+ },
+ "collections": {
+  "first_ns": 836047,
+  "median_ns": 165008,
+  "min_ns": 161060,
+  "rss_kib": 229.1
+ },
+ "asyncio": {
+  "first_ns": 645041,
+  "median_ns": 415874,
+  "min_ns": 404302,
+  "rss_kib": 392.3
+ },
+ "datetime": {
+  "first_ns": 1252070,
+  "median_ns": 387541,
+  "min_ns": 369919,
+  "rss_kib": 452.2
+ },
+ "typing": {
+  "first_ns": 1326729,
+  "median_ns": 583116,
+  "min_ns": 570582,
+  "rss_kib": 479.7
+ },
+ "enum": {
+  "first_ns": 905476,
+  "median_ns": 304286,
+  "min_ns": 293427,
+  "rss_kib": 247.8
+ },
+ "dataclasses": {
+  "first_ns": 730099,
+  "median_ns": 159397,
+  "min_ns": 152865,
+  "rss_kib": 205.6
+ },
+ "functools": {
+  "first_ns": 834474,
+  "median_ns": 271365,
+  "min_ns": 264823,
+  "rss_kib": 315.9
+ },
+ "itertools": {
+  "first_ns": 424490,
+  "median_ns": 150120,
+  "min_ns": 148336,
+  "rss_kib": 166.7
+ },
+ "decimal": {
+  "first_ns": 4006058,
+  "median_ns": 2293790,
+  "min_ns": 2230833,
+  "rss_kib": 1477.6
+ },
+ "statistics": {
+  "first_ns": 6422657,
+  "median_ns": 4438804,
+  "min_ns": 4116734,
+  "rss_kib": 2135.3
+ },
+ "zoneinfo": {
+  "first_ns": 3301055,
+  "median_ns": 1237834,
+  "min_ns": 1213749,
+  "rss_kib": 1186.6
+ },
+ "tomllib": {
+  "first_ns": 3950865,
+  "median_ns": 2146967,
+  "min_ns": 2074491,
+  "rss_kib": 1298.8
+ },
+ "html.parser": {
+  "first_ns": 2587457,
+  "median_ns": 1778651,
+  "min_ns": 1737564,
+  "rss_kib": 582.5
+ },
+ "calendar": {
+  "first_ns": 2924765,
+  "median_ns": 1751461,
+  "min_ns": 1451783,
+  "rss_kib": 992.2
+ },
+ "json,re,collections,asyncio,datetime": {
+  "first_ns": 2907753,
+  "median_ns": 1601171,
+  "min_ns": 1289020,
+  "rss_kib": 1201.6
+ }
+}

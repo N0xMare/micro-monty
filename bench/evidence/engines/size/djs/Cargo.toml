@@ -1,0 +1,21 @@
+[package]
+name = "size-djs"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+# djs-core and djs-prelude at the pinned checkout, default features.
+[dependencies]
+djs-core = { path = "/tmp/eng/djs/crates/djs-core" }
+djs-prelude = { path = "/tmp/eng/djs/crates/djs-prelude" }
+
+# The repo's release profile (Cargo.toml), as `cargo xtask size` builds
+# `hello`: built by ../build.sh with std rebuilt for immediate abort.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

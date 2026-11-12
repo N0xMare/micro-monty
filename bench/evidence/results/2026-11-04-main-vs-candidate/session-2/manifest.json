@@ -1,0 +1,27 @@
+{
+  "boundary": "spawn to exit; taskset and optional GNU timeout overhead included",
+  "engines": [
+    {
+      "binary": "/tmp/mm-evidence-layers/candidate/mm",
+      "name": "micro-monty",
+      "sha256": "dec9ebb5eae20b959b4afbac945c3e46acb827663e8587adb53e5c03b24f1300  /tmp/mm-evidence-layers/candidate/mm",
+      "version": "micro-monty 0.0.0"
+    },
+    {
+      "binary": "/tmp/mm-evidence-layers/main/mm",
+      "name": "micro-monty-main",
+      "sha256": "ec95bd9e7dc963747fbb205f7ef2da3438543f329cd429778e99e47af91f8b8b  /tmp/mm-evidence-layers/main/mm",
+      "version": "micro-monty-main 0.0.0"
+    }
+  ],
+  "head": "8be97770c443e1078b6f416c1bc19f351c7f6604",
+  "machine": "Intel(R) Xeon(R) Processor @ 2.60GHz, nproc 16, Linux 6.1.189+; 2026-11-04; pinned with taskset -c 2",
+  "order": "program blocks; balanced rotating engine order each round",
+  "reps": 21,
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+  "schema": 1,
+  "status": "?? bench/evidence/results/",
+  "timeout_secs": null,
+  "unix_time_ns": "1793823236611612656",
+  "warmups": 1
+}

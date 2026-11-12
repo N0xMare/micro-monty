@@ -1,0 +1,17 @@
+# [M] machine: unknown CPU, nproc ?, Darwin 27.2.0; 2026-11-05; not pinned (no taskset or fewer than 3 CPUs)
+# engine: micro-monty 0.0.0
+# wall clock per process (spawn to exit), 10 timed reps after 1 warm-up
+# program median_ms min_ms
+startup 2.7 2.5
+fib 23.5 22.6
+loop 51.2 49.7
+dict 67.5 66.8
+str 29.2 28.6
+json 64.8 63.7
+closure 37.5 36.9
+classes 92.0 91.4
+generators 170.4 168.9
+exceptions 58.2 57.7
+fmt 119.4 117.9
+sort 90.7 88.5
+interp 173.2 171.5

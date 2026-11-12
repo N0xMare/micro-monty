@@ -1,0 +1,8 @@
+{"arm": "codex-jsptc-qjs", "prompt": "loc-census", "exit": 0, "correct": true}
+{"arm": "codex-jsptc-qjs", "prompt": "todo-census", "exit": 0, "correct": true}
+{"arm": "codex-ptc-mm", "prompt": "loc-census", "exit": 0, "correct": true}
+{"arm": "codex-ptc-mm", "prompt": "todo-census", "exit": 0, "correct": true}
+{"arm": "grok-jsptc-qjs", "prompt": "loc-census", "exit": 0, "correct": true}
+{"arm": "grok-jsptc-qjs", "prompt": "todo-census", "exit": 0, "correct": true}
+{"arm": "grok-ptc-mm", "prompt": "loc-census", "exit": 0, "correct": true}
+{"arm": "grok-ptc-mm", "prompt": "todo-census", "exit": 0, "correct": true}

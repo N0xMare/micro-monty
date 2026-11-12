@@ -1,0 +1,58 @@
+{
+ "-": {
+  "steady_ir": 489030.6,
+  "first_ir": 830067,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "json": {
+  "steady_ir": 1255258.3,
+  "first_ir": 1585386,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "re": {
+  "steady_ir": 3316009.1,
+  "first_ir": 6548162,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "collections": {
+  "steady_ir": 2847882.0,
+  "first_ir": 5604128,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "asyncio": {
+  "steady_ir": 6461792.8,
+  "first_ir": 6691448,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "json,re,collections": {
+  "steady_ir": 6683534.3,
+  "first_ir": 12013371,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "datetime": {
+  "steady_ir": 6475460.0,
+  "first_ir": 12635442,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "json,re,collections,asyncio,datetime": {
+  "steady_ir": 19043079.9,
+  "first_ir": 29478488,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ }
+}

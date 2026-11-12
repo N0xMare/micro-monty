@@ -1,0 +1,813 @@
+{
+ "calls": [
+  {
+   "args": {
+    "page": 1,
+    "query": "status:in_progress"
+   },
+   "name": "search_issues",
+   "ok": {
+    "has_more": false,
+    "issues": [
+     {
+      "assignee": "alice",
+      "created": "2026-01-29T02:00:00Z",
+      "estimate_hours": 5,
+      "key": "OPS-101",
+      "labels": [],
+      "priority": "P4",
+      "status": "in_progress",
+      "title": "Typo on pricing page",
+      "updated": "2026-03-03T21:00:00Z"
+     },
+     {
+      "assignee": "bjorn",
+      "created": "2026-01-23T19:00:00Z",
+      "estimate_hours": 2,
+      "key": "OPS-103",
+      "labels": [
+       "bug",
+       "infra"
+      ],
+      "priority": "P2",
+      "status": "in_progress",
+      "title": "Export to CSV drops unicode",
+      "updated": "2026-02-15T13:00:00Z"
+     },
+     {
+      "assignee": "diego",
+      "created": "2026-01-30T05:00:00Z",
+      "estimate_hours": null,
+      "key": "OPS-109",
+      "labels": [
+       "billing"
+      ],
+      "priority": "P2",
+      "status": "in_progress",
+      "title": "SSO redirect loop",
+      "updated": "2026-03-01T04:00:00Z"
+     },
+     {
+      "assignee": null,
+      "created": "2026-02-09T22:00:00Z",
+      "estimate_hours": 2,
+      "key": "OPS-110",
+      "labels": [],
+      "priority": "P3",
+      "status": "in_progress",
+      "title": "Upgrade TLS library",
+      "updated": "2026-03-09T16:00:00Z"
+     },
+     {
+      "assignee": "emi",
+      "created": "2026-03-06T09:00:00Z",
+      "estimate_hours": 5,
+      "key": "OPS-115",
+      "labels": [],
+      "priority": "P4",
+      "status": "in_progress",
+      "title": "Memory leak in worker",
+      "updated": "2026-03-15T08:05:00Z"
+     },
+     {
+      "assignee": "diego",
+      "created": "2026-01-06T03:00:00Z",
+      "estimate_hours": 5,
+      "key": "OPS-120",
+      "labels": [
+       "infra"
+      ],
+      "priority": "P1",
+      "status": "in_progress",
+      "title": "Export to CSV drops unicode",
+      "updated": "2026-01-12T17:00:00Z"
+     },
+     {
+      "assignee": "chitra",
+      "created": "2026-03-02T08:00:00Z",
+      "estimate_hours": 2,
+      "key": "OPS-124",
+      "labels": [
+       "infra",
+       "ui"
+      ],
+      "priority": "P3",
+      "status": "in_progress",
+      "title": "Payment webhook retries forever",
+      "updated": "2026-03-05T14:00:00Z"
+     },
+     {
+      "assignee": "alice",
+      "created": "2026-02-10T00:00:00Z",
+      "estimate_hours": 13,
+      "key": "OPS-127",
+      "labels": [
+       "customer"
+      ],
+      "priority": "P3",
+      "status": "in_progress",
+      "title": "Typo on pricing page",
+      "updated": "2026-02-13T00:00:00Z"
+     },
+     {
+      "assignee": null,
+      "created": "2026-01-21T19:00:00Z",
+      "estimate_hours": 13,
+      "key": "OPS-129",
+      "labels": [
+       "billing"
+      ],
+      "priority": "P4",
+      "status": "in_progress",
+      "title": "API rate limit too strict",
+      "updated": "2026-02-08T10:00:00Z"
+     },
+     {
+      "assignee": null,
+      "created": "2026-02-01T22:00:00Z",
+      "estimate_hours": null,
+      "key": "OPS-135",
+      "labels": [
+       "security",
+       "ui"
+      ],
+      "priority": "P2",
+      "status": "in_progress",
+      "title": "Slow dashboard load",
+      "updated": "2026-02-14T10:00:00Z"
+     },
+     {
+      "assignee": "bjorn",
+      "created": "2026-01-09T10:00:00Z",
+      "estimate_hours": 1,
+      "key": "OPS-137",
+      "labels": [
+       "security"
+      ],
+      "priority": "P1",
+      "status": "in_progress",
+      "title": "Payment webhook retries forever",
+      "updated": "2026-02-01T10:00:00Z"
+     },
+     {
+      "assignee": "emi",
+      "created": "2026-02-06T10:00:00Z",
+      "estimate_hours": 2,
+      "key": "OPS-138",
+      "labels": [
+       "infra",
+       "ui"
+      ],
+      "priority": "P4",
+      "status": "in_progress",
+      "title": "Payment webhook retries forever",
+      "updated": "2026-03-13T05:00:00Z"
+     },
+     {
+      "assignee": "alice",
+      "created": "2026-01-27T06:00:00Z",
+      "estimate_hours": 2,
+      "key": "OPS-141",
+      "labels": [
+       "infra",
+       "security"
+      ],
+      "priority": "P1",
+      "status": "in_progress",
+      "title": "SSO redirect loop",
+      "updated": "2026-02-18T06:00:00Z"
+     },
+     {
+      "assignee": null,
+      "created": "2026-02-01T17:00:00Z",
+      "estimate_hours": 13,
+      "key": "OPS-144",
+      "labels": [],
+      "priority": "P2",
+      "status": "in_progress",
+      "title": "Upgrade TLS library",
+      "updated": "2026-02-12T14:00:00Z"
+     },
+     {
+      "assignee": null,
+      "created": "2026-01-11T13:00:00Z",
+      "estimate_hours": 2,
+      "key": "OPS-154",
+      "labels": [
+       "billing",
+       "customer"
+      ],
+      "priority": "P1",
+      "status": "in_progress",
+      "title": "Search returns duplicates",
+      "updated": "2026-02-03T00:00:00Z"
+     },
+     {
+      "assignee": "chitra",
+      "created": "2026-02-08T12:00:00Z",
+      "estimate_hours": null,
+      "key": "OPS-155",
+      "labels": [
+       "billing",
+       "customer"
+      ],
+      "priority": "P3",
+      "status": "in_progress",
+      "title": "API rate limit too strict",
+      "updated": "2026-02-10T19:00:00Z"
+     },
+     {
+      "assignee": "bjorn",
+      "created": "2026-02-13T10:00:00Z",
+      "estimate_hours": null,
+      "key": "OPS-158",
+      "labels": [
+       "security"
+      ],
+      "priority": "P3",
+      "status": "in_progress",
+      "title": "Flaky integration test",
+      "updated": "2026-02-21T21:00:00Z"
+     }
+    ],
+    "page": 1
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-101"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": "alice",
+    "comments": [
+     {
+      "author": "alice",
+      "body": "Blocked on vendor"
+     }
+    ],
+    "created": "2026-01-29T02:00:00Z",
+    "estimate_hours": 5,
+    "key": "OPS-101",
+    "labels": [],
+    "priority": "P4",
+    "status": "in_progress",
+    "title": "Typo on pricing page",
+    "updated": "2026-03-03T21:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-103"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": "bjorn",
+    "comments": [],
+    "created": "2026-01-23T19:00:00Z",
+    "estimate_hours": 2,
+    "key": "OPS-103",
+    "labels": [
+     "bug",
+     "infra"
+    ],
+    "priority": "P2",
+    "status": "in_progress",
+    "title": "Export to CSV drops unicode",
+    "updated": "2026-02-15T13:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-109"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": "diego",
+    "comments": [
+     {
+      "author": "alice",
+      "body": "Blocked on vendor"
+     },
+     {
+      "author": "chitra",
+      "body": "Looking into it"
+     },
+     {
+      "author": "chitra",
+      "body": "Customer escalated"
+     }
+    ],
+    "created": "2026-01-30T05:00:00Z",
+    "estimate_hours": null,
+    "key": "OPS-109",
+    "labels": [
+     "billing"
+    ],
+    "priority": "P2",
+    "status": "in_progress",
+    "title": "SSO redirect loop",
+    "updated": "2026-03-01T04:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-110"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": null,
+    "comments": [
+     {
+      "author": "alice",
+      "body": "Blocked on vendor"
+     },
+     {
+      "author": "diego",
+      "body": "Fixed in #4521?"
+     }
+    ],
+    "created": "2026-02-09T22:00:00Z",
+    "estimate_hours": 2,
+    "key": "OPS-110",
+    "labels": [],
+    "priority": "P3",
+    "status": "in_progress",
+    "title": "Upgrade TLS library",
+    "updated": "2026-03-09T16:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-115"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": "emi",
+    "comments": [
+     {
+      "author": "alice",
+      "body": "Customer escalated"
+     }
+    ],
+    "created": "2026-03-06T09:00:00Z",
+    "estimate_hours": 5,
+    "key": "OPS-115",
+    "labels": [],
+    "priority": "P4",
+    "status": "in_progress",
+    "title": "Memory leak in worker",
+    "updated": "2026-03-15T08:05:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-120"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": "diego",
+    "comments": [
+     {
+      "author": "diego",
+      "body": "Looking into it"
+     },
+     {
+      "author": "emi",
+      "body": "Blocked on vendor"
+     }
+    ],
+    "created": "2026-01-06T03:00:00Z",
+    "estimate_hours": 5,
+    "key": "OPS-120",
+    "labels": [
+     "infra"
+    ],
+    "priority": "P1",
+    "status": "in_progress",
+    "title": "Export to CSV drops unicode",
+    "updated": "2026-01-12T17:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-124"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": "chitra",
+    "comments": [],
+    "created": "2026-03-02T08:00:00Z",
+    "estimate_hours": 2,
+    "key": "OPS-124",
+    "labels": [
+     "infra",
+     "ui"
+    ],
+    "priority": "P3",
+    "status": "in_progress",
+    "title": "Payment webhook retries forever",
+    "updated": "2026-03-05T14:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-127"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": "alice",
+    "comments": [
+     {
+      "author": "emi",
+      "body": "Fixed in #4521?"
+     },
+     {
+      "author": "alice",
+      "body": "Blocked on vendor"
+     },
+     {
+      "author": "emi",
+      "body": "Customer escalated"
+     }
+    ],
+    "created": "2026-02-10T00:00:00Z",
+    "estimate_hours": 13,
+    "key": "OPS-127",
+    "labels": [
+     "customer"
+    ],
+    "priority": "P3",
+    "status": "in_progress",
+    "title": "Typo on pricing page",
+    "updated": "2026-02-13T00:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-129"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": null,
+    "comments": [
+     {
+      "author": "chitra",
+      "body": "Can repro on staging"
+     }
+    ],
+    "created": "2026-01-21T19:00:00Z",
+    "estimate_hours": 13,
+    "key": "OPS-129",
+    "labels": [
+     "billing"
+    ],
+    "priority": "P4",
+    "status": "in_progress",
+    "title": "API rate limit too strict",
+    "updated": "2026-02-08T10:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-135"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": null,
+    "comments": [
+     {
+      "author": "alice",
+      "body": "Looking into it"
+     },
+     {
+      "author": "chitra",
+      "body": "Blocked on vendor"
+     },
+     {
+      "author": "bjorn",
+      "body": "Blocked on vendor"
+     }
+    ],
+    "created": "2026-02-01T22:00:00Z",
+    "estimate_hours": null,
+    "key": "OPS-135",
+    "labels": [
+     "security",
+     "ui"
+    ],
+    "priority": "P2",
+    "status": "in_progress",
+    "title": "Slow dashboard load",
+    "updated": "2026-02-14T10:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-137"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": "bjorn",
+    "comments": [
+     {
+      "author": "chitra",
+      "body": "Looking into it"
+     },
+     {
+      "author": "diego",
+      "body": "Can repro on staging"
+     }
+    ],
+    "created": "2026-01-09T10:00:00Z",
+    "estimate_hours": 1,
+    "key": "OPS-137",
+    "labels": [
+     "security"
+    ],
+    "priority": "P1",
+    "status": "in_progress",
+    "title": "Payment webhook retries forever",
+    "updated": "2026-02-01T10:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-138"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": "emi",
+    "comments": [
+     {
+      "author": "bjorn",
+      "body": "Fixed in #4521?"
+     },
+     {
+      "author": "diego",
+      "body": "Looking into it"
+     },
+     {
+      "author": "emi",
+      "body": "Blocked on vendor"
+     }
+    ],
+    "created": "2026-02-06T10:00:00Z",
+    "estimate_hours": 2,
+    "key": "OPS-138",
+    "labels": [
+     "infra",
+     "ui"
+    ],
+    "priority": "P4",
+    "status": "in_progress",
+    "title": "Payment webhook retries forever",
+    "updated": "2026-03-13T05:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-141"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": "alice",
+    "comments": [
+     {
+      "author": "chitra",
+      "body": "Fixed in #4521?"
+     },
+     {
+      "author": "bjorn",
+      "body": "Blocked on vendor"
+     }
+    ],
+    "created": "2026-01-27T06:00:00Z",
+    "estimate_hours": 2,
+    "key": "OPS-141",
+    "labels": [
+     "infra",
+     "security"
+    ],
+    "priority": "P1",
+    "status": "in_progress",
+    "title": "SSO redirect loop",
+    "updated": "2026-02-18T06:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-144"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": null,
+    "comments": [
+     {
+      "author": "alice",
+      "body": "Can repro on staging"
+     },
+     {
+      "author": "bjorn",
+      "body": "Can repro on staging"
+     }
+    ],
+    "created": "2026-02-01T17:00:00Z",
+    "estimate_hours": 13,
+    "key": "OPS-144",
+    "labels": [],
+    "priority": "P2",
+    "status": "in_progress",
+    "title": "Upgrade TLS library",
+    "updated": "2026-02-12T14:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-154"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": null,
+    "comments": [
+     {
+      "author": "emi",
+      "body": "Customer escalated"
+     }
+    ],
+    "created": "2026-01-11T13:00:00Z",
+    "estimate_hours": 2,
+    "key": "OPS-154",
+    "labels": [
+     "billing",
+     "customer"
+    ],
+    "priority": "P1",
+    "status": "in_progress",
+    "title": "Search returns duplicates",
+    "updated": "2026-02-03T00:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-155"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": "chitra",
+    "comments": [
+     {
+      "author": "diego",
+      "body": "Can repro on staging"
+     },
+     {
+      "author": "chitra",
+      "body": "Customer escalated"
+     }
+    ],
+    "created": "2026-02-08T12:00:00Z",
+    "estimate_hours": null,
+    "key": "OPS-155",
+    "labels": [
+     "billing",
+     "customer"
+    ],
+    "priority": "P3",
+    "status": "in_progress",
+    "title": "API rate limit too strict",
+    "updated": "2026-02-10T19:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "key": "OPS-158"
+   },
+   "name": "get_issue",
+   "ok": {
+    "assignee": "bjorn",
+    "comments": [
+     {
+      "author": "diego",
+      "body": "Can repro on staging"
+     },
+     {
+      "author": "emi",
+      "body": "Blocked on vendor"
+     },
+     {
+      "author": "emi",
+      "body": "Fixed in #4521?"
+     }
+    ],
+    "created": "2026-02-13T10:00:00Z",
+    "estimate_hours": null,
+    "key": "OPS-158",
+    "labels": [
+     "security"
+    ],
+    "priority": "P3",
+    "status": "in_progress",
+    "title": "Flaky integration test",
+    "updated": "2026-02-21T21:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "fields": {
+     "status": "closed"
+    },
+    "key": "OPS-110"
+   },
+   "name": "update_issue",
+   "ok": {
+    "assignee": null,
+    "created": "2026-02-09T22:00:00Z",
+    "estimate_hours": 2,
+    "key": "OPS-110",
+    "labels": [],
+    "priority": "P3",
+    "status": "closed",
+    "title": "Upgrade TLS library",
+    "updated": "2026-03-09T16:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "body": "Closing: fix merged",
+    "key": "OPS-110"
+   },
+   "name": "add_comment",
+   "ok": {
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "fields": {
+     "status": "closed"
+    },
+    "key": "OPS-158"
+   },
+   "name": "update_issue",
+   "ok": {
+    "assignee": "bjorn",
+    "created": "2026-02-13T10:00:00Z",
+    "estimate_hours": null,
+    "key": "OPS-158",
+    "labels": [
+     "security"
+    ],
+    "priority": "P3",
+    "status": "closed",
+    "title": "Flaky integration test",
+    "updated": "2026-02-21T21:00:00Z"
+   }
+  },
+  {
+   "args": {
+    "body": "Closing: fix merged",
+    "key": "OPS-158"
+   },
+   "name": "add_comment",
+   "ok": {
+    "ok": true
+   }
+  }
+ ],
+ "category": "multistep-workflow",
+ "stdout": "checked: 17 closed: ['OPS-110', 'OPS-158']\n",
+ "task": "wf-close-fixed",
+ "tools": [
+  {
+   "description": "Search issues with a query such as \"status:open label:bug login\". Terms with a colon filter on status (open, in_progress, closed), priority (P1-P4), assignee (username or None) or label; other words must appear in the title. 20 results per page, ordered by key.",
+   "name": "search_issues",
+   "params": [
+    "query",
+    "page"
+   ]
+  },
+  {
+   "description": "Fetch one issue with its comments.",
+   "name": "get_issue",
+   "params": [
+    "key"
+   ]
+  },
+  {
+   "description": "Update fields of an issue.",
+   "name": "update_issue",
+   "params": [
+    "key",
+    "fields"
+   ]
+  },
+  {
+   "description": "Add a comment to an issue.",
+   "name": "add_comment",
+   "params": [
+    "key",
+    "body"
+   ]
+  }
+ ]
+}

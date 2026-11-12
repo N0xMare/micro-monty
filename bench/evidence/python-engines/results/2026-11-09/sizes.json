@@ -1,0 +1,65 @@
+[
+ {
+  "engine": "mm",
+  "target": "native",
+  "bytes": 2366008,
+  "gzip9": 1386737,
+  "how": "`cargo xtask size` hello"
+ },
+ {
+  "engine": "micropython",
+  "target": "native",
+  "bytes": 547688,
+  "gzip9": 238373,
+  "how": "sandbox variant, upstream -Os, stripped"
+ },
+ {
+  "engine": "micropython-standard",
+  "target": "native",
+  "bytes": 839040,
+  "gzip9": 393911,
+  "how": "unix standard variant, -Os, stripped"
+ },
+ {
+  "engine": "pocketpy",
+  "target": "native",
+  "bytes": 462088,
+  "gzip9": 232304,
+  "how": "pocketpy.c + hello, -Os -flto, gc-sections, stripped"
+ },
+ {
+  "engine": "pocketpy -O2 host build",
+  "target": "native",
+  "bytes": 695824,
+  "gzip9": 315173,
+  "how": "upstream CLI, -O2 (speed build), not stripped"
+ },
+ {
+  "engine": "mm",
+  "target": "wasm32-unknown-unknown",
+  "bytes": 2164619,
+  "gzip9": 1061231,
+  "how": "`cargo xtask size` hello.wasm"
+ },
+ {
+  "engine": "mm-wasm guest",
+  "target": "wasm32-unknown-unknown",
+  "bytes": 2251239,
+  "gzip9": 1094467,
+  "how": "`cargo xtask size`"
+ },
+ {
+  "engine": "micropython",
+  "target": "wasm32 (emscripten)",
+  "bytes": 449553,
+  "gzip9": 197274,
+  "how": "npm @micropython/micropython-webassembly-pyscript 1.29.0-6 (+ 110 KB .mjs glue)"
+ },
+ {
+  "engine": "pocketpy",
+  "target": "wasm32-wasip1",
+  "bytes": 451815,
+  "gzip9": 192262,
+  "how": "wasi-sdk 34 -Oz -flto, wasm-opt -Oz"
+ }
+]

@@ -1,0 +1,14 @@
+58d7acac7d5426f49c965d536932337e717a247d
+rustc 1.99.0 (b940084d7 2026-09-28)
+16
+1d4785c640977a3af5d87f20b4500a9920ecdd9e604295d7da2316543b37f372  /home/user/workspace/repo/target/isolation/release/iso-harness
+116950b9fa78c9d233a759443023296da8bc0e57d8fb41d4466bc1bec7e130ae  /home/user/workspace/repo/target/isolation/release/iso-worker
+1c62d5a53d64bcade59129de13e353a7649e1a39fa59e905c388ca80aa34eb2c  /home/user/workspace/repo/target/isolation/wasm32-wasip1/release/iso_guest.wasm
+9bbb3977b88fb19ca32a1fa853acfe440c2cd578a61bcd2ac62295eb4f056085  /home/user/workspace/repo/target/isolation/release-unwind/iso-harness
+61bb3297879e8ee7fbfc281196006cb2fc1cd079602b55e8bcdea89615ab2588  /home/user/workspace/repo/target/isolation-shipped/x86_64-unknown-linux-gnu/release/iso-harness
+589d77b8c6ae4484df8011c4e36e6a475bef511a058b9a86ddc08bf2ff19936e  /home/user/workspace/repo/target/isolation/release-unwind/iso-worker
+f670724e56ceebc5436ffcf8258ec9e6cac51183e543f2be35f3657cae64cbfd  /home/user/workspace/repo/target/isolation-shipped/x86_64-unknown-linux-gnu/release/iso-worker
+4180425a2154a2480314c653a9e7dd3891c05e870cd31488ea436e5c6fc91ec9  /home/user/workspace/repo/target/isolation-shipped/wasm32-wasip1/release/iso_guest.wasm
+9b57d35e4bb9cb6efad0a231505f6c67ac639546173eefb101b69c0d26ddf3b8  /home/user/workspace/repo/target/isolation/wasm32-wasip1/release/mm_wasm_guest.wasm
+2c9b8b7bd52ec9bbe62995b0db6df6c9c169b23c93aed9b02726bfb8807b723c  /home/user/workspace/repo/target/isolation/wasm32-unknown-unknown/release/mm_wasm_guest.wasm
+fc0eb599fd4c7f0f4a9c86d130de87b431621f4cbc96d0f7a17ac994c3498cd6  /home/user/workspace/repo/target/isolation-shipped/wasm32-unknown-unknown/release/mm_wasm_guest.wasm

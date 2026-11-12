@@ -1,0 +1,3 @@
+import json
+rows = json.loads(await query_database({"sql": "SELECT c.region, 100.0*SUM(CASE WHEN o.status='cancelled' THEN 1 ELSE 0 END)/COUNT(*) AS rate FROM orders o JOIN customers c ON c.id=o.customer_id GROUP BY c.region"}))
+await submit_answer({"rates": {r["region"]: round(r["rate"], 1) for r in rows}})

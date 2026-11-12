@@ -1,0 +1,93 @@
+{
+ "-": {
+  "steady_ir": 496222.6,
+  "first_ir": 838143,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "json": {
+  "steady_ir": 1173241.1,
+  "first_ir": 2140404,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "re": {
+  "steady_ir": 2892402.2,
+  "first_ir": 6486706,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "collections": {
+  "steady_ir": 3028083.9,
+  "first_ir": 6223127,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "asyncio": {
+  "steady_ir": 651588.3,
+  "first_ir": 995752,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "datetime": {
+  "steady_ir": 6330924.1,
+  "first_ir": 12502133,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "typing": {
+  "steady_ir": 7227060.3,
+  "first_ir": 13498592,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "functools": {
+  "steady_ir": 4200453.5,
+  "first_ir": 8771068,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "itertools": {
+  "steady_ir": 2050607.4,
+  "first_ir": 3894536,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "decimal": {
+  "steady_ir": 33419052.8,
+  "first_ir": 46509847,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "statistics": {
+  "steady_ir": 56321604.0,
+  "first_ir": 75906969,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "html.parser": {
+  "steady_ir": 28447004.8,
+  "first_ir": 33245180,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "json,re,collections,asyncio,datetime": {
+  "steady_ir": 13031378.5,
+  "first_ir": 24811487,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ }
+}

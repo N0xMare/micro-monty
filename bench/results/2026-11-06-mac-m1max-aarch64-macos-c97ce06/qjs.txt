@@ -1,0 +1,17 @@
+# [M] machine: unknown CPU, nproc ?, Darwin 27.2.0; 2026-11-06; not pinned (no taskset or fewer than 3 CPUs)
+# engine: qjs QuickJS version 2026-06-04
+# wall clock per process (spawn to exit), 10 timed reps after 1 warm-up
+# program median_ms min_ms
+startup 3.2 2.9
+fib 17.0 16.7
+loop 44.5 44.4
+dict 64.3 63.2
+str 23.4 23.1
+json 122.2 121.8
+closure 30.0 29.5
+classes 53.7 53.5
+generators 83.7 83.2
+exceptions 141.1 140.5
+fmt 51.9 51.7
+sort 161.5 154.1
+interp 116.2 115.2

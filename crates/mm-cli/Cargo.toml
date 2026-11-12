@@ -1,0 +1,23 @@
+[package]
+name = "mm-cli"
+description = "micro-monty command-line runner (`mm run`, `mm exec --json`)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+exclude.workspace = true
+publish = false
+
+[[bin]]
+name = "mm"
+path = "src/main.rs"
+
+[dependencies]
+# The optional stdlib modules, for the conformance runs.
+micro-monty = { workspace = true, features = ["mod-uuid", "mod-unicodedata", "mod-html-entities", "mod-ast"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

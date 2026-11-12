@@ -1,0 +1,128 @@
+{
+ "-": {
+  "steady_ir": 488803.0,
+  "first_ir": 830629,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "json": {
+  "steady_ir": 1270010.5,
+  "first_ir": 1600662,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "re": {
+  "steady_ir": 6127335.6,
+  "first_ir": 6318303,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "collections": {
+  "steady_ir": 5154333.5,
+  "first_ir": 5360287,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "asyncio": {
+  "steady_ir": 6435085.1,
+  "first_ir": 6655778,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "datetime": {
+  "steady_ir": 12116800.0,
+  "first_ir": 12454041,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "typing": {
+  "steady_ir": 13237473.9,
+  "first_ir": 13557550,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "enum": {
+  "steady_ir": 6602577.2,
+  "first_ir": 7106293,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "dataclasses": {
+  "steady_ir": 4938192.6,
+  "first_ir": 5287601,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "functools": {
+  "steady_ir": 7986056.0,
+  "first_ir": 8162145,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "itertools": {
+  "steady_ir": 3764895.7,
+  "first_ir": 4022153,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "decimal": {
+  "steady_ir": 46806777.9,
+  "first_ir": 46285690,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "statistics": {
+  "steady_ir": 77864064.8,
+  "first_ir": 76776459,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "zoneinfo": {
+  "steady_ir": 33809053.4,
+  "first_ir": 32820688,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "tomllib": {
+  "steady_ir": 44484509.1,
+  "first_ir": 43786033,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "html.parser": {
+  "steady_ir": 33300784.2,
+  "first_ir": 33605353,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "calendar": {
+  "steady_ir": 31368701.3,
+  "first_ir": 31439053,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ },
+ "json,re,collections,asyncio,datetime": {
+  "steady_ir": 29803976.5,
+  "first_ir": 29459054,
+  "median_ns": 0,
+  "first_ns": 0,
+  "rss_kib": 0
+ }
+}

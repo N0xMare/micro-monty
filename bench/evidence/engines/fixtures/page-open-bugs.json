@@ -1,0 +1,173 @@
+{
+ "calls": [
+  {
+   "args": {
+    "page": 1,
+    "query": "label:bug"
+   },
+   "name": "search_issues",
+   "ok": {
+    "has_more": false,
+    "issues": [
+     {
+      "assignee": "bjorn",
+      "created": "2026-01-23T19:00:00Z",
+      "estimate_hours": 2,
+      "key": "OPS-103",
+      "labels": [
+       "bug",
+       "infra"
+      ],
+      "priority": "P2",
+      "status": "in_progress",
+      "title": "Export to CSV drops unicode",
+      "updated": "2026-02-15T13:00:00Z"
+     },
+     {
+      "assignee": "diego",
+      "created": "2026-02-14T03:00:00Z",
+      "estimate_hours": 3,
+      "key": "OPS-111",
+      "labels": [
+       "bug"
+      ],
+      "priority": "P3",
+      "status": "open",
+      "title": "Password reset email delayed",
+      "updated": "2026-02-28T06:00:00Z"
+     },
+     {
+      "assignee": null,
+      "created": "2026-02-14T00:00:00Z",
+      "estimate_hours": 8,
+      "key": "OPS-123",
+      "labels": [
+       "bug"
+      ],
+      "priority": "P3",
+      "status": "closed",
+      "title": "Crash when cart is empty",
+      "updated": "2026-03-04T16:00:00Z"
+     },
+     {
+      "assignee": "alice",
+      "created": "2026-01-30T11:00:00Z",
+      "estimate_hours": 1,
+      "key": "OPS-125",
+      "labels": [
+       "bug"
+      ],
+      "priority": "P2",
+      "status": "closed",
+      "title": "Wrong tax for Canada",
+      "updated": "2026-02-14T02:00:00Z"
+     },
+     {
+      "assignee": "alice",
+      "created": "2026-02-25T16:00:00Z",
+      "estimate_hours": 3,
+      "key": "OPS-128",
+      "labels": [
+       "billing",
+       "bug"
+      ],
+      "priority": "P2",
+      "status": "open",
+      "title": "Login page times out",
+      "updated": "2026-03-15T04:41:00Z"
+     },
+     {
+      "assignee": null,
+      "created": "2026-02-27T17:00:00Z",
+      "estimate_hours": null,
+      "key": "OPS-131",
+      "labels": [
+       "bug",
+       "infra"
+      ],
+      "priority": "P3",
+      "status": "closed",
+      "title": "Payment webhook retries forever",
+      "updated": "2026-03-01T12:00:00Z"
+     },
+     {
+      "assignee": "alice",
+      "created": "2026-01-20T08:00:00Z",
+      "estimate_hours": 1,
+      "key": "OPS-143",
+      "labels": [
+       "bug",
+       "ui"
+      ],
+      "priority": "P3",
+      "status": "open",
+      "title": "Upgrade TLS library",
+      "updated": "2026-02-22T18:00:00Z"
+     },
+     {
+      "assignee": null,
+      "created": "2026-01-06T22:00:00Z",
+      "estimate_hours": 13,
+      "key": "OPS-145",
+      "labels": [
+       "bug",
+       "ui"
+      ],
+      "priority": "P4",
+      "status": "closed",
+      "title": "API rate limit too strict",
+      "updated": "2026-01-17T15:00:00Z"
+     },
+     {
+      "assignee": "chitra",
+      "created": "2026-01-08T13:00:00Z",
+      "estimate_hours": 13,
+      "key": "OPS-151",
+      "labels": [
+       "bug",
+       "ui"
+      ],
+      "priority": "P2",
+      "status": "open",
+      "title": "Flaky integration test",
+      "updated": "2026-01-13T23:00:00Z"
+     }
+    ],
+    "page": 1
+   }
+  },
+  {
+   "args": {
+    "keys": [
+     "OPS-103",
+     "OPS-111",
+     "OPS-128",
+     "OPS-143",
+     "OPS-151"
+    ]
+   },
+   "name": "submit_answer",
+   "ok": "ok"
+  }
+ ],
+ "category": "pagination",
+ "stdout": "5 ['OPS-103', 'OPS-111', 'OPS-128', 'OPS-143', 'OPS-151']\n",
+ "task": "page-open-bugs",
+ "tools": [
+  {
+   "description": "Search issues with a query such as \"status:open label:bug login\". Terms with a colon filter on status (open, in_progress, closed), priority (P1-P4), assignee (username or None) or label; other words must appear in the title. 20 results per page, ordered by key.",
+   "name": "search_issues",
+   "params": [
+    "query",
+    "page"
+   ]
+  },
+  {
+   "description": "Submit the final answer of this task. Call it once, at the end.",
+   "name": "submit_answer",
+   "params": [
+    "keys"
+   ]
+  }
+ ]
+}

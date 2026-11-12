@@ -1,0 +1,58 @@
+{
+ "-": {
+  "steady_ir": 489029.2,
+  "first_ir": 830073,
+  "first_ns": 202733,
+  "median_ns": 78345,
+  "min_ns": 76167,
+  "rss_kib": 104.6
+ },
+ "decimal,statistics,zoneinfo,tomllib": {
+  "steady_ir": 83047371.1,
+  "first_ir": 111126026,
+  "first_ns": 28475778,
+  "median_ns": 11278828,
+  "min_ns": 10955190,
+  "rss_kib": 2972.9
+ },
+ "decimal": {
+  "steady_ir": 35030841.8,
+  "first_ir": 46685055,
+  "first_ns": 7047575,
+  "median_ns": 4163776,
+  "min_ns": 4138931,
+  "rss_kib": 1473.2
+ },
+ "statistics": {
+  "steady_ir": 58167366.0,
+  "first_ir": 76536011,
+  "first_ns": 11640246,
+  "median_ns": 7903054,
+  "min_ns": 7552227,
+  "rss_kib": 2131.7
+ },
+ "zoneinfo": {
+  "steady_ir": 17477830.4,
+  "first_ir": 32698225,
+  "first_ns": 5816813,
+  "median_ns": 2369793,
+  "min_ns": 2303410,
+  "rss_kib": 1202.6
+ },
+ "tomllib": {
+  "steady_ir": 30455345.0,
+  "first_ir": 43423884,
+  "first_ns": 7248791,
+  "median_ns": 4472624,
+  "min_ns": 3911939,
+  "rss_kib": 1293.5
+ },
+ "datetime": {
+  "steady_ir": 6475473.2,
+  "first_ir": 12635413,
+  "first_ns": 2495182,
+  "median_ns": 862450,
+  "min_ns": 776860,
+  "rss_kib": 450.2
+ }
+}

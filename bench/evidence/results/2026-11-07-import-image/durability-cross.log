@@ -1,0 +1,3 @@
+durability: 201 own + 0 corpus cases (402 runs), parked at 5:50, each snapshot restored on the other target (native <-> wasm32-wasip1, both directions) and at every host call, one mm process per park (/home/user/workspace/repo/xtask/../target/release/mm), 16 workers
+durability (cross-target): 402 of 402 runs identical to an unparked run, 0 skipped, 10856 parks (= 10856 snapshots restored in a new process), 11.1 s
+exit 0

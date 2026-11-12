@@ -1,0 +1,15 @@
+6b02db1d5a1c23bde22bf44b2f3bc31a29b9220f
+rustc 1.99.0 (b940084d7 2026-09-28)
+16
+Linux host1 7.0.0-42-generic #42~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Mon Oct 19 14:43:01 UTC 2 x86_64 x86_64 x86_64 GNU/Linux
+84feb2a190c43fb383a42738fe9d1680036beca57343e88aa94679b6d124a736  /home/me/dev/micro-monty/target/isolation/release/iso-harness
+a0e12a9c6710ce287ba0908b1bb675b1883ae0204f2d9e868e3267dfc900faa6  /home/me/dev/micro-monty/target/isolation/release/iso-worker
+6406cf2560c95d6fbe6c2f985c02e3725f0d8cbd85ba7a0d6a510be61e809e1d  /home/me/dev/micro-monty/target/isolation/wasm32-wasip1/release/iso_guest.wasm
+95eb713452df6203420f5a752788604a5d13acc938eb7d7863e8b2871deb0281  /home/me/dev/micro-monty/target/isolation/release-unwind/iso-harness
+9bb8c385e19ca5ee71ff75016222e1ae8f00bb96ad14782d4d1922f125cb90cc  /home/me/dev/micro-monty/target/isolation-shipped/x86_64-unknown-linux-gnu/release/iso-harness
+543dd9c10a301711e0cd1e326cfdb789a6b44be85520df91584289ca80fc8199  /home/me/dev/micro-monty/target/isolation/release-unwind/iso-worker
+65ca763f4495b2c66c644c608dd7021f48b50256710cbac2a5cb0d1e27eb8b06  /home/me/dev/micro-monty/target/isolation-shipped/x86_64-unknown-linux-gnu/release/iso-worker
+35a9dccba34acbf74ca30325be8fdefd477a9c24b3a7e500f351c3dbd74f7444  /home/me/dev/micro-monty/target/isolation-shipped/wasm32-wasip1/release/iso_guest.wasm
+3e5df404e02e74dfdc5577414f05e9fe1c7679f188ba168620df64e22e92cb92  /home/me/dev/micro-monty/target/isolation/wasm32-wasip1/release/mm_wasm_guest.wasm
+b078072f4f8489722b0a872164619bb0ebc30fd5d98cd87be7eb11637bea9fe3  /home/me/dev/micro-monty/target/isolation/wasm32-unknown-unknown/release/mm_wasm_guest.wasm
+4f933271be005435ed6c2a34f184ce7c8815570cee9e3c7c94fc42108220ce77  /home/me/dev/micro-monty/target/isolation-shipped/wasm32-unknown-unknown/release/mm_wasm_guest.wasm

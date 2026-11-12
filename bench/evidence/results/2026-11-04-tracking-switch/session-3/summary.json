@@ -1,0 +1,652 @@
+[
+  {
+    "section": "programs",
+    "engine": "switch-off",
+    "program": "startup",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 2.995898
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "startup",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 3.019258
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "startup",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 3.00532
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "startup",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 3.011775
+  },
+  {
+    "section": "programs",
+    "engine": "switch-on",
+    "program": "startup",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 3.038481
+  },
+  {
+    "section": "programs",
+    "engine": "switch-off",
+    "program": "fib",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 28.939996
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "fib",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 26.682882
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "fib",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 28.136332
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "fib",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 26.371397
+  },
+  {
+    "section": "programs",
+    "engine": "switch-on",
+    "program": "fib",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 28.846518
+  },
+  {
+    "section": "programs",
+    "engine": "switch-off",
+    "program": "loop",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 76.403151
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "loop",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 70.957975
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "loop",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 81.332768
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "loop",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 70.0457
+  },
+  {
+    "section": "programs",
+    "engine": "switch-on",
+    "program": "loop",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 85.146803
+  },
+  {
+    "section": "programs",
+    "engine": "switch-off",
+    "program": "dict",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 155.155729
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "dict",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 138.934466
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "dict",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 168.946445
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "dict",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 145.896479
+  },
+  {
+    "section": "programs",
+    "engine": "switch-on",
+    "program": "dict",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 167.30122
+  },
+  {
+    "section": "programs",
+    "engine": "switch-off",
+    "program": "str",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 55.575968
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "str",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 56.3907
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "str",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 58.677368
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "str",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 54.930669
+  },
+  {
+    "section": "programs",
+    "engine": "switch-on",
+    "program": "str",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 58.730329
+  },
+  {
+    "section": "programs",
+    "engine": "switch-off",
+    "program": "json",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 119.364569
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "json",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 119.252339
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "json",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 123.323261
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "json",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 116.888467
+  },
+  {
+    "section": "programs",
+    "engine": "switch-on",
+    "program": "json",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 123.294069
+  },
+  {
+    "section": "programs",
+    "engine": "switch-off",
+    "program": "closure",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 55.185802
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "closure",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 48.927992
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "closure",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 55.116854
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "closure",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 48.883248
+  },
+  {
+    "section": "programs",
+    "engine": "switch-on",
+    "program": "closure",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 56.784278
+  },
+  {
+    "section": "programs",
+    "engine": "switch-off",
+    "program": "classes",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 148.608298
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "classes",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 145.531291
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "classes",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 157.928043
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "classes",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 145.555214
+  },
+  {
+    "section": "programs",
+    "engine": "switch-on",
+    "program": "classes",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 152.547998
+  },
+  {
+    "section": "programs",
+    "engine": "switch-off",
+    "program": "generators",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 308.808391
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "generators",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 294.89944
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "generators",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 335.252475
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "generators",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 296.838059
+  },
+  {
+    "section": "programs",
+    "engine": "switch-on",
+    "program": "generators",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 330.224521
+  },
+  {
+    "section": "programs",
+    "engine": "switch-off",
+    "program": "exceptions",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 108.608042
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "exceptions",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 106.347938
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "exceptions",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 111.389514
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "exceptions",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 106.329073
+  },
+  {
+    "section": "programs",
+    "engine": "switch-on",
+    "program": "exceptions",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 112.124563
+  },
+  {
+    "section": "programs",
+    "engine": "switch-off",
+    "program": "fmt",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 259.013067
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "fmt",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 260.368804
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "fmt",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 257.024937
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "fmt",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 248.77072
+  },
+  {
+    "section": "programs",
+    "engine": "switch-on",
+    "program": "fmt",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 264.050379
+  },
+  {
+    "section": "programs",
+    "engine": "switch-off",
+    "program": "sort",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 233.408656
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "sort",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 239.582669
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "sort",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 256.032063
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "sort",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 256.505475
+  },
+  {
+    "section": "programs",
+    "engine": "switch-on",
+    "program": "sort",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 252.228168
+  },
+  {
+    "section": "programs",
+    "engine": "switch-off",
+    "program": "interp",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 270.145228
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "interp",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 270.113873
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "interp",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 275.26919
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "interp",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 270.276135
+  },
+  {
+    "section": "programs",
+    "engine": "switch-on",
+    "program": "interp",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 277.646133
+  }
+]

@@ -1,0 +1,194 @@
+name: Release
+
+# A `v*` tag push builds every artifact and opens a *draft* GitHub release
+# for the tag; the owner reviews and publishes it. A manual dispatch is a dry
+# run: the same builds, with the bundle (artifacts, SHA256SUMS, notes)
+# uploaded as a workflow artifact and no release
+# (`gh workflow run release.yml --ref main`).
+#
+# Artifacts:
+# - `mm` and `mm-cell-worker` for macOS arm64/x86_64 and Linux x86_64/arm64,
+#   release profile (`panic = "abort"`, LTO, stripped). Linux builds run on
+#   Ubuntu 22.04 (glibc 2.35); arm64 is cross-linked there and smoke-tested
+#   under qemu.
+# - The shipped wasm facade examples (`hello`, `roundtrip`) for
+#   wasm32-wasip1 and wasm32-unknown-unknown, built and checked by
+#   `cargo xtask wasm` (shipped build, `wasm-opt -Oz`, round trip under
+#   wasmtime).
+# - SHA256SUMS, and release notes listing each binary's snapshot build_id
+#   (`mm version`, `mm-cell-worker --version`, the wasip1 round trip).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  native:
+    name: native ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, target: aarch64-apple-darwin, run: "" }
+          - { os: macos-15-intel, target: x86_64-apple-darwin, run: "" }
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, run: "" }
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            run: qemu-aarch64 -L /usr/aarch64-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install --no-self-update
+          rustup target add ${{ matrix.target }}
+      - name: Cross linker and qemu (Linux arm64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+      # One invocation each: built together, cargo would unify the stdlib
+      # features and give the worker mm's optional modules (and its build_id).
+      - name: Build mm and mm-cell-worker
+        run: |
+          cargo build --release --locked --target ${{ matrix.target }} -p mm-cli
+          cargo build --release --locked --target ${{ matrix.target }} -p mm-cell-worker
+      - name: Smoke test and build ids
+        env:
+          TARGET: ${{ matrix.target }}
+          RUN: ${{ matrix.run }}
+        run: |
+          bin="target/$TARGET/release"
+          printf 'print(sum(i * i for i in range(10)))\n' > smoke.py
+          test "$($RUN "$bin/mm" run smoke.py)" = 285
+          $RUN "$bin/mm" version | tee mm.version
+          $RUN "$bin/mm-cell-worker" --version | tee worker.version
+          mkdir -p out
+          {
+            printf '%s mm %s\n' "$TARGET" "$(sed -n 's/^build_id //p' mm.version)"
+            printf '%s mm-cell-worker %s\n' "$TARGET" "$(sed -n 's/^build_id //p' worker.version)"
+          } > "out/build-ids-$TARGET.txt"
+          head -n1 mm.version | sed 's/^mm //' > out/version.txt
+          name="micro-monty-$TARGET"
+          mkdir "$name"
+          cp "$bin/mm" "$bin/mm-cell-worker" LICENSE THIRD_PARTY.md "$name/"
+          tar -czf "out/$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.target }}
+          path: out/
+          if-no-files-found: error
+
+  wasm:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (rust-toolchain.toml; wasm targets, rust-src)
+        run: rustup toolchain install --no-self-update
+      # The versions and digests .agents/setup pins.
+      - name: binaryen 133 and wasmtime 50.0.0
+        run: |
+          mkdir -p "$HOME/.local/bin" tools
+          curl -fsSL -o tools/binaryen.tar.gz \
+            https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz
+          echo "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489  tools/binaryen.tar.gz" | sha256sum -c -
+          tar -xzf tools/binaryen.tar.gz -C tools binaryen-version_133/bin/wasm-opt
+          install -m755 tools/binaryen-version_133/bin/wasm-opt "$HOME/.local/bin/wasm-opt"
+          curl -fsSL -o tools/wasmtime.tar.xz \
+            https://github.com/bytecodealliance/wasmtime/releases/download/v50.0.0/wasmtime-v50.0.0-x86_64-linux.tar.xz
+          echo "77c19ee0437991f9ac7837b9c269d9c7076744f85dad263fea5214cc2723c7ff  tools/wasmtime.tar.xz" | sha256sum -c -
+          tar -xJf tools/wasmtime.tar.xz -C tools wasmtime-v50.0.0-x86_64-linux/wasmtime
+          install -m755 tools/wasmtime-v50.0.0-x86_64-linux/wasmtime "$HOME/.local/bin/wasmtime"
+          rm -rf tools
+      - name: cargo xtask wasm (shipped builds, wasm-opt -Oz, round trips)
+        run: cargo xtask wasm | tee wasm.log
+      - name: Collect modules and build ids
+        run: |
+          mkdir -p out
+          for target in wasm32-wasip1 wasm32-unknown-unknown; do
+            for example in hello roundtrip; do
+              cp "target/$target/release/shipped/$example.wasm" "out/$example-$target.wasm"
+            done
+          done
+          id=$("$HOME/.local/bin/wasmtime" out/roundtrip-wasm32-wasip1.wasm | sed -n 's/^build_id //p')
+          test -n "$id"
+          {
+            printf 'wasm32-wasip1 hello,roundtrip %s\n' "$id"
+            # Same source and features as wasip1; build_id has no target input.
+            printf 'wasm32-unknown-unknown hello,roundtrip %s\n' "$id"
+          } > out/build-ids-wasm.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: out/
+          if-no-files-found: error
+
+  release:
+    needs: [native, wasm]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+      - name: Checksums and release notes
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          SHA: ${{ github.sha }}
+        run: |
+          mkdir dist
+          cp parts/native-*/*.tar.gz parts/wasm/*.wasm dist/
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          version=$(cat parts/native-x86_64-unknown-linux-gnu/version.txt)
+          if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "v$version" ]; then
+            echo "tag $REF_NAME does not match the crate version $version" >&2
+            exit 1
+          fi
+          cat parts/*/build-ids-*.txt | sort > build-ids.txt
+          {
+            echo "micro-monty $version (commit $SHA)."
+            echo
+            echo "## Snapshot build ids"
+            echo
+            echo "A snapshot restores only into a build with the same build_id"
+            echo "(docs/sdk.md, Snapshots). The id covers the engine version, the"
+            echo "enabled stdlib modules and the engine's tables, not the target, so"
+            echo "builds with the same modules share it across targets: \`mm\` adds"
+            echo "optional modules, the worker and the wasm examples use the defaults."
+            echo
+            echo "| Target | Binary | build_id |"
+            echo "|---|---|---|"
+            awk '{ printf "| %s | %s | `%s` |\n", $1, $2, $3 }' build-ids.txt
+            echo
+            echo "## Checksums (SHA-256)"
+            echo
+            echo '```'
+            cat dist/SHA256SUMS
+            echo '```'
+          } > notes.md
+          cat notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: |
+            dist/
+            notes.md
+          if-no-files-found: error
+      - name: Draft release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          gh release create "$REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "micro-monty $REF_NAME" --notes-file notes.md

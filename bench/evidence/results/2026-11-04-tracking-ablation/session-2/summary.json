@@ -1,0 +1,522 @@
+[
+  {
+    "section": "programs",
+    "engine": "ablation-b",
+    "program": "startup",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 2.969284
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "startup",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 2.985237
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "startup",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 2.983053
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "startup",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 2.960651
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-b",
+    "program": "fib",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 27.541972
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "fib",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 27.730068
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "fib",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 28.49307
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "fib",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 27.598098
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-b",
+    "program": "loop",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 71.724637
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "loop",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 70.78937
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "loop",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 81.87166
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "loop",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 72.163725
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-b",
+    "program": "dict",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 159.097224
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "dict",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 156.540961
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "dict",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 186.728749
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "dict",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 166.424287
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-b",
+    "program": "str",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 56.157087
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "str",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 57.72169
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "str",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 60.787906
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "str",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 56.482169
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-b",
+    "program": "json",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 118.916331
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "json",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 118.299456
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "json",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 126.557347
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "json",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 118.239217
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-b",
+    "program": "closure",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 49.988773
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "closure",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 48.891855
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "closure",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 55.101748
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "closure",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 48.15078
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-b",
+    "program": "classes",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 152.566561
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "classes",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 148.824242
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "classes",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 159.243908
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "classes",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 152.826971
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-b",
+    "program": "generators",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 304.21958
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "generators",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 295.136144
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "generators",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 335.103312
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "generators",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 293.300556
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-b",
+    "program": "exceptions",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 104.764307
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "exceptions",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 105.542183
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "exceptions",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 110.427572
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "exceptions",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 104.071124
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-b",
+    "program": "fmt",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 258.499236
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "fmt",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 263.077352
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "fmt",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 262.694326
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "fmt",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 252.449048
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-b",
+    "program": "sort",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 207.351277
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "sort",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 206.295687
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "sort",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 233.854256
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "sort",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 234.59981
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-b",
+    "program": "interp",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 275.052716
+  },
+  {
+    "section": "programs",
+    "engine": "main",
+    "program": "interp",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 270.70525
+  },
+  {
+    "section": "programs",
+    "engine": "candidate",
+    "program": "interp",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 277.820984
+  },
+  {
+    "section": "programs",
+    "engine": "ablation-a",
+    "program": "interp",
+    "outcomes": {
+      "pass": 22
+    },
+    "rounds": 21,
+    "median_process_ms": 270.986337
+  }
+]

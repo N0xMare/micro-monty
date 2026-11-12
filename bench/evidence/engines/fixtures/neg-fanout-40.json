@@ -1,0 +1,1042 @@
+{
+ "calls": [
+  {
+   "args": {
+    "order_id": 1001
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 39,
+    "id": 1001,
+    "items": [
+     {
+      "product_id": "P05",
+      "qty": 3,
+      "unit_price": 593.89
+     }
+    ],
+    "order_date": "2026-01-17",
+    "status": "pending",
+    "total": 1781.67
+   }
+  },
+  {
+   "args": {
+    "order_id": 1002
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 34,
+    "id": 1002,
+    "items": [
+     {
+      "product_id": "P15",
+      "qty": 3,
+      "unit_price": 21.04
+     }
+    ],
+    "order_date": "2025-12-23",
+    "status": "completed",
+    "total": 63.12
+   }
+  },
+  {
+   "args": {
+    "order_id": 1003
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 33,
+    "id": 1003,
+    "items": [
+     {
+      "product_id": "P20",
+      "qty": 3,
+      "unit_price": 172.38
+     }
+    ],
+    "order_date": "2025-12-15",
+    "status": "completed",
+    "total": 517.14
+   }
+  },
+  {
+   "args": {
+    "order_id": 1004
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 27,
+    "id": 1004,
+    "items": [
+     {
+      "product_id": "P02",
+      "qty": 1,
+      "unit_price": 507.02
+     }
+    ],
+    "order_date": "2025-10-03",
+    "status": "completed",
+    "total": 507.02
+   }
+  },
+  {
+   "args": {
+    "order_id": 1005
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 20,
+    "id": 1005,
+    "items": [
+     {
+      "product_id": "P17",
+      "qty": 2,
+      "unit_price": 38.18
+     },
+     {
+      "product_id": "P16",
+      "qty": 5,
+      "unit_price": 53.18
+     },
+     {
+      "product_id": "P03",
+      "qty": 5,
+      "unit_price": 805.3
+     }
+    ],
+    "order_date": "2025-10-26",
+    "status": "completed",
+    "total": 4368.76
+   }
+  },
+  {
+   "args": {
+    "order_id": 1006
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 2,
+    "id": 1006,
+    "items": [
+     {
+      "product_id": "P01",
+      "qty": 1,
+      "unit_price": 547.01
+     }
+    ],
+    "order_date": "2026-02-09",
+    "status": "completed",
+    "total": 547.01
+   }
+  },
+  {
+   "args": {
+    "order_id": 1007
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 13,
+    "id": 1007,
+    "items": [
+     {
+      "product_id": "P06",
+      "qty": 1,
+      "unit_price": 862.83
+     }
+    ],
+    "order_date": "2025-12-15",
+    "status": "completed",
+    "total": 862.83
+   }
+  },
+  {
+   "args": {
+    "order_id": 1008
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 18,
+    "id": 1008,
+    "items": [
+     {
+      "product_id": "P05",
+      "qty": 1,
+      "unit_price": 593.89
+     },
+     {
+      "product_id": "P24",
+      "qty": 1,
+      "unit_price": 176.75
+     },
+     {
+      "product_id": "P11",
+      "qty": 1,
+      "unit_price": 61.18
+     }
+    ],
+    "order_date": "2025-10-26",
+    "status": "completed",
+    "total": 831.82
+   }
+  },
+  {
+   "args": {
+    "order_id": 1009
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 4,
+    "id": 1009,
+    "items": [
+     {
+      "product_id": "P16",
+      "qty": 3,
+      "unit_price": 53.18
+     },
+     {
+      "product_id": "P02",
+      "qty": 1,
+      "unit_price": 507.02
+     },
+     {
+      "product_id": "P02",
+      "qty": 2,
+      "unit_price": 507.02
+     }
+    ],
+    "order_date": "2025-12-10",
+    "status": "pending",
+    "total": 1680.6
+   }
+  },
+  {
+   "args": {
+    "order_id": 1010
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 10,
+    "id": 1010,
+    "items": [
+     {
+      "product_id": "P23",
+      "qty": 1,
+      "unit_price": 123.77
+     }
+    ],
+    "order_date": "2025-11-19",
+    "status": "completed",
+    "total": 123.77
+   }
+  },
+  {
+   "args": {
+    "order_id": 1011
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 18,
+    "id": 1011,
+    "items": [
+     {
+      "product_id": "P24",
+      "qty": 1,
+      "unit_price": 176.75
+     }
+    ],
+    "order_date": "2025-11-17",
+    "status": "completed",
+    "total": 176.75
+   }
+  },
+  {
+   "args": {
+    "order_id": 1012
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 39,
+    "id": 1012,
+    "items": [
+     {
+      "product_id": "P09",
+      "qty": 3,
+      "unit_price": 94.68
+     }
+    ],
+    "order_date": "2025-12-15",
+    "status": "completed",
+    "total": 284.04
+   }
+  },
+  {
+   "args": {
+    "order_id": 1013
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 37,
+    "id": 1013,
+    "items": [
+     {
+      "product_id": "P17",
+      "qty": 2,
+      "unit_price": 38.18
+     },
+     {
+      "product_id": "P12",
+      "qty": 3,
+      "unit_price": 56.96
+     },
+     {
+      "product_id": "P18",
+      "qty": 1,
+      "unit_price": 20.33
+     }
+    ],
+    "order_date": "2026-03-04",
+    "status": "completed",
+    "total": 267.57
+   }
+  },
+  {
+   "args": {
+    "order_id": 1014
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 10,
+    "id": 1014,
+    "items": [
+     {
+      "product_id": "P05",
+      "qty": 2,
+      "unit_price": 593.89
+     },
+     {
+      "product_id": "P02",
+      "qty": 1,
+      "unit_price": 507.02
+     },
+     {
+      "product_id": "P21",
+      "qty": 2,
+      "unit_price": 167.94
+     }
+    ],
+    "order_date": "2025-11-09",
+    "status": "completed",
+    "total": 2030.68
+   }
+  },
+  {
+   "args": {
+    "order_id": 1015
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 16,
+    "id": 1015,
+    "items": [
+     {
+      "product_id": "P17",
+      "qty": 2,
+      "unit_price": 38.18
+     },
+     {
+      "product_id": "P11",
+      "qty": 3,
+      "unit_price": 61.18
+     },
+     {
+      "product_id": "P17",
+      "qty": 1,
+      "unit_price": 38.18
+     }
+    ],
+    "order_date": "2025-10-02",
+    "status": "refunded",
+    "total": 298.08
+   }
+  },
+  {
+   "args": {
+    "order_id": 1016
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 10,
+    "id": 1016,
+    "items": [
+     {
+      "product_id": "P04",
+      "qty": 3,
+      "unit_price": 827.38
+     }
+    ],
+    "order_date": "2025-12-26",
+    "status": "completed",
+    "total": 2482.14
+   }
+  },
+  {
+   "args": {
+    "order_id": 1017
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 20,
+    "id": 1017,
+    "items": [
+     {
+      "product_id": "P18",
+      "qty": 1,
+      "unit_price": 20.33
+     },
+     {
+      "product_id": "P01",
+      "qty": 3,
+      "unit_price": 547.01
+     }
+    ],
+    "order_date": "2026-02-24",
+    "status": "refunded",
+    "total": 1661.36
+   }
+  },
+  {
+   "args": {
+    "order_id": 1018
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 28,
+    "id": 1018,
+    "items": [
+     {
+      "product_id": "P01",
+      "qty": 3,
+      "unit_price": 547.01
+     },
+     {
+      "product_id": "P07",
+      "qty": 2,
+      "unit_price": 61.92
+     },
+     {
+      "product_id": "P16",
+      "qty": 1,
+      "unit_price": 53.18
+     }
+    ],
+    "order_date": "2025-11-13",
+    "status": "pending",
+    "total": 1818.05
+   }
+  },
+  {
+   "args": {
+    "order_id": 1019
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 39,
+    "id": 1019,
+    "items": [
+     {
+      "product_id": "P05",
+      "qty": 1,
+      "unit_price": 593.89
+     }
+    ],
+    "order_date": "2025-12-23",
+    "status": "cancelled",
+    "total": 593.89
+   }
+  },
+  {
+   "args": {
+    "order_id": 1020
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 1,
+    "id": 1020,
+    "items": [
+     {
+      "product_id": "P13",
+      "qty": 3,
+      "unit_price": 21.86
+     }
+    ],
+    "order_date": "2025-11-06",
+    "status": "completed",
+    "total": 65.58
+   }
+  },
+  {
+   "args": {
+    "order_id": 1021
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 34,
+    "id": 1021,
+    "items": [
+     {
+      "product_id": "P02",
+      "qty": 1,
+      "unit_price": 507.02
+     }
+    ],
+    "order_date": "2025-12-19",
+    "status": "completed",
+    "total": 507.02
+   }
+  },
+  {
+   "args": {
+    "order_id": 1022
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 37,
+    "id": 1022,
+    "items": [
+     {
+      "product_id": "P14",
+      "qty": 1,
+      "unit_price": 46.15
+     },
+     {
+      "product_id": "P19",
+      "qty": 2,
+      "unit_price": 91.71
+     }
+    ],
+    "order_date": "2025-12-04",
+    "status": "completed",
+    "total": 229.57
+   }
+  },
+  {
+   "args": {
+    "order_id": 1023
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 25,
+    "id": 1023,
+    "items": [
+     {
+      "product_id": "P15",
+      "qty": 5,
+      "unit_price": 21.04
+     },
+     {
+      "product_id": "P22",
+      "qty": 2,
+      "unit_price": 123.72
+     },
+     {
+      "product_id": "P01",
+      "qty": 2,
+      "unit_price": 547.01
+     }
+    ],
+    "order_date": "2025-11-11",
+    "status": "cancelled",
+    "total": 1446.66
+   }
+  },
+  {
+   "args": {
+    "order_id": 1024
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 12,
+    "id": 1024,
+    "items": [
+     {
+      "product_id": "P18",
+      "qty": 1,
+      "unit_price": 20.33
+     },
+     {
+      "product_id": "P14",
+      "qty": 1,
+      "unit_price": 46.15
+     }
+    ],
+    "order_date": "2025-10-18",
+    "status": "completed",
+    "total": 66.48
+   }
+  },
+  {
+   "args": {
+    "order_id": 1025
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 8,
+    "id": 1025,
+    "items": [
+     {
+      "product_id": "P15",
+      "qty": 5,
+      "unit_price": 21.04
+     },
+     {
+      "product_id": "P05",
+      "qty": 1,
+      "unit_price": 593.89
+     },
+     {
+      "product_id": "P21",
+      "qty": 1,
+      "unit_price": 167.94
+     }
+    ],
+    "order_date": "2026-01-24",
+    "status": "cancelled",
+    "total": 867.03
+   }
+  },
+  {
+   "args": {
+    "order_id": 1026
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 1,
+    "id": 1026,
+    "items": [
+     {
+      "product_id": "P02",
+      "qty": 1,
+      "unit_price": 507.02
+     }
+    ],
+    "order_date": "2025-10-26",
+    "status": "completed",
+    "total": 507.02
+   }
+  },
+  {
+   "args": {
+    "order_id": 1027
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 40,
+    "id": 1027,
+    "items": [
+     {
+      "product_id": "P07",
+      "qty": 3,
+      "unit_price": 61.92
+     },
+     {
+      "product_id": "P09",
+      "qty": 1,
+      "unit_price": 94.68
+     }
+    ],
+    "order_date": "2026-03-04",
+    "status": "cancelled",
+    "total": 280.44
+   }
+  },
+  {
+   "args": {
+    "order_id": 1028
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 12,
+    "id": 1028,
+    "items": [
+     {
+      "product_id": "P15",
+      "qty": 1,
+      "unit_price": 21.04
+     },
+     {
+      "product_id": "P07",
+      "qty": 1,
+      "unit_price": 61.92
+     },
+     {
+      "product_id": "P04",
+      "qty": 2,
+      "unit_price": 827.38
+     }
+    ],
+    "order_date": "2025-12-17",
+    "status": "pending",
+    "total": 1737.72
+   }
+  },
+  {
+   "args": {
+    "order_id": 1029
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 2,
+    "id": 1029,
+    "items": [
+     {
+      "product_id": "P02",
+      "qty": 3,
+      "unit_price": 507.02
+     },
+     {
+      "product_id": "P01",
+      "qty": 1,
+      "unit_price": 547.01
+     },
+     {
+      "product_id": "P13",
+      "qty": 1,
+      "unit_price": 21.86
+     }
+    ],
+    "order_date": "2026-01-27",
+    "status": "pending",
+    "total": 2089.93
+   }
+  },
+  {
+   "args": {
+    "order_id": 1030
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 35,
+    "id": 1030,
+    "items": [
+     {
+      "product_id": "P04",
+      "qty": 1,
+      "unit_price": 827.38
+     }
+    ],
+    "order_date": "2026-01-21",
+    "status": "completed",
+    "total": 827.38
+   }
+  },
+  {
+   "args": {
+    "order_id": 1031
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 1,
+    "id": 1031,
+    "items": [
+     {
+      "product_id": "P23",
+      "qty": 5,
+      "unit_price": 123.77
+     },
+     {
+      "product_id": "P20",
+      "qty": 2,
+      "unit_price": 172.38
+     }
+    ],
+    "order_date": "2025-10-15",
+    "status": "completed",
+    "total": 963.61
+   }
+  },
+  {
+   "args": {
+    "order_id": 1032
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 16,
+    "id": 1032,
+    "items": [
+     {
+      "product_id": "P03",
+      "qty": 1,
+      "unit_price": 805.3
+     },
+     {
+      "product_id": "P03",
+      "qty": 3,
+      "unit_price": 805.3
+     },
+     {
+      "product_id": "P07",
+      "qty": 2,
+      "unit_price": 61.92
+     }
+    ],
+    "order_date": "2026-03-07",
+    "status": "pending",
+    "total": 3345.04
+   }
+  },
+  {
+   "args": {
+    "order_id": 1033
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 10,
+    "id": 1033,
+    "items": [
+     {
+      "product_id": "P22",
+      "qty": 1,
+      "unit_price": 123.72
+     }
+    ],
+    "order_date": "2026-02-05",
+    "status": "completed",
+    "total": 123.72
+   }
+  },
+  {
+   "args": {
+    "order_id": 1034
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 19,
+    "id": 1034,
+    "items": [
+     {
+      "product_id": "P07",
+      "qty": 2,
+      "unit_price": 61.92
+     }
+    ],
+    "order_date": "2025-10-29",
+    "status": "completed",
+    "total": 123.84
+   }
+  },
+  {
+   "args": {
+    "order_id": 1035
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 20,
+    "id": 1035,
+    "items": [
+     {
+      "product_id": "P19",
+      "qty": 3,
+      "unit_price": 91.71
+     }
+    ],
+    "order_date": "2026-03-13",
+    "status": "cancelled",
+    "total": 275.13
+   }
+  },
+  {
+   "args": {
+    "order_id": 1036
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 11,
+    "id": 1036,
+    "items": [
+     {
+      "product_id": "P16",
+      "qty": 3,
+      "unit_price": 53.18
+     },
+     {
+      "product_id": "P05",
+      "qty": 2,
+      "unit_price": 593.89
+     },
+     {
+      "product_id": "P16",
+      "qty": 1,
+      "unit_price": 53.18
+     }
+    ],
+    "order_date": "2026-02-26",
+    "status": "pending",
+    "total": 1400.5
+   }
+  },
+  {
+   "args": {
+    "order_id": 1037
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 6,
+    "id": 1037,
+    "items": [
+     {
+      "product_id": "P14",
+      "qty": 1,
+      "unit_price": 46.15
+     }
+    ],
+    "order_date": "2026-02-27",
+    "status": "completed",
+    "total": 46.15
+   }
+  },
+  {
+   "args": {
+    "order_id": 1038
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 21,
+    "id": 1038,
+    "items": [
+     {
+      "product_id": "P09",
+      "qty": 1,
+      "unit_price": 94.68
+     },
+     {
+      "product_id": "P18",
+      "qty": 1,
+      "unit_price": 20.33
+     },
+     {
+      "product_id": "P02",
+      "qty": 3,
+      "unit_price": 507.02
+     }
+    ],
+    "order_date": "2025-11-18",
+    "status": "completed",
+    "total": 1636.07
+   }
+  },
+  {
+   "args": {
+    "order_id": 1039
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 26,
+    "id": 1039,
+    "items": [
+     {
+      "product_id": "P22",
+      "qty": 2,
+      "unit_price": 123.72
+     }
+    ],
+    "order_date": "2026-03-05",
+    "status": "completed",
+    "total": 247.44
+   }
+  },
+  {
+   "args": {
+    "order_id": 1040
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 34,
+    "id": 1040,
+    "items": [
+     {
+      "product_id": "P14",
+      "qty": 2,
+      "unit_price": 46.15
+     },
+     {
+      "product_id": "P06",
+      "qty": 3,
+      "unit_price": 862.83
+     }
+    ],
+    "order_date": "2025-10-22",
+    "status": "completed",
+    "total": 2680.79
+   }
+  },
+  {
+   "args": {
+    "refunded": 2,
+    "total": 40363.42
+   },
+   "name": "submit_answer",
+   "ok": "ok"
+  }
+ ],
+ "category": "negative-habits",
+ "stdout": "orders=40 total=40363.42 refunded=2 currencies={'USD'}\nok\n",
+ "task": "neg-fanout-40",
+ "tools": [
+  {
+   "description": "Fetch one order with its line items.",
+   "name": "get_order",
+   "params": [
+    "order_id"
+   ]
+  },
+  {
+   "description": "Submit the final answer of this task. Call it once, at the end.",
+   "name": "submit_answer",
+   "params": [
+    "total",
+    "refunded"
+   ]
+  }
+ ]
+}

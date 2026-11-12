@@ -1,0 +1,123 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/mm-core",
+    "crates/mm-compile",
+    "crates/mm-engine",
+    "crates/mm-stdlib",
+    "crates/mm-parse",
+    "crates/micro-monty",
+    "crates/mm-cell-worker",
+    "crates/mm-cli",
+    "crates/mm-wasm-abi",
+    "crates/mm-wasm-guest",
+    "crates/mm-wasm-alloc",
+    "conformance/codemode/runner",
+    "xtask",
+]
+# cargo-fuzz keeps its own workspace so fuzz-only dependencies stay out of the lockfile.
+# The wasmtime reference host keeps its own workspace and lockfile.
+exclude = ["fuzz", "spikes", "crates/mm-wasm-host"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.99.0"
+license = "MIT AND PSF-2.0 AND Unicode-3.0"
+repository = "https://github.com/N0xMare/micro-monty"
+readme = "README.md"
+exclude = ["/tests/", "/benches/"]
+
+[workspace.dependencies]
+# The published crates pin each other exactly: they are one engine, and a
+# mix of versions is untested (the snapshot build id hashes each engine
+# crate's layouts and codecs, not its version; docs/spec.md §9.3).
+mm-core = { path = "crates/mm-core", version = "=0.0.1" }
+mm-compile = { path = "crates/mm-compile", version = "=0.0.1" }
+mm-engine = { path = "crates/mm-engine", version = "=0.0.1" }
+mm-stdlib = { path = "crates/mm-stdlib", version = "=0.0.1", default-features = false }
+mm-parse = { path = "crates/mm-parse", version = "=0.0.1" }
+micro-monty = { path = "crates/micro-monty", version = "=0.0.1" }
+mm-wasm-abi = { path = "crates/mm-wasm-abi" }
+mm-wasm-alloc = { path = "crates/mm-wasm-alloc" }
+# Not on crates.io yet; switch to `plakous-cell = "=0.0.x"` once plak publishes it.
+# Only `mm-cell-worker` (publish = false) may depend on it.
+plakous-cell = { git = "https://github.com/N0xMare/plak", rev = "9ba53187ce597c27b948c89c11fe2821471f1781" }
+serde_json = "1"
+
+[workspace.lints.rust]
+missing_docs = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+# The arena heap needs no unsafe. An exception overrides `[lints]` in its own
+# crate and is recorded in docs/spec.md §5.
+unsafe_code = "forbid"
+unused_lifetimes = "deny"
+unused_qualifications = "warn"
+# `mm_shipped`: set by xtask for shipped builds (docs/spec.md §6).
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(mm_shipped)"] }
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "warn"
+dbg_macro = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# The size budget (docs/spec.md §6) is measured with this profile.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# Keep code-size optimization off the VM's execution path. Parser `z` saves
+# another 14.7 KB over `s`; the measured compile cost is in docs/spec.md §6.
+[profile.release.package.mm-parse]
+opt-level = "z"
+
+[profile.release.package.mm-compile]
+opt-level = "s"
+
+# The facade (host-API rendering, help, snapshots' and results' plumbing) is
+# off the dispatch path: `z` takes 51.6 KB off the guest and 16.2 KB off
+# `hello.wasm`, bench Ir within +0.21% (startup; `Vm::new` stays out of line
+# so it keeps opt 3) [M] (docs/spec.md §6). `mm-core` measured +3% to +22%
+# Ir at `s`/`z`. A package override drops the profile's `strip` for that
+# package's examples, so it is repeated. Examples are the facade's, so
+# `cargo xtask size` builds `hello` with its own crate at opt 3: fat LTO
+# optimizes at the root crate's level, which an embedder's binary sets.
+[profile.release.package.micro-monty]
+opt-level = "z"
+strip = true
+
+# `cargo xtask check`'s builds that measure nothing (the `mm` and workers the
+# conformance, durability and replay gates run, the golden images): thin
+# LTO on many codegen units, which a warm rebuild finishes several times
+# sooner than the fat, one-unit release profile. Sizes, the step-time
+# oracle, the embedding workload and every shipped build keep `release`.
+[profile.gate]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
+# The own-case loops of `cargo test` (parking and snapshot restores over
+# every own case) in `cargo xtask check`: debug assertions and overflow
+# checks as in `dev`, optimized enough that they stop dominating the gate.
+[profile.gate-test]
+inherits = "dev"
+opt-level = 1

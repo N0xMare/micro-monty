@@ -1,0 +1,3 @@
+# Builds land in the root target directory, beside the workspace's.
+[build]
+target-dir = "../../target/mm-wasm-host"

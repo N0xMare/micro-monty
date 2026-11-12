@@ -1,0 +1,10 @@
+874409b4a6e43b22ba08262b6503ecbdd937ba1f
+rustc 1.99.0 (b940084d7 2026-09-28)
+Darwin host2.local 27.2.0 Darwin Kernel Version 27.2.0: Thu Oct 15 00:02:46 PDT 2026; root:xnu-13432.41.4~25/RELEASE_ARM64_T6000 arm64
+ProductName:		macOS
+ProductVersion:		27.2
+BuildVersion:		26B123
+51f2be7ad38c6f02702f71e7be222d2c31080dd70a6d35db8950e65bb1afa5e1  target/isolation/release/iso-harness
+9d38200434a2fe4369ebf23e9510428587b7d1cd5df2a3fac26a824bbbcb2339  target/isolation/wasm32-wasip1/release/mm_wasm_guest.wasm
+5de3091dfc97b59b214067fd85c6b25ecc47667b45fe182b4ccca0c941ec2ca5  target/isolation/wasm32-unknown-unknown/release/mm_wasm_guest.wasm
+18:21  up 8 days,  4:06, 2 users, load averages: 5.24 6.33 13.64

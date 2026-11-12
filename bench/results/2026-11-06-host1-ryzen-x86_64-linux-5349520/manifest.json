@@ -1,0 +1,39 @@
+{
+  "boundary": "spawn to exit; taskset and optional GNU timeout overhead included",
+  "engines": [
+    {
+      "binary": "/home/me/.local/bin/python3.14",
+      "name": "cpython",
+      "sha256": "1747426f232ecbe022fc83eef7e56ccedcb9841c3acea82c43f1f6a013c05027  /home/me/.local/bin/python3.14",
+      "version": "CPython 3.14.7"
+    },
+    {
+      "binary": "/tmp/dquickts/qjs",
+      "name": "qjs",
+      "sha256": "9d377ac56a91fb021729c45c959c9e5265c7c752bff3e6e5d8ae52fc3a11dcb5  /tmp/dquickts/qjs",
+      "version": "qjs QuickJS version 2026-06-04"
+    },
+    {
+      "binary": "/tmp/monty-cli/bin/monty",
+      "name": "monty",
+      "sha256": "4479e7306fdf0c6a2a567aa139150ac47c75ab3c0138ec2c4efa010c382a87e0  /tmp/monty-cli/bin/monty",
+      "version": "monty-runtime 1.4.0"
+    },
+    {
+      "binary": "/home/me/ab/5349520/xtask/../target/release/mm",
+      "name": "micro-monty",
+      "sha256": "1380ca98cb7cbc10f506e8f79da4259400319dccddb88c1f71d9a1f99bf029d5  /home/me/ab/5349520/xtask/../target/release/mm",
+      "version": "micro-monty 0.0.0"
+    }
+  ],
+  "head": "534952023da889caf2bd4d306d2feb8886a93c94",
+  "machine": "AMD Ryzen 9 8945HS w/ Radeon 780M Graphics, nproc 16, Linux 7.0.0-42-generic; 2026-11-06; pinned with taskset -c 2",
+  "order": "program blocks; balanced rotating engine order each round",
+  "reps": 10,
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+  "schema": 1,
+  "status": "",
+  "timeout_secs": null,
+  "unix_time_ns": "1793981467172978667",
+  "warmups": 1
+}

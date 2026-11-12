@@ -1,0 +1,95 @@
+diff --git a/crates/mm-wasm-guest/Cargo.toml b/crates/mm-wasm-guest/Cargo.toml
+index ab5e7a9..beeba5a 100644
+--- a/crates/mm-wasm-guest/Cargo.toml
++++ b/crates/mm-wasm-guest/Cargo.toml
+@@ -20,6 +20,7 @@ test-hooks = ["micro-monty/test-hooks"]
+ 
+ [dependencies]
+ micro-monty.workspace = true
++mm-core.workspace = true
+ mm-wasm-abi.workspace = true
+ 
+ # The workspace lints, except that `unsafe_code` is `deny` instead of
+diff --git a/crates/mm-wasm-guest/src/lib.rs b/crates/mm-wasm-guest/src/lib.rs
+index e591fde..64511cb 100644
+--- a/crates/mm-wasm-guest/src/lib.rs
++++ b/crates/mm-wasm-guest/src/lib.rs
+@@ -20,6 +20,25 @@
+ 
+ use std::cell::RefCell;
+ 
++#[allow(dead_code, reason = "size probe")]
++mod delta;
++
++thread_local! {
++    static BASE: RefCell<Option<delta::Base>> = const { RefCell::new(None) };
++}
++
++/// Runs `f` with the base: this build's fresh-session image, made once.
++fn with_base<T>(f: impl FnOnce(&delta::Base) -> T) -> Option<T> {
++    BASE.with_borrow_mut(|b| {
++        if b.is_none() {
++            let engine = Engine::new(EngineConfig::default());
++            let image = Session::new(&engine).ok()?.snapshot().ok()?;
++            *b = delta::Base::new(&image).ok();
++        }
++        b.as_ref().map(f)
++    })
++}
++
+ use micro_monty::{Engine, EngineConfig, ParkReason, Progress, Session, Stream, ZoneSource};
+ use mm_wasm_abi::{ARMED, Bad, Reader, SessionOptions, get_options, put_progress, put_str, status};
+ 
+@@ -444,6 +463,52 @@ pub mod exports {
+         })
+     }
+ 
++    /// The session's image relative to the base, in the output.
++    #[unsafe(no_mangle)]
++    pub extern "C" fn mm_snapshot_relative(s: u32) -> u32 {
++        with_slot(s, |slot| match slot.session.snapshot() {
++            Ok(image) => match super::with_base(|b| super::delta::encode(&image, b, 256)) {
++                Some(Ok(d)) => {
++                    OUTPUT.with_borrow_mut(|o| *o = d);
++                    status::OK
++                }
++                _ => status::SNAPSHOT_ERROR,
++            },
++            Err(e) => {
++                output(|o| put_snapshot_error(o, &e));
++                status::SNAPSHOT_ERROR
++            }
++        })
++    }
++
++    /// A session restored from the input: options, then a relative image.
++    #[unsafe(no_mangle)]
++    pub extern "C" fn mm_session_restore_relative() -> i32 {
++        let restored = input(|i| {
++            let mut r = Reader::new(i);
++            let o = get_options(&mut r)?;
++            let engine = engine(&o);
++            let full = super::with_base(|b| super::delta::apply(r.rest(), b, true));
++            Ok::<_, mm_wasm_abi::Bad>((o, engine, full))
++        });
++        match restored {
++            Ok((o, engine, Some(Ok(full)))) => match engine.restore(&full) {
++                Ok(mut session) => {
++                    install(next_id(), &mut session, &o);
++                    push(Slot { engine, session, deadline: None }).cast_signed()
++                }
++                Err(e) => {
++                    output(|out| put_snapshot_error(out, &e));
++                    -1
++                }
++            },
++            _ => {
++                bad("restore relative");
++                -2
++            }
++        }
++    }
++
+     /// `Session::set_fuel`; `u64::MAX` is unlimited.
+     #[unsafe(no_mangle)]
+     pub extern "C" fn mm_set_fuel(s: u32, fuel: u64) -> u32 {

@@ -1,0 +1,9 @@
+# qjs kernels.js reps=15 (+1 untimed warm-up/verification run)
+engine,kernel,reps,min_ms,median_ms,max_ms,result,expected,ok
+qjs,fib,15,18.76,19.14,20.61,196418,196418,true
+qjs,loop,15,63.44,63.85,75.63,4499998500000,4499998500000,true
+qjs,closure,15,33.44,33.74,34.62,3000000,3000000,true
+qjs,attr,15,35.13,35.25,50.30,500000500002,500000500002,true
+qjs,method,15,63.24,63.38,65.26,2000000,2000000,true
+qjs,list,15,72.37,72.79,89.76,499999500000,499999500000,true
+qjs,dict,15,46.79,56.52,101.51,19999900000,19999900000,true

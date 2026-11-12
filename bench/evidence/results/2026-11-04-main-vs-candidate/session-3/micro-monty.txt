@@ -1,0 +1,17 @@
+# [M] machine: Intel(R) Xeon(R) Processor @ 2.60GHz, nproc 16, Linux 6.1.189+; 2026-11-04; pinned with taskset -c 2
+# engine: micro-monty 0.0.0
+# wall clock per process (spawn to exit), 21 timed reps after 1 warm-up
+# program median_ms min_ms
+startup 3.3 3.1
+fib 28.5 28.0
+loop 80.9 79.6
+dict 147.6 142.5
+str 57.6 54.6
+json 121.0 118.7
+closure 55.4 53.6
+classes 152.3 150.3
+generators 323.8 321.9
+exceptions 108.1 106.2
+fmt 232.2 226.3
+sort 177.6 170.9
+interp 270.3 266.9

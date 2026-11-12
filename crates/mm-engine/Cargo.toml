@@ -1,0 +1,55 @@
+[package]
+name = "mm-engine"
+description = "micro-monty VM and builtins: dispatch, calls, exceptions, async, fuel, pause"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+exclude.workspace = true
+keywords = ["python", "micro-monty", "interpreter", "vm", "sandbox"]
+categories = ["compilers", "no-std"]
+
+[dependencies]
+mm-core.workspace = true
+mm-compile.workspace = true
+# The own parser, for `ast.parse` (already in every build through the facade).
+mm-parse = { workspace = true, optional = true }
+
+# The prelude (src/prelude.py) is compiled at build time.
+[build-dependencies]
+mm-compile.workspace = true
+mm-parse.workspace = true
+
+# Snapshot tests run real programs: parse them as the facade does.
+[dev-dependencies]
+mm-parse.workspace = true
+
+# Native parts of stdlib modules; mm-stdlib's `mod-*` features turn them on,
+# so a disabled module contributes no code (docs/spec.md §5).
+[features]
+re = []
+random = []
+hashlib = []
+binascii = []
+struct = []
+datetime = []
+# `ast.parse` over the own parser.
+ast = ["dep:mm-parse"]
+# `tokenize` over the own lexer.
+tokenize = ["dep:mm-parse"]
+# The Unicode Character Database tables (about 340 KB; not in the default stdlib).
+unicodedata = []
+# The `asyncio` module: its natives, its prelude units and the scheduler's
+# task, gather, sleep and loop paths. Coroutines, `await` and host futures
+# do not need it.
+asyncio = []
+# The `json` module: its natives and prelude units.
+json = []
+# The prelude's packed chunks are the host's (`ModuleCache::bundle`,
+# region 0), not linked in.
+host-bundle = []
+
+[lints]
+workspace = true

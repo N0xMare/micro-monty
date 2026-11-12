@@ -1,0 +1,2816 @@
+{
+ "bench": {
+  "djs": {
+   "classes": {
+    "ns": 96609749.0,
+    "output": "840 61955 3995100 200000 400000 499300"
+   },
+   "closure": {
+    "ns": 62841487.0,
+    "output": "3000000"
+   },
+   "dict": {
+    "ns": 111505538.0,
+    "output": "200000 19999900000"
+   },
+   "exceptions": {
+    "ns": 279396871.0,
+    "output": "33334 99995 25063333 100000 50000"
+   },
+   "fib": {
+    "ns": 24110400.0,
+    "output": "196418"
+   },
+   "fmt": {
+    "ns": 99001395.0,
+    "output": "2333978 30000 60000 user012345|  26|6e7|345:8:ok   |86415"
+   },
+   "generators": {
+    "ns": 803019996.0,
+    "output": "67499550000 138450000 299995 100"
+   },
+   "interp": {
+    "ns": 213165278.0,
+    "output": "7500 2536368"
+   },
+   "json_rows": {
+    "ns": 98743017.0,
+    "output": "3865741 50000 3749925000"
+   },
+   "loop": {
+    "ns": 123436886.0,
+    "output": "4499998500000"
+   },
+   "sort": {
+    "ns": 289394843.0,
+    "output": "330434481 25000 500 n0 n994 7300 379"
+   },
+   "startup": {
+    "ns": 25299.0,
+    "output": "0"
+   },
+   "str": {
+    "ns": 32965988.0,
+    "output": "988889 100000 788889 11111"
+   }
+  },
+  "djs-wasm": {
+   "classes": {
+    "ns": 179507096.0,
+    "output": "840 61955 3995100 200000 400000 499300"
+   },
+   "closure": {
+    "ns": 108844877.0,
+    "output": "3000000"
+   },
+   "dict": {
+    "ns": 220255957.0,
+    "output": "200000 19999900000"
+   },
+   "exceptions": {
+    "ns": 729025120.0,
+    "output": "33334 99995 25063333 100000 50000"
+   },
+   "fib": {
+    "ns": 52838380.0,
+    "output": "196418"
+   },
+   "fmt": {
+    "ns": 259438094.0,
+    "output": "2333978 30000 60000 user012345|  26|6e7|345:8:ok   |86415"
+   },
+   "generators": {
+    "ns": 1747015645.0,
+    "output": "67499550000 138450000 299995 100"
+   },
+   "interp": {
+    "ns": 465617682.0,
+    "output": "7500 2536368"
+   },
+   "json_rows": {
+    "ns": 197876723.0,
+    "output": "3865741 50000 3749925000"
+   },
+   "loop": {
+    "ns": 172228971.0,
+    "output": "4499998500000"
+   },
+   "sort": {
+    "ns": 514370189.0,
+    "output": "330434481 25000 500 n0 n994 7300 379"
+   },
+   "startup": {
+    "ns": 178826.0,
+    "output": "0"
+   },
+   "str": {
+    "ns": 62884962.0,
+    "output": "988889 100000 788889 11111"
+   }
+  },
+  "dquickts": {
+   "classes": {
+    "ns": 60998882.0,
+    "output": "840 61955 3995100 200000 400000 499300"
+   },
+   "closure": {
+    "ns": 28475450.0,
+    "output": "3000000"
+   },
+   "dict": {
+    "ns": 76173114.0,
+    "output": "200000 19999900000"
+   },
+   "exceptions": {
+    "ns": 44175954.0,
+    "output": "33334 99995 25063333 100000 50000"
+   },
+   "fib": {
+    "ns": 13248339.0,
+    "output": "196418"
+   },
+   "fmt": {
+    "ns": 60448118.0,
+    "output": "2333978 30000 60000 user012345|  26|6e7|345:8:ok   |86415"
+   },
+   "generators": {
+    "ns": 84332531.0,
+    "output": "67499550000 138450000 299995 100"
+   },
+   "interp": {
+    "ns": 130477330.0,
+    "output": "7500 2536368"
+   },
+   "json_rows": {
+    "ns": 137979641.0,
+    "output": "3865741 50000 3749925000"
+   },
+   "loop": {
+    "ns": 52754418.0,
+    "output": "4499998500000"
+   },
+   "sort": {
+    "ns": 154639768.0,
+    "output": "330434481 25000 500 n0 n994 7300 379"
+   },
+   "startup": {
+    "ns": 145470.0,
+    "output": "0"
+   },
+   "str": {
+    "ns": 21224024.0,
+    "output": "988889 100000 788889 11111"
+   }
+  },
+  "mm-native": {
+   "classes": {
+    "ns": 71407144.0,
+    "output": "840 61955 3995100 200000 400000 499300"
+   },
+   "closure": {
+    "ns": 35329439.0,
+    "output": "3000000"
+   },
+   "dict": {
+    "ns": 85240940.0,
+    "output": "200000 19999900000"
+   },
+   "exceptions": {
+    "ns": 67547959.0,
+    "output": "33334 99995 25063333 100000 50000"
+   },
+   "fib": {
+    "ns": 17183128.0,
+    "output": "196418"
+   },
+   "fmt": {
+    "ns": 128605492.0,
+    "output": "2333978 30000 60000 user012345|  26|6e7|345:8:ok   |86415"
+   },
+   "generators": {
+    "ns": 130114869.0,
+    "output": "67499550000 138450000 299995 100"
+   },
+   "interp": {
+    "ns": 143956919.0,
+    "output": "7500 2536368"
+   },
+   "json_rows": {
+    "ns": 83260061.0,
+    "output": "3865741 50000 3749925000"
+   },
+   "loop": {
+    "ns": 51379187.0,
+    "output": "4499998500000"
+   },
+   "sort": {
+    "ns": 104895888.0,
+    "output": "330434481 25000 500 n0 n994 7300 379"
+   },
+   "startup": {
+    "ns": 34858.0,
+    "output": "0"
+   },
+   "str": {
+    "ns": 32250800.0,
+    "output": "988889 100000 788889 11111"
+   }
+  },
+  "mm-wasm": {
+   "classes": {
+    "ns": 139575030.0,
+    "output": "840 61955 3995100 200000 400000 499300"
+   },
+   "closure": {
+    "ns": 74269570.0,
+    "output": "3000000"
+   },
+   "dict": {
+    "ns": 146360664.0,
+    "output": "200000 19999900000"
+   },
+   "exceptions": {
+    "ns": 146149522.0,
+    "output": "33334 99995 25063333 100000 50000"
+   },
+   "fib": {
+    "ns": 35423523.0,
+    "output": "196418"
+   },
+   "fmt": {
+    "ns": 253639132.0,
+    "output": "2333978 30000 60000 user012345|  26|6e7|345:8:ok   |86415"
+   },
+   "generators": {
+    "ns": 253480357.0,
+    "output": "67499550000 138450000 299995 100"
+   },
+   "interp": {
+    "ns": 312438050.0,
+    "output": "7500 2536368"
+   },
+   "json_rows": {
+    "ns": 172397523.0,
+    "output": "3865741 50000 3749925000"
+   },
+   "loop": {
+    "ns": 110246212.0,
+    "output": "4499998500000"
+   },
+   "sort": {
+    "ns": 179922428.0,
+    "output": "330434481 25000 500 n0 n994 7300 379"
+   },
+   "startup": {
+    "ns": 141316.0,
+    "output": "0"
+   },
+   "str": {
+    "ns": 63187163.0,
+    "output": "988889 100000 788889 11111"
+   }
+  },
+  "quickjs-wasi": {
+   "classes": {
+    "ns": 218857071.0,
+    "output": "840 61955 3995100 200000 400000 499300"
+   },
+   "closure": {
+    "ns": 119006408.0,
+    "output": "3000000"
+   },
+   "dict": {
+    "ns": 208031866.0,
+    "output": "200000 19999900000"
+   },
+   "exceptions": {
+    "ns": 710636652.0,
+    "output": "33334 99995 25063333 100000 50000"
+   },
+   "fib": {
+    "ns": 46043759.0,
+    "output": "196418"
+   },
+   "fmt": {
+    "ns": 206251413.0,
+    "output": "2333978 30000 60000 user012345|  26|6e7|345:8:ok   |86415"
+   },
+   "generators": {
+    "ns": 281798756.0,
+    "output": "67499550000 138450000 299995 100"
+   },
+   "interp": {
+    "ns": 450423623.0,
+    "output": "7500 2536368"
+   },
+   "json_rows": {
+    "ns": 449150195.0,
+    "output": "3865741 50000 3749925000"
+   },
+   "loop": {
+    "ns": 239347867.0,
+    "output": "4499998500000"
+   },
+   "sort": {
+    "ns": 394420999.0,
+    "output": "330434481 25000 500 n0 n994 7300 379"
+   },
+   "startup": {
+    "ns": 347563.0,
+    "output": "0"
+   },
+   "str": {
+    "ns": 88953934.0,
+    "output": "988889 100000 788889 11111"
+   }
+  },
+  "rquickjs": {
+   "classes": {
+    "ns": 101554615.0,
+    "output": "840 61955 3995100 200000 400000 499300"
+   },
+   "closure": {
+    "ns": 66165157.0,
+    "output": "3000000"
+   },
+   "dict": {
+    "ns": 104068296.0,
+    "output": "200000 19999900000"
+   },
+   "exceptions": {
+    "ns": 259768919.0,
+    "output": "33334 99995 25063333 100000 50000"
+   },
+   "fib": {
+    "ns": 39620193.0,
+    "output": "196418"
+   },
+   "fmt": {
+    "ns": 89802683.0,
+    "output": "2333978 30000 60000 user012345|  26|6e7|345:8:ok   |86415"
+   },
+   "generators": {
+    "ns": 140354272.0,
+    "output": "67499550000 138450000 299995 100"
+   },
+   "interp": {
+    "ns": 185348736.0,
+    "output": "7500 2536368"
+   },
+   "json_rows": {
+    "ns": 184051555.0,
+    "output": "3865741 50000 3749925000"
+   },
+   "loop": {
+    "ns": 119193359.0,
+    "output": "4499998500000"
+   },
+   "sort": {
+    "ns": 283861319.0,
+    "output": "330434481 25000 500 n0 n994 7300 379"
+   },
+   "startup": {
+    "ns": 147176.0,
+    "output": "0"
+   },
+   "str": {
+    "ns": 37452523.0,
+    "output": "988889 100000 788889 11111"
+   }
+  }
+ },
+ "cli": {
+  "djs-cli": {
+   "classes": {
+    "ns": 95597789,
+    "output": "840 61955 3995100 200000 400000 499300"
+   },
+   "closure": {
+    "ns": 62776432,
+    "output": "3000000"
+   },
+   "dict": {
+    "ns": 116186477,
+    "output": "200000 19999900000"
+   },
+   "exceptions": {
+    "ns": 338812503,
+    "output": "33334 99995 25063333 100000 50000"
+   },
+   "fib": {
+    "ns": 29275792,
+    "output": "196418"
+   },
+   "fmt": {
+    "ns": 111518012,
+    "output": "2333978 30000 60000 user012345|  26|6e7|345:8:ok   |86415"
+   },
+   "generators": {
+    "ns": 847187394,
+    "output": "67499550000 138450000 299995 100"
+   },
+   "interp": {
+    "ns": 231287174,
+    "output": "7500 2536368"
+   },
+   "json_rows": {
+    "ns": 102742032,
+    "output": "3865741 50000 3749925000"
+   },
+   "loop": {
+    "ns": 116295355,
+    "output": "4499998500000"
+   },
+   "sort": {
+    "ns": 296579895,
+    "output": "330434481 25000 500 n0 n994 7300 379"
+   },
+   "startup": {
+    "ns": 3032272,
+    "output": "0"
+   },
+   "str": {
+    "ns": 33638456,
+    "output": "988889 100000 788889 11111"
+   }
+  },
+  "mm-cli": {
+   "classes": {
+    "ns": 75621175,
+    "output": "840 61955 3995100 200000 400000 499300"
+   },
+   "closure": {
+    "ns": 35219248,
+    "output": "3000000"
+   },
+   "dict": {
+    "ns": 82430657,
+    "output": "200000 19999900000"
+   },
+   "exceptions": {
+    "ns": 69059947,
+    "output": "33334 99995 25063333 100000 50000"
+   },
+   "fib": {
+    "ns": 18716431,
+    "output": "196418"
+   },
+   "fmt": {
+    "ns": 131923748,
+    "output": "2333978 30000 60000 user012345|  26|6e7|345:8:ok   |86415"
+   },
+   "generators": {
+    "ns": 136547117,
+    "output": "67499550000 138450000 299995 100"
+   },
+   "interp": {
+    "ns": 142924957,
+    "output": "7500 2536368"
+   },
+   "json_rows": {
+    "ns": 84423005,
+    "output": "3865741 50000 3749925000"
+   },
+   "loop": {
+    "ns": 61411721,
+    "output": "4499998500000"
+   },
+   "sort": {
+    "ns": 112575122,
+    "output": "330434481 25000 500 n0 n994 7300 379"
+   },
+   "startup": {
+    "ns": 2675805,
+    "output": "0"
+   },
+   "str": {
+    "ns": 36018276,
+    "output": "988889 100000 788889 11111"
+   }
+  },
+  "qjs-bellard": {
+   "classes": {
+    "ns": 60305192,
+    "output": "840 61955 3995100 200000 400000 499300"
+   },
+   "closure": {
+    "ns": 31516199,
+    "output": "3000000"
+   },
+   "dict": {
+    "ns": 84100387,
+    "output": "200000 19999900000"
+   },
+   "exceptions": {
+    "ns": 124128635,
+    "output": "33334 99995 25063333 100000 50000"
+   },
+   "fib": {
+    "ns": 14963024,
+    "output": "196418"
+   },
+   "fmt": {
+    "ns": 64601564,
+    "output": "2333978 30000 60000 user012345|  26|6e7|345:8:ok   |86415"
+   },
+   "generators": {
+    "ns": 80020980,
+    "output": "67499550000 138450000 299995 100"
+   },
+   "interp": {
+    "ns": 135228123,
+    "output": "7500 2536368"
+   },
+   "json_rows": {
+    "ns": 151463557,
+    "output": "3865741 50000 3749925000"
+   },
+   "loop": {
+    "ns": 54092435,
+    "output": "4499998500000"
+   },
+   "sort": {
+    "ns": 162804158,
+    "output": "330434481 25000 500 n0 n994 7300 379"
+   },
+   "startup": {
+    "ns": 2766348,
+    "output": "0"
+   },
+   "str": {
+    "ns": 27401244,
+    "output": "988889 100000 788889 11111"
+   }
+  },
+  "qjs-ng": {
+   "classes": {
+    "ns": 62351055,
+    "output": "840 61955 3995100 200000 400000 499300"
+   },
+   "closure": {
+    "ns": 36090595,
+    "output": "3000000"
+   },
+   "dict": {
+    "ns": 88548541,
+    "output": "200000 19999900000"
+   },
+   "exceptions": {
+    "ns": 219466060,
+    "output": "33334 99995 25063333 100000 50000"
+   },
+   "fib": {
+    "ns": 16402612,
+    "output": "196418"
+   },
+   "fmt": {
+    "ns": 75401523,
+    "output": "2333978 30000 60000 user012345|  26|6e7|345:8:ok   |86415"
+   },
+   "generators": {
+    "ns": 68188708,
+    "output": "67499550000 138450000 299995 100"
+   },
+   "interp": {
+    "ns": 140937154,
+    "output": "7500 2536368"
+   },
+   "json_rows": {
+    "ns": 170891794,
+    "output": "3865741 50000 3749925000"
+   },
+   "loop": {
+    "ns": 65537235,
+    "output": "4499998500000"
+   },
+   "sort": {
+    "ns": 167182215,
+    "output": "330434481 25000 500 n0 n994 7300 379"
+   },
+   "startup": {
+    "ns": 2712940,
+    "output": "0"
+   },
+   "str": {
+    "ns": 37682970,
+    "output": "988889 100000 788889 11111"
+   }
+  }
+ },
+ "control": {
+  "djs": {
+   "loop": {
+    "how": [
+     "stopped at a slice"
+    ],
+    "latency_ns": 43363,
+    "n": 5,
+    "resumable": [
+     true
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "sort": {
+    "how": [
+     "stopped at a slice"
+    ],
+    "latency_ns": 225645600,
+    "n": 5,
+    "resumable": [
+     true
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "sort-loop": {
+    "how": [
+     "stopped at a slice"
+    ],
+    "latency_ns": 220399519,
+    "n": 5,
+    "resumable": [
+     true
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "string": {
+    "how": [
+     "stopped at a slice"
+    ],
+    "latency_ns": 40479837,
+    "n": 5,
+    "resumable": [
+     true
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "string-loop": {
+    "how": [
+     "not regained"
+    ],
+    "latency_ns": null,
+    "n": 5,
+    "resumable": [
+     null
+    ],
+    "session_usable": [
+     null
+    ]
+   }
+  },
+  "dquickts": {
+   "loop": {
+    "how": [
+     "interrupted"
+    ],
+    "latency_ns": 125578,
+    "n": 5,
+    "resumable": [
+     false
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "sort": {
+    "how": [
+     "interrupted"
+    ],
+    "latency_ns": 250698767,
+    "n": 5,
+    "resumable": [
+     false
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "sort-loop": {
+    "how": [
+     "not regained"
+    ],
+    "latency_ns": null,
+    "n": 5,
+    "resumable": [
+     null
+    ],
+    "session_usable": [
+     null
+    ]
+   },
+   "string": {
+    "how": [
+     "interrupted"
+    ],
+    "latency_ns": 30575501,
+    "n": 5,
+    "resumable": [
+     false
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "string-loop": {
+    "how": [
+     "not regained"
+    ],
+    "latency_ns": null,
+    "n": 5,
+    "resumable": [
+     null
+    ],
+    "session_usable": [
+     null
+    ]
+   }
+  },
+  "mm-native": {
+   "loop": {
+    "how": [
+     "parked"
+    ],
+    "latency_ns": 38830,
+    "n": 5,
+    "resumable": [
+     true
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "sort": {
+    "how": [
+     "parked"
+    ],
+    "latency_ns": 704187,
+    "n": 5,
+    "resumable": [
+     true
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "sort-loop": {
+    "how": [
+     "parked"
+    ],
+    "latency_ns": 528163,
+    "n": 5,
+    "resumable": [
+     true
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "string": {
+    "how": [
+     "parked"
+    ],
+    "latency_ns": 287949,
+    "n": 5,
+    "resumable": [
+     true
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "string-loop": {
+    "how": [
+     "parked"
+    ],
+    "latency_ns": 372071,
+    "n": 5,
+    "resumable": [
+     true
+    ],
+    "session_usable": [
+     true
+    ]
+   }
+  },
+  "mm-wasm": {
+   "loop": {
+    "how": [
+     "parked"
+    ],
+    "latency_ns": 45841,
+    "n": 5,
+    "resumable": [
+     true
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "sort": {
+    "how": [
+     "parked"
+    ],
+    "latency_ns": 3002155,
+    "n": 5,
+    "resumable": [
+     true
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "sort-loop": {
+    "how": [
+     "parked"
+    ],
+    "latency_ns": 1274230,
+    "n": 5,
+    "resumable": [
+     true
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "string": {
+    "how": [
+     "parked"
+    ],
+    "latency_ns": 339462,
+    "n": 5,
+    "resumable": [
+     true
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "string-loop": {
+    "how": [
+     "parked"
+    ],
+    "latency_ns": 1094622,
+    "n": 5,
+    "resumable": [
+     true
+    ],
+    "session_usable": [
+     true
+    ]
+   }
+  },
+  "quickjs-wasi": {
+   "loop": {
+    "how": [
+     "interrupted"
+    ],
+    "latency_ns": 226734,
+    "n": 5,
+    "resumable": [
+     false
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "sort": {
+    "how": [
+     "epoch trap (instance lost)"
+    ],
+    "latency_ns": 106701654,
+    "n": 5,
+    "resumable": [
+     false
+    ],
+    "session_usable": [
+     false
+    ]
+   },
+   "sort-loop": {
+    "how": [
+     "epoch trap (instance lost)"
+    ],
+    "latency_ns": 104564233,
+    "n": 5,
+    "resumable": [
+     false
+    ],
+    "session_usable": [
+     false
+    ]
+   },
+   "string": {
+    "how": [
+     "epoch trap (instance lost)"
+    ],
+    "latency_ns": 106564777,
+    "n": 5,
+    "resumable": [
+     false
+    ],
+    "session_usable": [
+     false
+    ]
+   },
+   "string-loop": {
+    "how": [
+     "epoch trap (instance lost)"
+    ],
+    "latency_ns": 106659465,
+    "n": 5,
+    "resumable": [
+     false
+    ],
+    "session_usable": [
+     false
+    ]
+   }
+  },
+  "rquickjs": {
+   "loop": {
+    "how": [
+     "interrupted"
+    ],
+    "latency_ns": 84241,
+    "n": 5,
+    "resumable": [
+     false
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "sort": {
+    "how": [
+     "interrupted"
+    ],
+    "latency_ns": 319576625,
+    "n": 5,
+    "resumable": [
+     false
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "sort-loop": {
+    "how": [
+     "not regained"
+    ],
+    "latency_ns": null,
+    "n": 5,
+    "resumable": [
+     null
+    ],
+    "session_usable": [
+     null
+    ]
+   },
+   "string": {
+    "how": [
+     "interrupted"
+    ],
+    "latency_ns": 35284841,
+    "n": 5,
+    "resumable": [
+     false
+    ],
+    "session_usable": [
+     true
+    ]
+   },
+   "string-loop": {
+    "how": [
+     "not regained"
+    ],
+    "latency_ns": null,
+    "n": 5,
+    "resumable": [
+     null
+    ],
+    "session_usable": [
+     null
+    ]
+   }
+  }
+ },
+ "errors": [],
+ "gc": {
+  "djs": {
+   "2000000": {
+    "appends": {
+     "errors": [],
+     "max_ns": 620611,
+     "p50_ns": 40588,
+     "p99_ns": 72007,
+     "wall_ns": 69251192.0,
+     "worst_ns": 639441
+    },
+    "cycles": {
+     "errors": [],
+     "max_ns": 145396404,
+     "p50_ns": 50115,
+     "p99_ns": 74350,
+     "wall_ns": 412325717.0,
+     "worst_ns": 152971274
+    },
+    "engine_bytes": 192975192,
+    "full_ns": 138560760.0,
+    "garbage": {
+     "errors": [],
+     "max_ns": 144962139,
+     "p50_ns": 60427,
+     "p99_ns": 93161,
+     "wall_ns": 469985744.0,
+     "worst_ns": 151868488
+    },
+    "live_heap": 195179296,
+    "n": 5,
+    "writes": {
+     "errors": [],
+     "max_ns": 188955520,
+     "p50_ns": 38502,
+     "p99_ns": 78202,
+     "wall_ns": 654041307.0,
+     "worst_ns": 205965492
+    }
+   },
+   "550000": {
+    "appends": {
+     "errors": [],
+     "max_ns": 59969699,
+     "p50_ns": 40198,
+     "p99_ns": 82405,
+     "wall_ns": 130281443.0,
+     "worst_ns": 75234469
+    },
+    "cycles": {
+     "errors": [],
+     "max_ns": 36118728,
+     "p50_ns": 45084,
+     "p99_ns": 84381,
+     "wall_ns": 428398110.0,
+     "worst_ns": 49705431
+    },
+    "engine_bytes": 56986584,
+    "full_ns": 28367437.0,
+    "garbage": {
+     "errors": [],
+     "max_ns": 34624401,
+     "p50_ns": 51089,
+     "p99_ns": 83983,
+     "wall_ns": 366446685.0,
+     "worst_ns": 36742376
+    },
+    "live_heap": 68842272,
+    "n": 5,
+    "writes": {
+     "errors": [],
+     "max_ns": 48061928,
+     "p50_ns": 38079,
+     "p99_ns": 68706,
+     "wall_ns": 540022771.0,
+     "worst_ns": 49632553
+    }
+   }
+  },
+  "dquickts": {
+   "2000000": {
+    "appends": {
+     "errors": [],
+     "max_ns": 1249861,
+     "p50_ns": 270411,
+     "p99_ns": 655895,
+     "wall_ns": 56032554.0,
+     "worst_ns": 1597842
+    },
+    "cycles": {
+     "errors": [],
+     "max_ns": 211019729,
+     "p50_ns": 409164,
+     "p99_ns": 537672,
+     "wall_ns": 588681984.0,
+     "worst_ns": 212691627
+    },
+    "engine_bytes": 380707208,
+    "full_ns": 127142101.0,
+    "garbage": {
+     "errors": [],
+     "max_ns": 341958,
+     "p50_ns": 209545,
+     "p99_ns": 273880,
+     "wall_ns": 172857480.0,
+     "worst_ns": 398249
+    },
+    "live_heap": 380724000,
+    "n": 5,
+    "writes": {
+     "errors": [],
+     "max_ns": 381390,
+     "p50_ns": 250710,
+     "p99_ns": 326009,
+     "wall_ns": 302310509.0,
+     "worst_ns": 1156763
+    }
+   },
+   "550000": {
+    "appends": {
+     "errors": [],
+     "max_ns": 50466501,
+     "p50_ns": 282710,
+     "p99_ns": 2784256,
+     "wall_ns": 155326986.0,
+     "worst_ns": 62491413
+    },
+    "cycles": {
+     "errors": [],
+     "max_ns": 47103707,
+     "p50_ns": 306115,
+     "p99_ns": 609701,
+     "wall_ns": 388083910.0,
+     "worst_ns": 61137501
+    },
+    "engine_bytes": 105667272,
+    "full_ns": 15126435.0,
+    "garbage": {
+     "errors": [],
+     "max_ns": 341552,
+     "p50_ns": 232235,
+     "p99_ns": 297170,
+     "wall_ns": 189087587.0,
+     "worst_ns": 478377
+    },
+    "live_heap": 105677920,
+    "n": 5,
+    "writes": {
+     "errors": [],
+     "max_ns": 434195,
+     "p50_ns": 249189,
+     "p99_ns": 318446,
+     "wall_ns": 302391731.0,
+     "worst_ns": 540463
+    }
+   }
+  },
+  "mm-native": {
+   "2000000": {
+    "appends": {
+     "errors": [],
+     "max_ns": 1554975,
+     "p50_ns": 487123,
+     "p99_ns": 1035613,
+     "wall_ns": 76171544.0,
+     "worst_ns": 1651571
+    },
+    "cycles": {
+     "errors": [],
+     "max_ns": 986419,
+     "p50_ns": 724210,
+     "p99_ns": 897278,
+     "wall_ns": 300354395.0,
+     "worst_ns": 1964253
+    },
+    "engine_bytes": 0,
+    "full_ns": 73983345.0,
+    "garbage": {
+     "errors": [],
+     "max_ns": 24705139,
+     "p50_ns": 493425,
+     "p99_ns": 587071,
+     "wall_ns": 221130766.0,
+     "worst_ns": 26812840
+    },
+    "live_heap": 249465488,
+    "n": 5,
+    "writes": {
+     "errors": [],
+     "max_ns": 41992241,
+     "p50_ns": 518986,
+     "p99_ns": 675129,
+     "wall_ns": 495225599.0,
+     "worst_ns": 51776919
+    }
+   },
+   "550000": {
+    "appends": {
+     "errors": [],
+     "max_ns": 1572029,
+     "p50_ns": 466513,
+     "p99_ns": 1036070,
+     "wall_ns": 72072117.0,
+     "worst_ns": 1657704
+    },
+    "cycles": {
+     "errors": [],
+     "max_ns": 21744076,
+     "p50_ns": 640027,
+     "p99_ns": 843360,
+     "wall_ns": 275574692.0,
+     "worst_ns": 22822081
+    },
+    "engine_bytes": 0,
+    "full_ns": 14381486.0,
+    "garbage": {
+     "errors": [],
+     "max_ns": 22115153,
+     "p50_ns": 454759,
+     "p99_ns": 598876,
+     "wall_ns": 206972127.0,
+     "worst_ns": 23829469
+    },
+    "live_heap": 73136784,
+    "n": 5,
+    "writes": {
+     "errors": [],
+     "max_ns": 24177422,
+     "p50_ns": 514467,
+     "p99_ns": 760435,
+     "wall_ns": 466233349.0,
+     "worst_ns": 26581478
+    }
+   }
+  },
+  "mm-native (park requests)": {
+   "2000000": {
+    "appends": {
+     "errors": [],
+     "max_ns": 546829,
+     "p50_ns": 16200,
+     "p99_ns": 546829,
+     "wall_ns": 74928017.0,
+     "worst_ns": 831611
+    },
+    "cycles": {
+     "errors": [],
+     "max_ns": 75086,
+     "p50_ns": 17072,
+     "p99_ns": 60365,
+     "wall_ns": 277839745.0,
+     "worst_ns": 76617
+    },
+    "engine_bytes": 0,
+    "full_ns": 72666566.0,
+    "garbage": {
+     "errors": [],
+     "max_ns": 69337,
+     "p50_ns": 14748,
+     "p99_ns": 57381,
+     "wall_ns": 216929741.0,
+     "worst_ns": 79025
+    },
+    "live_heap": 249465488,
+    "n": 5,
+    "writes": {
+     "errors": [],
+     "max_ns": 2935152,
+     "p50_ns": 18558,
+     "p99_ns": 875726,
+     "wall_ns": 502697268.0,
+     "worst_ns": 3273127
+    }
+   },
+   "550000": {
+    "appends": {
+     "errors": [],
+     "max_ns": 213854,
+     "p50_ns": 16857,
+     "p99_ns": 213854,
+     "wall_ns": 73480995.0,
+     "worst_ns": 662890
+    },
+    "cycles": {
+     "errors": [],
+     "max_ns": 3031102,
+     "p50_ns": 18167,
+     "p99_ns": 752562,
+     "wall_ns": 281990346.0,
+     "worst_ns": 3354230
+    },
+    "engine_bytes": 0,
+    "full_ns": 15456135.0,
+    "garbage": {
+     "errors": [],
+     "max_ns": 917987,
+     "p50_ns": 14380,
+     "p99_ns": 790359,
+     "wall_ns": 212136049.0,
+     "worst_ns": 946569
+    },
+    "live_heap": 73136784,
+    "n": 5,
+    "writes": {
+     "errors": [],
+     "max_ns": 1398352,
+     "p50_ns": 17022,
+     "p99_ns": 882419,
+     "wall_ns": 477188038.0,
+     "worst_ns": 1756213
+    }
+   }
+  },
+  "rquickjs": {
+   "2000000": {
+    "appends": {
+     "errors": [],
+     "max_ns": 229921631,
+     "p50_ns": 485844,
+     "p99_ns": 690593,
+     "wall_ns": 328714079.0,
+     "worst_ns": 236099897
+    },
+    "cycles": {
+     "errors": [],
+     "max_ns": 218366267,
+     "p50_ns": 513093,
+     "p99_ns": 736007,
+     "wall_ns": 526930146.0,
+     "worst_ns": 239611227
+    },
+    "engine_bytes": 437905272,
+    "full_ns": 135539096.0,
+    "garbage": {
+     "errors": [],
+     "max_ns": 594429,
+     "p50_ns": 345255,
+     "p99_ns": 468073,
+     "wall_ns": 288119321.0,
+     "worst_ns": 622253
+    },
+    "live_heap": 443008832,
+    "n": 5,
+    "writes": {
+     "errors": [],
+     "max_ns": 564691,
+     "p50_ns": 343964,
+     "p99_ns": 419395,
+     "wall_ns": 553417944.0,
+     "worst_ns": 628297
+    }
+   },
+   "550000": {
+    "appends": {
+     "errors": [],
+     "max_ns": 57591404,
+     "p50_ns": 415444,
+     "p99_ns": 2809847,
+     "wall_ns": 193684148.0,
+     "worst_ns": 64433461
+    },
+    "cycles": {
+     "errors": [],
+     "max_ns": 61295284,
+     "p50_ns": 429436,
+     "p99_ns": 672673,
+     "wall_ns": 499465538.0,
+     "worst_ns": 71892001
+    },
+    "engine_bytes": 121309944,
+    "full_ns": 14804487.0,
+    "garbage": {
+     "errors": [],
+     "max_ns": 707568,
+     "p50_ns": 395402,
+     "p99_ns": 450362,
+     "wall_ns": 308037722.0,
+     "worst_ns": 1322832
+    },
+    "live_heap": 122765104,
+    "n": 5,
+    "writes": {
+     "errors": [],
+     "max_ns": 652110,
+     "p50_ns": 341381,
+     "p99_ns": 450916,
+     "wall_ns": 544009786.0,
+     "worst_ns": 1506690
+    }
+   }
+  }
+ },
+ "hostcall": {
+  "djs": {
+   "await": {
+    "calls": 10000,
+    "local_ns": 7109765.0,
+    "per_call_ns": 4600.8114,
+    "per_call_total_ns": 5311.7879,
+    "tool_ns": 53117879.0
+   },
+   "fanout": {
+    "calls": 10000,
+    "local_ns": 21501151.0,
+    "per_call_ns": 4904.9761,
+    "per_call_total_ns": 7055.0912,
+    "tool_ns": 70550912.0
+   },
+   "sync": {
+    "calls": 10000,
+    "local_ns": 395449.0,
+    "per_call_ns": 127.1032,
+    "per_call_total_ns": 166.6481,
+    "tool_ns": 1666481.0
+   }
+  },
+  "dquickts": {
+   "await": {
+    "calls": 10000,
+    "local_ns": 7339949.0,
+    "per_call_ns": 2021.3938,
+    "per_call_total_ns": 2755.3887,
+    "tool_ns": 27553887.0
+   },
+   "fanout": {
+    "calls": 10000,
+    "local_ns": 9860925.0,
+    "per_call_ns": 2071.1815,
+    "per_call_total_ns": 3057.274,
+    "tool_ns": 30572740.0
+   },
+   "sync": {
+    "calls": 10000,
+    "local_ns": 292337.0,
+    "per_call_ns": 35.19,
+    "per_call_total_ns": 64.4237,
+    "tool_ns": 644237.0
+   }
+  },
+  "mm-native": {
+   "await": {
+    "calls": 10000,
+    "local_ns": 2670250.0,
+    "per_call_ns": 2163.9737,
+    "per_call_total_ns": 2430.9987,
+    "tool_ns": 24309987.0
+   },
+   "fanout": {
+    "calls": 10000,
+    "local_ns": 4314240.0,
+    "per_call_ns": 1889.4825,
+    "per_call_total_ns": 2320.9065,
+    "tool_ns": 23209065.0
+   },
+   "sync": {
+    "calls": 10000,
+    "local_ns": 352037.0,
+    "per_call_ns": 322.9276,
+    "per_call_total_ns": 358.1313,
+    "tool_ns": 3581313.0
+   }
+  },
+  "mm-wasm": {
+   "await": {
+    "calls": 10000,
+    "local_ns": 4471558.0,
+    "per_call_ns": 4786.9944,
+    "per_call_total_ns": 5234.1502,
+    "tool_ns": 52341502.0
+   },
+   "fanout": {
+    "calls": 10000,
+    "local_ns": 7783241.0,
+    "per_call_ns": 3643.8717,
+    "per_call_total_ns": 4422.1958,
+    "tool_ns": 44221958.0
+   },
+   "sync": {
+    "calls": 10000,
+    "local_ns": 723145.0,
+    "per_call_ns": 799.216,
+    "per_call_total_ns": 871.5305,
+    "tool_ns": 8715305.0
+   }
+  },
+  "quickjs-wasi": {
+   "await": {
+    "calls": 10000,
+    "local_ns": 19608847.0,
+    "per_call_ns": 25100.3422,
+    "per_call_total_ns": 27061.2269,
+    "tool_ns": 270612269.0
+   },
+   "fanout": {
+    "calls": 10000,
+    "local_ns": 33563292.0,
+    "per_call_ns": 25674.1193,
+    "per_call_total_ns": 29030.4485,
+    "tool_ns": 290304485.0
+   },
+   "sync": {
+    "calls": 10000,
+    "local_ns": 1136456.0,
+    "per_call_ns": 1622.9727,
+    "per_call_total_ns": 1736.6183,
+    "tool_ns": 17366183.0
+   }
+  },
+  "rquickjs": {
+   "await": {
+    "calls": 10000,
+    "local_ns": 9415657.0,
+    "per_call_ns": 2960.2869,
+    "per_call_total_ns": 3901.8526,
+    "tool_ns": 39018526.0
+   },
+   "fanout": {
+    "calls": 10000,
+    "local_ns": 13041452.0,
+    "per_call_ns": 3045.1229,
+    "per_call_total_ns": 4349.2681,
+    "tool_ns": 43492681.0
+   },
+   "sync": {
+    "calls": 10000,
+    "local_ns": 729048.0,
+    "per_call_ns": 46.957,
+    "per_call_total_ns": 119.8618,
+    "tool_ns": 1198618.0
+   }
+  }
+ },
+ "mem": {
+  "djs": {
+   "empty-1": {
+    "engine_bytes": 199624,
+    "heap_delta": 263408,
+    "rss_after": 3653632,
+    "rss_delta": 0
+   },
+   "empty-40": {
+    "engine_bytes": 7984960,
+    "heap_delta": 10507904,
+    "rss_after": 12414976,
+    "rss_delta": 8646656
+   },
+   "empty-8": {
+    "engine_bytes": 1596992,
+    "heap_delta": 2099840,
+    "rss_after": 5337088,
+    "rss_delta": 1617920
+   },
+   "setup-1": {
+    "engine_bytes": 738048,
+    "heap_delta": 804688,
+    "rss_after": 5275648,
+    "rss_delta": 806912
+   },
+   "setup-40": {
+    "engine_bytes": 29521920,
+    "heap_delta": 31635008,
+    "rss_after": 35020800,
+    "rss_delta": 30543872
+   },
+   "setup-8": {
+    "engine_bytes": 5904384,
+    "heap_delta": 6379840,
+    "rss_after": 10747904,
+    "rss_delta": 6213632
+   }
+  },
+  "djs-wasm": {
+   "empty-1": {
+    "engine_bytes": 589824,
+    "heap_delta": 9920,
+    "rss_after": 7147520,
+    "rss_delta": 0
+   },
+   "empty-40": {
+    "engine_bytes": 23592960,
+    "heap_delta": 506112,
+    "rss_after": 19816448,
+    "rss_delta": 12464128
+   },
+   "empty-8": {
+    "engine_bytes": 4718592,
+    "heap_delta": 94448,
+    "rss_after": 9523200,
+    "rss_delta": 2273280
+   },
+   "setup-1": {
+    "engine_bytes": 1572864,
+    "heap_delta": 10576,
+    "rss_after": 10022912,
+    "rss_delta": 1159168
+   },
+   "setup-40": {
+    "engine_bytes": 62914560,
+    "heap_delta": 506736,
+    "rss_after": 63832064,
+    "rss_delta": 55066624
+   },
+   "setup-8": {
+    "engine_bytes": 12582912,
+    "heap_delta": 94992,
+    "rss_after": 19791872,
+    "rss_delta": 10952704
+   }
+  },
+  "dquickts": {
+   "empty-1": {
+    "engine_bytes": 165216,
+    "heap_delta": 162624,
+    "rss_after": 3076096,
+    "rss_delta": 0
+   },
+   "empty-40": {
+    "engine_bytes": 6607392,
+    "heap_delta": 6646640,
+    "rss_after": 10231808,
+    "rss_delta": 7188480
+   },
+   "empty-8": {
+    "engine_bytes": 1321504,
+    "heap_delta": 1322896,
+    "rss_after": 4890624,
+    "rss_delta": 1880064
+   },
+   "setup-1": {
+    "engine_bytes": 467472,
+    "heap_delta": 467456,
+    "rss_after": 4812800,
+    "rss_delta": 0
+   },
+   "setup-40": {
+    "engine_bytes": 18698304,
+    "heap_delta": 18768896,
+    "rss_after": 23228416,
+    "rss_delta": 18440192
+   },
+   "setup-8": {
+    "engine_bytes": 3739664,
+    "heap_delta": 3759568,
+    "rss_after": 8216576,
+    "rss_delta": 3358720
+   }
+  },
+  "mm-native": {
+   "empty-1": {
+    "engine_bytes": 0,
+    "heap_delta": 109440,
+    "rss_after": 2752512,
+    "rss_delta": 0
+   },
+   "empty-40": {
+    "engine_bytes": 0,
+    "heap_delta": 4585200,
+    "rss_after": 6520832,
+    "rss_delta": 3624960
+   },
+   "empty-8": {
+    "engine_bytes": 0,
+    "heap_delta": 896576,
+    "rss_after": 4173824,
+    "rss_delta": 1339392
+   },
+   "setup-1": {
+    "engine_bytes": 0,
+    "heap_delta": 121904,
+    "rss_after": 4534272,
+    "rss_delta": 0
+   },
+   "setup-40": {
+    "engine_bytes": 0,
+    "heap_delta": 5085104,
+    "rss_after": 8081408,
+    "rss_delta": 5287936
+   },
+   "setup-8": {
+    "engine_bytes": 0,
+    "heap_delta": 1007040,
+    "rss_after": 5263360,
+    "rss_delta": 2285568
+   }
+  },
+  "mm-wasm": {
+   "empty-1": {
+    "engine_bytes": 1507328,
+    "heap_delta": 32048,
+    "rss_after": 9453568,
+    "rss_delta": 0
+   },
+   "empty-40": {
+    "engine_bytes": 60293120,
+    "heap_delta": 1441536,
+    "rss_after": 21884928,
+    "rss_delta": 12218368
+   },
+   "empty-8": {
+    "engine_bytes": 12058624,
+    "heap_delta": 272832,
+    "rss_after": 11382784,
+    "rss_delta": 1945600
+   },
+   "setup-1": {
+    "engine_bytes": 1507328,
+    "heap_delta": 32896,
+    "rss_after": 11898880,
+    "rss_delta": 0
+   },
+   "setup-40": {
+    "engine_bytes": 60293120,
+    "heap_delta": 1453808,
+    "rss_after": 29937664,
+    "rss_delta": 18341888
+   },
+   "setup-8": {
+    "engine_bytes": 12058624,
+    "heap_delta": 278400,
+    "rss_after": 15216640,
+    "rss_delta": 3366912
+   }
+  },
+  "quickjs-wasi": {
+   "empty-1": {
+    "engine_bytes": 1376256,
+    "heap_delta": 41600,
+    "rss_after": 8757248,
+    "rss_delta": 0
+   },
+   "empty-40": {
+    "engine_bytes": 55050240,
+    "heap_delta": 1791696,
+    "rss_after": 21536768,
+    "rss_delta": 12742656
+   },
+   "empty-8": {
+    "engine_bytes": 11010048,
+    "heap_delta": 353344,
+    "rss_after": 11321344,
+    "rss_delta": 2437120
+   },
+   "setup-1": {
+    "engine_bytes": 1638400,
+    "heap_delta": 45312,
+    "rss_after": 9940992,
+    "rss_delta": 368640
+   },
+   "setup-40": {
+    "engine_bytes": 65536000,
+    "heap_delta": 1797248,
+    "rss_after": 34299904,
+    "rss_delta": 24797184
+   },
+   "setup-8": {
+    "engine_bytes": 13107200,
+    "heap_delta": 357392,
+    "rss_after": 14450688,
+    "rss_delta": 4898816
+   }
+  },
+  "rquickjs": {
+   "empty-1": {
+    "engine_bytes": 107376,
+    "heap_delta": 161152,
+    "rss_after": 3014656,
+    "rss_delta": 0
+   },
+   "empty-40": {
+    "engine_bytes": 4294432,
+    "heap_delta": 6735712,
+    "rss_after": 10276864,
+    "rss_delta": 7311360
+   },
+   "empty-8": {
+    "engine_bytes": 858912,
+    "heap_delta": 1338576,
+    "rss_after": 4845568,
+    "rss_delta": 1818624
+   },
+   "setup-1": {
+    "engine_bytes": 362872,
+    "heap_delta": 438256,
+    "rss_after": 4440064,
+    "rss_delta": 139264
+   },
+   "setup-40": {
+    "engine_bytes": 14515072,
+    "heap_delta": 17783392,
+    "rss_after": 21864448,
+    "rss_delta": 17457152
+   },
+   "setup-8": {
+    "engine_bytes": 2903104,
+    "heap_delta": 3557840,
+    "rss_after": 7409664,
+    "rss_delta": 3112960
+   }
+  }
+ },
+ "polling": {
+  "djs": {
+   "fib": {
+    "overhead": 0.08306523873920035,
+    "plain_ns": 24195440.0,
+    "polled_ns": 26205240.0
+   },
+   "loop": {
+    "overhead": 0.045339759759297715,
+    "plain_ns": 113585582.0,
+    "polled_ns": 118735525.0
+   },
+   "sort": {
+    "overhead": -0.01991634132006359,
+    "plain_ns": 297121590.0,
+    "polled_ns": 291204015.0
+   }
+  },
+  "djs-wasm": {
+   "fib": {
+    "overhead": -0.007228010624376835,
+    "plain_ns": 52155153.0,
+    "polled_ns": 51778175.0
+   },
+   "loop": {
+    "overhead": -0.039942700833576095,
+    "plain_ns": 178747452.0,
+    "polled_ns": 171607796.0
+   },
+   "sort": {
+    "overhead": 0.013613608943007893,
+    "plain_ns": 526111043.0,
+    "polled_ns": 533273313.0
+   }
+  },
+  "dquickts": {
+   "fib": {
+    "overhead": 0.0392013922390535,
+    "plain_ns": 12312828.0,
+    "polled_ns": 12795508.0
+   },
+   "loop": {
+    "overhead": 0.00030628915912722654,
+    "plain_ns": 56766619.0,
+    "polled_ns": 56784006.0
+   },
+   "sort": {
+    "overhead": -0.021093404602133936,
+    "plain_ns": 156140133.0,
+    "polled_ns": 152846606.0
+   }
+  },
+  "mm-native": {
+   "fib": {
+    "overhead": 0.047681182689265134,
+    "plain_ns": 16038025.0,
+    "polled_ns": 16802737.0
+   },
+   "loop": {
+    "overhead": 0.0011431803939285778,
+    "plain_ns": 48128887.0,
+    "polled_ns": 48183907.0
+   },
+   "sort": {
+    "overhead": 0.005599777301389386,
+    "plain_ns": 104543086.0,
+    "polled_ns": 105128504.0
+   }
+  },
+  "mm-wasm": {
+   "fib": {
+    "overhead": 0.03244457483923835,
+    "plain_ns": 35638778.0,
+    "polled_ns": 36795063.0
+   },
+   "loop": {
+    "overhead": -0.008935178919630138,
+    "plain_ns": 99212339.0,
+    "polled_ns": 98325859.0
+   },
+   "sort": {
+    "overhead": 0.0006999991678509065,
+    "plain_ns": 186144507.0,
+    "polled_ns": 186274808.0
+   }
+  },
+  "quickjs-wasi": {
+   "fib": {
+    "overhead": 0.03469368931404859,
+    "plain_ns": 46554432.0,
+    "polled_ns": 48169577.0
+   },
+   "loop": {
+    "overhead": 0.030993974871159402,
+    "plain_ns": 233389200.0,
+    "polled_ns": 240622859.0
+   },
+   "sort": {
+    "overhead": 0.0028792726205839614,
+    "plain_ns": 404704991.0,
+    "polled_ns": 405870247.0
+   }
+  },
+  "rquickjs": {
+   "fib": {
+    "overhead": -0.005501945563809674,
+    "plain_ns": 38387330.0,
+    "polled_ns": 38176125.0
+   },
+   "loop": {
+    "overhead": -0.01463351616801789,
+    "plain_ns": 112241650.0,
+    "polled_ns": 110599160.0
+   },
+   "sort": {
+    "overhead": 0.01469791627844419,
+    "plain_ns": 275776098.0,
+    "polled_ns": 279829432.0
+   }
+  }
+ },
+ "snapshot": {
+  "djs": {
+   "agg-avg-order-by-tier@3": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 10, \"misses\": []}"
+    ],
+    "kind": "raw heap image (Vm::image, in-process format)",
+    "raw_bytes": 398184,
+    "restore_ns": 227766.5,
+    "snapshot_ns": 8864.5,
+    "zstd1_bytes": 107543
+   },
+   "neg-fanout-40@0": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 41, \"misses\": []}"
+    ],
+    "kind": "raw heap image (Vm::image, in-process format)",
+    "raw_bytes": 397856,
+    "restore_ns": 236692.0,
+    "snapshot_ns": 10494.0,
+    "zstd1_bytes": 103896
+   },
+   "par-two-level-fanout@1": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 23, \"misses\": []}"
+    ],
+    "kind": "raw heap image (Vm::image, in-process format)",
+    "raw_bytes": 761784,
+    "restore_ns": 602127.5,
+    "snapshot_ns": 19914.5,
+    "zstd1_bytes": 142724
+   }
+  },
+  "dquickts": {
+   "agg-avg-order-by-tier@3": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 10, \"misses\": []}"
+    ],
+    "kind": "heap snapshot (JS_WriteSnapshot, mid-await)",
+    "raw_bytes": 68799,
+    "restore_ns": 381466.5,
+    "snapshot_ns": 337706.0,
+    "zstd1_bytes": 30934
+   },
+   "neg-fanout-40@0": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 41, \"misses\": []}"
+    ],
+    "kind": "heap snapshot (JS_WriteSnapshot, mid-await)",
+    "raw_bytes": 68406,
+    "restore_ns": 405051.5,
+    "snapshot_ns": 345679.5,
+    "zstd1_bytes": 29115
+   },
+   "par-two-level-fanout@1": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 23, \"misses\": []}"
+    ],
+    "kind": "heap snapshot (JS_WriteSnapshot, mid-await)",
+    "raw_bytes": 63681,
+    "restore_ns": 339888.5,
+    "snapshot_ns": 331010.0,
+    "zstd1_bytes": 28494
+   }
+  },
+  "mm-native": {
+   "agg-avg-order-by-tier@3": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 7, \"misses\": []}"
+    ],
+    "kind": "full image (mid-await)",
+    "raw_bytes": 144586,
+    "restore_ns": 138721.0,
+    "snapshot_ns": 117251.5,
+    "zstd1_bytes": 26655
+   },
+   "neg-fanout-40@0": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 41, \"misses\": []}"
+    ],
+    "kind": "full image (mid-await)",
+    "raw_bytes": 69535,
+    "restore_ns": 77089.5,
+    "snapshot_ns": 56295.0,
+    "zstd1_bytes": 16249
+   },
+   "par-two-level-fanout@1": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 14, \"misses\": []}"
+    ],
+    "kind": "full image (mid-await)",
+    "raw_bytes": 170197,
+    "restore_ns": 209141.5,
+    "snapshot_ns": 143637.0,
+    "zstd1_bytes": 39699
+   }
+  },
+  "mm-wasm": {
+   "agg-avg-order-by-tier@3": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 7, \"misses\": []}"
+    ],
+    "kind": "full image (mid-await)",
+    "raw_bytes": 149652,
+    "restore_ns": 564018.5,
+    "snapshot_ns": 373508.0,
+    "zstd1_bytes": 29008
+   },
+   "neg-fanout-40@0": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 41, \"misses\": []}"
+    ],
+    "kind": "full image (mid-await)",
+    "raw_bytes": 73239,
+    "restore_ns": 358612.0,
+    "snapshot_ns": 223997.0,
+    "zstd1_bytes": 18216
+   },
+   "par-two-level-fanout@1": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 14, \"misses\": []}"
+    ],
+    "kind": "full image (mid-await)",
+    "raw_bytes": 174944,
+    "restore_ns": 1187441.5,
+    "snapshot_ns": 432273.0,
+    "zstd1_bytes": 41955
+   }
+  },
+  "quickjs-wasi": {
+   "agg-avg-order-by-tier@3": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 10, \"misses\": []}"
+    ],
+    "kind": "linear memory (QuickJS.snapshot, mid-await)",
+    "raw_bytes": 1638440,
+    "restore_ns": 614168.5,
+    "snapshot_ns": 429221.5,
+    "zstd1_bytes": 208677
+   },
+   "neg-fanout-40@0": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 41, \"misses\": []}"
+    ],
+    "kind": "linear memory (QuickJS.snapshot, mid-await)",
+    "raw_bytes": 1638440,
+    "restore_ns": 638048.0,
+    "snapshot_ns": 60533.0,
+    "zstd1_bytes": 209131
+   },
+   "par-two-level-fanout@1": {
+    "finished": [
+     "{\"ok\": true, \"error\": null, \"calls_after_restore\": 23, \"misses\": []}"
+    ],
+    "kind": "linear memory (QuickJS.snapshot, mid-await)",
+    "raw_bytes": 1638440,
+    "restore_ns": 591143.5,
+    "snapshot_ns": 424528.0,
+    "zstd1_bytes": 205717
+   }
+  }
+ },
+ "startup": {
+  "djs": {
+   "first_cell_ns": 41676.5,
+   "image_first_cell_ns": 24882.0,
+   "image_ns": 36031.5,
+   "runtime_ns": 49.0,
+   "session_ns": 15062.0,
+   "setup_ns": 5130303.5
+  },
+  "djs-wasm": {
+   "first_cell_ns": 22576.5,
+   "runtime_ns": 3791434.0,
+   "session_ns": 140166.5,
+   "setup_ns": 11140547.0
+  },
+  "dquickts": {
+   "first_cell_ns": 23036.5,
+   "image_first_cell_ns": 19899.0,
+   "image_ns": 349647.5,
+   "runtime_ns": 55.0,
+   "session_ns": 106363.0,
+   "setup_ns": 3203231.5
+  },
+  "mm-native": {
+   "first_cell_ns": 23333.5,
+   "image_first_cell_ns": 36884.0,
+   "image_ns": 146251.5,
+   "runtime_ns": 22223.0,
+   "session_ns": 44144.0,
+   "setup_ns": 52739.5
+  },
+  "mm-wasm": {
+   "first_cell_ns": 50213.0,
+   "image_first_cell_ns": 74722.0,
+   "image_ns": 480328.0,
+   "runtime_ns": 2710939.0,
+   "session_ns": 143018.5,
+   "setup_ns": 436177.5
+  },
+  "quickjs-wasi": {
+   "first_cell_ns": 77487.0,
+   "image_first_cell_ns": 90550.5,
+   "image_ns": 672989.0,
+   "runtime_ns": 3127758.0,
+   "session_ns": 360643.0,
+   "setup_ns": 9339886.0
+  },
+  "rquickjs": {
+   "first_cell_ns": 26336.5,
+   "runtime_ns": 50.0,
+   "session_ns": 116935.0,
+   "setup_ns": 3982294.5
+  }
+ },
+ "workload": {
+  "djs": {
+   "agg-avg-order-by-tier": {
+    "ns": 5508184.0,
+    "run_ns": 941348.0,
+    "setup_ns": 4598701.0
+   },
+   "agg-customer-summary": {
+    "ns": 4916316.0,
+    "run_ns": 243741.0,
+    "setup_ns": 4678314.0
+   },
+   "agg-revenue-by-region": {
+    "ns": 5249342.0,
+    "run_ns": 133191.0,
+    "setup_ns": 5116151.0
+   },
+   "agg-top-customers": {
+    "ns": 4878249.0,
+    "run_ns": 135984.0,
+    "setup_ns": 4747580.0
+   },
+   "logs-access-top-ips": {
+    "ns": 6460561.0,
+    "run_ns": 1304302.0,
+    "setup_ns": 5146915.0
+   },
+   "logs-errors-per-service": {
+    "ns": 5746985.0,
+    "run_ns": 964395.0,
+    "setup_ns": 4779129.0
+   },
+   "neg-fanout-40": {
+    "ns": 5547232.0,
+    "run_ns": 788524.0,
+    "setup_ns": 4794488.0
+   },
+   "page-accounts-offset": {
+    "ns": 5728096.0,
+    "run_ns": 549474.0,
+    "setup_ns": 5149933.0
+   },
+   "page-all-pending": {
+    "ns": 4834892.0,
+    "run_ns": 229507.0,
+    "setup_ns": 4570332.0
+   },
+   "page-feb-orders": {
+    "ns": 5515169.0,
+    "run_ns": 282857.0,
+    "setup_ns": 5198669.0
+   },
+   "page-open-bugs": {
+    "ns": 4794044.0,
+    "run_ns": 162191.0,
+    "setup_ns": 4622490.0
+   },
+   "par-two-level-fanout": {
+    "ns": 5641467.0,
+    "run_ns": 709996.0,
+    "setup_ns": 4923192.0
+   },
+   "par-weather-warmest": {
+    "ns": 4879718.0,
+    "run_ns": 217364.0,
+    "setup_ns": 4667025.0
+   },
+   "rep-quotes-csv": {
+    "ns": 4871414.0,
+    "run_ns": 237437.0,
+    "setup_ns": 4647729.0
+   },
+   "reshape-nested-counts": {
+    "ns": 5676239.0,
+    "run_ns": 581666.0,
+    "setup_ns": 5085121.0
+   },
+   "retry-backoff": {
+    "ns": 4837913.0,
+    "run_ns": 184039.0,
+    "setup_ns": 4644244.0
+   },
+   "retry-gather-flaky": {
+    "ns": 5723891.0,
+    "run_ns": 669455.0,
+    "setup_ns": 5034529.0
+   },
+   "retry-give-up": {
+    "ns": 4949126.0,
+    "run_ns": 333174.0,
+    "setup_ns": 4615952.0
+   },
+   "retry-permanent-errors": {
+    "ns": 4919068.0,
+    "run_ns": 256645.0,
+    "setup_ns": 4634518.0
+   },
+   "stat-max-drawdown": {
+    "ns": 5175810.0,
+    "run_ns": 606167.0,
+    "setup_ns": 4544928.0
+   },
+   "wf-close-fixed": {
+    "ns": 5281257.0,
+    "run_ns": 646172.0,
+    "setup_ns": 4612950.0
+   },
+   "wf-customer-latest-order": {
+    "ns": 5456650.0,
+    "run_ns": 302520.0,
+    "setup_ns": 5156810.0
+   }
+  },
+  "dquickts": {
+   "agg-avg-order-by-tier": {
+    "ns": 3795948.0,
+    "run_ns": 667323.0,
+    "setup_ns": 3104284.0
+   },
+   "agg-customer-summary": {
+    "ns": 3200079.0,
+    "run_ns": 169728.0,
+    "setup_ns": 3030351.0
+   },
+   "agg-revenue-by-region": {
+    "ns": 3041482.0,
+    "run_ns": 91274.0,
+    "setup_ns": 2950208.0
+   },
+   "agg-top-customers": {
+    "ns": 3197249.0,
+    "run_ns": 108855.0,
+    "setup_ns": 3105259.0
+   },
+   "logs-access-top-ips": {
+    "ns": 4375913.0,
+    "run_ns": 974725.0,
+    "setup_ns": 3383280.0
+   },
+   "logs-errors-per-service": {
+    "ns": 3582675.0,
+    "run_ns": 581132.0,
+    "setup_ns": 2971872.0
+   },
+   "neg-fanout-40": {
+    "ns": 3406509.0,
+    "run_ns": 415502.0,
+    "setup_ns": 2968596.0
+   },
+   "page-accounts-offset": {
+    "ns": 3655990.0,
+    "run_ns": 265324.0,
+    "setup_ns": 3378405.0
+   },
+   "page-all-pending": {
+    "ns": 3162322.0,
+    "run_ns": 169182.0,
+    "setup_ns": 2981272.0
+   },
+   "page-feb-orders": {
+    "ns": 3218814.0,
+    "run_ns": 173819.0,
+    "setup_ns": 3053749.0
+   },
+   "page-open-bugs": {
+    "ns": 3168527.0,
+    "run_ns": 114918.0,
+    "setup_ns": 3051703.0
+   },
+   "par-two-level-fanout": {
+    "ns": 3359517.0,
+    "run_ns": 318472.0,
+    "setup_ns": 3041984.0
+   },
+   "par-weather-warmest": {
+    "ns": 3126438.0,
+    "run_ns": 147293.0,
+    "setup_ns": 2968978.0
+   },
+   "rep-quotes-csv": {
+    "ns": 3183839.0,
+    "run_ns": 161124.0,
+    "setup_ns": 3017697.0
+   },
+   "reshape-nested-counts": {
+    "ns": 3309956.0,
+    "run_ns": 270680.0,
+    "setup_ns": 3022383.0
+   },
+   "retry-backoff": {
+    "ns": 3004684.0,
+    "run_ns": 103323.0,
+    "setup_ns": 2904573.0
+   },
+   "retry-gather-flaky": {
+    "ns": 3313225.0,
+    "run_ns": 327318.0,
+    "setup_ns": 3022828.0
+   },
+   "retry-give-up": {
+    "ns": 3134577.0,
+    "run_ns": 205472.0,
+    "setup_ns": 2924434.0
+   },
+   "retry-permanent-errors": {
+    "ns": 3161241.0,
+    "run_ns": 168684.0,
+    "setup_ns": 2999430.0
+   },
+   "stat-max-drawdown": {
+    "ns": 3293275.0,
+    "run_ns": 407094.0,
+    "setup_ns": 2923915.0
+   },
+   "wf-close-fixed": {
+    "ns": 3290815.0,
+    "run_ns": 330795.0,
+    "setup_ns": 2960020.0
+   },
+   "wf-customer-latest-order": {
+    "ns": 3576835.0,
+    "run_ns": 225547.0,
+    "setup_ns": 3350343.0
+   }
+  },
+  "mm-native": {
+   "agg-avg-order-by-tier": {
+    "ns": 1143297.0,
+    "run_ns": 1006510.0,
+    "setup_ns": 127634.0
+   },
+   "agg-customer-summary": {
+    "ns": 312688.0,
+    "run_ns": 200267.0,
+    "setup_ns": 109123.0
+   },
+   "agg-revenue-by-region": {
+    "ns": 173471.0,
+    "run_ns": 83737.0,
+    "setup_ns": 89330.0
+   },
+   "agg-top-customers": {
+    "ns": 190240.0,
+    "run_ns": 100833.0,
+    "setup_ns": 92560.0
+   },
+   "logs-access-top-ips": {
+    "ns": 1947472.0,
+    "run_ns": 1846255.0,
+    "setup_ns": 116885.0
+   },
+   "logs-errors-per-service": {
+    "ns": 1548330.0,
+    "run_ns": 1414682.0,
+    "setup_ns": 130057.0
+   },
+   "neg-fanout-40": {
+    "ns": 529721.0,
+    "run_ns": 430316.0,
+    "setup_ns": 101336.0
+   },
+   "page-accounts-offset": {
+    "ns": 452795.0,
+    "run_ns": 352860.0,
+    "setup_ns": 99161.0
+   },
+   "page-all-pending": {
+    "ns": 329139.0,
+    "run_ns": 227005.0,
+    "setup_ns": 102866.0
+   },
+   "page-feb-orders": {
+    "ns": 580201.0,
+    "run_ns": 489974.0,
+    "setup_ns": 101020.0
+   },
+   "page-open-bugs": {
+    "ns": 218274.0,
+    "run_ns": 127450.0,
+    "setup_ns": 85000.0
+   },
+   "par-two-level-fanout": {
+    "ns": 723951.0,
+    "run_ns": 606542.0,
+    "setup_ns": 112579.0
+   },
+   "par-weather-warmest": {
+    "ns": 309424.0,
+    "run_ns": 212173.0,
+    "setup_ns": 93533.0
+   },
+   "rep-quotes-csv": {
+    "ns": 271107.0,
+    "run_ns": 178372.0,
+    "setup_ns": 83778.0
+   },
+   "reshape-nested-counts": {
+    "ns": 780977.0,
+    "run_ns": 668258.0,
+    "setup_ns": 104516.0
+   },
+   "retry-backoff": {
+    "ns": 231086.0,
+    "run_ns": 141025.0,
+    "setup_ns": 89147.0
+   },
+   "retry-gather-flaky": {
+    "ns": 444033.0,
+    "run_ns": 328055.0,
+    "setup_ns": 98950.0
+   },
+   "retry-give-up": {
+    "ns": 381155.0,
+    "run_ns": 286248.0,
+    "setup_ns": 97707.0
+   },
+   "retry-permanent-errors": {
+    "ns": 323245.0,
+    "run_ns": 221058.0,
+    "setup_ns": 97706.0
+   },
+   "stat-max-drawdown": {
+    "ns": 535830.0,
+    "run_ns": 426897.0,
+    "setup_ns": 100821.0
+   },
+   "wf-close-fixed": {
+    "ns": 646294.0,
+    "run_ns": 507492.0,
+    "setup_ns": 134112.0
+   },
+   "wf-customer-latest-order": {
+    "ns": 440967.0,
+    "run_ns": 307793.0,
+    "setup_ns": 134297.0
+   }
+  },
+  "mm-wasm": {
+   "agg-avg-order-by-tier": {
+    "ns": 2669111.0,
+    "run_ns": 1959523.0,
+    "setup_ns": 709588.0
+   },
+   "agg-customer-summary": {
+    "ns": 1028914.0,
+    "run_ns": 387807.0,
+    "setup_ns": 688161.0
+   },
+   "agg-revenue-by-region": {
+    "ns": 757833.0,
+    "run_ns": 175037.0,
+    "setup_ns": 581165.0
+   },
+   "agg-top-customers": {
+    "ns": 785524.0,
+    "run_ns": 196733.0,
+    "setup_ns": 581434.0
+   },
+   "logs-access-top-ips": {
+    "ns": 5829733.0,
+    "run_ns": 5202271.0,
+    "setup_ns": 634288.0
+   },
+   "logs-errors-per-service": {
+    "ns": 4075188.0,
+    "run_ns": 3379052.0,
+    "setup_ns": 689809.0
+   },
+   "neg-fanout-40": {
+    "ns": 1653221.0,
+    "run_ns": 1005621.0,
+    "setup_ns": 623159.0
+   },
+   "page-accounts-offset": {
+    "ns": 1552019.0,
+    "run_ns": 905357.0,
+    "setup_ns": 639492.0
+   },
+   "page-all-pending": {
+    "ns": 1142541.0,
+    "run_ns": 530563.0,
+    "setup_ns": 607221.0
+   },
+   "page-feb-orders": {
+    "ns": 2211835.0,
+    "run_ns": 1617110.0,
+    "setup_ns": 636395.0
+   },
+   "page-open-bugs": {
+    "ns": 817174.0,
+    "run_ns": 259218.0,
+    "setup_ns": 549226.0
+   },
+   "par-two-level-fanout": {
+    "ns": 2413145.0,
+    "run_ns": 1723692.0,
+    "setup_ns": 712905.0
+   },
+   "par-weather-warmest": {
+    "ns": 1330993.0,
+    "run_ns": 689519.0,
+    "setup_ns": 623158.0
+   },
+   "rep-quotes-csv": {
+    "ns": 963277.0,
+    "run_ns": 393002.0,
+    "setup_ns": 556712.0
+   },
+   "reshape-nested-counts": {
+    "ns": 2358079.0,
+    "run_ns": 1785480.0,
+    "setup_ns": 585906.0
+   },
+   "retry-backoff": {
+    "ns": 842225.0,
+    "run_ns": 281881.0,
+    "setup_ns": 567651.0
+   },
+   "retry-gather-flaky": {
+    "ns": 1162046.0,
+    "run_ns": 603388.0,
+    "setup_ns": 562627.0
+   },
+   "retry-give-up": {
+    "ns": 1071694.0,
+    "run_ns": 514485.0,
+    "setup_ns": 562194.0
+   },
+   "retry-permanent-errors": {
+    "ns": 980818.0,
+    "run_ns": 413528.0,
+    "setup_ns": 547282.0
+   },
+   "stat-max-drawdown": {
+    "ns": 1520619.0,
+    "run_ns": 951115.0,
+    "setup_ns": 579822.0
+   },
+   "wf-close-fixed": {
+    "ns": 1791293.0,
+    "run_ns": 1051509.0,
+    "setup_ns": 764883.0
+   },
+   "wf-customer-latest-order": {
+    "ns": 1448708.0,
+    "run_ns": 660385.0,
+    "setup_ns": 759987.0
+   }
+  },
+  "quickjs-wasi": {
+   "agg-avg-order-by-tier": {
+    "ns": 10616383.0,
+    "run_ns": 2027191.0,
+    "setup_ns": 8433228.0
+   },
+   "agg-customer-summary": {
+    "ns": 8740202.0,
+    "run_ns": 386951.0,
+    "setup_ns": 8347987.0
+   },
+   "agg-revenue-by-region": {
+    "ns": 8855375.0,
+    "run_ns": 242512.0,
+    "setup_ns": 8619561.0
+   },
+   "agg-top-customers": {
+    "ns": 10004128.0,
+    "run_ns": 298190.0,
+    "setup_ns": 9710224.0
+   },
+   "logs-access-top-ips": {
+    "ns": 12322861.0,
+    "run_ns": 2618311.0,
+    "setup_ns": 9664770.0
+   },
+   "logs-errors-per-service": {
+    "ns": 10453018.0,
+    "run_ns": 1731188.0,
+    "setup_ns": 8724566.0
+   },
+   "neg-fanout-40": {
+    "ns": 10597169.0,
+    "run_ns": 1741357.0,
+    "setup_ns": 8978586.0
+   },
+   "page-accounts-offset": {
+    "ns": 9230216.0,
+    "run_ns": 684710.0,
+    "setup_ns": 8550664.0
+   },
+   "page-all-pending": {
+    "ns": 9377505.0,
+    "run_ns": 465891.0,
+    "setup_ns": 8952062.0
+   },
+   "page-feb-orders": {
+    "ns": 9293679.0,
+    "run_ns": 491652.0,
+    "setup_ns": 8800664.0
+   },
+   "page-open-bugs": {
+    "ns": 8981212.0,
+    "run_ns": 268225.0,
+    "setup_ns": 8717318.0
+   },
+   "par-two-level-fanout": {
+    "ns": 10193912.0,
+    "run_ns": 1132916.0,
+    "setup_ns": 8926523.0
+   },
+   "par-weather-warmest": {
+    "ns": 9024537.0,
+    "run_ns": 455008.0,
+    "setup_ns": 8540421.0
+   },
+   "rep-quotes-csv": {
+    "ns": 8957805.0,
+    "run_ns": 473557.0,
+    "setup_ns": 8469119.0
+   },
+   "reshape-nested-counts": {
+    "ns": 9361191.0,
+    "run_ns": 662265.0,
+    "setup_ns": 8595306.0
+   },
+   "retry-backoff": {
+    "ns": 8670497.0,
+    "run_ns": 323599.0,
+    "setup_ns": 8357128.0
+   },
+   "retry-gather-flaky": {
+    "ns": 9631236.0,
+    "run_ns": 921698.0,
+    "setup_ns": 8716617.0
+   },
+   "retry-give-up": {
+    "ns": 8901821.0,
+    "run_ns": 653967.0,
+    "setup_ns": 8254434.0
+   },
+   "retry-permanent-errors": {
+    "ns": 9057670.0,
+    "run_ns": 472665.0,
+    "setup_ns": 8626442.0
+   },
+   "stat-max-drawdown": {
+    "ns": 9461339.0,
+    "run_ns": 1183011.0,
+    "setup_ns": 8263813.0
+   },
+   "wf-close-fixed": {
+    "ns": 9646495.0,
+    "run_ns": 1110047.0,
+    "setup_ns": 8579333.0
+   },
+   "wf-customer-latest-order": {
+    "ns": 8969426.0,
+    "run_ns": 533525.0,
+    "setup_ns": 8311771.0
+   }
+  },
+  "rquickjs": {
+   "agg-avg-order-by-tier": {
+    "ns": 4468720.0,
+    "run_ns": 765835.0,
+    "setup_ns": 3693752.0
+   },
+   "agg-customer-summary": {
+    "ns": 3751348.0,
+    "run_ns": 171683.0,
+    "setup_ns": 3594347.0
+   },
+   "agg-revenue-by-region": {
+    "ns": 4018389.0,
+    "run_ns": 103338.0,
+    "setup_ns": 3918306.0
+   },
+   "agg-top-customers": {
+    "ns": 3981669.0,
+    "run_ns": 121494.0,
+    "setup_ns": 3862449.0
+   },
+   "logs-access-top-ips": {
+    "ns": 5198617.0,
+    "run_ns": 1138441.0,
+    "setup_ns": 4080368.0
+   },
+   "logs-errors-per-service": {
+    "ns": 4516378.0,
+    "run_ns": 700560.0,
+    "setup_ns": 3724567.0
+   },
+   "neg-fanout-40": {
+    "ns": 4758362.0,
+    "run_ns": 538289.0,
+    "setup_ns": 4086189.0
+   },
+   "page-accounts-offset": {
+    "ns": 3960703.0,
+    "run_ns": 278804.0,
+    "setup_ns": 3703600.0
+   },
+   "page-all-pending": {
+    "ns": 3908262.0,
+    "run_ns": 181825.0,
+    "setup_ns": 3713520.0
+   },
+   "page-feb-orders": {
+    "ns": 3854875.0,
+    "run_ns": 212529.0,
+    "setup_ns": 3646787.0
+   },
+   "page-open-bugs": {
+    "ns": 3775567.0,
+    "run_ns": 121669.0,
+    "setup_ns": 3656830.0
+   },
+   "par-two-level-fanout": {
+    "ns": 3998146.0,
+    "run_ns": 341208.0,
+    "setup_ns": 3635461.0
+   },
+   "par-weather-warmest": {
+    "ns": 3993502.0,
+    "run_ns": 176171.0,
+    "setup_ns": 3830411.0
+   },
+   "rep-quotes-csv": {
+    "ns": 3820348.0,
+    "run_ns": 163096.0,
+    "setup_ns": 3651738.0
+   },
+   "reshape-nested-counts": {
+    "ns": 3841889.0,
+    "run_ns": 293836.0,
+    "setup_ns": 3559808.0
+   },
+   "retry-backoff": {
+    "ns": 3769490.0,
+    "run_ns": 119922.0,
+    "setup_ns": 3646672.0
+   },
+   "retry-gather-flaky": {
+    "ns": 3939485.0,
+    "run_ns": 330884.0,
+    "setup_ns": 3578454.0
+   },
+   "retry-give-up": {
+    "ns": 3737231.0,
+    "run_ns": 215063.0,
+    "setup_ns": 3511720.0
+   },
+   "retry-permanent-errors": {
+    "ns": 3756279.0,
+    "run_ns": 179163.0,
+    "setup_ns": 3591006.0
+   },
+   "stat-max-drawdown": {
+    "ns": 4045157.0,
+    "run_ns": 425907.0,
+    "setup_ns": 3609565.0
+   },
+   "wf-close-fixed": {
+    "ns": 3926963.0,
+    "run_ns": 382208.0,
+    "setup_ns": 3565810.0
+   },
+   "wf-customer-latest-order": {
+    "ns": 4368990.0,
+    "run_ns": 255271.0,
+    "setup_ns": 4058447.0
+   }
+  }
+ }
+}

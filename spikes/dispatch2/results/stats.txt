@@ -1,0 +1,7 @@
+fib dispatched 5402781 ticks 635621 result 196418
+loop dispatched 18000008 ticks 3000000 result 4499998500000
+closure dispatched 9000018 ticks 2000001 result 3000000
+callfn dispatched 9000015 ticks 2000001 result 1000000
+dictint dispatched 3000018 ticks 400000 result 200000 19999900000
+loopfn dispatched 4000013 ticks 1000001 result 1000000
+empty dispatched 2 ticks 0 result None

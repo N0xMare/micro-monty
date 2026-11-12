@@ -1,0 +1,159 @@
+[package]
+name = "micro-monty"
+description = "Small, fast, durable Python-subset sandbox engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+exclude.workspace = true
+keywords = ["python", "sandbox", "interpreter", "wasm", "agents"]
+categories = ["development-tools", "wasm", "compilers"]
+
+[dependencies]
+mm-core.workspace = true
+mm-compile.workspace = true
+mm-engine.workspace = true
+mm-parse.workspace = true
+mm-stdlib.workspace = true
+
+[features]
+# The prelude and bundled modules' bytecode read from the host
+# (`set_bundle_reader`) instead of linked in: the mm-wasm bundle guest.
+host-bundle = ["mm-stdlib/host-bundle"]
+# The default module set (docs/sdk.md, "Optional stdlib modules"); since
+# the codemode census (owner decisions D2 and S1, docs/HANDOFF.md) it
+# includes fractions, statistics, tomllib, decimal, numbers, contextvars,
+# calendar, hmac, zlib and zoneinfo. To leave modules out, turn off default
+# features and list the ones you want. `mod-ast`, `mod-uuid`,
+# `mod-unicodedata` and `mod-html-entities` are opt-in. A module brings the
+# modules it imports (`mod-datetime` brings `mod-time`, `mod-re`,
+# `mod-warnings` and `mod-operator`; mm-stdlib's build script checks the
+# graph). `math`, `cmath` and `sys` are always built, with no feature.
+# Module features are part of the build id.
+default = [
+    "mod-json",
+    "mod-re",
+    "mod-collections",
+    "mod-itertools",
+    "mod-functools",
+    "mod-datetime",
+    "mod-random",
+    "mod-asyncio",
+    "mod-typing",
+    "mod-base64",
+    "mod-hashlib",
+    "mod-dataclasses",
+    "mod-operator",
+    "mod-copy",
+    "mod-heapq",
+    "mod-bisect",
+    "mod-string",
+    "mod-textwrap",
+    "mod-enum",
+    "mod-abc",
+    "mod-binascii",
+    "mod-time",
+    "mod-os",
+    "mod-pathlib",
+    "mod-fnmatch",
+    "mod-posixpath",
+    "mod-csv",
+    "mod-io",
+    "mod-gc",
+    "mod-types",
+    "mod-contextlib",
+    "mod-traceback",
+    "mod-logging",
+    "mod-urllib",
+    "mod-pprint",
+    "mod-shlex",
+    "mod-difflib",
+    "mod-struct",
+    "mod-html",
+    "mod-warnings",
+    "mod-codecs",
+    "mod-platform",
+    "mod-tempfile",
+    "mod-decimal",
+    "mod-numbers",
+    "mod-contextvars",
+    "mod-fractions",
+    "mod-statistics",
+    "mod-tomllib",
+    "mod-calendar",
+    "mod-hmac",
+    "mod-zlib",
+    "mod-zoneinfo",
+    "mod-tokenize",
+]
+mod-abc = ["mm-stdlib/mod-abc"]
+mod-ast = ["mm-stdlib/mod-ast"]
+mod-asyncio = ["mm-stdlib/mod-asyncio"]
+mod-base64 = ["mm-stdlib/mod-base64"]
+mod-binascii = ["mm-stdlib/mod-binascii"]
+mod-bisect = ["mm-stdlib/mod-bisect"]
+mod-calendar = ["mm-stdlib/mod-calendar"]
+mod-codecs = ["mm-stdlib/mod-codecs"]
+mod-collections = ["mm-stdlib/mod-collections"]
+mod-contextlib = ["mm-stdlib/mod-contextlib"]
+mod-contextvars = ["mm-stdlib/mod-contextvars"]
+mod-copy = ["mm-stdlib/mod-copy"]
+mod-csv = ["mm-stdlib/mod-csv"]
+mod-dataclasses = ["mm-stdlib/mod-dataclasses"]
+mod-datetime = ["mm-stdlib/mod-datetime"]
+mod-decimal = ["mm-stdlib/mod-decimal"]
+mod-difflib = ["mm-stdlib/mod-difflib"]
+mod-enum = ["mm-stdlib/mod-enum"]
+mod-fnmatch = ["mm-stdlib/mod-fnmatch"]
+mod-fractions = ["mm-stdlib/mod-fractions"]
+mod-functools = ["mm-stdlib/mod-functools"]
+mod-gc = ["mm-stdlib/mod-gc"]
+mod-hashlib = ["mm-stdlib/mod-hashlib"]
+mod-heapq = ["mm-stdlib/mod-heapq"]
+mod-hmac = ["mm-stdlib/mod-hmac"]
+mod-html = ["mm-stdlib/mod-html"]
+mod-html-entities = ["mm-stdlib/mod-html-entities"]
+mod-io = ["mm-stdlib/mod-io"]
+mod-itertools = ["mm-stdlib/mod-itertools"]
+mod-json = ["mm-stdlib/mod-json"]
+mod-logging = ["mm-stdlib/mod-logging"]
+mod-numbers = ["mm-stdlib/mod-numbers"]
+mod-operator = ["mm-stdlib/mod-operator"]
+mod-os = ["mm-stdlib/mod-os"]
+mod-pathlib = ["mm-stdlib/mod-pathlib"]
+mod-platform = ["mm-stdlib/mod-platform"]
+mod-posixpath = ["mm-stdlib/mod-posixpath"]
+mod-pprint = ["mm-stdlib/mod-pprint"]
+mod-random = ["mm-stdlib/mod-random"]
+mod-re = ["mm-stdlib/mod-re"]
+mod-shlex = ["mm-stdlib/mod-shlex"]
+mod-statistics = ["mm-stdlib/mod-statistics"]
+mod-string = ["mm-stdlib/mod-string"]
+mod-struct = ["mm-stdlib/mod-struct"]
+mod-tempfile = ["mm-stdlib/mod-tempfile"]
+mod-textwrap = ["mm-stdlib/mod-textwrap"]
+mod-time = ["mm-stdlib/mod-time"]
+mod-tokenize = ["mm-stdlib/mod-tokenize"]
+mod-tomllib = ["mm-stdlib/mod-tomllib"]
+mod-traceback = ["mm-stdlib/mod-traceback"]
+mod-types = ["mm-stdlib/mod-types"]
+mod-typing = ["mm-stdlib/mod-typing"]
+mod-unicodedata = ["mm-stdlib/mod-unicodedata"]
+mod-urllib = ["mm-stdlib/mod-urllib"]
+mod-uuid = ["mm-stdlib/mod-uuid"]
+mod-warnings = ["mm-stdlib/mod-warnings"]
+mod-zlib = ["mm-stdlib/mod-zlib"]
+mod-zoneinfo = ["mm-stdlib/mod-zoneinfo"]
+# `test_hooks::panic_next`: injects a panic into a facade operation, for the
+# panic-containment test (tests/panics.rs). Never in shipping builds.
+test-hooks = []
+
+# The tests turn the hooks on for this crate's own test builds.
+[dev-dependencies]
+micro-monty = { path = ".", default-features = false, features = ["test-hooks"] }
+mm-wasm-alloc.workspace = true
+
+[lints]
+workspace = true

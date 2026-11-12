@@ -1,0 +1,11 @@
+call 1 lookup [Str("pear")]
+call 2 lookup [Str("fig")]
+call 3 lookup [Str("banana")]
+call 4 lookup [Str("kiwi")]
+output:
+[0, 1] [4, 20, (1, 'y'), [('a', 1), ('b', 2)], 2] 107 ['fig', 'pear', 'kiwi', 'banana']
+['ba', 'bytes', 'c', 'floats', 'ints', 'nested', 'r', 's', 'set'] 601 (1.5-2j) 11 slice(1, None, 2)
+OrderedDict({'a': 1, 'b': 2}) {'k': [1]} [('a', 5), ('b', 2)] deque([1, 2, 3], maxlen=5) Point(x=3, y=4) Point(x=9, y=4)
+["Shape('box', (2, 3, 4))", "Square('square', (5, 5))", "Square('square', (1, 1))"] [24, 25, 1] 5 Square 3
+KeyError('missing') ['ba', 'bytes', 'c', 'floats', 'ints', 'nested', 'r', 's', 'set'] {"k": [1, 2, {"x": null}]} bytearray(b'HELLO') 00ff6d6d
+complete Some("'4:fig'")

@@ -1,0 +1,27 @@
+[package]
+name = "mm-codemode"
+description = "Runs codemode solutions on micro-monty for conformance/codemode/run.py, answering tool calls over stdio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+exclude.workspace = true
+publish = false
+
+[dependencies]
+micro-monty.workspace = true
+serde_json.workspace = true
+
+[features]
+# The `full` configuration: every optional stdlib module (what `mm` enables).
+# Without it the runner has the default module set an embedder gets.
+optional-modules = [
+    "micro-monty/mod-uuid",
+    "micro-monty/mod-unicodedata",
+    "micro-monty/mod-html-entities",
+]
+
+[lints]
+workspace = true

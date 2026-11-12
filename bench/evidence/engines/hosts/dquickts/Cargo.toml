@@ -1,0 +1,28 @@
+[package]
+name = "engines-dquickts"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+# The rquickjs host's source, against dquickts's vendored rquickjs (Bellard
+# QuickJS with heap snapshots and suspension), with snapshots on.
+[[bin]]
+name = "engines-dquickts"
+path = "../rquickjs/src/main.rs"
+
+[features]
+default = ["snapshots"]
+snapshots = []
+
+[dependencies]
+common = { package = "engines-common", path = "../common" }
+rquickjs = { path = "/tmp/eng/dquickts/rquickjs", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

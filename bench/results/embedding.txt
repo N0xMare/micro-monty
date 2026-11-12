@@ -1,0 +1,291 @@
+run=1
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=272 max_ns=272
+[M] compile calls=7 total_ns=242906 max_ns=106336
+[M] host-fixture calls=13 total_ns=85114 max_ns=26402
+[M] new-session calls=1 total_ns=823351 max_ns=823351
+[M] query-cell calls=32 total_ns=1329634 max_ns=105049
+[M] reset calls=1 total_ns=40280 max_ns=40280
+[M] restore calls=6 total_ns=2096469 max_ns=670280
+[M] resume calls=16 total_ns=1038456 max_ns=236822
+[M] snapshot calls=6 total_ns=882360 max_ns=337943
+[M] start calls=38 total_ns=1706329 max_ns=104423
+run=2
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=205 max_ns=205
+[M] compile calls=7 total_ns=248948 max_ns=109072
+[M] host-fixture calls=13 total_ns=108521 max_ns=46577
+[M] new-session calls=1 total_ns=846659 max_ns=846659
+[M] query-cell calls=32 total_ns=1286273 max_ns=73696
+[M] reset calls=1 total_ns=39202 max_ns=39202
+[M] restore calls=6 total_ns=2244983 max_ns=673826
+[M] resume calls=16 total_ns=1085775 max_ns=289609
+[M] snapshot calls=6 total_ns=836342 max_ns=393738
+[M] start calls=38 total_ns=1646310 max_ns=77003
+run=3
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=190 max_ns=190
+[M] compile calls=7 total_ns=315534 max_ns=182545
+[M] host-fixture calls=13 total_ns=81008 max_ns=27296
+[M] new-session calls=1 total_ns=808739 max_ns=808739
+[M] query-cell calls=32 total_ns=1293546 max_ns=109232
+[M] reset calls=1 total_ns=35998 max_ns=35998
+[M] restore calls=6 total_ns=2085269 max_ns=720447
+[M] resume calls=16 total_ns=1062405 max_ns=239800
+[M] snapshot calls=6 total_ns=753552 max_ns=343729
+[M] start calls=38 total_ns=1651116 max_ns=108575
+run=4
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=196 max_ns=196
+[M] compile calls=7 total_ns=245629 max_ns=110269
+[M] host-fixture calls=13 total_ns=79769 max_ns=26340
+[M] new-session calls=1 total_ns=858092 max_ns=858092
+[M] query-cell calls=32 total_ns=1375772 max_ns=89025
+[M] reset calls=1 total_ns=38697 max_ns=38697
+[M] restore calls=6 total_ns=1959037 max_ns=624834
+[M] resume calls=16 total_ns=993515 max_ns=206356
+[M] snapshot calls=6 total_ns=822344 max_ns=387115
+[M] start calls=38 total_ns=1779269 max_ns=124734
+run=5
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=283 max_ns=283
+[M] compile calls=7 total_ns=275242 max_ns=141503
+[M] host-fixture calls=13 total_ns=82458 max_ns=28480
+[M] new-session calls=1 total_ns=787926 max_ns=787926
+[M] query-cell calls=32 total_ns=1348632 max_ns=118613
+[M] reset calls=1 total_ns=38478 max_ns=38478
+[M] restore calls=6 total_ns=2114680 max_ns=674469
+[M] resume calls=16 total_ns=985054 max_ns=216075
+[M] snapshot calls=6 total_ns=858863 max_ns=396507
+[M] start calls=38 total_ns=1721318 max_ns=117955
+run=6
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=197 max_ns=197
+[M] compile calls=7 total_ns=246136 max_ns=106252
+[M] host-fixture calls=13 total_ns=79388 max_ns=25572
+[M] new-session calls=1 total_ns=804826 max_ns=804826
+[M] query-cell calls=32 total_ns=1336306 max_ns=73170
+[M] reset calls=1 total_ns=98463 max_ns=98463
+[M] restore calls=6 total_ns=2112158 max_ns=663700
+[M] resume calls=16 total_ns=1046896 max_ns=251177
+[M] snapshot calls=6 total_ns=804978 max_ns=341397
+[M] start calls=38 total_ns=1699157 max_ns=80253
+run=7
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=225 max_ns=225
+[M] compile calls=7 total_ns=247933 max_ns=109237
+[M] host-fixture calls=13 total_ns=79836 max_ns=25774
+[M] new-session calls=1 total_ns=808645 max_ns=808645
+[M] query-cell calls=32 total_ns=1339301 max_ns=108317
+[M] reset calls=1 total_ns=38942 max_ns=38942
+[M] restore calls=6 total_ns=2112301 max_ns=671401
+[M] resume calls=16 total_ns=1027047 max_ns=235785
+[M] snapshot calls=6 total_ns=815765 max_ns=403266
+[M] start calls=38 total_ns=1698805 max_ns=107757
+run=8
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=187 max_ns=187
+[M] compile calls=7 total_ns=247422 max_ns=105840
+[M] host-fixture calls=13 total_ns=79931 max_ns=25615
+[M] new-session calls=1 total_ns=810650 max_ns=810650
+[M] query-cell calls=32 total_ns=1298698 max_ns=75080
+[M] reset calls=1 total_ns=40309 max_ns=40309
+[M] restore calls=6 total_ns=2085557 max_ns=682941
+[M] resume calls=16 total_ns=1068468 max_ns=268774
+[M] snapshot calls=6 total_ns=805692 max_ns=371747
+[M] start calls=38 total_ns=1714462 max_ns=95698
+run=9
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=194 max_ns=194
+[M] compile calls=7 total_ns=268626 max_ns=132845
+[M] host-fixture calls=13 total_ns=81037 max_ns=26871
+[M] new-session calls=1 total_ns=835667 max_ns=835667
+[M] query-cell calls=32 total_ns=1384132 max_ns=109712
+[M] reset calls=1 total_ns=36756 max_ns=36756
+[M] restore calls=6 total_ns=2089885 max_ns=651807
+[M] resume calls=16 total_ns=966400 max_ns=216299
+[M] snapshot calls=6 total_ns=749249 max_ns=336319
+[M] start calls=38 total_ns=1734302 max_ns=109359
+run=10
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=219 max_ns=219
+[M] compile calls=7 total_ns=243071 max_ns=107651
+[M] host-fixture calls=13 total_ns=80094 max_ns=26338
+[M] new-session calls=1 total_ns=811587 max_ns=811587
+[M] query-cell calls=32 total_ns=1398625 max_ns=116356
+[M] reset calls=1 total_ns=38953 max_ns=38953
+[M] restore calls=6 total_ns=2068953 max_ns=666880
+[M] resume calls=16 total_ns=1000682 max_ns=251299
+[M] snapshot calls=6 total_ns=761391 max_ns=342676
+[M] start calls=38 total_ns=1768001 max_ns=115985
+run=11
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=202 max_ns=202
+[M] compile calls=7 total_ns=245727 max_ns=108573
+[M] host-fixture calls=13 total_ns=81332 max_ns=26011
+[M] new-session calls=1 total_ns=830750 max_ns=830750
+[M] query-cell calls=32 total_ns=1364475 max_ns=109109
+[M] reset calls=1 total_ns=37933 max_ns=37933
+[M] restore calls=6 total_ns=2107309 max_ns=692168
+[M] resume calls=16 total_ns=1071440 max_ns=247732
+[M] snapshot calls=6 total_ns=886802 max_ns=351814
+[M] start calls=38 total_ns=1742498 max_ns=108428
+run=12
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=178 max_ns=178
+[M] compile calls=7 total_ns=249040 max_ns=106833
+[M] host-fixture calls=13 total_ns=108004 max_ns=44548
+[M] new-session calls=1 total_ns=828556 max_ns=828556
+[M] query-cell calls=32 total_ns=1366067 max_ns=85258
+[M] reset calls=1 total_ns=40069 max_ns=40069
+[M] restore calls=6 total_ns=2117773 max_ns=643931
+[M] resume calls=16 total_ns=1066856 max_ns=217106
+[M] snapshot calls=6 total_ns=804064 max_ns=382288
+[M] start calls=38 total_ns=1779983 max_ns=107748
+run=13
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=202 max_ns=202
+[M] compile calls=7 total_ns=250642 max_ns=108036
+[M] host-fixture calls=13 total_ns=82421 max_ns=26803
+[M] new-session calls=1 total_ns=827073 max_ns=827073
+[M] query-cell calls=32 total_ns=1340056 max_ns=89254
+[M] reset calls=1 total_ns=42175 max_ns=42175
+[M] restore calls=6 total_ns=2050109 max_ns=704634
+[M] resume calls=16 total_ns=1063418 max_ns=259911
+[M] snapshot calls=6 total_ns=861144 max_ns=383124
+[M] start calls=38 total_ns=1746217 max_ns=106222
+run=14
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=198 max_ns=198
+[M] compile calls=7 total_ns=239547 max_ns=105654
+[M] host-fixture calls=13 total_ns=80850 max_ns=26101
+[M] new-session calls=1 total_ns=845945 max_ns=845945
+[M] query-cell calls=32 total_ns=1365097 max_ns=96243
+[M] reset calls=1 total_ns=38972 max_ns=38972
+[M] restore calls=6 total_ns=2076131 max_ns=653816
+[M] resume calls=16 total_ns=957156 max_ns=211824
+[M] snapshot calls=6 total_ns=827132 max_ns=377326
+[M] start calls=38 total_ns=1716881 max_ns=95880
+run=15
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=273 max_ns=273
+[M] compile calls=7 total_ns=247302 max_ns=109932
+[M] host-fixture calls=13 total_ns=80288 max_ns=25579
+[M] new-session calls=1 total_ns=796863 max_ns=796863
+[M] query-cell calls=32 total_ns=1345078 max_ns=82129
+[M] reset calls=1 total_ns=37435 max_ns=37435
+[M] restore calls=6 total_ns=2119091 max_ns=692340
+[M] resume calls=16 total_ns=993976 max_ns=246998
+[M] snapshot calls=6 total_ns=766516 max_ns=344025
+[M] start calls=38 total_ns=1700529 max_ns=81784
+run=16
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=212 max_ns=212
+[M] compile calls=7 total_ns=242307 max_ns=107219
+[M] host-fixture calls=13 total_ns=82338 max_ns=26002
+[M] new-session calls=1 total_ns=823015 max_ns=823015
+[M] query-cell calls=32 total_ns=1363474 max_ns=108208
+[M] reset calls=1 total_ns=37521 max_ns=37521
+[M] restore calls=6 total_ns=2095339 max_ns=681880
+[M] resume calls=16 total_ns=1070992 max_ns=246892
+[M] snapshot calls=6 total_ns=906298 max_ns=355237
+[M] start calls=38 total_ns=1723025 max_ns=107572
+run=17
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=238 max_ns=238
+[M] compile calls=7 total_ns=246879 max_ns=107061
+[M] host-fixture calls=13 total_ns=85890 max_ns=30895
+[M] new-session calls=1 total_ns=824995 max_ns=824995
+[M] query-cell calls=32 total_ns=1353122 max_ns=81846
+[M] reset calls=1 total_ns=37849 max_ns=37849
+[M] restore calls=6 total_ns=2119701 max_ns=644729
+[M] resume calls=16 total_ns=1101490 max_ns=235526
+[M] snapshot calls=6 total_ns=811781 max_ns=388489
+[M] start calls=38 total_ns=1769183 max_ns=107282
+run=18
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=200 max_ns=200
+[M] compile calls=7 total_ns=255599 max_ns=110621
+[M] host-fixture calls=13 total_ns=83002 max_ns=26997
+[M] new-session calls=1 total_ns=836294 max_ns=836294
+[M] query-cell calls=32 total_ns=1349137 max_ns=96853
+[M] reset calls=1 total_ns=39495 max_ns=39495
+[M] restore calls=6 total_ns=2127843 max_ns=720842
+[M] resume calls=16 total_ns=1087524 max_ns=259951
+[M] snapshot calls=6 total_ns=802483 max_ns=379446
+[M] start calls=38 total_ns=1755032 max_ns=99501
+run=19
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=185 max_ns=185
+[M] compile calls=7 total_ns=244688 max_ns=106033
+[M] host-fixture calls=13 total_ns=81573 max_ns=26412
+[M] new-session calls=1 total_ns=875360 max_ns=875360
+[M] query-cell calls=32 total_ns=1384036 max_ns=88704
+[M] reset calls=1 total_ns=87845 max_ns=87845
+[M] restore calls=6 total_ns=2033030 max_ns=640539
+[M] resume calls=16 total_ns=1018460 max_ns=211082
+[M] snapshot calls=6 total_ns=830320 max_ns=392489
+[M] start calls=38 total_ns=1750524 max_ns=88363
+run=20
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=200 max_ns=200
+[M] compile calls=7 total_ns=270137 max_ns=111463
+[M] host-fixture calls=13 total_ns=83261 max_ns=26646
+[M] new-session calls=1 total_ns=853048 max_ns=853048
+[M] query-cell calls=32 total_ns=1423237 max_ns=179608
+[M] reset calls=1 total_ns=40861 max_ns=40861
+[M] restore calls=6 total_ns=2031679 max_ns=635133
+[M] resume calls=16 total_ns=1023111 max_ns=213850
+[M] snapshot calls=6 total_ns=845500 max_ns=391568
+[M] start calls=38 total_ns=1849485 max_ns=178949
+run=21
+embedding ok gc_stress=false host_calls=13 fuel_parks=2 snapshot_bytes=[187126, 117924, 115133, 118596, 116994, 105157]
+[M] cancel calls=1 total_ns=188 max_ns=188
+[M] compile calls=7 total_ns=284218 max_ns=142997
+[M] host-fixture calls=13 total_ns=82204 max_ns=26894
+[M] new-session calls=1 total_ns=796065 max_ns=796065
+[M] query-cell calls=32 total_ns=1331772 max_ns=77083
+[M] reset calls=1 total_ns=41762 max_ns=41762
+[M] restore calls=6 total_ns=2138549 max_ns=662955
+[M] resume calls=16 total_ns=1059390 max_ns=253217
+[M] snapshot calls=6 total_ns=819057 max_ns=389627
+[M] start calls=38 total_ns=1791606 max_ns=147586
+SUMMARY: [M] default features, release, CPU 2, three warmups, 21 fresh processes
+cancel calls= 1 median_total_ns= 200 largest_call_ns= 283
+cancel_total_ns=[272, 205, 190, 196, 283, 197, 225, 187, 194, 219, 202, 178, 202, 198, 273, 212, 238, 200, 185, 200, 188]
+cancel_max_ns=[272, 205, 190, 196, 283, 197, 225, 187, 194, 219, 202, 178, 202, 198, 273, 212, 238, 200, 185, 200, 188]
+compile calls= 7 median_total_ns= 247422 largest_call_ns= 182545
+compile_total_ns=[242906, 248948, 315534, 245629, 275242, 246136, 247933, 247422, 268626, 243071, 245727, 249040, 250642, 239547, 247302, 242307, 246879, 255599, 244688, 270137, 284218]
+compile_max_ns=[106336, 109072, 182545, 110269, 141503, 106252, 109237, 105840, 132845, 107651, 108573, 106833, 108036, 105654, 109932, 107219, 107061, 110621, 106033, 111463, 142997]
+host-fixture calls= 13 median_total_ns= 81573 largest_call_ns= 46577
+host-fixture_total_ns=[85114, 108521, 81008, 79769, 82458, 79388, 79836, 79931, 81037, 80094, 81332, 108004, 82421, 80850, 80288, 82338, 85890, 83002, 81573, 83261, 82204]
+host-fixture_max_ns=[26402, 46577, 27296, 26340, 28480, 25572, 25774, 25615, 26871, 26338, 26011, 44548, 26803, 26101, 25579, 26002, 30895, 26997, 26412, 26646, 26894]
+new-session calls= 1 median_total_ns= 824995 largest_call_ns= 875360
+new-session_total_ns=[823351, 846659, 808739, 858092, 787926, 804826, 808645, 810650, 835667, 811587, 830750, 828556, 827073, 845945, 796863, 823015, 824995, 836294, 875360, 853048, 796065]
+new-session_max_ns=[823351, 846659, 808739, 858092, 787926, 804826, 808645, 810650, 835667, 811587, 830750, 828556, 827073, 845945, 796863, 823015, 824995, 836294, 875360, 853048, 796065]
+query-cell calls= 32 median_total_ns= 1349137 largest_call_ns= 179608
+query-cell_total_ns=[1329634, 1286273, 1293546, 1375772, 1348632, 1336306, 1339301, 1298698, 1384132, 1398625, 1364475, 1366067, 1340056, 1365097, 1345078, 1363474, 1353122, 1349137, 1384036, 1423237, 1331772]
+query-cell_max_ns=[105049, 73696, 109232, 89025, 118613, 73170, 108317, 75080, 109712, 116356, 109109, 85258, 89254, 96243, 82129, 108208, 81846, 96853, 88704, 179608, 77083]
+reset calls= 1 median_total_ns= 38972 largest_call_ns= 98463
+reset_total_ns=[40280, 39202, 35998, 38697, 38478, 98463, 38942, 40309, 36756, 38953, 37933, 40069, 42175, 38972, 37435, 37521, 37849, 39495, 87845, 40861, 41762]
+reset_max_ns=[40280, 39202, 35998, 38697, 38478, 98463, 38942, 40309, 36756, 38953, 37933, 40069, 42175, 38972, 37435, 37521, 37849, 39495, 87845, 40861, 41762]
+restore calls= 6 median_total_ns= 2096469 largest_call_ns= 720842
+restore_total_ns=[2096469, 2244983, 2085269, 1959037, 2114680, 2112158, 2112301, 2085557, 2089885, 2068953, 2107309, 2117773, 2050109, 2076131, 2119091, 2095339, 2119701, 2127843, 2033030, 2031679, 2138549]
+restore_max_ns=[670280, 673826, 720447, 624834, 674469, 663700, 671401, 682941, 651807, 666880, 692168, 643931, 704634, 653816, 692340, 681880, 644729, 720842, 640539, 635133, 662955]
+resume calls= 16 median_total_ns= 1046896 largest_call_ns= 289609
+resume_total_ns=[1038456, 1085775, 1062405, 993515, 985054, 1046896, 1027047, 1068468, 966400, 1000682, 1071440, 1066856, 1063418, 957156, 993976, 1070992, 1101490, 1087524, 1018460, 1023111, 1059390]
+resume_max_ns=[236822, 289609, 239800, 206356, 216075, 251177, 235785, 268774, 216299, 251299, 247732, 217106, 259911, 211824, 246998, 246892, 235526, 259951, 211082, 213850, 253217]
+snapshot calls= 6 median_total_ns= 819057 largest_call_ns= 403266
+snapshot_total_ns=[882360, 836342, 753552, 822344, 858863, 804978, 815765, 805692, 749249, 761391, 886802, 804064, 861144, 827132, 766516, 906298, 811781, 802483, 830320, 845500, 819057]
+snapshot_max_ns=[337943, 393738, 343729, 387115, 396507, 341397, 403266, 371747, 336319, 342676, 351814, 382288, 383124, 377326, 344025, 355237, 388489, 379446, 392489, 391568, 389627]
+start calls= 38 median_total_ns= 1734302 largest_call_ns= 178949
+start_total_ns=[1706329, 1646310, 1651116, 1779269, 1721318, 1699157, 1698805, 1714462, 1734302, 1768001, 1742498, 1779983, 1746217, 1716881, 1700529, 1723025, 1769183, 1755032, 1750524, 1849485, 1791606]
+start_max_ns=[104423, 77003, 108575, 124734, 117955, 80253, 107757, 95698, 109359, 115985, 108428, 107748, 106222, 95880, 81784, 107572, 107282, 99501, 88363, 178949, 147586]
+# [M] Separate peak-RSS run: same release/default-feature binary, panic=abort,
+# CPU 2, three warmups, 21 fresh processes, /usr/bin/time -f RSS_KIB=%M.
+# Engine b41651915935404dcf56c14cce2b811fd93ad2cf, Rust 1.99.0, x86_64 Linux orb.
+# Command: target/release/examples/embedding_bench (all result checks passed).
+# Process RSS includes the engine, caller-owned data, executable and allocator;
+# it is not the admitted session capacity or an upper bound.
+peak_rss_kib=[6656, 6788, 6724, 6740, 6768, 6840, 6756, 6788, 6828, 6760, 6836, 6696, 6896, 6648, 6872, 6680, 6628, 6692, 6732, 6652, 6680]
+median_peak_rss_kib=6740

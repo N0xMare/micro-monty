@@ -1,0 +1,451 @@
+{
+ "calls": [
+  {
+   "args": {
+    "order_id": 1100
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 24,
+    "id": 1100,
+    "items": [
+     {
+      "product_id": "P24",
+      "qty": 1,
+      "unit_price": 176.75
+     }
+    ],
+    "order_date": "2025-10-31",
+    "status": "cancelled",
+    "total": 176.75
+   }
+  },
+  {
+   "args": {
+    "order_id": 1101
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 30,
+    "id": 1101,
+    "items": [
+     {
+      "product_id": "P02",
+      "qty": 1,
+      "unit_price": 507.02
+     },
+     {
+      "product_id": "P02",
+      "qty": 1,
+      "unit_price": 507.02
+     }
+    ],
+    "order_date": "2025-11-25",
+    "status": "completed",
+    "total": 1014.04
+   }
+  },
+  {
+   "args": {
+    "order_id": 1102
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 2,
+    "id": 1102,
+    "items": [
+     {
+      "product_id": "P15",
+      "qty": 3,
+      "unit_price": 21.04
+     }
+    ],
+    "order_date": "2025-12-13",
+    "status": "completed",
+    "total": 63.12
+   }
+  },
+  {
+   "args": {
+    "order_id": 1103
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 39,
+    "id": 1103,
+    "items": [
+     {
+      "product_id": "P08",
+      "qty": 2,
+      "unit_price": 127.71
+     }
+    ],
+    "order_date": "2026-02-18",
+    "status": "completed",
+    "total": 255.42
+   }
+  },
+  {
+   "args": {
+    "order_id": 1104
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 37,
+    "id": 1104,
+    "items": [
+     {
+      "product_id": "P05",
+      "qty": 5,
+      "unit_price": 593.89
+     }
+    ],
+    "order_date": "2025-12-01",
+    "status": "completed",
+    "total": 2969.45
+   }
+  },
+  {
+   "args": {
+    "order_id": 1105
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 37,
+    "id": 1105,
+    "items": [
+     {
+      "product_id": "P11",
+      "qty": 2,
+      "unit_price": 61.18
+     },
+     {
+      "product_id": "P07",
+      "qty": 3,
+      "unit_price": 61.92
+     },
+     {
+      "product_id": "P18",
+      "qty": 1,
+      "unit_price": 20.33
+     }
+    ],
+    "order_date": "2025-12-25",
+    "status": "completed",
+    "total": 328.45
+   }
+  },
+  {
+   "args": {
+    "order_id": 1106
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 24,
+    "id": 1106,
+    "items": [
+     {
+      "product_id": "P09",
+      "qty": 1,
+      "unit_price": 94.68
+     },
+     {
+      "product_id": "P17",
+      "qty": 3,
+      "unit_price": 38.18
+     }
+    ],
+    "order_date": "2026-01-02",
+    "status": "cancelled",
+    "total": 209.22
+   }
+  },
+  {
+   "args": {
+    "order_id": 1107
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 8,
+    "id": 1107,
+    "items": [
+     {
+      "product_id": "P22",
+      "qty": 2,
+      "unit_price": 123.72
+     },
+     {
+      "product_id": "P23",
+      "qty": 3,
+      "unit_price": 123.77
+     },
+     {
+      "product_id": "P12",
+      "qty": 1,
+      "unit_price": 56.96
+     }
+    ],
+    "order_date": "2026-02-12",
+    "status": "refunded",
+    "total": 675.71
+   }
+  },
+  {
+   "args": {
+    "order_id": 1108
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 18,
+    "id": 1108,
+    "items": [
+     {
+      "product_id": "P22",
+      "qty": 1,
+      "unit_price": 123.72
+     }
+    ],
+    "order_date": "2025-12-14",
+    "status": "completed",
+    "total": 123.72
+   }
+  },
+  {
+   "args": {
+    "order_id": 1109
+   },
+   "name": "get_order",
+   "ok": {
+    "currency": "USD",
+    "customer_id": 38,
+    "id": 1109,
+    "items": [
+     {
+      "product_id": "P02",
+      "qty": 1,
+      "unit_price": 507.02
+     }
+    ],
+    "order_date": "2025-11-16",
+    "status": "refunded",
+    "total": 507.02
+   }
+  },
+  {
+   "args": {
+    "product_id": "P02"
+   },
+   "name": "get_product",
+   "ok": {
+    "category": "hardware",
+    "id": "P02",
+    "name": "Laptop Air 13",
+    "price": 507.02,
+    "stock": 62
+   }
+  },
+  {
+   "args": {
+    "product_id": "P05"
+   },
+   "name": "get_product",
+   "ok": {
+    "category": "hardware",
+    "id": "P05",
+    "name": "Monitor 32",
+    "price": 593.89,
+    "stock": 37
+   }
+  },
+  {
+   "args": {
+    "product_id": "P07"
+   },
+   "name": "get_product",
+   "ok": {
+    "category": "software",
+    "id": "P07",
+    "name": "Office Suite",
+    "price": 61.92,
+    "stock": 37
+   }
+  },
+  {
+   "args": {
+    "product_id": "P08"
+   },
+   "name": "get_product",
+   "ok": {
+    "category": "software",
+    "id": "P08",
+    "name": "Antivirus Plus",
+    "price": 127.71,
+    "stock": 3
+   }
+  },
+  {
+   "args": {
+    "product_id": "P09"
+   },
+   "name": "get_product",
+   "ok": {
+    "category": "software",
+    "id": "P09",
+    "name": "Design Studio",
+    "price": 94.68,
+    "stock": 69
+   }
+  },
+  {
+   "args": {
+    "product_id": "P11"
+   },
+   "name": "get_product",
+   "ok": {
+    "category": "software",
+    "id": "P11",
+    "name": "VPN Annual",
+    "price": 61.18,
+    "stock": 3
+   }
+  },
+  {
+   "args": {
+    "product_id": "P12"
+   },
+   "name": "get_product",
+   "ok": {
+    "category": "software",
+    "id": "P12",
+    "name": "Dev Tools",
+    "price": 56.96,
+    "stock": 34
+   }
+  },
+  {
+   "args": {
+    "product_id": "P15"
+   },
+   "name": "get_product",
+   "ok": {
+    "category": "accessories",
+    "id": "P15",
+    "name": "USB-C Hub",
+    "price": 21.04,
+    "stock": 1
+   }
+  },
+  {
+   "args": {
+    "product_id": "P17"
+   },
+   "name": "get_product",
+   "ok": {
+    "category": "accessories",
+    "id": "P17",
+    "name": "Headset",
+    "price": 38.18,
+    "stock": 32
+   }
+  },
+  {
+   "args": {
+    "product_id": "P18"
+   },
+   "name": "get_product",
+   "ok": {
+    "category": "accessories",
+    "id": "P18",
+    "name": "Laptop Sleeve",
+    "price": 20.33,
+    "stock": 67
+   }
+  },
+  {
+   "args": {
+    "product_id": "P22"
+   },
+   "name": "get_product",
+   "ok": {
+    "category": "services",
+    "id": "P22",
+    "name": "Training Session",
+    "price": 123.72,
+    "stock": 52
+   }
+  },
+  {
+   "args": {
+    "product_id": "P23"
+   },
+   "name": "get_product",
+   "ok": {
+    "category": "services",
+    "id": "P23",
+    "name": "Onsite Repair",
+    "price": 123.77,
+    "stock": 17
+   }
+  },
+  {
+   "args": {
+    "product_id": "P24"
+   },
+   "name": "get_product",
+   "ok": {
+    "category": "services",
+    "id": "P24",
+    "name": "Consulting Hour",
+    "price": 176.75,
+    "stock": 20
+   }
+  },
+  {
+   "args": {
+    "units": {
+     "accessories": 7,
+     "hardware": 8,
+     "services": 7,
+     "software": 9
+    }
+   },
+   "name": "submit_answer",
+   "ok": "ok"
+  }
+ ],
+ "category": "parallel-gather",
+ "stdout": "{'accessories': 7, 'hardware': 8, 'services': 7, 'software': 9}\n",
+ "task": "par-two-level-fanout",
+ "tools": [
+  {
+   "description": "Fetch one order with its line items.",
+   "name": "get_order",
+   "params": [
+    "order_id"
+   ]
+  },
+  {
+   "description": "Fetch one product.",
+   "name": "get_product",
+   "params": [
+    "product_id"
+   ]
+  },
+  {
+   "description": "Submit the final answer of this task. Call it once, at the end.",
+   "name": "submit_answer",
+   "params": [
+    "units"
+   ]
+  }
+ ]
+}

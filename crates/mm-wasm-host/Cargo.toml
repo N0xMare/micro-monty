@@ -1,0 +1,36 @@
+[package]
+name = "mm-wasm-host"
+description = "Reference wasmtime host for the mm-wasm guest (crates/mm-wasm-guest), with an API close to micro_monty::Session"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99.0"
+license = "MIT AND PSF-2.0 AND Unicode-3.0"
+publish = false
+
+# Its own workspace and lockfile, so wasmtime (about 187 crates) stays out
+# of the root lockfile, the engine crates and `cargo xtask size` (owner
+# decision, 2026-11-05; docs/research/wasm-embedding.md).
+[workspace]
+
+[dependencies]
+micro-monty = { path = "../micro-monty" }
+mm-wasm-abi = { path = "../mm-wasm-abi" }
+# The precompiled cache's content key; already in the tree through wasmtime.
+sha2 = "0.10"
+wasmtime = "50"
+# Only for wasm32-wasip1 guests (std's start-up imports); a host that runs
+# only wasm32-unknown-unknown guests can drop it.
+wasmtime-wasi = "50"
+
+[lints.rust]
+missing_docs = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+# One `unsafe` call: wasmtime's `Module::deserialize` for the precompiled
+# module this host wrote itself (its cache directory must be host-only).
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+expect_used = "deny"
+panic = "deny"
+unwrap_used = "deny"

@@ -1,0 +1,36 @@
+[package]
+name = "mm-soak"
+description = "Soak: many sessions on one shared Engine across threads, checked against fresh uncached runs (bench/evidence/soak/README.md)"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99.0"
+license = "MIT"
+publish = false
+
+# Its own workspace, so the harness never enters the engine's build, lockfile
+# or size budget.
+[workspace]
+
+[[bin]]
+name = "soak"
+path = "main.rs"
+
+[dependencies]
+micro-monty = { path = "../../../crates/micro-monty" }
+# Every optional module, as `mm` and the `full` mm-codemode build have.
+mm-stdlib = { path = "../../../crates/mm-stdlib", default-features = false, features = [
+    "mod-uuid",
+    "mod-unicodedata",
+    "mod-html-entities",
+] }
+serde_json = "1"
+
+# The engine's release profile, except that panics unwind: the facade then
+# contains an engine panic as a poisoned session, which the soak reports as
+# a difference instead of aborting.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "unwind"
+debug = "line-tables-only"

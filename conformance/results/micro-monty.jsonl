@@ -1,0 +1,726 @@
+{"file":"args__dict_get_no_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__dict_get_too_many.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__dict_items_with_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__dict_keys_with_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__dict_pop_no_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__dict_pop_too_many.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__dict_values_with_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__id_too_many.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__len_no_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__len_too_many.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__len_type_error_int.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__len_type_error_none.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__list_append_no_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__list_append_too_many.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__list_insert_too_few.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__list_insert_too_many.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"args__macro_errors.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError: py-missing-pos: replace expected at least 2 arguments, got 1","category":"unexpected AssertionError"}
+{"file":"args__repr_no_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"arith__div_zero_float.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"arith__div_zero_int.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"arith__floordiv_zero_float.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"arith__floordiv_zero_int.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"arith__pow_zero_neg.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"arith__pow_zero_neg_builtin.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"assert__fail.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"assert__fail_msg.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"assert__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"assign__chain.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__asyncio_run.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__basic.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__closure.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__control_flow.py","tags":["host"],"status":"pass","reason":""}
+{"file":"async__double_await_coroutine.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__exception.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__ext_call.py","tags":["host"],"status":"pass","reason":""}
+{"file":"async__ext_exc.py","tags":["host"],"status":"pass","reason":""}
+{"file":"async__gather_all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__gather_commit_rollback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__gather_double_spawn.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__gather_double_spawn_traceback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__nested_await.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__nested_gather_ext.py","tags":["host"],"status":"pass","reason":""}
+{"file":"async__not_awaitable.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__not_imported.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__recursion_depth_isolation.py","tags":["host"],"status":"pass","reason":""}
+{"file":"async__return_types.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__sequential.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__sleep.py","tags":["host"],"status":"pass","reason":""}
+{"file":"async__traceback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__transitive_closure.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"async__with_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"attr__class_object_errors.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"attr__get_int_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"attr__get_list_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"attr__set_int_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"attr__set_list_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"base64__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"bench__kitchen_sink.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"binascii__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"bisect__behavior.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"bisect__errors.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"bisect__index.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"bool__arithmetic.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"bool__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__add_type_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__eval_exec.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: NameError: name 'eval' is not defined. micro-monty does not support eval()","category":"missing builtin"}
+{"file":"builtin__exec_import_traceback.py","tags":["cpython"],"status":"fail","reason":"traceback line 7: expected ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~, got ~~~~","category":"missing builtin"}
+{"file":"builtin__exec_namespaces.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: NameError: name 'exec' is not defined. micro-monty does not support exec()","category":"missing builtin"}
+{"file":"builtin__exec_traceback.py","tags":["cpython"],"status":"fail","reason":"traceback line 4: expected ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~, got ~~~~","category":"missing builtin"}
+{"file":"builtin__filter.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__filter_not_iterable.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__getattr.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__hasattr.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__iter_err_unpack_int.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__iter_funcs.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__iter_next.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__map.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__map_not_iterable.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__math_funcs.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: MemoryError: integer operation too large","category":"int work cap"}
+{"file":"builtin__more_iter_funcs.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__next_stop_iteration.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__print_invalid_kwarg.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__print_kwargs.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__repr.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtin__setattr.py","tags":["host"],"status":"fail","reason":"unexpected exception: NotImplementedError: mm's host fixtures do not provide host objects (make_mutable_point) until clas…","category":"unexpected NotImplementedError"}
+{"file":"builtin__string_funcs.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"builtins__format.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"bytes__decode_invalid_utf8.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"bytes__endswith_str_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"bytes__getitem_index_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"bytes__index_start_gt_end.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"bytes__methods.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"bytes__negative_count.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"bytes__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"bytes__percent_format.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"bytes__startswith_str_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"call_object.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"chain_comparison__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__annotations.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__attribute_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__attrs.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__basic.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__body_external.py","tags":["host"],"status":"pass","reason":""}
+{"file":"class__body_raises.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__closures.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__contains.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__dynamic_type.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__eq_hash.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__index_dunder.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__init_async.py","tags":["host"],"status":"pass","reason":""}
+{"file":"class__init_external.py","tags":["host"],"status":"pass","reason":""}
+{"file":"class__init_raises.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__init_return.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__method_raises.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__name_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__numeric.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"class__numeric_traceback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__operators.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__protocol_traceback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__protocols.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__repr.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__scope.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"class__type_errors.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"closure__multi_hop_capture.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"closure__param_shadows_outer.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"closure__pep448.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"closure__transitive.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"closure__undefined_nonlocal.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"codecs__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"collections__counter.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"collections__defaultdict.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"collections__deque.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError: a NaN element makes the ordering false","category":"unexpected AssertionError"}
+{"file":"collections__namedtuple.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError: a NaN element leaves the pair unordered","category":"unexpected AssertionError"}
+{"file":"compare__mixed_types.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"complex__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"complex__error_ordering.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"complex__error_zero_power.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"complex__format.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"comprehension__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"comprehension__scope.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"comprehension__unbound_local.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"copy__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"csv__dict.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"csv__files.py","tags":["host"],"status":"skip","reason":"needs the mount-fs host filesystem"}
+{"file":"csv__module.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"csv__reader.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"csv__writer.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dataclass__basic.py","tags":["host"],"status":"fail","reason":"unexpected exception: NotImplementedError: mm's host fixtures do not provide host objects (make_point) until classes land…","category":"unexpected NotImplementedError"}
+{"file":"dataclass__call_field_error.py","tags":["host"],"status":"fail","reason":"traceback line 2: expected …aclass__call_field_error.py\", line 6, in <module>, got …aclass__call_field_error.py\", line 5, in <module>","category":"wrong traceback"}
+{"file":"dataclass__field.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dataclass__generated_methods.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dataclass__get_missing_attr_error.py","tags":["host"],"status":"fail","reason":"traceback line 2: expected …__get_missing_attr_error.py\", line 6, in <module>, got …__get_missing_attr_error.py\", line 5, in <module>","category":"wrong traceback"}
+{"file":"dataclass__init.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dataclass__is_dataclass.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dataclass__options.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dataclass__repr_eq.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"datetime__core.py","tags":["host"],"status":"pass","reason":""}
+{"file":"datetime__format.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"datetime__zone_default.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"datetime__zone_kathmandu.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"datetime__zone_london.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"datetime__zone_new_york.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"datetime__zone_sydney.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"decimal__arithmetic.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"decimal__context.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"decimal__format.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"decimal__math.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"decimal__methods.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"decorator__class.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"decorator__class_body_traceback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"decorator__class_traceback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"decorator__function.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"decorator__function_async.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"decorator__function_external.py","tags":["host"],"status":"pass","reason":""}
+{"file":"decorator__function_traceback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__eq_self_referential.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__get_unhashable_key.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__literal_unhashable_key.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__method_pop_missing_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__methods.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__mutation_during_iteration.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__pop_unhashable_key.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__popitem_empty.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__subscript_missing_key.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__unhashable_dict_key.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__unhashable_list_key.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__unpack_type_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__update_self.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"dict__views.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"edge__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"edge__float_int_mod.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"edge__int_float_mod.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"exc__args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"exc__str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"execute_ok__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"execute_raise__error_instance_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"execute_raise__error_no_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"execute_raise__error_string_arg.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"execute_raise__error_string_arg_quotes.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"execute_raise__error_type.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"execute_raise__raise_instance_via_var.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"execute_raise__raise_list.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"execute_raise__raise_number.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"execute_raise__raise_type_call_via_var.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"execute_raise__raise_type_direct.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"execute_raise__raise_type_via_var.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"ext_call__arg_side_effect_bug.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__augmented.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__augmented_refcount_bug.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__bare_raise_after_resume.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__basic.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__boolean.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__boolean_side_effect_hang.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__closure_bug.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__comparison.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__deep_call_stack.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__elif.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__eval_exec.py","tags":["host"],"status":"fail","reason":"unexpected exception: NameError: name 'eval' is not defined. micro-monty does not support eval()","category":"missing builtin"}
+{"file":"ext_call__exc.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__exc_deep_stack.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__exc_in_function.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__exc_nested_functions.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__ext_exc.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__for.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__fstring.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__if.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__if_condition.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__in_closure.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__in_function.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__in_function_simple.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__literals.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__multi_in_func.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__name_lookup.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__name_lookup_undefined.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__nested_calls.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__recursion_bug.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__return.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__side_effects.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__subscript.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__ternary.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__try.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__try_simple.py","tags":["host"],"status":"pass","reason":""}
+{"file":"ext_call__unary.py","tags":["host"],"status":"pass","reason":""}
+{"file":"float__from_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"float__mod.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"float__pow.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"fnmatch__module.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"fnmatch__posix.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"frozenset__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"fstring__all.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError: expected precision too big for 0.0001 with '.2147482624g'","category":"unexpected AssertionError"}
+{"file":"fstring__error_eq_align_on_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"fstring__error_float_f_on_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"fstring__error_int_d_on_float.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"fstring__error_int_d_on_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"fstring__error_invalid_flags.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"fstring__error_invalid_spec.py","tags":["monty-specific"],"status":"fail","reason":"expected SyntaxError(\"Invalid format specifier '10xyz'\"), got ValueError(\"Invalid format specifier '10xyz' for object of type 'int'…","category":"wrong exception"}
+{"file":"fstring__error_invalid_spec_dynamic.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"fstring__error_invalid_spec_str.py","tags":["monty-specific"],"status":"fail","reason":"expected SyntaxError(\"Invalid format specifier 'abc'\"), got ValueError(\"Invalid format specifier 'abc' for object of type 'str'\")","category":"wrong exception"}
+{"file":"fstring__error_str_s_on_int.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__arity_defaults.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__call_duplicate_kwargs.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__call_unpack.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__defaults.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_duplicate_arg.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_duplicate_first_arg.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_duplicate_kwarg_cleanup.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_duplicate_param.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_kwonly_as_positional.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_missing_all_posonly.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_missing_heap_cleanup.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_missing_kwonly.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_missing_posonly_with_kwarg.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_missing_with_posonly.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_posonly_as_kwarg.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_posonly_first_as_kwarg.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_repeated_keyword.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_too_many_posonly.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_too_many_with_kwonly.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_unexpected_kwarg.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_unexpected_kwarg_cleanup.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_unexpected_kwarg_quote.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_unexpected_kwarg_simple.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_unpack_duplicate_arg.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_unpack_duplicate_heap.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_unpack_int.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_unpack_nonstring_key.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__err_unpack_not_mapping.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__kwargs_unpacking.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__return_none.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__signatures.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__too_few_args_all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__too_few_args_one.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__too_few_args_two.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__too_many_args_one.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__too_many_args_two.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"function__too_many_args_zero.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"functools__gc.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"functools__lru_cache.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"functools__lru_cache_async.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"functools__lru_cache_external.py","tags":["host"],"status":"pass","reason":""}
+{"file":"functools__partial.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"functools__partial_external.py","tags":["host"],"status":"pass","reason":""}
+{"file":"functools__reduce.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"generic_alias.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"generic_alias__not_subscriptable.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"global__error_assigned_before.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"global__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"hash__dict_unhashable.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"hash__list_unhashable.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"hash__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"hashlib__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"hashlib__errors.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"id__bytes_literals_distinct.py","tags":["monty-specific"],"status":"pass","reason":""}
+{"file":"id__int_copy_distinct.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"id__is_number_is_number.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"id__non_overlapping_lifetimes_distinct_types.py","tags":["monty-specific"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"id__non_overlapping_lifetimes_same_types.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"id__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"id__str_literals_same.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"if__elif_else.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"if__raise_elif.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"if__raise_else.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"if__raise_if.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"if__raise_in_elif_condition.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"if__raise_in_if_condition.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"if_else_expr__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"import__dotted_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"import__error_cannot_import.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"import__error_module_not_found.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"import__files.py","tags":["host"],"status":"skip","reason":"needs the mount-fs host filesystem"}
+{"file":"import__future_unknown_feature.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"import__host.py","tags":["host"],"status":"pass","reason":""}
+{"file":"import__host_async.py","tags":["host"],"status":"pass","reason":""}
+{"file":"import__host_cannot_import.py","tags":["host"],"status":"pass","reason":""}
+{"file":"import__host_not_found.py","tags":["host"],"status":"pass","reason":""}
+{"file":"import__local_scope.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"import__multi.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"import__os.py","tags":["host"],"status":"pass","reason":""}
+{"file":"import__relative_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"import__relative_future_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"import__relative_no_module_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"import__runtime_error_when_executed.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"import__star_error.py","tags":["monty-specific"],"status":"fail","reason":"no exception raised, expected Traceback (most recent call last):\\n  File \"import__star_error.py\", line 4, in <module>\\n    from s…","category":"no exception raised"}
+{"file":"import__sys.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"import__sys_monty.py","tags":["monty-specific"],"status":"fail","reason":"unexpected exception: AssertionError: version should be 3.14.0 (Monty), got '<version> (micro-monty)'","category":"unexpected AssertionError"}
+{"file":"import__type_checking_guard.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"import__typing.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"import__typing_type_ignore.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"inline__string_operations.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: NameError: name 'eval' is not defined. micro-monty does not support eval()","category":"missing builtin"}
+{"file":"int__base.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"int__bigint.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"int__bigint_errors.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"int__max_str_digits.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"int__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"int__overflow_division.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"is_variant__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"isinstance__arg2_list_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"isinstance__arg2_type_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"issue369__function_default_walrus.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"iter__consume.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"iter__consume_sites.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"iter__dict_mutation.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"iter__dict_mutation_last_element.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"iter__for.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"iter__for_loop_unpacking.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"iter__generator_expr.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"iter__generator_expr_type.py","tags":["monty-specific"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"iter__not_iterable.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"iter__reentrant.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"iter__sentinel.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"iter__user_class.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"itertools__adaptors.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"itertools__combinatoric.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"itertools__count_repeat.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"itertools__gc.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"itertools__groupby.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"itertools__reentrancy.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"itertools__tee.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"json__dumps_errors.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"json__dumps_formatting.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"json__dumps_keys.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"json__dumps_recursion.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"json__file_io.py","tags":["host"],"status":"skip","reason":"needs the mount-fs host filesystem"}
+{"file":"json__int_max_str_digits.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"json__literals.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"json__loads_invalid_messages.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"json__module.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"lambda__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__eq_self_referential.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__extend_not_iterable.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__extend_self.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__getitem_out_of_bounds.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__index_not_found.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__index_start_gt_end.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__pop_empty.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__pop_out_of_range.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__pop_type_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__remove_not_found.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__setitem_dict_index.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__setitem_huge_int_index.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__setitem_index_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__setitem_type_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__slice_assignment.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"list__unpack_type_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"longint__index_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"longint__repeat_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"lookup__mutation.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"loop__break_continue.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"loop__break_finally.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"loop__break_in_function_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"loop__break_in_if_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"loop__break_nested_except_clears.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"loop__break_outside_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"loop__continue_finally.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"loop__continue_in_function_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"loop__continue_in_if_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"loop__continue_nested_except_clears.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"loop__continue_outside_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"loop__else_control_flow.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__async.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__body_traceback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__class_error_traceback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__error_as_duplicate.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__error_capture_unreachable.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__error_different_names.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__error_duplicate_bigint_key.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__error_duplicate_binary_complex_key.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__error_duplicate_complex_key.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__error_duplicate_int_key.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__error_duplicate_key.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__error_duplicate_name.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__error_duplicate_zero_key.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__error_multiple_stars.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__error_or_wildcard_unreachable.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__error_repeated_attr.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"match__error_wildcard_unreachable.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__acos_domain_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__acosh_domain_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__aggregates.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__asin_domain_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__atanh_domain_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__cos_inf_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__cosh_overflow_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__exp_overflow_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__factorial_float_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__factorial_negative_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__floor_inf_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__floor_nan_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__floor_str_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__fmod_inf_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__gamma_neg_int_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__gcd_float_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__isqrt_negative_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__ldexp_overflow_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__log1p_domain_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__log_base1_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__log_zero_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__module.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__pow_domain_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__sin_inf_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__sqrt_negative_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__tan_inf_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"math__trunc_str_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"method__args_kwargs_unpacking.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"module__dunders.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"mount_fs__errors.py","tags":["host"],"status":"skip","reason":"needs the mount-fs host filesystem"}
+{"file":"mount_fs__ops.py","tags":["host"],"status":"skip","reason":"needs the mount-fs host filesystem"}
+{"file":"mount_fs__walk_glob.py","tags":["host"],"status":"skip","reason":"needs the mount-fs host filesystem"}
+{"file":"name_error__module_conditional_assign.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"name_error__unbound_local_call_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"name_error__unbound_local_func.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"name_error__unbound_local_module.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"name_error__undefined_call_chained.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"name_error__undefined_call_in_expr.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"name_error__undefined_call_in_function.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"name_error__undefined_call_with_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"name_error__undefined_global.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"name_error__undefined_global_in_function.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"namedtuple__missing_attr.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"namedtuple__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"nonlocal__error_module_level.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"nonlocal__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"not_implemented__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"object__setattr.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"open__fs.py","tags":["host"],"status":"skip","reason":"needs the mount-fs host filesystem"}
+{"file":"open__fs_windows.py","tags":["host"],"status":"skip","reason":"needs the mount-fs host filesystem"}
+{"file":"os__cwd.py","tags":["host"],"status":"skip","reason":"needs the mount-fs host filesystem"}
+{"file":"os__environ.py","tags":["host"],"status":"pass","reason":""}
+{"file":"os__functions.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"os__urandom.py","tags":["host"],"status":"pass","reason":""}
+{"file":"os_path__fs.py","tags":["host"],"status":"skip","reason":"needs the mount-fs host filesystem"}
+{"file":"os_path__pure.py","tags":["host"],"status":"pass","reason":""}
+{"file":"pathlib__import.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"pathlib__os.py","tags":["host"],"status":"pass","reason":""}
+{"file":"pathlib__os_read_error.py","tags":["host"],"status":"pass","reason":""}
+{"file":"pathlib__pure.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"pyobject__cycle_dict_self.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"pyobject__cycle_list_dict.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"pyobject__cycle_list_self.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"pyobject__cycle_multiple_refs.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"random__errors.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"random__seeded.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"random__unseeded.py","tags":["host"],"status":"pass","reason":""}
+{"file":"range__error_no_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"range__error_step_zero.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"range__error_too_many_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"range__getitem_index_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"range__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"range__slice_overflow.py","tags":["monty-specific"],"status":"pass","reason":""}
+{"file":"re__basic.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"re__grouping.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"re__match.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"recursion__deep_copy.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"recursion__deep_drop.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"recursion__deep_eq.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"recursion__deep_hash.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"recursion__deep_isinstance.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"recursion__deep_repr.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"recursion__function_depth.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"recursion__instance_repr.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"recursion__limit_depth.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"recursion__nested_eval.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"refcount__assert.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__bisect.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__callable_iterator.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__class.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__collections.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__copy.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__cycle_deep.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__cycle_external_ref.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__cycle_mutual_reference.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__cycle_self_reference.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__dataclass_default_cycle.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__dataclass_defaults.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__dataclass_field.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__dataclass_options.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__datetime_tzinfo.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__decimal.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__dict_basic.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__dict_build_failure.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__dict_get.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__dict_keys_and.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__dict_overwrite.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__divmod.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__exec_compile_error.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__exec_locals_snapshot.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__exec_namespace.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__finally_swallow.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__functools_lru_cache.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__functools_partial.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__gather_cleanup.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__gather_detached_sibling.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__gather_exception.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__gather_nested_cancel.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__gather_nested_commit_unwind.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__gather_nested_gather_cancel.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__generic_alias.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__immediate_skipped.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__index_dunder.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__itertools_adaptors.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__itertools_combinatoric.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__itertools_count_repeat.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__keyword_only_kwarg_arity_errors.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__kwargs_unpacking.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__list_append_multiple.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__list_append_ref.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__list_concat.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__list_getitem.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__list_iadd.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__min_max_key_error_paths.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__nested_list.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__not_callable_args.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__object_setattr.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__partial_recursion_cleanup.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__re_pattern_sub_error_paths.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__re_search_match.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__re_sub_error_paths.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__set_build_failure.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__shared_reference.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__single_list.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__str_arg_error_paths.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__str_argument_errors.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__time_tzinfo.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__typing_union.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__unbound_result.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__unknown_method_args.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__unpack_builtin_containers.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__unpack_object_targets.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__user_contains.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__user_iterator.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"refcount__with_class.py","tags":["excluded"],"status":"skip","reason":"excluded: micro-monty has no reference counting"}
+{"file":"repr__cycle_detection.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"repr__mutation.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"sequence__getitem_type_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"sequence__repeat.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"sequence__search_bounds.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"set__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"set__ordering.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"set__unpack_type_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"slice__invalid_indices.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"slice__kwargs.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"slice__no_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"slice__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"slice__step_zero.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"slice__step_zero_bytes.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"slice__step_zero_range.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"slice__step_zero_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"slice__step_zero_tuple.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"slice__too_many_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"star__unpack_iterables.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__argument_errors.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__attribute_names.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__format.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: ValueError: Unknown format code '５' for object of type 'int'","category":"unexpected ValueError"}
+{"file":"str__format_long_int.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__getitem_index_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__index_not_found.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__join_no_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__join_non_string.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__join_not_iterable.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__join_too_many_args.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__methods.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__module_arguments.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__partition_empty.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__percent_format.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"str__pyformat.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__rsplit_empty_sep.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"str__split_empty_sep.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"sys__types.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"time__core.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"time__module.py","tags":["host"],"status":"pass","reason":""}
+{"file":"time__struct_time.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"tomllib__errors.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"tomllib__load.py","tags":["host"],"status":"skip","reason":"needs the mount-fs host filesystem"}
+{"file":"tomllib__loads.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"traceback__division_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"traceback__index_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"traceback__insert_as_int.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"traceback__nested_call.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"traceback__nonlocal_module_scope.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"traceback__nonlocal_unbound.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"traceback__range_as_int.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"traceback__recursion_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"traceback__set_mutation.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"traceback__undefined_attr_call.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"traceback__undefined_call.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"traceback__undefined_raise.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"try_except__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"try_except__bare_raise_no_context.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"try_except__invalid_type.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"try_finally__control_flow.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"tuple__getitem_out_of_bounds.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"tuple__index_not_found.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"tuple__index_start_gt_end.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"tuple__methods.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"tuple__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"tuple__unpack_type_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__builtin_attr_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__bytes_negative.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__cell_not_builtin.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__exception_attr_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__float_conversion_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__float_repr_both_quotes.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__float_repr_newline.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__float_repr_single_quote.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__int_conversion_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__list_not_iterable.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__non_builtin_name_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__shadow_exc.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__shadow_int.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__shadow_len.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type__tuple_not_iterable.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__int_add_list.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__int_div_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__int_floordiv_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__int_iadd_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__int_mod_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__int_pow_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__int_sub_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__list_add_int.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__list_add_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__list_iadd_int.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__str_add_int.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__str_iadd_int.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__unary_invert_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__unary_minus_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__unary_neg_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"type_error__unary_plus_str.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"typing__get_type_hints.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"typing__get_type_hints_classes.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"typing__get_type_hints_dataclasses.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"typing__get_type_hints_external.py","tags":["host"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"typing__get_type_hints_external_async.py","tags":["host"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"typing__get_type_hints_functions.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"typing__types.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"typing__union.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"unary__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"unicodedata__bad_arg.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"unicodedata__core.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"unicodedata__name_error.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"unpack__builtin_containers.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"unpack__err_multiple_starred.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"unpack__nested.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"unpack__non_sequence.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"unpack__not_enough.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"unpack__object_targets.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"unpack__ops.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"unpack__star_not_enough.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"unpack__too_many.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"version__cpython.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"walrus__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"while__all.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"with__all.py","tags":["host"],"status":"skip","reason":"needs the mount-fs host filesystem"}
+{"file":"with__class.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"with__class_external.py","tags":["host"],"status":"pass","reason":""}
+{"file":"with__cm_context_expr_raises_traceback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"with__cm_enter_raises_traceback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"with__cm_exit_raises_normal_exit_traceback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"with__cm_nested_body_raises_traceback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"with__cm_traceback.py","tags":["cpython"],"status":"pass","reason":""}
+{"file":"with__not_context_manager.py","tags":["cpython"],"status":"pass","reason":""}

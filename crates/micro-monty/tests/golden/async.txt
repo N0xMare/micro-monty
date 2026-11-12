@@ -1,0 +1,4 @@
+waiting [1, 2, 3]
+output:
+[('a', 20), ('bb', 40), ('ccc', 60)]
+complete Some("{'a': 20, 'bb': 40, 'ccc': 60}")

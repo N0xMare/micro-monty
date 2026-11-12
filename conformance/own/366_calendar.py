@@ -1,0 +1,20 @@
+# calendar: month/year text and HTML, Calendar iterators, Month/Day enums and
+# their module-level names, timegm, IllegalMonthError.
+import calendar
+print(calendar.isleap(2024), calendar.leapdays(1900, 2025), calendar.weekday(2026, 3, 15), calendar.monthrange(2026, 2))
+print(calendar.month(2026, 3))
+print(calendar.TextCalendar(calendar.SUNDAY).formatmonth(2024, 2))
+print(calendar.monthcalendar(2026, 11))
+print(list(calendar.month_name), list(calendar.day_abbr))
+print(calendar.month_abbr[1:4], calendar.MONDAY, repr(calendar.Month.MARCH), calendar.Day(3))
+print(calendar.timegm((2026, 3, 15, 12, 0, 0)))
+c = calendar.Calendar(firstweekday=6)
+print(list(c.itermonthdates(2026, 2))[:3], list(c.itermonthdays2(2026, 2))[:8])
+print([d for d in c.itermonthdates(2026, 3) if d.weekday() == 4 and d.month == 3])
+print(calendar.HTMLCalendar().formatmonth(2026, 1)[:200])
+print(calendar.calendar(2026)[:300])
+try: calendar.monthrange(2026, 13)
+except calendar.IllegalMonthError as e: print(type(e).__name__, e, isinstance(e, IndexError))
+try: calendar.setfirstweekday(9)
+except ValueError as e: print(e)
+print(calendar.weekheader(3), calendar.firstweekday())

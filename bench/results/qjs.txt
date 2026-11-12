@@ -1,0 +1,17 @@
+# [M] machine: Intel(R) Xeon(R) Processor @ 2.60GHz, nproc 16, Linux 6.1.189+; 2026-11-04; pinned with taskset -c 2
+# engine: QuickJS version 2026-06-04
+# wall clock per process (spawn to exit), 10 timed reps after 1 warm-up
+# program median_ms min_ms
+startup 3.3 3.1
+fib 19.1 19.0
+loop 66.7 66.4
+dict 129.1 126.4
+str 34.3 33.7
+json 197.7 182.5
+closure 37.1 36.6
+classes 74.0 65.9
+generators 107.7 101.2
+exceptions 150.3 139.1
+fmt 79.9 76.7
+sort 219.4 208.5
+interp 143.4 131.7

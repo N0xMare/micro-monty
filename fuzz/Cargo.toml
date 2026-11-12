@@ -1,0 +1,119 @@
+[package]
+name = "mm-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mm-core = { path = "../crates/mm-core" }
+mm-compile = { path = "../crates/mm-compile" }
+mm-parse = { path = "../crates/mm-parse" }
+# The opt-in modules too: `memory_bound` probes `ast` and `unicodedata`.
+micro-monty = { path = "../crates/micro-monty", features = ["mod-ast", "mod-unicodedata"] }
+mm-engine = { path = "../crates/mm-engine" }
+mm-stdlib = { path = "../crates/mm-stdlib" }
+mm-wasm-abi = { path = "../crates/mm-wasm-abi" }
+
+[features]
+# Makes the `parse` target differential against the phase-1 ruff front end.
+ruff-oracle = ["mm-parse/ruff-oracle"]
+# Builds the `memory_probes` replay. Off by default so that `cargo fuzz
+# build` skips it: cargo-fuzz instruments every bin with SanitizerCoverage,
+# whose callbacks only libFuzzer or a sanitizer runtime defines, and the
+# replay links neither under `-s none`.
+memory-probes = []
+
+# Its own workspace: fuzz-only dependencies stay out of the main lockfile.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "arena_ops"
+path = "fuzz_targets/arena_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "snapshot_restore"
+path = "fuzz_targets/snapshot_restore.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "re"
+path = "fuzz_targets/re.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vm_bytecode"
+path = "fuzz_targets/vm_bytecode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_loads"
+path = "fuzz_targets/json_loads.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "nested_data"
+path = "fuzz_targets/nested_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compile"
+path = "fuzz_targets/compile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "run_source"
+path = "fuzz_targets/run_source.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wasm_abi"
+path = "fuzz_targets/wasm_abi.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "memory_bound"
+path = "fuzz_targets/memory_bound.rs"
+test = false
+doc = false
+bench = false
+
+# Not a fuzz target: replays `memory_probes/` under the same bounds.
+[[bin]]
+name = "memory_probes"
+path = "src/bin/memory_probes.rs"
+required-features = ["memory-probes"]
+test = false
+doc = false
+bench = false

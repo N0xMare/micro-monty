@@ -1,0 +1,145 @@
+{
+ "calls": [
+  {
+   "args": {
+    "url": "https://api.example.com"
+   },
+   "name": "check_health",
+   "ok": {
+    "latency_ms": 42,
+    "up": true,
+    "url": "https://api.example.com"
+   }
+  },
+  {
+   "args": {
+    "url": "https://auth.example.com"
+   },
+   "name": "check_health",
+   "ok": {
+    "latency_ms": 88,
+    "up": true,
+    "url": "https://auth.example.com"
+   }
+  },
+  {
+   "args": {
+    "url": "https://billing.example.com"
+   },
+   "name": "check_health",
+   "ok": {
+    "latency_ms": null,
+    "up": false,
+    "url": "https://billing.example.com"
+   }
+  },
+  {
+   "args": {
+    "url": "https://cdn.example.com"
+   },
+   "err": [
+    "TimeoutError",
+    "upstream timed out"
+   ],
+   "name": "check_health"
+  },
+  {
+   "args": {
+    "url": "https://mail.example.com"
+   },
+   "name": "check_health",
+   "ok": {
+    "latency_ms": null,
+    "up": false,
+    "url": "https://mail.example.com"
+   }
+  },
+  {
+   "args": {
+    "url": "https://search.example.com"
+   },
+   "name": "check_health",
+   "ok": {
+    "latency_ms": 340,
+    "up": true,
+    "url": "https://search.example.com"
+   }
+  },
+  {
+   "args": {
+    "url": "https://status.example.com"
+   },
+   "name": "check_health",
+   "ok": {
+    "latency_ms": 51,
+    "up": true,
+    "url": "https://status.example.com"
+   }
+  },
+  {
+   "args": {
+    "url": "https://cdn.example.com"
+   },
+   "err": [
+    "RuntimeError",
+    "503 Service Unavailable"
+   ],
+   "name": "check_health"
+  },
+  {
+   "args": {
+    "url": "https://cdn.example.com"
+   },
+   "err": [
+    "TimeoutError",
+    "upstream timed out"
+   ],
+   "name": "check_health"
+  },
+  {
+   "args": {
+    "url": "https://cdn.example.com"
+   },
+   "err": [
+    "RuntimeError",
+    "503 Service Unavailable"
+   ],
+   "name": "check_health"
+  },
+  {
+   "args": {
+    "unreachable": [
+     "https://cdn.example.com"
+    ],
+    "up": [
+     "https://api.example.com",
+     "https://auth.example.com",
+     "https://search.example.com",
+     "https://status.example.com"
+    ]
+   },
+   "name": "submit_answer",
+   "ok": "ok"
+  }
+ ],
+ "category": "retries-errors",
+ "stdout": "https://cdn.example.com: unreachable (RuntimeError: 503 Service Unavailable)\nup: ['https://api.example.com', 'https://auth.example.com', 'https://search.example.com', 'https://status.example.com']\ndown (responded, not up): ['https://billing.example.com', 'https://mail.example.com']\nunreachable: ['https://cdn.example.com']\nok\n",
+ "task": "retry-give-up",
+ "tools": [
+  {
+   "description": "Probe an endpoint's /health.",
+   "name": "check_health",
+   "params": [
+    "url"
+   ]
+  },
+  {
+   "description": "Submit the final answer of this task. Call it once, at the end.",
+   "name": "submit_answer",
+   "params": [
+    "up",
+    "unreachable"
+   ]
+  }
+ ]
+}

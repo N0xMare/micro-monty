@@ -1,0 +1,9 @@
+# /// monty
+# call-external = true
+# ///
+def foo():
+    return add_ints(1, 2)
+
+
+result = foo()
+assert result == 3

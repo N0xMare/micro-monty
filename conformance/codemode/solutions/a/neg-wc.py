@@ -1,0 +1,6 @@
+text = await read_file({"path": "/docs/contract.txt"})
+lines = text.count("\n")
+words = len(text.split())
+nbytes = len(text.encode("utf-8"))
+print(f"{lines} {words} {nbytes} /docs/contract.txt")
+print(await submit_answer({"lines": lines, "words": words, "bytes": nbytes}))

@@ -1,0 +1,61 @@
+[package]
+name = "mm-cell-worker"
+description = "A micro-monty worker for one external cell protocol (plakous-cell-protocol.v2), used in local integration testing: a library and a binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+exclude.workspace = true
+# A local integration-test harness (docs/HANDOFF.md scope decision 44).
+publish = false
+
+# The protocol loop, codec and session driving; no FFI, no seccomp.
+[lib]
+path = "src/lib.rs"
+
+# The child-process worker: stdio, seccomp (src/seccomp.rs), crash cuts.
+[[bin]]
+name = "mm-cell-worker"
+path = "src/main.rs"
+
+[features]
+# Crash cuts for plak's delivery tests (`PLAK_TEST_CELL_CUT`), debug builds only.
+test-hooks = []
+
+[dependencies]
+micro-monty.workspace = true
+plakous-cell.workspace = true
+serde_json.workspace = true
+
+# The seccomp filter (src/seccomp.rs, docs/spec.md §10.2).
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+# The workspace lints, except that `unsafe_code` is `deny` instead of
+# `forbid`: src/seccomp.rs in the binary, the one exception (docs/spec.md
+# §5), allows it for the prctl/seccomp/getrusage FFI calls. The library
+# forbids it itself (src/lib.rs). Keep in sync with the
+# workspace's `[workspace.lints]`.
+[lints.rust]
+missing_docs = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+unsafe_code = "deny"
+unused_lifetimes = "deny"
+unused_qualifications = "warn"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "warn"
+dbg_macro = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"

@@ -1,0 +1,16 @@
+[package]
+name = "mm-core"
+description = "micro-monty heap: NaN-boxed values, arena, tracing GC, write barrier, interning"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+exclude.workspace = true
+keywords = ["python", "micro-monty", "interpreter", "gc", "arena"]
+categories = ["memory-management", "no-std"]
+
+
+[lints]
+workspace = true

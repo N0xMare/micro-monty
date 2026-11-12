@@ -1,0 +1,44 @@
+{
+ "-": {
+  "first_ns": 177433,
+  "median_ns": 33904,
+  "min_ns": 32882,
+  "rss_kib": 111.2
+ },
+ "json": {
+  "first_ns": 458499,
+  "median_ns": 123513,
+  "min_ns": 104784,
+  "rss_kib": 113.7
+ },
+ "re": {
+  "first_ns": 1305802,
+  "median_ns": 324031,
+  "min_ns": 278526,
+  "rss_kib": 252.2
+ },
+ "collections": {
+  "first_ns": 1283297,
+  "median_ns": 298004,
+  "min_ns": 267803,
+  "rss_kib": 265.4
+ },
+ "asyncio": {
+  "first_ns": 278923,
+  "median_ns": 46587,
+  "min_ns": 45274,
+  "rss_kib": 77.1
+ },
+ "datetime": {
+  "first_ns": 2574776,
+  "median_ns": 782144,
+  "min_ns": 720508,
+  "rss_kib": 451.7
+ },
+ "json,re,collections,asyncio,datetime": {
+  "first_ns": 4613324,
+  "median_ns": 2047519,
+  "min_ns": 1874194,
+  "rss_kib": 946.7
+ }
+}

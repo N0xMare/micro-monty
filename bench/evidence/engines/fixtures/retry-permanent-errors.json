@@ -1,0 +1,104 @@
+{
+ "calls": [
+  {
+   "args": {
+    "customer_id": 4
+   },
+   "name": "get_customer",
+   "ok": {
+    "country": "US",
+    "email": "ivan.novak4@example.com",
+    "id": 4,
+    "name": "Ivan Novak",
+    "region": "South",
+    "signup_date": "2024-08-08",
+    "tier": "bronze"
+   }
+  },
+  {
+   "args": {
+    "customer_id": 77
+   },
+   "err": [
+    "LookupError",
+    "404 Not Found: customer 77"
+   ],
+   "name": "get_customer"
+  },
+  {
+   "args": {
+    "customer_id": 12
+   },
+   "name": "get_customer",
+   "ok": {
+    "country": "GB",
+    "email": "eli.larsen12@example.com",
+    "id": 12,
+    "name": "Eli Larsen",
+    "region": "South",
+    "signup_date": "2024-09-30",
+    "tier": "bronze"
+   }
+  },
+  {
+   "args": {
+    "customer_id": 300
+   },
+   "err": [
+    "LookupError",
+    "404 Not Found: customer 300"
+   ],
+   "name": "get_customer"
+  },
+  {
+   "args": {
+    "customer_id": 25
+   },
+   "name": "get_customer",
+   "ok": {
+    "country": "US",
+    "email": "pia.haddad25@example.com",
+    "id": 25,
+    "name": "Pia Haddad",
+    "region": "South",
+    "signup_date": "2025-04-15",
+    "tier": "silver"
+   }
+  },
+  {
+   "args": {
+    "found": {
+     "12": "Eli Larsen",
+     "25": "Pia Haddad",
+     "4": "Ivan Novak"
+    },
+    "not_found": [
+     77,
+     300
+    ]
+   },
+   "name": "submit_answer",
+   "ok": "ok"
+  }
+ ],
+ "category": "retries-errors",
+ "stdout": "{'4': 'Ivan Novak', '12': 'Eli Larsen', '25': 'Pia Haddad'} [77, 300]\nok\n",
+ "task": "retry-permanent-errors",
+ "tools": [
+  {
+   "description": "Fetch one customer by id.",
+   "name": "get_customer",
+   "params": [
+    "customer_id"
+   ]
+  },
+  {
+   "description": "Submit the final answer of this task. Call it once, at the end.",
+   "name": "submit_answer",
+   "params": [
+    "found",
+    "not_found"
+   ]
+  }
+ ]
+}

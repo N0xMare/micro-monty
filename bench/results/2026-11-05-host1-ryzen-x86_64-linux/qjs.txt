@@ -1,0 +1,17 @@
+# [M] machine: AMD Ryzen 9 8945HS w/ Radeon 780M Graphics, nproc 16, Linux 7.0.0-42-generic; 2026-11-05; pinned with taskset -c 2
+# engine: qjs QuickJS version 2026-06-04
+# wall clock per process (spawn to exit), 10 timed reps after 1 warm-up
+# program median_ms min_ms
+startup 1.3 1.1
+fib 13.9 13.8
+loop 52.1 50.0
+dict 72.8 71.1
+str 24.8 24.7
+json 129.4 128.2
+closure 28.2 27.9
+classes 54.0 53.3
+generators 73.7 73.4
+exceptions 95.6 95.3
+fmt 51.4 51.0
+sort 126.6 125.8
+interp 110.5 110.0

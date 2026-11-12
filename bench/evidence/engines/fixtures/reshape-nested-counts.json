@@ -1,0 +1,461 @@
+{
+ "calls": [
+  {
+   "args": {
+    "page": 1
+   },
+   "name": "list_customers",
+   "ok": {
+    "customers": [
+     {
+      "country": "US",
+      "email": "hana.garcia1@example.com",
+      "id": 1,
+      "name": "Hana Garcia",
+      "region": "East",
+      "signup_date": "2024-05-07",
+      "tier": "silver"
+     },
+     {
+      "country": "US",
+      "email": "omar.larsen2@example.com",
+      "id": 2,
+      "name": "Omar Larsen",
+      "region": "North",
+      "signup_date": "2025-01-17",
+      "tier": "silver"
+     },
+     {
+      "country": "CA",
+      "email": "ben.kim3@example.com",
+      "id": 3,
+      "name": "Ben Kim",
+      "region": "North",
+      "signup_date": "2024-08-28",
+      "tier": "bronze"
+     },
+     {
+      "country": "US",
+      "email": "ivan.novak4@example.com",
+      "id": 4,
+      "name": "Ivan Novak",
+      "region": "South",
+      "signup_date": "2024-08-08",
+      "tier": "bronze"
+     },
+     {
+      "country": "DE",
+      "email": "pia.haddad5@example.com",
+      "id": 5,
+      "name": "Pia Haddad",
+      "region": "East",
+      "signup_date": "2025-07-26",
+      "tier": "gold"
+     },
+     {
+      "country": "CA",
+      "email": "cara.silva6@example.com",
+      "id": 6,
+      "name": "Cara Silva",
+      "region": "East",
+      "signup_date": "2024-03-11",
+      "tier": "silver"
+     },
+     {
+      "country": "DE",
+      "email": "jade.okafor7@example.com",
+      "id": 7,
+      "name": "Jade Okafor",
+      "region": "North",
+      "signup_date": "2024-09-14",
+      "tier": "bronze"
+     },
+     {
+      "country": "DE",
+      "email": "quinn.chen8@example.com",
+      "id": 8,
+      "name": "Quinn Chen",
+      "region": "North",
+      "signup_date": "2024-07-05",
+      "tier": "bronze"
+     },
+     {
+      "country": "GB",
+      "email": "dev.moreau9@example.com",
+      "id": 9,
+      "name": "Dev Moreau",
+      "region": "South",
+      "signup_date": "2025-02-14",
+      "tier": "silver"
+     },
+     {
+      "country": "US",
+      "email": "kai.smith10@example.com",
+      "id": 10,
+      "name": "Kai Smith",
+      "region": "East",
+      "signup_date": "2024-03-20",
+      "tier": "bronze"
+     }
+    ],
+    "page": 1,
+    "total_pages": 4
+   }
+  },
+  {
+   "args": {
+    "page": 2
+   },
+   "name": "list_customers",
+   "ok": {
+    "customers": [
+     {
+      "country": "US",
+      "email": "rosa.garcia11@example.com",
+      "id": 11,
+      "name": "Rosa Garcia",
+      "region": "West",
+      "signup_date": "2024-06-05",
+      "tier": "silver"
+     },
+     {
+      "country": "GB",
+      "email": "eli.larsen12@example.com",
+      "id": 12,
+      "name": "Eli Larsen",
+      "region": "South",
+      "signup_date": "2024-09-30",
+      "tier": "bronze"
+     },
+     {
+      "country": "CA",
+      "email": "lena.kim13@example.com",
+      "id": 13,
+      "name": "Lena Kim",
+      "region": "East",
+      "signup_date": "2025-01-15",
+      "tier": "silver"
+     },
+     {
+      "country": "US",
+      "email": "sam.novak14@example.com",
+      "id": 14,
+      "name": "Sam Novak",
+      "region": "North",
+      "signup_date": "2025-01-11",
+      "tier": "bronze"
+     },
+     {
+      "country": "CA",
+      "email": "fay.haddad15@example.com",
+      "id": 15,
+      "name": "Fay Haddad",
+      "region": "South",
+      "signup_date": "2025-10-09",
+      "tier": "bronze"
+     },
+     {
+      "country": "GB",
+      "email": "milo.silva16@example.com",
+      "id": 16,
+      "name": "Milo Silva",
+      "region": "East",
+      "signup_date": "2024-07-17",
+      "tier": "gold"
+     },
+     {
+      "country": "GB",
+      "email": "tara.okafor17@example.com",
+      "id": 17,
+      "name": "Tara Okafor",
+      "region": "North",
+      "signup_date": "2025-06-08",
+      "tier": "silver"
+     },
+     {
+      "country": "CA",
+      "email": "gus.chen18@example.com",
+      "id": 18,
+      "name": "Gus Chen",
+      "region": "East",
+      "signup_date": "2024-05-27",
+      "tier": "silver"
+     },
+     {
+      "country": "CA",
+      "email": "nina.moreau19@example.com",
+      "id": 19,
+      "name": "Nina Moreau",
+      "region": "West",
+      "signup_date": "2024-01-14",
+      "tier": "bronze"
+     },
+     {
+      "country": "US",
+      "email": "ada.smith20@example.com",
+      "id": 20,
+      "name": "Ada Smith",
+      "region": "South",
+      "signup_date": "2025-04-16",
+      "tier": "bronze"
+     }
+    ],
+    "page": 2,
+    "total_pages": 4
+   }
+  },
+  {
+   "args": {
+    "page": 3
+   },
+   "name": "list_customers",
+   "ok": {
+    "customers": [
+     {
+      "country": "GB",
+      "email": "hana.garcia21@example.com",
+      "id": 21,
+      "name": "Hana Garcia",
+      "region": "South",
+      "signup_date": "2024-06-20",
+      "tier": "bronze"
+     },
+     {
+      "country": "CA",
+      "email": "omar.larsen22@example.com",
+      "id": 22,
+      "name": "Omar Larsen",
+      "region": "South",
+      "signup_date": "2025-11-15",
+      "tier": "gold"
+     },
+     {
+      "country": "CA",
+      "email": "ben.kim23@example.com",
+      "id": 23,
+      "name": "Ben Kim",
+      "region": "West",
+      "signup_date": "2024-08-18",
+      "tier": "silver"
+     },
+     {
+      "country": "US",
+      "email": "ivan.novak24@example.com",
+      "id": 24,
+      "name": "Ivan Novak",
+      "region": "South",
+      "signup_date": "2024-07-11",
+      "tier": "silver"
+     },
+     {
+      "country": "US",
+      "email": "pia.haddad25@example.com",
+      "id": 25,
+      "name": "Pia Haddad",
+      "region": "South",
+      "signup_date": "2025-04-15",
+      "tier": "silver"
+     },
+     {
+      "country": "CA",
+      "email": "cara.silva26@example.com",
+      "id": 26,
+      "name": "Cara Silva",
+      "region": "West",
+      "signup_date": "2025-05-26",
+      "tier": "bronze"
+     },
+     {
+      "country": "CA",
+      "email": "jade.okafor27@example.com",
+      "id": 27,
+      "name": "Jade Okafor",
+      "region": "South",
+      "signup_date": "2025-10-18",
+      "tier": "bronze"
+     },
+     {
+      "country": "US",
+      "email": "quinn.chen28@example.com",
+      "id": 28,
+      "name": "Quinn Chen",
+      "region": "West",
+      "signup_date": "2024-11-17",
+      "tier": "bronze"
+     },
+     {
+      "country": "DE",
+      "email": "dev.moreau29@example.com",
+      "id": 29,
+      "name": "Dev Moreau",
+      "region": "West",
+      "signup_date": "2024-12-13",
+      "tier": "bronze"
+     },
+     {
+      "country": "DE",
+      "email": "kai.smith30@example.com",
+      "id": 30,
+      "name": "Kai Smith",
+      "region": "East",
+      "signup_date": "2025-11-27",
+      "tier": "bronze"
+     }
+    ],
+    "page": 3,
+    "total_pages": 4
+   }
+  },
+  {
+   "args": {
+    "page": 4
+   },
+   "name": "list_customers",
+   "ok": {
+    "customers": [
+     {
+      "country": "US",
+      "email": "rosa.garcia31@example.com",
+      "id": 31,
+      "name": "Rosa Garcia",
+      "region": "West",
+      "signup_date": "2025-01-20",
+      "tier": "silver"
+     },
+     {
+      "country": "CA",
+      "email": "eli.larsen32@example.com",
+      "id": 32,
+      "name": "Eli Larsen",
+      "region": "West",
+      "signup_date": "2025-08-19",
+      "tier": "gold"
+     },
+     {
+      "country": "US",
+      "email": "lena.kim33@example.com",
+      "id": 33,
+      "name": "Lena Kim",
+      "region": "East",
+      "signup_date": "2025-09-27",
+      "tier": "bronze"
+     },
+     {
+      "country": "US",
+      "email": "sam.novak34@example.com",
+      "id": 34,
+      "name": "Sam Novak",
+      "region": "North",
+      "signup_date": "2024-09-18",
+      "tier": "bronze"
+     },
+     {
+      "country": "CA",
+      "email": "fay.haddad35@example.com",
+      "id": 35,
+      "name": "Fay Haddad",
+      "region": "North",
+      "signup_date": "2024-03-01",
+      "tier": "gold"
+     },
+     {
+      "country": "DE",
+      "email": "milo.silva36@example.com",
+      "id": 36,
+      "name": "Milo Silva",
+      "region": "North",
+      "signup_date": "2024-10-31",
+      "tier": "bronze"
+     },
+     {
+      "country": "CA",
+      "email": "tara.okafor37@example.com",
+      "id": 37,
+      "name": "Tara Okafor",
+      "region": "South",
+      "signup_date": "2024-10-27",
+      "tier": "bronze"
+     },
+     {
+      "country": "US",
+      "email": "gus.chen38@example.com",
+      "id": 38,
+      "name": "Gus Chen",
+      "region": "West",
+      "signup_date": "2024-01-05",
+      "tier": "silver"
+     },
+     {
+      "country": "CA",
+      "email": "nina.moreau39@example.com",
+      "id": 39,
+      "name": "Nina Moreau",
+      "region": "North",
+      "signup_date": "2024-11-14",
+      "tier": "gold"
+     },
+     {
+      "country": "US",
+      "email": "ada.smith40@example.com",
+      "id": 40,
+      "name": "Ada Smith",
+      "region": "South",
+      "signup_date": "2025-07-23",
+      "tier": "gold"
+     }
+    ],
+    "page": 4,
+    "total_pages": 4
+   }
+  },
+  {
+   "args": {
+    "counts": {
+     "East": {
+      "bronze": 3,
+      "gold": 2,
+      "silver": 4
+     },
+     "North": {
+      "bronze": 6,
+      "gold": 2,
+      "silver": 2
+     },
+     "South": {
+      "bronze": 7,
+      "gold": 2,
+      "silver": 3
+     },
+     "West": {
+      "bronze": 4,
+      "gold": 1,
+      "silver": 4
+     }
+    }
+   },
+   "name": "submit_answer",
+   "ok": "ok"
+  }
+ ],
+ "category": "csv-json-reshaping",
+ "stdout": "40 {'East': {'bronze': 3, 'gold': 2, 'silver': 4}, 'North': {'bronze': 6, 'gold': 2, 'silver': 2}, 'South': {'bronze': 7, 'gold': 2, 'silver': 3}, 'West': {'bronze': 4, 'gold': 1, 'silver': 4}}\nok\n",
+ "task": "reshape-nested-counts",
+ "tools": [
+  {
+   "description": "List customers, 10 per page, ordered by id. Optional filters by region and tier.",
+   "name": "list_customers",
+   "params": [
+    "region",
+    "tier",
+    "page"
+   ]
+  },
+  {
+   "description": "Submit the final answer of this task. Call it once, at the end.",
+   "name": "submit_answer",
+   "params": [
+    "counts"
+   ]
+  }
+ ]
+}

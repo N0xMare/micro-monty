@@ -1,0 +1,17 @@
+# [M] machine: AMD Ryzen 9 8945HS w/ Radeon 780M Graphics, nproc 16, Linux 7.0.0-42-generic; 2026-11-05; pinned with taskset -c 2
+# engine: CPython 3.14.7
+# wall clock per process (spawn to exit), 10 timed reps after 1 warm-up
+# program median_ms min_ms
+startup 7.0 7.0
+fib 19.4 19.1
+loop 136.9 127.9
+dict 75.7 72.5
+str 28.8 28.4
+json 111.0 110.0
+closure 56.0 54.0
+classes 58.2 56.4
+generators 56.2 55.2
+exceptions 43.0 42.5
+fmt 56.8 56.1
+sort 61.9 60.9
+interp 56.9 56.5

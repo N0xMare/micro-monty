@@ -1,0 +1,33 @@
+# csv over io.StringIO.
+import csv
+import io
+
+buf = io.StringIO()
+w = csv.writer(buf)
+w.writerow(['name', 'note', 'n'])
+w.writerows([['a', 'x,y', 1], ['b', 'say "hi"', 2.5], ['c', 'two\nlines', None]])
+text = buf.getvalue()
+print(repr(text))
+print(list(csv.reader(io.StringIO(text))))
+for row in csv.DictReader(io.StringIO(text)):
+    print(row)
+out = io.StringIO()
+dw = csv.DictWriter(out, ['k', 'v'], quoting=csv.QUOTE_NONNUMERIC)
+dw.writeheader()
+dw.writerow({'k': 'x', 'v': 3})
+print(repr(out.getvalue()))
+print(list(csv.reader(['a;b;"c;d"'], delimiter=';')), list(csv.reader(['a|b'], csv.excel, delimiter='|')))
+csv.register_dialect('pipes', delimiter='|', quoting=csv.QUOTE_ALL)
+p = io.StringIO()
+csv.writer(p, 'pipes').writerow([1, 'b'])
+print(repr(p.getvalue()), csv.list_dialects(), csv.get_dialect('pipes').quoting)
+csv.unregister_dialect('pipes')
+b = io.BytesIO()
+b.write(b'ab')
+b.write(b'cd')
+b.seek(1)
+print(b.read(2), b.getvalue(), b.tell())
+s = io.StringIO('x\ny\n')
+print(s.readline(), s.readlines(), s.read(), s.seek(0), s.read(1))
+print('to', 'buffer', sep='+', file=s)
+print(repr(s.getvalue()))

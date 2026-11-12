@@ -1,0 +1,28 @@
+# [M] machine: unknown CPU, nproc ?, Darwin 27.2.0; 2026-11-05; not pinned (no taskset or fewer than 3 CPUs)
+# engine: monty-runtime 1.4.0
+# wall clock per process (spawn to exit), 10 timed reps after 1 warm-up
+# program median_ms min_ms
+startup 5.0 4.4
+fib 61.5 60.8
+loop 119.4 118.4
+dict 97.0 96.1
+str 35.7 34.8
+json 128.8 125.7
+closure 120.0 119.3
+classes 311.1 309.0
+fmt 120.5 119.8
+sort 183.0 178.1
+interp 281.6 279.4
+# failed generators: generators on monty-runtime 1.4.0: expected `67499550000 138450000 299995 100`, got `` (exit status: 1): error:
+Traceback (most recent call last):
+  File "/Users/local/dev/agents/micro-monty/xtask/../bench/generators.py", line 6, in <module>
+    yield i
+    ~~~~~~~
+NotImplementedError: The monty syntax parser does not yet support yield expressions
+# failed exceptions: exceptions on monty-runtime 1.4.0: expected `33334 99995 25063333 100000 50000`, got `` (exit status: 1): error:
+Traceback (most recent call last):
+  File "/Users/local/dev/agents/micro-monty/xtask/../bench/exceptions.py", line 4, in <module>
+    class Invalid(ValueError):
+    ...<2 lines>...
+            self.code = code
+NotImplementedError: The monty syntax parser does not yet support class inheritance and metaclasses

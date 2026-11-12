@@ -1,0 +1,134 @@
+diff --git a/crates/micro-monty/src/lib.rs b/crates/micro-monty/src/lib.rs
+index 6a1486d..52150f3 100644
+--- a/crates/micro-monty/src/lib.rs
++++ b/crates/micro-monty/src/lib.rs
+@@ -1044,6 +1044,11 @@ impl Session {
+         self.vm.set_gc_stress(on);
+     }
+ 
++    /// DIAGNOSTIC: dirty-line tracking on or off (off breaks deltas).
++    pub fn set_delta_tracking(&mut self, on: bool) {
++        self.vm.heap.set_delta_tracking(on);
++    }
++
+     /// Whether a completed cell reports the value of its last expression
+     /// (default `true`). Running a script, turn it off: computing the
+     /// value's text may run a user `__repr__` or `__str__`.
+diff --git a/crates/mm-cli/src/main.rs b/crates/mm-cli/src/main.rs
+index 7d988b6..916deaf 100644
+--- a/crates/mm-cli/src/main.rs
++++ b/crates/mm-cli/src/main.rs
+@@ -60,6 +60,10 @@ const USAGE: &str = "usage: mm run FILE
+ 
+ /// `MM_GC_STRESS=1`: collect at every safepoint.
+ fn gc_stress(session: &mut Session) {
++    // DIAGNOSTIC: `MM_DELTA_TRACKING=0` turns dirty-line marking off.
++    if std::env::var("MM_DELTA_TRACKING").as_deref() == Ok("0") {
++        session.set_delta_tracking(false);
++    }
+     if std::env::var("MM_GC_STRESS").as_deref() == Ok("1") {
+         session.set_gc_stress(true);
+     }
+diff --git a/crates/mm-core/src/heap.rs b/crates/mm-core/src/heap.rs
+index 04c5467..b70cf64 100644
+--- a/crates/mm-core/src/heap.rs
++++ b/crates/mm-core/src/heap.rs
+@@ -491,7 +491,9 @@ impl Heap {
+         {
+             *slot = v.0;
+             s.dirty = true;
+-            space::mark_line(space::line_map(&mut self.words.lines, seg), at);
++            if self.words.track {
++                space::mark_line(space::line_map(&mut self.words.lines, seg), at);
++            }
+         }
+     }
+ 
+@@ -508,7 +510,9 @@ impl Heap {
+         {
+             *slot = v.0;
+             s.dirty = true;
+-            space::mark_line(space::line_map(&mut self.words.lines, seg), at + 1);
++            if self.words.track {
++                space::mark_line(space::line_map(&mut self.words.lines, seg), at + 1);
++            }
+             return true;
+         }
+         false
+@@ -921,6 +925,12 @@ impl Heap {
+ 
+     // --- write barrier -------------------------------------------------
+ 
++    /// DIAGNOSTIC: turns dirty-line marking on or off for this heap.
++    pub fn set_delta_tracking(&mut self, on: bool) {
++        self.words.track = on;
++        self.bytes.track = on;
++    }
++
+     /// Reports every segment written, allocated into, freed from or released
+     /// since the last call, and clears the record (with the dirty lines a
+     /// delta snapshot writes).
+diff --git a/crates/mm-core/src/space.rs b/crates/mm-core/src/space.rs
+index 166d25d..4c79fe5 100644
+--- a/crates/mm-core/src/space.rs
++++ b/crates/mm-core/src/space.rs
+@@ -82,7 +82,7 @@ pub(crate) fn mark_line(l: &mut [u64], unit: usize) {
+ 
+ /// Marks the lines holding units `[off, off + n)` written in `l`.
+ pub(crate) fn mark_lines(l: &mut [u64], off: usize, n: usize) {
+-    if n == 0 {
++    if n == 0 || l.is_empty() {
+         return;
+     }
+     let (first, last) = (off / LINE_UNITS, (off + n - 1) / LINE_UNITS);
+@@ -507,6 +507,9 @@ pub(crate) struct Space<S> {
+     /// units written since the last [`Heap::clear_dirty`] (a delta snapshot
+     /// writes those lines). Apart from `Seg` so it stays 64 bytes.
+     pub(crate) lines: Vec<Box<[u64]>>,
++    /// DIAGNOSTIC per-session switch: when false, setters mark no lines
++    /// (delta snapshots are then wrong; measurement only).
++    pub(crate) track: bool,
+     pub(crate) vacant: Vec<usize>,
+     /// Segment being bump-allocated into (0: none).
+     pub(crate) bump: usize,
+@@ -525,6 +528,7 @@ impl<S: Store> Space<S> {
+             segs: Vec::new(),
+             marks: Vec::new(),
+             lines: Vec::new(),
++            track: true,
+             vacant: Vec::new(),
+             bump: 0,
+             run: (0, 0, 0),
+@@ -699,7 +703,9 @@ impl<S: Store> Space<S> {
+         s.used += n;
+         s.dirty = true;
+         // The caller fills the block.
+-        mark_lines(line_map(&mut self.lines, idx), off, n);
++        if self.track {
++            mark_lines(line_map(&mut self.lines, idx), off, n);
++        }
+         Ok((&mut s.data, off))
+     }
+ 
+@@ -899,7 +905,11 @@ impl<S: Store> Space<S> {
+     pub(crate) fn block_lines(&mut self, a: u32) -> Option<(&mut Seg<S>, &mut [u64], usize)> {
+         let (seg, off) = split(a);
+         let s = self.segs.get_mut(seg)?;
+-        let lines = line_map(&mut self.lines, seg);
++        let lines = if self.track {
++            line_map(&mut self.lines, seg)
++        } else {
++            &mut []
++        };
+         bit(&s.starts, off).then_some((s, lines, off))
+     }
+ 
+@@ -940,7 +950,7 @@ impl<S: Store> Space<S> {
+                 if !s.large && !all_live {
+                     s.used = walk(
+                         &mut self.lists,
+-                        &mut self.lines,
++                        if self.track { &mut self.lines } else { &mut [] },
+                         s,
+                         m,
+                         idx,

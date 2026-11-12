@@ -1,0 +1,109 @@
+{"arm": "codex-ptc-mm", "cell": 1, "original_last_line": "NameError: name 'cmd' is not defined", "prompt": "builtins-callbacks", "replay_last_line": "NameError: name 'cmd' is not defined", "replay_worker": "monty", "verdict": "same outcome, other traceback"}
+{"arm": "codex-ptc-mm", "cell": 2, "prompt": "builtins-callbacks", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 3, "prompt": "builtins-callbacks", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 4, "prompt": "builtins-callbacks", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 5, "prompt": "builtins-callbacks", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 6, "prompt": "builtins-callbacks", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 7, "prompt": "builtins-callbacks", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 8, "prompt": "builtins-callbacks", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 9, "prompt": "builtins-callbacks", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 10, "prompt": "builtins-callbacks", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 11, "prompt": "builtins-callbacks", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 1, "original_last_line": "SyntaxError: invalid syntax", "prompt": "codec-review", "replay_last_line": "SyntaxError: Simple statements must be separated by newlines or semicolons", "replay_worker": "monty", "verdict": "same outcome, other message"}
+{"arm": "codex-ptc-mm", "cell": 2, "prompt": "codec-review", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 3, "prompt": "codec-review", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 4, "prompt": "codec-review", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 5, "prompt": "codec-review", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 6, "prompt": "codec-review", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 7, "prompt": "codec-review", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 8, "prompt": "codec-review", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 9, "prompt": "codec-review", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 10, "prompt": "codec-review", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 1, "original_last_line": "NameError: name 'cmd' is not defined", "prompt": "dict-review", "replay_last_line": "NameError: name 'cmd' is not defined", "replay_worker": "monty", "verdict": "same outcome, other traceback"}
+{"arm": "codex-ptc-mm", "cell": 2, "prompt": "dict-review", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 3, "prompt": "dict-review", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 4, "prompt": "dict-review", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 5, "prompt": "dict-review", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 6, "prompt": "dict-review", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 1, "prompt": "fuel-loops", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 2, "original_last_line": "KeyError: 'stdout'", "prompt": "fuel-loops", "replay_last_line": "KeyError: stdout", "replay_worker": "monty", "verdict": "same outcome, other message"}
+{"arm": "codex-ptc-mm", "cell": 3, "prompt": "fuel-loops", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 4, "prompt": "fuel-loops", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 5, "prompt": "fuel-loops", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 6, "prompt": "fuel-loops", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 7, "prompt": "fuel-loops", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 8, "prompt": "fuel-loops", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 1, "original_last_line": "NameError: name 'cmd' is not defined", "prompt": "loc-census", "replay_last_line": "NameError: name 'cmd' is not defined", "replay_worker": "monty", "verdict": "same outcome, other traceback"}
+{"arm": "codex-ptc-mm", "cell": 2, "original_last_line": "KeyError: 'stdout'", "prompt": "loc-census", "replay_last_line": "KeyError: stdout", "replay_worker": "monty", "verdict": "same outcome, other message"}
+{"arm": "codex-ptc-mm", "cell": 3, "prompt": "loc-census", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 4, "original_last_line": "TypeError: unsupported operand type(s) for /: 'str' and 'str'", "prompt": "loc-census", "replay_last_line": "TypeError: unsupported operand type(s) for /: 'str' and 'str'", "replay_worker": "monty", "verdict": "same outcome, other traceback"}
+{"arm": "codex-ptc-mm", "cell": 5, "prompt": "loc-census", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 6, "prompt": "loc-census", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 1, "original_last_line": "NameError: name 'cmd' is not defined", "prompt": "own-exceptions", "replay_last_line": "NameError: name 'cmd' is not defined", "replay_worker": "monty", "verdict": "same outcome, other traceback"}
+{"arm": "codex-ptc-mm", "cell": 2, "prompt": "own-exceptions", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 3, "prompt": "own-exceptions", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 4, "prompt": "own-exceptions", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 5, "prompt": "own-exceptions", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 1, "original_last_line": "NameError: name 'cmd' is not defined", "prompt": "snapshot-format", "replay_last_line": "NameError: name 'cmd' is not defined", "replay_worker": "monty", "verdict": "same outcome, other traceback"}
+{"arm": "codex-ptc-mm", "cell": 2, "prompt": "snapshot-format", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 3, "prompt": "snapshot-format", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 4, "prompt": "snapshot-format", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 5, "prompt": "snapshot-format", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 6, "prompt": "snapshot-format", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 7, "prompt": "snapshot-format", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 8, "prompt": "snapshot-format", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 1, "original_last_line": "NameError: name 'cmd' is not defined", "prompt": "todo-census", "replay_last_line": "NameError: name 'cmd' is not defined", "replay_worker": "monty", "verdict": "same outcome, other traceback"}
+{"arm": "codex-ptc-mm", "cell": 2, "prompt": "todo-census", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-mm", "cell": 3, "prompt": "todo-census", "replay_worker": "monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 1, "original_last_line": "NameError: name 'cmd' is not defined", "prompt": "builtins-callbacks", "replay_last_line": "NameError: name 'cmd' is not defined", "replay_worker": "micro-monty", "verdict": "same outcome, other traceback"}
+{"arm": "codex-ptc-monty", "cell": 2, "prompt": "builtins-callbacks", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 3, "prompt": "builtins-callbacks", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 4, "prompt": "builtins-callbacks", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 5, "prompt": "builtins-callbacks", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 6, "prompt": "builtins-callbacks", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 7, "prompt": "builtins-callbacks", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 1, "original_last_line": "SyntaxError: Expected `,`, found name", "prompt": "codec-review", "replay_last_line": "SyntaxError: invalid syntax", "replay_worker": "micro-monty", "verdict": "same outcome, other message"}
+{"arm": "codex-ptc-monty", "cell": 2, "prompt": "codec-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 3, "prompt": "codec-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 4, "prompt": "codec-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 5, "prompt": "codec-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 6, "prompt": "codec-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 7, "prompt": "codec-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 8, "prompt": "codec-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 1, "original_last_line": "KeyError: stdout", "prompt": "dict-review", "replay_last_line": "KeyError: 'stdout'", "replay_worker": "micro-monty", "verdict": "same outcome, other message"}
+{"arm": "codex-ptc-monty", "cell": 2, "prompt": "dict-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 3, "prompt": "dict-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 4, "prompt": "dict-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 5, "prompt": "dict-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 6, "prompt": "dict-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 7, "prompt": "dict-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 8, "prompt": "dict-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 9, "prompt": "dict-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 10, "prompt": "dict-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 11, "prompt": "dict-review", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 1, "original_last_line": "SyntaxError: Expected `,`, found name", "prompt": "fuel-loops", "replay_last_line": "SyntaxError: unterminated string literal (detected at line 1)", "replay_worker": "micro-monty", "verdict": "same outcome, other message"}
+{"arm": "codex-ptc-monty", "cell": 2, "prompt": "fuel-loops", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 3, "prompt": "fuel-loops", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 4, "prompt": "fuel-loops", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 5, "prompt": "fuel-loops", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 6, "prompt": "fuel-loops", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 7, "prompt": "fuel-loops", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 8, "prompt": "fuel-loops", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 1, "original_last_line": "NameError: name 'cmd' is not defined", "prompt": "loc-census", "replay_last_line": "NameError: name 'cmd' is not defined", "replay_worker": "micro-monty", "verdict": "same outcome, other traceback"}
+{"arm": "codex-ptc-monty", "cell": 2, "original_last_line": "KeyError: stdout", "prompt": "loc-census", "replay_last_line": "KeyError: 'stdout'", "replay_worker": "micro-monty", "verdict": "same outcome, other message"}
+{"arm": "codex-ptc-monty", "cell": 3, "prompt": "loc-census", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 4, "prompt": "loc-census", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 1, "original_last_line": "NameError: name 'cmd' is not defined", "prompt": "own-exceptions", "replay_last_line": "NameError: name 'cmd' is not defined", "replay_worker": "micro-monty", "verdict": "same outcome, other traceback"}
+{"arm": "codex-ptc-monty", "cell": 2, "original_last_line": "KeyError: stdout", "prompt": "own-exceptions", "replay_last_line": "KeyError: 'stdout'", "replay_worker": "micro-monty", "verdict": "same outcome, other message"}
+{"arm": "codex-ptc-monty", "cell": 3, "prompt": "own-exceptions", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 4, "prompt": "own-exceptions", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 5, "prompt": "own-exceptions", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 6, "prompt": "own-exceptions", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 1, "original_last_line": "NameError: name 'cmd' is not defined", "prompt": "snapshot-format", "replay_last_line": "NameError: name 'cmd' is not defined", "replay_worker": "micro-monty", "verdict": "same outcome, other traceback"}
+{"arm": "codex-ptc-monty", "cell": 2, "prompt": "snapshot-format", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 3, "prompt": "snapshot-format", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 4, "prompt": "snapshot-format", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 5, "prompt": "snapshot-format", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 1, "original_last_line": "NameError: name 'cmd' is not defined", "prompt": "todo-census", "replay_last_line": "NameError: name 'cmd' is not defined", "replay_worker": "micro-monty", "verdict": "same outcome, other traceback"}
+{"arm": "codex-ptc-monty", "cell": 2, "prompt": "todo-census", "replay_worker": "micro-monty", "verdict": "same"}
+{"arm": "codex-ptc-monty", "cell": 3, "prompt": "todo-census", "replay_worker": "micro-monty", "verdict": "same"}

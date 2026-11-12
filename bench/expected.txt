@@ -1,0 +1,15 @@
+# The one line each benchmark program prints, on every engine: `<name>: <line>`.
+# `cargo xtask bench` checks every run against it.
+startup: 0
+fib: 196418
+loop: 4499998500000
+dict: 200000 19999900000
+str: 988889 100000 788889 11111
+json: 3865741 50000 3749925000
+closure: 3000000
+classes: 840 61955 3995100 200000 400000 499300
+generators: 67499550000 138450000 299995 100
+exceptions: 33334 99995 25063333 100000 50000
+fmt: 2333978 30000 60000 user012345|  26|6e7|345:8:ok   |86415
+sort: 330434481 25000 500 n0 n994 7300 379
+interp: 7500 2536368

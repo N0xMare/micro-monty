@@ -1,0 +1,12 @@
+[package]
+name = "iso-guest"
+description = "Wasmtime mode: the shared service as a wasm32-wasip1 reactor module"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+iso-service.workspace = true

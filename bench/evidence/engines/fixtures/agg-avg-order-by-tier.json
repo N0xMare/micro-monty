@@ -1,0 +1,2150 @@
+{
+ "calls": [
+  {
+   "args": {
+    "page": 1
+   },
+   "name": "list_customers",
+   "ok": {
+    "customers": [
+     {
+      "country": "US",
+      "email": "hana.garcia1@example.com",
+      "id": 1,
+      "name": "Hana Garcia",
+      "region": "East",
+      "signup_date": "2024-05-07",
+      "tier": "silver"
+     },
+     {
+      "country": "US",
+      "email": "omar.larsen2@example.com",
+      "id": 2,
+      "name": "Omar Larsen",
+      "region": "North",
+      "signup_date": "2025-01-17",
+      "tier": "silver"
+     },
+     {
+      "country": "CA",
+      "email": "ben.kim3@example.com",
+      "id": 3,
+      "name": "Ben Kim",
+      "region": "North",
+      "signup_date": "2024-08-28",
+      "tier": "bronze"
+     },
+     {
+      "country": "US",
+      "email": "ivan.novak4@example.com",
+      "id": 4,
+      "name": "Ivan Novak",
+      "region": "South",
+      "signup_date": "2024-08-08",
+      "tier": "bronze"
+     },
+     {
+      "country": "DE",
+      "email": "pia.haddad5@example.com",
+      "id": 5,
+      "name": "Pia Haddad",
+      "region": "East",
+      "signup_date": "2025-07-26",
+      "tier": "gold"
+     },
+     {
+      "country": "CA",
+      "email": "cara.silva6@example.com",
+      "id": 6,
+      "name": "Cara Silva",
+      "region": "East",
+      "signup_date": "2024-03-11",
+      "tier": "silver"
+     },
+     {
+      "country": "DE",
+      "email": "jade.okafor7@example.com",
+      "id": 7,
+      "name": "Jade Okafor",
+      "region": "North",
+      "signup_date": "2024-09-14",
+      "tier": "bronze"
+     },
+     {
+      "country": "DE",
+      "email": "quinn.chen8@example.com",
+      "id": 8,
+      "name": "Quinn Chen",
+      "region": "North",
+      "signup_date": "2024-07-05",
+      "tier": "bronze"
+     },
+     {
+      "country": "GB",
+      "email": "dev.moreau9@example.com",
+      "id": 9,
+      "name": "Dev Moreau",
+      "region": "South",
+      "signup_date": "2025-02-14",
+      "tier": "silver"
+     },
+     {
+      "country": "US",
+      "email": "kai.smith10@example.com",
+      "id": 10,
+      "name": "Kai Smith",
+      "region": "East",
+      "signup_date": "2024-03-20",
+      "tier": "bronze"
+     }
+    ],
+    "page": 1,
+    "total_pages": 4
+   }
+  },
+  {
+   "args": {
+    "status": "completed"
+   },
+   "name": "list_orders",
+   "ok": {
+    "next_cursor": "b2Zmc2V0OjI1",
+    "orders": [
+     {
+      "currency": "USD",
+      "customer_id": 8,
+      "id": 1194,
+      "order_date": "2026-03-13",
+      "status": "completed",
+      "total": 99.17
+     },
+     {
+      "currency": "USD",
+      "customer_id": 10,
+      "id": 1068,
+      "order_date": "2026-03-13",
+      "status": "completed",
+      "total": 105.2
+     },
+     {
+      "currency": "USD",
+      "customer_id": 13,
+      "id": 1143,
+      "order_date": "2026-03-11",
+      "status": "completed",
+      "total": 138.45
+     },
+     {
+      "currency": "USD",
+      "customer_id": 28,
+      "id": 1117,
+      "order_date": "2026-03-09",
+      "status": "completed",
+      "total": 901.6
+     },
+     {
+      "currency": "USD",
+      "customer_id": 31,
+      "id": 1216,
+      "order_date": "2026-03-07",
+      "status": "completed",
+      "total": 862.83
+     },
+     {
+      "currency": "USD",
+      "customer_id": 24,
+      "id": 1222,
+      "order_date": "2026-03-06",
+      "status": "completed",
+      "total": 1610.6
+     },
+     {
+      "currency": "USD",
+      "customer_id": 13,
+      "id": 1062,
+      "order_date": "2026-03-06",
+      "status": "completed",
+      "total": 252.08
+     },
+     {
+      "currency": "USD",
+      "customer_id": 17,
+      "id": 1201,
+      "order_date": "2026-03-05",
+      "status": "completed",
+      "total": 806.4
+     },
+     {
+      "currency": "USD",
+      "customer_id": 26,
+      "id": 1039,
+      "order_date": "2026-03-05",
+      "status": "completed",
+      "total": 247.44
+     },
+     {
+      "currency": "USD",
+      "customer_id": 37,
+      "id": 1013,
+      "order_date": "2026-03-04",
+      "status": "completed",
+      "total": 267.57
+     },
+     {
+      "currency": "USD",
+      "customer_id": 21,
+      "id": 1239,
+      "order_date": "2026-03-03",
+      "status": "completed",
+      "total": 1038.8
+     },
+     {
+      "currency": "USD",
+      "customer_id": 22,
+      "id": 1232,
+      "order_date": "2026-03-03",
+      "status": "completed",
+      "total": 2468.41
+     },
+     {
+      "currency": "USD",
+      "customer_id": 20,
+      "id": 1164,
+      "order_date": "2026-03-03",
+      "status": "completed",
+      "total": 184.02
+     },
+     {
+      "currency": "USD",
+      "customer_id": 32,
+      "id": 1155,
+      "order_date": "2026-03-02",
+      "status": "completed",
+      "total": 2725.5
+     },
+     {
+      "currency": "USD",
+      "customer_id": 29,
+      "id": 1066,
+      "order_date": "2026-03-02",
+      "status": "completed",
+      "total": 2575.44
+     },
+     {
+      "currency": "USD",
+      "customer_id": 21,
+      "id": 1050,
+      "order_date": "2026-03-01",
+      "status": "completed",
+      "total": 1349.92
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1212,
+      "order_date": "2026-02-28",
+      "status": "completed",
+      "total": 56.96
+     },
+     {
+      "currency": "USD",
+      "customer_id": 16,
+      "id": 1136,
+      "order_date": "2026-02-28",
+      "status": "completed",
+      "total": 335.88
+     },
+     {
+      "currency": "USD",
+      "customer_id": 33,
+      "id": 1067,
+      "order_date": "2026-02-28",
+      "status": "completed",
+      "total": 113.57
+     },
+     {
+      "currency": "USD",
+      "customer_id": 28,
+      "id": 1181,
+      "order_date": "2026-02-27",
+      "status": "completed",
+      "total": 344.76
+     },
+     {
+      "currency": "USD",
+      "customer_id": 6,
+      "id": 1037,
+      "order_date": "2026-02-27",
+      "status": "completed",
+      "total": 46.15
+     },
+     {
+      "currency": "USD",
+      "customer_id": 5,
+      "id": 1043,
+      "order_date": "2026-02-26",
+      "status": "completed",
+      "total": 3353.9
+     },
+     {
+      "currency": "USD",
+      "customer_id": 2,
+      "id": 1255,
+      "order_date": "2026-02-25",
+      "status": "completed",
+      "total": 3150.25
+     },
+     {
+      "currency": "USD",
+      "customer_id": 14,
+      "id": 1254,
+      "order_date": "2026-02-25",
+      "status": "completed",
+      "total": 255.42
+     },
+     {
+      "currency": "USD",
+      "customer_id": 21,
+      "id": 1228,
+      "order_date": "2026-02-23",
+      "status": "completed",
+      "total": 4832.41
+     }
+    ]
+   }
+  },
+  {
+   "args": {
+    "cursor": "b2Zmc2V0OjI1",
+    "status": "completed"
+   },
+   "name": "list_orders",
+   "ok": {
+    "next_cursor": "b2Zmc2V0OjUw",
+    "orders": [
+     {
+      "currency": "USD",
+      "customer_id": 12,
+      "id": 1258,
+      "order_date": "2026-02-22",
+      "status": "completed",
+      "total": 1231.19
+     },
+     {
+      "currency": "USD",
+      "customer_id": 25,
+      "id": 1200,
+      "order_date": "2026-02-22",
+      "status": "completed",
+      "total": 6428.58
+     },
+     {
+      "currency": "USD",
+      "customer_id": 8,
+      "id": 1124,
+      "order_date": "2026-02-22",
+      "status": "completed",
+      "total": 2650.08
+     },
+     {
+      "currency": "USD",
+      "customer_id": 16,
+      "id": 1075,
+      "order_date": "2026-02-20",
+      "status": "completed",
+      "total": 103.78
+     },
+     {
+      "currency": "USD",
+      "customer_id": 20,
+      "id": 1154,
+      "order_date": "2026-02-19",
+      "status": "completed",
+      "total": 183.42
+     },
+     {
+      "currency": "USD",
+      "customer_id": 1,
+      "id": 1192,
+      "order_date": "2026-02-18",
+      "status": "completed",
+      "total": 284.04
+     },
+     {
+      "currency": "USD",
+      "customer_id": 39,
+      "id": 1103,
+      "order_date": "2026-02-18",
+      "status": "completed",
+      "total": 255.42
+     },
+     {
+      "currency": "USD",
+      "customer_id": 1,
+      "id": 1288,
+      "order_date": "2026-02-17",
+      "status": "completed",
+      "total": 275.13
+     },
+     {
+      "currency": "USD",
+      "customer_id": 22,
+      "id": 1118,
+      "order_date": "2026-02-17",
+      "status": "completed",
+      "total": 338.25
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1127,
+      "order_date": "2026-02-16",
+      "status": "completed",
+      "total": 1725.66
+     },
+     {
+      "currency": "USD",
+      "customer_id": 11,
+      "id": 1042,
+      "order_date": "2026-02-16",
+      "status": "completed",
+      "total": 862.26
+     },
+     {
+      "currency": "USD",
+      "customer_id": 25,
+      "id": 1182,
+      "order_date": "2026-02-15",
+      "status": "completed",
+      "total": 53.18
+     },
+     {
+      "currency": "USD",
+      "customer_id": 28,
+      "id": 1054,
+      "order_date": "2026-02-15",
+      "status": "completed",
+      "total": 2969.45
+     },
+     {
+      "currency": "USD",
+      "customer_id": 16,
+      "id": 1277,
+      "order_date": "2026-02-14",
+      "status": "completed",
+      "total": 742.57
+     },
+     {
+      "currency": "USD",
+      "customer_id": 33,
+      "id": 1099,
+      "order_date": "2026-02-14",
+      "status": "completed",
+      "total": 346.58
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1085,
+      "order_date": "2026-02-14",
+      "status": "completed",
+      "total": 3943.45
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1056,
+      "order_date": "2026-02-14",
+      "status": "completed",
+      "total": 355.83
+     },
+     {
+      "currency": "USD",
+      "customer_id": 3,
+      "id": 1097,
+      "order_date": "2026-02-12",
+      "status": "completed",
+      "total": 61.92
+     },
+     {
+      "currency": "USD",
+      "customer_id": 24,
+      "id": 1261,
+      "order_date": "2026-02-11",
+      "status": "completed",
+      "total": 267.82
+     },
+     {
+      "currency": "USD",
+      "customer_id": 16,
+      "id": 1139,
+      "order_date": "2026-02-11",
+      "status": "completed",
+      "total": 539.04
+     },
+     {
+      "currency": "USD",
+      "customer_id": 20,
+      "id": 1208,
+      "order_date": "2026-02-09",
+      "status": "completed",
+      "total": 1336.46
+     },
+     {
+      "currency": "USD",
+      "customer_id": 8,
+      "id": 1064,
+      "order_date": "2026-02-09",
+      "status": "completed",
+      "total": 247.54
+     },
+     {
+      "currency": "USD",
+      "customer_id": 2,
+      "id": 1006,
+      "order_date": "2026-02-09",
+      "status": "completed",
+      "total": 547.01
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1074,
+      "order_date": "2026-02-06",
+      "status": "completed",
+      "total": 575.09
+     },
+     {
+      "currency": "USD",
+      "customer_id": 36,
+      "id": 1128,
+      "order_date": "2026-02-05",
+      "status": "completed",
+      "total": 275.13
+     }
+    ]
+   }
+  },
+  {
+   "args": {
+    "page": 2
+   },
+   "name": "list_customers",
+   "ok": {
+    "customers": [
+     {
+      "country": "US",
+      "email": "rosa.garcia11@example.com",
+      "id": 11,
+      "name": "Rosa Garcia",
+      "region": "West",
+      "signup_date": "2024-06-05",
+      "tier": "silver"
+     },
+     {
+      "country": "GB",
+      "email": "eli.larsen12@example.com",
+      "id": 12,
+      "name": "Eli Larsen",
+      "region": "South",
+      "signup_date": "2024-09-30",
+      "tier": "bronze"
+     },
+     {
+      "country": "CA",
+      "email": "lena.kim13@example.com",
+      "id": 13,
+      "name": "Lena Kim",
+      "region": "East",
+      "signup_date": "2025-01-15",
+      "tier": "silver"
+     },
+     {
+      "country": "US",
+      "email": "sam.novak14@example.com",
+      "id": 14,
+      "name": "Sam Novak",
+      "region": "North",
+      "signup_date": "2025-01-11",
+      "tier": "bronze"
+     },
+     {
+      "country": "CA",
+      "email": "fay.haddad15@example.com",
+      "id": 15,
+      "name": "Fay Haddad",
+      "region": "South",
+      "signup_date": "2025-10-09",
+      "tier": "bronze"
+     },
+     {
+      "country": "GB",
+      "email": "milo.silva16@example.com",
+      "id": 16,
+      "name": "Milo Silva",
+      "region": "East",
+      "signup_date": "2024-07-17",
+      "tier": "gold"
+     },
+     {
+      "country": "GB",
+      "email": "tara.okafor17@example.com",
+      "id": 17,
+      "name": "Tara Okafor",
+      "region": "North",
+      "signup_date": "2025-06-08",
+      "tier": "silver"
+     },
+     {
+      "country": "CA",
+      "email": "gus.chen18@example.com",
+      "id": 18,
+      "name": "Gus Chen",
+      "region": "East",
+      "signup_date": "2024-05-27",
+      "tier": "silver"
+     },
+     {
+      "country": "CA",
+      "email": "nina.moreau19@example.com",
+      "id": 19,
+      "name": "Nina Moreau",
+      "region": "West",
+      "signup_date": "2024-01-14",
+      "tier": "bronze"
+     },
+     {
+      "country": "US",
+      "email": "ada.smith20@example.com",
+      "id": 20,
+      "name": "Ada Smith",
+      "region": "South",
+      "signup_date": "2025-04-16",
+      "tier": "bronze"
+     }
+    ],
+    "page": 2,
+    "total_pages": 4
+   }
+  },
+  {
+   "args": {
+    "page": 3
+   },
+   "name": "list_customers",
+   "ok": {
+    "customers": [
+     {
+      "country": "GB",
+      "email": "hana.garcia21@example.com",
+      "id": 21,
+      "name": "Hana Garcia",
+      "region": "South",
+      "signup_date": "2024-06-20",
+      "tier": "bronze"
+     },
+     {
+      "country": "CA",
+      "email": "omar.larsen22@example.com",
+      "id": 22,
+      "name": "Omar Larsen",
+      "region": "South",
+      "signup_date": "2025-11-15",
+      "tier": "gold"
+     },
+     {
+      "country": "CA",
+      "email": "ben.kim23@example.com",
+      "id": 23,
+      "name": "Ben Kim",
+      "region": "West",
+      "signup_date": "2024-08-18",
+      "tier": "silver"
+     },
+     {
+      "country": "US",
+      "email": "ivan.novak24@example.com",
+      "id": 24,
+      "name": "Ivan Novak",
+      "region": "South",
+      "signup_date": "2024-07-11",
+      "tier": "silver"
+     },
+     {
+      "country": "US",
+      "email": "pia.haddad25@example.com",
+      "id": 25,
+      "name": "Pia Haddad",
+      "region": "South",
+      "signup_date": "2025-04-15",
+      "tier": "silver"
+     },
+     {
+      "country": "CA",
+      "email": "cara.silva26@example.com",
+      "id": 26,
+      "name": "Cara Silva",
+      "region": "West",
+      "signup_date": "2025-05-26",
+      "tier": "bronze"
+     },
+     {
+      "country": "CA",
+      "email": "jade.okafor27@example.com",
+      "id": 27,
+      "name": "Jade Okafor",
+      "region": "South",
+      "signup_date": "2025-10-18",
+      "tier": "bronze"
+     },
+     {
+      "country": "US",
+      "email": "quinn.chen28@example.com",
+      "id": 28,
+      "name": "Quinn Chen",
+      "region": "West",
+      "signup_date": "2024-11-17",
+      "tier": "bronze"
+     },
+     {
+      "country": "DE",
+      "email": "dev.moreau29@example.com",
+      "id": 29,
+      "name": "Dev Moreau",
+      "region": "West",
+      "signup_date": "2024-12-13",
+      "tier": "bronze"
+     },
+     {
+      "country": "DE",
+      "email": "kai.smith30@example.com",
+      "id": 30,
+      "name": "Kai Smith",
+      "region": "East",
+      "signup_date": "2025-11-27",
+      "tier": "bronze"
+     }
+    ],
+    "page": 3,
+    "total_pages": 4
+   }
+  },
+  {
+   "args": {
+    "page": 4
+   },
+   "name": "list_customers",
+   "ok": {
+    "customers": [
+     {
+      "country": "US",
+      "email": "rosa.garcia31@example.com",
+      "id": 31,
+      "name": "Rosa Garcia",
+      "region": "West",
+      "signup_date": "2025-01-20",
+      "tier": "silver"
+     },
+     {
+      "country": "CA",
+      "email": "eli.larsen32@example.com",
+      "id": 32,
+      "name": "Eli Larsen",
+      "region": "West",
+      "signup_date": "2025-08-19",
+      "tier": "gold"
+     },
+     {
+      "country": "US",
+      "email": "lena.kim33@example.com",
+      "id": 33,
+      "name": "Lena Kim",
+      "region": "East",
+      "signup_date": "2025-09-27",
+      "tier": "bronze"
+     },
+     {
+      "country": "US",
+      "email": "sam.novak34@example.com",
+      "id": 34,
+      "name": "Sam Novak",
+      "region": "North",
+      "signup_date": "2024-09-18",
+      "tier": "bronze"
+     },
+     {
+      "country": "CA",
+      "email": "fay.haddad35@example.com",
+      "id": 35,
+      "name": "Fay Haddad",
+      "region": "North",
+      "signup_date": "2024-03-01",
+      "tier": "gold"
+     },
+     {
+      "country": "DE",
+      "email": "milo.silva36@example.com",
+      "id": 36,
+      "name": "Milo Silva",
+      "region": "North",
+      "signup_date": "2024-10-31",
+      "tier": "bronze"
+     },
+     {
+      "country": "CA",
+      "email": "tara.okafor37@example.com",
+      "id": 37,
+      "name": "Tara Okafor",
+      "region": "South",
+      "signup_date": "2024-10-27",
+      "tier": "bronze"
+     },
+     {
+      "country": "US",
+      "email": "gus.chen38@example.com",
+      "id": 38,
+      "name": "Gus Chen",
+      "region": "West",
+      "signup_date": "2024-01-05",
+      "tier": "silver"
+     },
+     {
+      "country": "CA",
+      "email": "nina.moreau39@example.com",
+      "id": 39,
+      "name": "Nina Moreau",
+      "region": "North",
+      "signup_date": "2024-11-14",
+      "tier": "gold"
+     },
+     {
+      "country": "US",
+      "email": "ada.smith40@example.com",
+      "id": 40,
+      "name": "Ada Smith",
+      "region": "South",
+      "signup_date": "2025-07-23",
+      "tier": "gold"
+     }
+    ],
+    "page": 4,
+    "total_pages": 4
+   }
+  },
+  {
+   "args": {
+    "cursor": "b2Zmc2V0OjUw",
+    "status": "completed"
+   },
+   "name": "list_orders",
+   "ok": {
+    "next_cursor": "b2Zmc2V0Ojc1",
+    "orders": [
+     {
+      "currency": "USD",
+      "customer_id": 10,
+      "id": 1033,
+      "order_date": "2026-02-05",
+      "status": "completed",
+      "total": 123.72
+     },
+     {
+      "currency": "USD",
+      "customer_id": 35,
+      "id": 1146,
+      "order_date": "2026-02-02",
+      "status": "completed",
+      "total": 99.36
+     },
+     {
+      "currency": "USD",
+      "customer_id": 37,
+      "id": 1184,
+      "order_date": "2026-02-01",
+      "status": "completed",
+      "total": 444.54
+     },
+     {
+      "currency": "USD",
+      "customer_id": 20,
+      "id": 1211,
+      "order_date": "2026-01-31",
+      "status": "completed",
+      "total": 265.9
+     },
+     {
+      "currency": "USD",
+      "customer_id": 8,
+      "id": 1197,
+      "order_date": "2026-01-29",
+      "status": "completed",
+      "total": 733.1
+     },
+     {
+      "currency": "USD",
+      "customer_id": 2,
+      "id": 1137,
+      "order_date": "2026-01-27",
+      "status": "completed",
+      "total": 151.64
+     },
+     {
+      "currency": "USD",
+      "customer_id": 14,
+      "id": 1157,
+      "order_date": "2026-01-26",
+      "status": "completed",
+      "total": 123.72
+     },
+     {
+      "currency": "USD",
+      "customer_id": 7,
+      "id": 1152,
+      "order_date": "2026-01-26",
+      "status": "completed",
+      "total": 209.22
+     },
+     {
+      "currency": "USD",
+      "customer_id": 11,
+      "id": 1065,
+      "order_date": "2026-01-26",
+      "status": "completed",
+      "total": 38.18
+     },
+     {
+      "currency": "USD",
+      "customer_id": 23,
+      "id": 1265,
+      "order_date": "2026-01-25",
+      "status": "completed",
+      "total": 92.3
+     },
+     {
+      "currency": "USD",
+      "customer_id": 9,
+      "id": 1246,
+      "order_date": "2026-01-23",
+      "status": "completed",
+      "total": 190.9
+     },
+     {
+      "currency": "USD",
+      "customer_id": 2,
+      "id": 1163,
+      "order_date": "2026-01-23",
+      "status": "completed",
+      "total": 309.6
+     },
+     {
+      "currency": "USD",
+      "customer_id": 27,
+      "id": 1165,
+      "order_date": "2026-01-21",
+      "status": "completed",
+      "total": 803.2
+     },
+     {
+      "currency": "USD",
+      "customer_id": 35,
+      "id": 1030,
+      "order_date": "2026-01-21",
+      "status": "completed",
+      "total": 827.38
+     },
+     {
+      "currency": "USD",
+      "customer_id": 2,
+      "id": 1063,
+      "order_date": "2026-01-20",
+      "status": "completed",
+      "total": 3047.04
+     },
+     {
+      "currency": "USD",
+      "customer_id": 12,
+      "id": 1142,
+      "order_date": "2026-01-19",
+      "status": "completed",
+      "total": 61.18
+     },
+     {
+      "currency": "USD",
+      "customer_id": 38,
+      "id": 1180,
+      "order_date": "2026-01-18",
+      "status": "completed",
+      "total": 1521.06
+     },
+     {
+      "currency": "USD",
+      "customer_id": 16,
+      "id": 1161,
+      "order_date": "2026-01-18",
+      "status": "completed",
+      "total": 172.38
+     },
+     {
+      "currency": "USD",
+      "customer_id": 39,
+      "id": 1281,
+      "order_date": "2026-01-17",
+      "status": "completed",
+      "total": 473.4
+     },
+     {
+      "currency": "USD",
+      "customer_id": 34,
+      "id": 1048,
+      "order_date": "2026-01-16",
+      "status": "completed",
+      "total": 20.33
+     },
+     {
+      "currency": "USD",
+      "customer_id": 28,
+      "id": 1041,
+      "order_date": "2026-01-16",
+      "status": "completed",
+      "total": 108.07
+     },
+     {
+      "currency": "USD",
+      "customer_id": 4,
+      "id": 1290,
+      "order_date": "2026-01-15",
+      "status": "completed",
+      "total": 353.8
+     },
+     {
+      "currency": "USD",
+      "customer_id": 7,
+      "id": 1276,
+      "order_date": "2026-01-15",
+      "status": "completed",
+      "total": 2686.56
+     },
+     {
+      "currency": "USD",
+      "customer_id": 2,
+      "id": 1245,
+      "order_date": "2026-01-15",
+      "status": "completed",
+      "total": 439.76
+     },
+     {
+      "currency": "USD",
+      "customer_id": 5,
+      "id": 1241,
+      "order_date": "2026-01-14",
+      "status": "completed",
+      "total": 167.94
+     }
+    ]
+   }
+  },
+  {
+   "args": {
+    "cursor": "b2Zmc2V0Ojc1",
+    "status": "completed"
+   },
+   "name": "list_orders",
+   "ok": {
+    "next_cursor": "b2Zmc2V0OjEwMA==",
+    "orders": [
+     {
+      "currency": "USD",
+      "customer_id": 20,
+      "id": 1272,
+      "order_date": "2026-01-13",
+      "status": "completed",
+      "total": 432.49
+     },
+     {
+      "currency": "USD",
+      "customer_id": 19,
+      "id": 1252,
+      "order_date": "2026-01-13",
+      "status": "completed",
+      "total": 53.18
+     },
+     {
+      "currency": "USD",
+      "customer_id": 14,
+      "id": 1220,
+      "order_date": "2026-01-13",
+      "status": "completed",
+      "total": 547.01
+     },
+     {
+      "currency": "USD",
+      "customer_id": 32,
+      "id": 1177,
+      "order_date": "2026-01-13",
+      "status": "completed",
+      "total": 251.48
+     },
+     {
+      "currency": "USD",
+      "customer_id": 30,
+      "id": 1053,
+      "order_date": "2026-01-11",
+      "status": "completed",
+      "total": 324.02
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1297,
+      "order_date": "2026-01-09",
+      "status": "completed",
+      "total": 507.02
+     },
+     {
+      "currency": "USD",
+      "customer_id": 5,
+      "id": 1295,
+      "order_date": "2026-01-08",
+      "status": "completed",
+      "total": 21.86
+     },
+     {
+      "currency": "USD",
+      "customer_id": 7,
+      "id": 1188,
+      "order_date": "2026-01-08",
+      "status": "completed",
+      "total": 1397.17
+     },
+     {
+      "currency": "USD",
+      "customer_id": 39,
+      "id": 1289,
+      "order_date": "2026-01-07",
+      "status": "completed",
+      "total": 74.22
+     },
+     {
+      "currency": "USD",
+      "customer_id": 4,
+      "id": 1185,
+      "order_date": "2026-01-07",
+      "status": "completed",
+      "total": 344.76
+     },
+     {
+      "currency": "USD",
+      "customer_id": 36,
+      "id": 1084,
+      "order_date": "2026-01-07",
+      "status": "completed",
+      "total": 65.58
+     },
+     {
+      "currency": "USD",
+      "customer_id": 36,
+      "id": 1044,
+      "order_date": "2026-01-07",
+      "status": "completed",
+      "total": 618.6
+     },
+     {
+      "currency": "USD",
+      "customer_id": 38,
+      "id": 1274,
+      "order_date": "2026-01-05",
+      "status": "completed",
+      "total": 558.54
+     },
+     {
+      "currency": "USD",
+      "customer_id": 11,
+      "id": 1135,
+      "order_date": "2026-01-05",
+      "status": "completed",
+      "total": 326.88
+     },
+     {
+      "currency": "USD",
+      "customer_id": 26,
+      "id": 1286,
+      "order_date": "2026-01-04",
+      "status": "completed",
+      "total": 445.0
+     },
+     {
+      "currency": "USD",
+      "customer_id": 11,
+      "id": 1230,
+      "order_date": "2026-01-04",
+      "status": "completed",
+      "total": 181.4
+     },
+     {
+      "currency": "USD",
+      "customer_id": 13,
+      "id": 1130,
+      "order_date": "2026-01-01",
+      "status": "completed",
+      "total": 247.44
+     },
+     {
+      "currency": "USD",
+      "customer_id": 22,
+      "id": 1195,
+      "order_date": "2025-12-31",
+      "status": "completed",
+      "total": 1641.03
+     },
+     {
+      "currency": "USD",
+      "customer_id": 21,
+      "id": 1175,
+      "order_date": "2025-12-31",
+      "status": "completed",
+      "total": 275.13
+     },
+     {
+      "currency": "USD",
+      "customer_id": 25,
+      "id": 1294,
+      "order_date": "2025-12-29",
+      "status": "completed",
+      "total": 38.18
+     },
+     {
+      "currency": "USD",
+      "customer_id": 9,
+      "id": 1052,
+      "order_date": "2025-12-28",
+      "status": "completed",
+      "total": 147.99
+     },
+     {
+      "currency": "USD",
+      "customer_id": 35,
+      "id": 1167,
+      "order_date": "2025-12-27",
+      "status": "completed",
+      "total": 512.7
+     },
+     {
+      "currency": "USD",
+      "customer_id": 36,
+      "id": 1291,
+      "order_date": "2025-12-26",
+      "status": "completed",
+      "total": 638.55
+     },
+     {
+      "currency": "USD",
+      "customer_id": 10,
+      "id": 1016,
+      "order_date": "2025-12-26",
+      "status": "completed",
+      "total": 2482.14
+     },
+     {
+      "currency": "USD",
+      "customer_id": 37,
+      "id": 1105,
+      "order_date": "2025-12-25",
+      "status": "completed",
+      "total": 328.45
+     }
+    ]
+   }
+  },
+  {
+   "args": {
+    "cursor": "b2Zmc2V0OjEwMA==",
+    "status": "completed"
+   },
+   "name": "list_orders",
+   "ok": {
+    "next_cursor": "b2Zmc2V0OjEyNQ==",
+    "orders": [
+     {
+      "currency": "USD",
+      "customer_id": 11,
+      "id": 1172,
+      "order_date": "2025-12-23",
+      "status": "completed",
+      "total": 106.36
+     },
+     {
+      "currency": "USD",
+      "customer_id": 34,
+      "id": 1148,
+      "order_date": "2025-12-23",
+      "status": "completed",
+      "total": 183.54
+     },
+     {
+      "currency": "USD",
+      "customer_id": 34,
+      "id": 1002,
+      "order_date": "2025-12-23",
+      "status": "completed",
+      "total": 63.12
+     },
+     {
+      "currency": "USD",
+      "customer_id": 13,
+      "id": 1190,
+      "order_date": "2025-12-22",
+      "status": "completed",
+      "total": 222.66
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1178,
+      "order_date": "2025-12-22",
+      "status": "completed",
+      "total": 127.71
+     },
+     {
+      "currency": "USD",
+      "customer_id": 34,
+      "id": 1021,
+      "order_date": "2025-12-19",
+      "status": "completed",
+      "total": 507.02
+     },
+     {
+      "currency": "USD",
+      "customer_id": 1,
+      "id": 1235,
+      "order_date": "2025-12-17",
+      "status": "completed",
+      "total": 433.24
+     },
+     {
+      "currency": "USD",
+      "customer_id": 19,
+      "id": 1159,
+      "order_date": "2025-12-16",
+      "status": "completed",
+      "total": 1667.08
+     },
+     {
+      "currency": "USD",
+      "customer_id": 16,
+      "id": 1226,
+      "order_date": "2025-12-15",
+      "status": "completed",
+      "total": 507.02
+     },
+     {
+      "currency": "USD",
+      "customer_id": 39,
+      "id": 1012,
+      "order_date": "2025-12-15",
+      "status": "completed",
+      "total": 284.04
+     },
+     {
+      "currency": "USD",
+      "customer_id": 13,
+      "id": 1007,
+      "order_date": "2025-12-15",
+      "status": "completed",
+      "total": 862.83
+     },
+     {
+      "currency": "USD",
+      "customer_id": 33,
+      "id": 1003,
+      "order_date": "2025-12-15",
+      "status": "completed",
+      "total": 517.14
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1108,
+      "order_date": "2025-12-14",
+      "status": "completed",
+      "total": 123.72
+     },
+     {
+      "currency": "USD",
+      "customer_id": 15,
+      "id": 1207,
+      "order_date": "2025-12-13",
+      "status": "completed",
+      "total": 828.96
+     },
+     {
+      "currency": "USD",
+      "customer_id": 2,
+      "id": 1102,
+      "order_date": "2025-12-13",
+      "status": "completed",
+      "total": 63.12
+     },
+     {
+      "currency": "USD",
+      "customer_id": 37,
+      "id": 1240,
+      "order_date": "2025-12-12",
+      "status": "completed",
+      "total": 488.98
+     },
+     {
+      "currency": "USD",
+      "customer_id": 19,
+      "id": 1278,
+      "order_date": "2025-12-11",
+      "status": "completed",
+      "total": 2852.34
+     },
+     {
+      "currency": "USD",
+      "customer_id": 39,
+      "id": 1273,
+      "order_date": "2025-12-11",
+      "status": "completed",
+      "total": 593.89
+     },
+     {
+      "currency": "USD",
+      "customer_id": 30,
+      "id": 1047,
+      "order_date": "2025-12-11",
+      "status": "completed",
+      "total": 148.67
+     },
+     {
+      "currency": "USD",
+      "customer_id": 7,
+      "id": 1257,
+      "order_date": "2025-12-09",
+      "status": "completed",
+      "total": 754.46
+     },
+     {
+      "currency": "USD",
+      "customer_id": 24,
+      "id": 1191,
+      "order_date": "2025-12-08",
+      "status": "completed",
+      "total": 221.72
+     },
+     {
+      "currency": "USD",
+      "customer_id": 31,
+      "id": 1110,
+      "order_date": "2025-12-07",
+      "status": "completed",
+      "total": 434.22
+     },
+     {
+      "currency": "USD",
+      "customer_id": 20,
+      "id": 1268,
+      "order_date": "2025-12-05",
+      "status": "completed",
+      "total": 5723.99
+     },
+     {
+      "currency": "USD",
+      "customer_id": 29,
+      "id": 1247,
+      "order_date": "2025-12-05",
+      "status": "completed",
+      "total": 4026.5
+     },
+     {
+      "currency": "USD",
+      "customer_id": 37,
+      "id": 1022,
+      "order_date": "2025-12-04",
+      "status": "completed",
+      "total": 229.57
+     }
+    ]
+   }
+  },
+  {
+   "args": {
+    "cursor": "b2Zmc2V0OjEyNQ==",
+    "status": "completed"
+   },
+   "name": "list_orders",
+   "ok": {
+    "next_cursor": "b2Zmc2V0OjE1MA==",
+    "orders": [
+     {
+      "currency": "USD",
+      "customer_id": 39,
+      "id": 1285,
+      "order_date": "2025-12-03",
+      "status": "completed",
+      "total": 2605.86
+     },
+     {
+      "currency": "USD",
+      "customer_id": 24,
+      "id": 1055,
+      "order_date": "2025-12-03",
+      "status": "completed",
+      "total": 1093.28
+     },
+     {
+      "currency": "USD",
+      "customer_id": 40,
+      "id": 1251,
+      "order_date": "2025-12-01",
+      "status": "completed",
+      "total": 507.02
+     },
+     {
+      "currency": "USD",
+      "customer_id": 38,
+      "id": 1215,
+      "order_date": "2025-12-01",
+      "status": "completed",
+      "total": 4635.15
+     },
+     {
+      "currency": "USD",
+      "customer_id": 35,
+      "id": 1119,
+      "order_date": "2025-12-01",
+      "status": "completed",
+      "total": 21.04
+     },
+     {
+      "currency": "USD",
+      "customer_id": 37,
+      "id": 1104,
+      "order_date": "2025-12-01",
+      "status": "completed",
+      "total": 2969.45
+     },
+     {
+      "currency": "USD",
+      "customer_id": 14,
+      "id": 1224,
+      "order_date": "2025-11-30",
+      "status": "completed",
+      "total": 388.51
+     },
+     {
+      "currency": "USD",
+      "customer_id": 26,
+      "id": 1134,
+      "order_date": "2025-11-30",
+      "status": "completed",
+      "total": 118.88
+     },
+     {
+      "currency": "USD",
+      "customer_id": 10,
+      "id": 1269,
+      "order_date": "2025-11-29",
+      "status": "completed",
+      "total": 56.96
+     },
+     {
+      "currency": "USD",
+      "customer_id": 4,
+      "id": 1149,
+      "order_date": "2025-11-29",
+      "status": "completed",
+      "total": 275.13
+     },
+     {
+      "currency": "USD",
+      "customer_id": 12,
+      "id": 1267,
+      "order_date": "2025-11-28",
+      "status": "completed",
+      "total": 1239.66
+     },
+     {
+      "currency": "USD",
+      "customer_id": 28,
+      "id": 1266,
+      "order_date": "2025-11-27",
+      "status": "completed",
+      "total": 924.01
+     },
+     {
+      "currency": "USD",
+      "customer_id": 14,
+      "id": 1234,
+      "order_date": "2025-11-27",
+      "status": "completed",
+      "total": 74.22
+     },
+     {
+      "currency": "USD",
+      "customer_id": 35,
+      "id": 1250,
+      "order_date": "2025-11-26",
+      "status": "completed",
+      "total": 722.45
+     },
+     {
+      "currency": "USD",
+      "customer_id": 16,
+      "id": 1237,
+      "order_date": "2025-11-26",
+      "status": "completed",
+      "total": 61.92
+     },
+     {
+      "currency": "USD",
+      "customer_id": 10,
+      "id": 1156,
+      "order_date": "2025-11-25",
+      "status": "completed",
+      "total": 972.1
+     },
+     {
+      "currency": "USD",
+      "customer_id": 30,
+      "id": 1101,
+      "order_date": "2025-11-25",
+      "status": "completed",
+      "total": 1014.04
+     },
+     {
+      "currency": "USD",
+      "customer_id": 12,
+      "id": 1203,
+      "order_date": "2025-11-22",
+      "status": "completed",
+      "total": 547.01
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1073,
+      "order_date": "2025-11-22",
+      "status": "completed",
+      "total": 183.42
+     },
+     {
+      "currency": "USD",
+      "customer_id": 29,
+      "id": 1280,
+      "order_date": "2025-11-21",
+      "status": "completed",
+      "total": 257.51
+     },
+     {
+      "currency": "USD",
+      "customer_id": 12,
+      "id": 1189,
+      "order_date": "2025-11-21",
+      "status": "completed",
+      "total": 805.3
+     },
+     {
+      "currency": "USD",
+      "customer_id": 3,
+      "id": 1271,
+      "order_date": "2025-11-20",
+      "status": "completed",
+      "total": 21.04
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1187,
+      "order_date": "2025-11-19",
+      "status": "completed",
+      "total": 361.74
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1092,
+      "order_date": "2025-11-19",
+      "status": "completed",
+      "total": 1654.76
+     },
+     {
+      "currency": "USD",
+      "customer_id": 10,
+      "id": 1010,
+      "order_date": "2025-11-19",
+      "status": "completed",
+      "total": 123.77
+     }
+    ]
+   }
+  },
+  {
+   "args": {
+    "cursor": "b2Zmc2V0OjE1MA==",
+    "status": "completed"
+   },
+   "name": "list_orders",
+   "ok": {
+    "next_cursor": "b2Zmc2V0OjE3NQ==",
+    "orders": [
+     {
+      "currency": "USD",
+      "customer_id": 21,
+      "id": 1038,
+      "order_date": "2025-11-18",
+      "status": "completed",
+      "total": 1636.07
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1011,
+      "order_date": "2025-11-17",
+      "status": "completed",
+      "total": 176.75
+     },
+     {
+      "currency": "USD",
+      "customer_id": 13,
+      "id": 1171,
+      "order_date": "2025-11-13",
+      "status": "completed",
+      "total": 1240.96
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1121,
+      "order_date": "2025-11-13",
+      "status": "completed",
+      "total": 74.22
+     },
+     {
+      "currency": "USD",
+      "customer_id": 15,
+      "id": 1131,
+      "order_date": "2025-11-11",
+      "status": "completed",
+      "total": 96.08
+     },
+     {
+      "currency": "USD",
+      "customer_id": 7,
+      "id": 1096,
+      "order_date": "2025-11-11",
+      "status": "completed",
+      "total": 235.04
+     },
+     {
+      "currency": "USD",
+      "customer_id": 10,
+      "id": 1014,
+      "order_date": "2025-11-09",
+      "status": "completed",
+      "total": 2030.68
+     },
+     {
+      "currency": "USD",
+      "customer_id": 38,
+      "id": 1296,
+      "order_date": "2025-11-08",
+      "status": "completed",
+      "total": 170.88
+     },
+     {
+      "currency": "USD",
+      "customer_id": 1,
+      "id": 1020,
+      "order_date": "2025-11-06",
+      "status": "completed",
+      "total": 65.58
+     },
+     {
+      "currency": "USD",
+      "customer_id": 20,
+      "id": 1214,
+      "order_date": "2025-11-05",
+      "status": "completed",
+      "total": 38.18
+     },
+     {
+      "currency": "USD",
+      "customer_id": 29,
+      "id": 1244,
+      "order_date": "2025-11-04",
+      "status": "completed",
+      "total": 1055.08
+     },
+     {
+      "currency": "USD",
+      "customer_id": 23,
+      "id": 1270,
+      "order_date": "2025-10-31",
+      "status": "completed",
+      "total": 167.94
+     },
+     {
+      "currency": "USD",
+      "customer_id": 11,
+      "id": 1300,
+      "order_date": "2025-10-29",
+      "status": "completed",
+      "total": 242.5
+     },
+     {
+      "currency": "USD",
+      "customer_id": 22,
+      "id": 1225,
+      "order_date": "2025-10-29",
+      "status": "completed",
+      "total": 805.3
+     },
+     {
+      "currency": "USD",
+      "customer_id": 19,
+      "id": 1034,
+      "order_date": "2025-10-29",
+      "status": "completed",
+      "total": 123.84
+     },
+     {
+      "currency": "USD",
+      "customer_id": 17,
+      "id": 1081,
+      "order_date": "2025-10-28",
+      "status": "completed",
+      "total": 46.15
+     },
+     {
+      "currency": "USD",
+      "customer_id": 38,
+      "id": 1111,
+      "order_date": "2025-10-27",
+      "status": "completed",
+      "total": 91.71
+     },
+     {
+      "currency": "USD",
+      "customer_id": 1,
+      "id": 1026,
+      "order_date": "2025-10-26",
+      "status": "completed",
+      "total": 507.02
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1008,
+      "order_date": "2025-10-26",
+      "status": "completed",
+      "total": 831.82
+     },
+     {
+      "currency": "USD",
+      "customer_id": 20,
+      "id": 1005,
+      "order_date": "2025-10-26",
+      "status": "completed",
+      "total": 4368.76
+     },
+     {
+      "currency": "USD",
+      "customer_id": 31,
+      "id": 1233,
+      "order_date": "2025-10-24",
+      "status": "completed",
+      "total": 114.54
+     },
+     {
+      "currency": "USD",
+      "customer_id": 10,
+      "id": 1170,
+      "order_date": "2025-10-24",
+      "status": "completed",
+      "total": 38.18
+     },
+     {
+      "currency": "USD",
+      "customer_id": 34,
+      "id": 1040,
+      "order_date": "2025-10-22",
+      "status": "completed",
+      "total": 2680.79
+     },
+     {
+      "currency": "USD",
+      "customer_id": 9,
+      "id": 1292,
+      "order_date": "2025-10-20",
+      "status": "completed",
+      "total": 329.35
+     },
+     {
+      "currency": "USD",
+      "customer_id": 16,
+      "id": 1282,
+      "order_date": "2025-10-20",
+      "status": "completed",
+      "total": 65.58
+     }
+    ]
+   }
+  },
+  {
+   "args": {
+    "cursor": "b2Zmc2V0OjE3NQ==",
+    "status": "completed"
+   },
+   "name": "list_orders",
+   "ok": {
+    "next_cursor": null,
+    "orders": [
+     {
+      "currency": "USD",
+      "customer_id": 28,
+      "id": 1145,
+      "order_date": "2025-10-19",
+      "status": "completed",
+      "total": 176.75
+     },
+     {
+      "currency": "USD",
+      "customer_id": 36,
+      "id": 1071,
+      "order_date": "2025-10-19",
+      "status": "completed",
+      "total": 255.42
+     },
+     {
+      "currency": "USD",
+      "customer_id": 28,
+      "id": 1090,
+      "order_date": "2025-10-18",
+      "status": "completed",
+      "total": 1010.84
+     },
+     {
+      "currency": "USD",
+      "customer_id": 12,
+      "id": 1024,
+      "order_date": "2025-10-18",
+      "status": "completed",
+      "total": 66.48
+     },
+     {
+      "currency": "USD",
+      "customer_id": 30,
+      "id": 1248,
+      "order_date": "2025-10-16",
+      "status": "completed",
+      "total": 127.71
+     },
+     {
+      "currency": "USD",
+      "customer_id": 2,
+      "id": 1199,
+      "order_date": "2025-10-16",
+      "status": "completed",
+      "total": 123.84
+     },
+     {
+      "currency": "USD",
+      "customer_id": 21,
+      "id": 1193,
+      "order_date": "2025-10-16",
+      "status": "completed",
+      "total": 839.7
+     },
+     {
+      "currency": "USD",
+      "customer_id": 23,
+      "id": 1082,
+      "order_date": "2025-10-15",
+      "status": "completed",
+      "total": 1632.68
+     },
+     {
+      "currency": "USD",
+      "customer_id": 1,
+      "id": 1031,
+      "order_date": "2025-10-15",
+      "status": "completed",
+      "total": 963.61
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1078,
+      "order_date": "2025-10-14",
+      "status": "completed",
+      "total": 259.98
+     },
+     {
+      "currency": "USD",
+      "customer_id": 21,
+      "id": 1221,
+      "order_date": "2025-10-13",
+      "status": "completed",
+      "total": 40.66
+     },
+     {
+      "currency": "USD",
+      "customer_id": 38,
+      "id": 1205,
+      "order_date": "2025-10-12",
+      "status": "completed",
+      "total": 3282.06
+     },
+     {
+      "currency": "USD",
+      "customer_id": 22,
+      "id": 1045,
+      "order_date": "2025-10-12",
+      "status": "completed",
+      "total": 652.86
+     },
+     {
+      "currency": "USD",
+      "customer_id": 14,
+      "id": 1219,
+      "order_date": "2025-10-11",
+      "status": "completed",
+      "total": 114.54
+     },
+     {
+      "currency": "USD",
+      "customer_id": 18,
+      "id": 1284,
+      "order_date": "2025-10-10",
+      "status": "completed",
+      "total": 167.72
+     },
+     {
+      "currency": "USD",
+      "customer_id": 40,
+      "id": 1242,
+      "order_date": "2025-10-09",
+      "status": "completed",
+      "total": 371.31
+     },
+     {
+      "currency": "USD",
+      "customer_id": 38,
+      "id": 1168,
+      "order_date": "2025-10-09",
+      "status": "completed",
+      "total": 112.75
+     },
+     {
+      "currency": "USD",
+      "customer_id": 35,
+      "id": 1217,
+      "order_date": "2025-10-07",
+      "status": "completed",
+      "total": 255.42
+     },
+     {
+      "currency": "USD",
+      "customer_id": 34,
+      "id": 1141,
+      "order_date": "2025-10-07",
+      "status": "completed",
+      "total": 190.9
+     },
+     {
+      "currency": "USD",
+      "customer_id": 27,
+      "id": 1059,
+      "order_date": "2025-10-07",
+      "status": "completed",
+      "total": 2621.37
+     },
+     {
+      "currency": "USD",
+      "customer_id": 9,
+      "id": 1243,
+      "order_date": "2025-10-06",
+      "status": "completed",
+      "total": 1486.86
+     },
+     {
+      "currency": "USD",
+      "customer_id": 34,
+      "id": 1122,
+      "order_date": "2025-10-05",
+      "status": "completed",
+      "total": 40.66
+     },
+     {
+      "currency": "USD",
+      "customer_id": 7,
+      "id": 1089,
+      "order_date": "2025-10-03",
+      "status": "completed",
+      "total": 791.82
+     },
+     {
+      "currency": "USD",
+      "customer_id": 27,
+      "id": 1004,
+      "order_date": "2025-10-03",
+      "status": "completed",
+      "total": 507.02
+     },
+     {
+      "currency": "USD",
+      "customer_id": 3,
+      "id": 1223,
+      "order_date": "2025-10-01",
+      "status": "completed",
+      "total": 46.15
+     }
+    ]
+   }
+  },
+  {
+   "args": {
+    "averages": {
+     "bronze": 832.47,
+     "gold": 704.94,
+     "silver": 763.08
+    }
+   },
+   "name": "submit_answer",
+   "ok": "ok"
+  }
+ ],
+ "category": "api-db-aggregation",
+ "stdout": "{'bronze': 832.47, 'silver': 763.08, 'gold': 704.94} {'bronze': 99, 'silver': 69, 'gold': 32}\nok\n",
+ "task": "agg-avg-order-by-tier",
+ "tools": [
+  {
+   "description": "List customers, 10 per page, ordered by id. Optional filters by region and tier.",
+   "name": "list_customers",
+   "params": [
+    "region",
+    "tier",
+    "page"
+   ]
+  },
+  {
+   "description": "List orders, newest first, 25 per page. Optional filters.",
+   "name": "list_orders",
+   "params": [
+    "customer_id",
+    "status",
+    "since",
+    "until",
+    "cursor"
+   ]
+  },
+  {
+   "description": "Submit the final answer of this task. Call it once, at the end.",
+   "name": "submit_answer",
+   "params": [
+    "averages"
+   ]
+  }
+ ]
+}

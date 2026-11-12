@@ -1,0 +1,996 @@
+# The size ceilings `cargo xtask size` enforces (docs/spec.md §6), in bytes
+# of the shipped builds (`wasm-opt -Oz` on wasm).
+#
+# Each artifact's ceiling is the sum of its lines below the history. To move
+# a ceiling, APPEND a line `<artifact> <+bytes or -bytes> <why>`, the why
+# naming the change, its measurement and the owner decision, as the history
+# does; never edit or remove a line. `.gitattributes` merges this file as a
+# union, so when two branches each raise a ceiling, a rebase keeps both
+# raises and their sum is the new ceiling, with no conflict.
+#
+# Artifacts: hello.wasm (wasm32-unknown-unknown `hello`, the primary
+# budget), mm_wasm_guest.wasm and mm_wasm_guest_bundle.wasm (the guests on
+# wasm32-unknown-unknown), hello (native `hello`, gated on
+# x86_64-unknown-linux-gnu only). Until 2026-11-12 the ceilings were the
+# constants WASM_BUDGET_BYTES, GUEST_BUDGET_BYTES, BUNDLE_GUEST_BUDGET_BYTES
+# and SIZE_BUDGET_BYTES in xtask/src/main.rs; their records follow,
+# unchanged, and the history names them.
+
+## hello.wasm: `hello.wasm` for wasm32-unknown-unknown, the primary budget (was WASM_BUDGET_BYTES)
+#
+# The primary size budget: `hello.wasm` for `wasm32-unknown-unknown`, the
+# in-process embedding, built as shipped ([`shipped_build`], then
+# `wasm-opt -Oz`), in bytes. About 0.5% above the size measured when
+# wasm-opt joined the shipped pipeline (docs/spec.md §6; 1,873,000 before
+# it); raising it needs a spec change. Raised from 1,730,000 for the
+# in-place sequence comparisons and native continuation frames
+# (owner-approved speed phase 4), then to 1,741,000 for the declarative
+# host surface and host call ids (owner-approved SDK round: the measured
+# overshoot plus a small margin), then to 1,742,500 for the direct frame
+# push for dunder calls (speed phase 4, same rule), then for the nine
+# stdlib modules of 2026-11-04 (the same rule; per-module sizes in
+# docs/HANDOFF.md), then for the engine gaps (async iteration and
+# generators, same rule and place), then for the 2026-11-05 gap batch
+# (warning classes and `warnings`, `codecs`, `platform`, `dir()`, bounded
+# class-tuple walks; owner-approved gap-closing rule, docs/HANDOFF.md),
+# then for the breadth-campaign fixes (+2,903 B to 1,851,950: almost all
+# the 2,982-byte `str.isprintable` table that `repr` escaping now uses in
+# every build; same rule), then for `bytearray` and `struct.pack_into`
+# (+17,192 B to 1,869,142; same rule, docs/spec.md §7.4), then by the
+# measured +15,703 B of the second 2026-11-05 gap batch (coroutine
+# `send`/`throw`/`close`, `str.translate`/`maketrans`/`format_map`,
+# `float.hex`/`fromhex`, `bytes.translate`/`maketrans`/`expandtabs`,
+# `tempfile`, the `re` and `datetime` warnings; same rule, per-part sizes
+# in docs/HANDOFF.md), then for comparison depth carried across prelude
+# levels (libFuzzer F1: `_walk_eq`/`_walk_ord`, `_ord`; +2,907 B to
+# 1,887,752, same rule), then for the third 2026-11-05 gap batch
+# (+16,886 B to 1,904,638: warnings' caller location +2,845, the enum
+# fix and collection after `MemoryError` +125, `__await__`,
+# `types.coroutine` and suspending `coroutine.send()` +13,916), then for
+# the embedding hardening (+17,928 B to 1,922,566: the explicit-stack
+# comparison walk with its flat fast paths and the F4 dict check, then
+# charged and iterative host-value conversion and parking before big int
+# operators, +10,631 and +7,534 when measured before the rebase onto gap
+# batch 3; owner-approved, docs/HANDOFF.md), then for the codemode host
+# API (+30,210 B to 1,952,776, ablations [M]: redirect hints and "Did you
+# mean" +9,177, the head-and-tail and container-aware completion cut
+# +9,108, `help()`/`__doc__`/`__module__` on host functions +3,448, the
+# never-awaited scan +3,384, the rest (structured host errors, the call
+# log and their snapshot fields) about +5,100; owner decision S1, one
+# default build of about 2 MB, docs/HANDOFF.md), then for the codemode
+# stdlib round (S1; +127,874 B on ac10b28 alone [M], each part measured
+# in the order applied: `decimal` with `numbers` and `contextvars`
+# +42,679, `statistics` with `fractions` +22,767, `tomllib` +10,575,
+# `json.loads` hooks +1,291, `html.parser` with `_markupbase` +9,014,
+# `calendar` +8,670, `hmac` +2,213, `zlib` +408 plus +1,556 for the native
+# `adler32` and enum's `global_enum` reprs, `utf-8-sig` +457, the asyncio
+# additions +15,570, `zoneinfo` with `_mm.tzif` and `BytesIO` seeks
+# +11,413, `globals()` +1,261; to 2,081,288 with the host API
+# [M], +128,512 over it;
+# docs/HANDOFF.md), then for the 2026-11-05 review fixes (+10,127 B on
+# 5568b27 to 2,091,415 [M]: the asyncio and never-awaited fixes with the
+# weak coroutine list, fuel for identical comparison runs and the
+# subclass/view twins, the dict-subclass subscript twins, hint-name
+# charging, the cut fixes and the stdlib corrections; measured together,
+# docs/HANDOFF.md "Review and hygiene pass"), then for asyncio
+# cancellation as CPython 3.14 (+13,002 B on 9306b80 to 2,104,417 [M]:
+# the cancel walk and `CANCELLED` state, `cancelling`/`uncancel`, loop
+# iterations, the prelude `asyncio.run` with its shutdown, `timeouts.py`'s
+# `wait_for`; owner-approved, docs/HANDOFF.md), then for the speed
+# landing (+22,655 B on 9306b80 [M], each commit measured in order: the
+# generator resume/yield fast path +3,065, `Ic::New` +1,718, the str and
+# format fast paths +1,415, stack temporaries for short displays and
+# instances +1,032, direct compares for all-int or all-str sort keys
+# +1,604, native `datetime` parsers +13,821 (`fromisoformat` +4,668,
+# `strptime` +9,153; owner exception to spec §12); to 2,127,020 with asyncio
+# cancellation [M], docs/HANDOFF.md "Speed landing"), then for the review
+# follow-ups (+4,819 B on 1fe8e2d to 2,131,850 [M]: the big-int builtin
+# pre-park, `{**m}` for any mapping, hashed view membership, host
+# conversion charging before the copy and bool formatting; measured
+# together, docs/HANDOFF.md "Review follow-ups"), then for the asyncio
+# primitives (S1, owner-approved: +36,025 B on d6d77f6 to 2,167,875 [M]:
+# Lock, Event, Condition, the queues, TaskGroup, timeout, shield, wait, the
+# running loop's handles, task names, done callbacks, ExceptionGroup and
+# its report, reprlib-limited Task/Future reprs; docs/HANDOFF.md "asyncio
+# primitives"), then for the aware `datetime` fast paths (+4,080 B on
+# 77f20ed to 2,171,955 [M]: the `_mm.dt_ord`/`dt_ymd` natives and the
+# larger `datetime` and `zoneinfo` bytecode; owner-approved,
+# docs/HANDOFF.md "Aware datetime"). The size pass (2026-11-05, owner
+# decision 41) then lowered it to the measurement plus about 2 KB, each
+# lever measured in order on 874409b [M]: `crates/mm-wasm-alloc` (std's
+# dlmalloc without the per-site `validate_size` checks; temporary spec §5
+# exception) −83,553, the facade at `opt-level = "z"` −12,541, then the
+# bloat-audit fixes −12,736 together (alone on the facade commit: the
+# `NativeIds`/`Vec` traceback sets −5,271, `debug_quoted` instead of
+# `{:?}` −4,213, one shared Huffman header for the stdlib −3,231, merges
+# instead of slice sorts 0), to 2,063,125 [M] (docs/HANDOFF.md "Size
+# pass"). Raised for the restore hardening and exact `round(float, -n)`
+# (+4,883 B on 8cf3a11 to 2,068,008 [M]: reference kinds, dict index
+# tables and the frame checks on restore +4,097, the correctly rounded
+# `round` +786; docs/HANDOFF.md "Restore hardening and numeric
+# follow-ups"); geometric native-buffer growth up to the limit and repr
+# text fuel +33 B on 69749db to 2,068,041 [M], under the same ceiling.
+# Raised for the container `repr` hand-off to the prelude twin on fuel
+# (+2,690 B on 863beb1 to 2,070,731 [M]: the visit budget, `_walk_repr`,
+# `_ritem`, `%`'s hand-off and the completion cut's `head_more`;
+# docs/HANDOFF.md "Container `repr`/`str` hand off"), to the measurement
+# plus about 2 KB. Raised for the campaign's N1 and N2 fixes (+3,325 B on
+# bb34446 to 2,074,056 [M]: "Did you mean" hints computed when rendered
+# +2,286, CPython's null-byte `SyntaxError` +1,039; docs/HANDOFF.md
+# "Did you mean" hints), to the measurement plus about 2 KB. Raised for
+# hints rendered as CPython's traceback renders them (+4,895 B on 09ea2b1
+# to 2,078,951 [M]: `NameError.name`, `AttributeError.name`/`obj` and
+# their constructor keywords, the raising frame's names kept at `raise`;
+# docs/HANDOFF.md "Hints render as CPython's traceback"), to the
+# measurement plus about 2 KB. Raised under S1 for the third asyncio
+# batch (+21,264 B on 1f27970 to 2,100,215 [M]: `except*` (opcode,
+# compiler, `_star_match`/`_star_prep`), per-task `contextvars`,
+# `Barrier`, `Runner`, `new_event_loop`/`run_until_complete`, the asyncio
+# submodules, `SystemExit.code` and the escape and never-retrieved paths;
+# docs/HANDOFF.md "asyncio batch 3"), to the measurement plus about 2 KB.
+# SyntaxError precedence as CPython's (+906 B on f75899d to 2,101,121
+# [M]; docs/HANDOFF.md "SyntaxError precedence"), under the ceiling.
+# Raised for the Engine's decoded-module cache (+1,862 B on 7541558 to
+# 2,102,983 [M]: the `ModuleCache` hook, per-module slots and the byte
+# cap; docs/HANDOFF.md "Scope decisions" 45), to the measurement plus
+# about 2 KB.
+# Raised for the import-cost pass (+4,227 B on 1c03cff to 2,107,210 [M];
+# on a72abfe without the cache, +4,104: the class size hint from
+# `__init__` +1,449, the binary-searched flag dunders and flags
+# recomputed only for them +706, the incremental code bytes +157, batched
+# prelude units, `pack::Unpacker` and the zoneinfo bytecode +1,792
+# together; docs/research/import-cost.md), to the measurement plus about
+# 2 KB.
+# Lowered for size pass 2, the bundled data (on b01fd7d, −107,967 to
+# 1,999,243 [M]: `NATIVES` in its own static instead of borrowing the
+# whole const `Packed` −5,444; the bundled modules in nine sections with
+# shared strings and per-section Huffman codes −102,523; docs/HANDOFF.md
+# "Size pass 2"), to the measurement plus about 2 KB. The `mod-asyncio`
+# and `mod-json` gates +227 on db2521a to 1,999,470 [M], under the
+# ceiling. Raised for the capability gaps of 2026-11-07 (owner request,
+# S1; +66,431 B on b1013eb to 2,065,901 [M], each measured in order on
+# 266bde7: ImportError's `name`/`path`/`name_from` and `super().__init__`
+# keywords +1,038, `traceback.TracebackException` with CPython's hint
+# rules and SyntaxError attributes +10,533, the `ast` module over the own
+# parser +48,131, `tokenize` and `token` over the own lexer +6,729;
+# docs/HANDOFF.md "Capability gaps"), to the measurement plus about 2 KB.
+# Raised for the CPython-test core-module pass (+24,748 on 266bde7 [M];
+# +25,388 on top of the capability gaps to 2,091,289 [M]: about 6.8 KB
+# of prelude and stdlib bytecode, the rest engine code for json subclasses and
+# `JSONEncoder`/`JSONDecoder`, `__mro_entries__`, str/int subclass
+# arguments, the builtin iterators' methods, `sys.set_int_max_str_digits`
+# and the other fixes of docs/research/cpython-tests-core.md), to the
+# measurement plus about 2 KB (owner decision S1).
+# Lowered for `mod-ast` leaving the default set (owner decision,
+# 2026-11-07: about 48 KB for 3 of 2,841 recorded real cells; −43,874 B on
+# 168b7ac, 2,091,492 [M] then) and the `?`/`$` tokens only the parser
+# rejects (−5), to 2,047,613 [M] on 883b266, to the measurement plus about
+# 2 KB. Raised for the asyncio follow-up of the import-cost pass (on
+# 168b7ac: asyncio's prelude attributes built on first use +1,289, the
+# Engine's cache of unpacked prelude chunks +1,282 [M]; +2,561 on e7d7b81
+# to 2,050,734 [M]; docs/research/import-cost.md §5), to the measurement
+# plus about 2 KB (S1). The 0.1 API pass (scope decisions 49–55:
+# `DefineError`, the error details and their `Display`, the fuel total and
+# `Session::environment`, reserved module names, one generated helper per
+# typed callable) +3,605 on c0f37cd to 2,054,339 [M], the ceiling raised
+# to the measurement plus about 2 KB. Dunder flags by hash +320 on
+# 8507ad2 to 2,054,681 [M], under the ceiling. Host-module code once per
+# Engine (scope decision 60) +27,228 to 2,081,909 [M], the ceiling raised
+# to the measurement plus about 2 KB: about 23 KB of it is restore
+# building a keyed image's host code again (the code generator and
+# `decode_module`, which `hello` did not link before because it never
+# defines a host module; a restore that only took code from the Engine's
+# cache measured about +3.8 KB), the rest the cache, the keyed snapshot
+# form and `with_host_code_in_snapshots`. Regeneration kept by the owner
+# (2026-11-07) so restore stays self-contained: a host that defines typed
+# tools links the generator anyway, so the cost lands on builds such as
+# `hello` that never do. The pre-0.1 follow-ups (2026-11-08, HANDOFF): the
+# cached host-code check −467 and lone-`\r` lines +429 (under the
+# ceiling; 2,082,972 [M] with the exception-report cut of 10cf9f6), then
+# `Session::pending` +1,584 to 2,084,556 [M] (the stop encoded when a cell
+# stops and decoded on restore, in the facade's snapshot header), the
+# ceiling raised to the measurement plus about 2 KB (S1); with its `Vec`
+# encoder and line breaks in string values, rebased on string indexing
+# (0234ca3), 2,086,027 [M], under the ceiling. The fuel audit (natives
+# charge their results, byte work and walks; `any`/`all` and `hash` hand
+# off; linear bytes find, translate, pops and slice deletion; owner
+# request before the 0.0.1 release fuzz) +6,137 on 0bb82d0 to 2,092,164
+# [M], the ceiling raised to the measurement plus about 2 KB (S1). The
+# correctness-triage fixes to 2,093,926 [M] on 8673563, under the
+# ceiling. The codemode script-time pass (owner request; `str.splitlines`
+# and `re`'s match path +327 on d2fa244, heap-int arithmetic up to 128
+# bits without `Big` about +1.2 KB; docs/research/js-engines-compare.md
+# §7 and the Grok brute-force cell of docs/research/js-vs-python-models.md)
+# +1,498 on 8673563 to 2,095,424 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1). The fuel audit's follow-ups (scope
+# decision 64: `collect` in chunks, sorts and factorials charged up
+# front, the sweep of long native steps +12,391 on 5df122e; long sorts in
+# slices with a merge loop per key kind +22,032; C4's straight-line
+# checks -1,213) +33,193 on e8900af to 2,128,617 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# The memory audit (natives admit guest-sized buffers before filling
+# them) +8,327 on f753f3d to 2,136,944 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# The coverage-map fixes (line coverage of every gate; CPython parity for
+# tuple-of-slice subscripts, `math.pow` of infinities, builtin-subclass
+# construction, set reprs and slot wrappers, a walrus in a comprehension
+# iterable, builtin-type setattr/delattr and `repr(super())`; the
+# `object.__ne__` snapshot fix; dead code removed, -2) +2,566 on 83aa5c7
+# to 2,139,510 [M], the ceiling raised to the measurement plus about 2 KB
+# (S1). The difffuzz triage fixes (2026-11-09: `x ** -n`, Unicode 16 case
+# tables, str/bytes repeat `OverflowError`, 64-bit guest counts on
+# wasm32; +2,974 together on d2fa244 before the last) +3,959 on 3dbb44b
+# to 2,143,469 [M], the ceiling raised to the measurement plus about 2 KB
+# (S1).
+# The bounded-steps mechanism (scope decision 65: chunked natives, `x in`
+# a long list or tuple, sorts bounded at both ends) +7,656 on 6dfe504 to
+# 2,151,125 [M], the ceiling raised to the measurement plus about 2 KB (S1).
+# The 64 MiB object cap and the out-of-line NSTATE plumbing (owner
+# decision (a) for scope decision 65) +998 on 2563b39 to 2,152,624 [M], the
+# ceiling raised to the measurement plus about 2 KB (S1).
+# `__import__` (owner decision for 0.0.1, 2026-11-09: CPython's signature
+# over the import machinery, `fromlist` in the prelude) +2,048 on 8cd850c
+# to 2,154,576 [M], the ceiling raised to the measurement plus about 2 KB
+# (S1).
+# The native `re` call path (owner decision 2026-11-09; on 3073fdf at
+# 2,154,576: calls filling defaulted parameters without the general
+# binder +293, the native `re.Match` type and `_match` +13,437, the
+# search's first-item skip +2,220, its step weights and the shorter
+# slices +239, split measured on 1a14986) +16,191 to 2,170,767 [M], the
+# ceiling raised to the measurement plus about 2 KB (S1).
+# P4 containers (scope decision 65: set and dict algebra, `dict(...)`,
+# `update`, `{**d}`, copies and views in steps through `nstep::op::BULK`,
+# a range read in place; lists and tuples built from slices a batch per
+# step, `SEQ_BUILD`; `count`, `index` and `remove` a slice per step,
+# `SEQ_SCAN`; tables rebuilt a slice per step as they grow, presized at
+# most to the object cap) +38,468 on 3624a3d to 2,203,087 [M], the ceiling raised
+# to the measurement plus about 2 KB (S1).
+# Incremental marking over 32 MiB live with the give-up to a full
+# collection and allocation pacing (scope decision 65, GC decision (d))
+# +11,525 on 5ba19df to 2,214,612 [M], the ceiling raised to the measurement plus
+# about 2 KB (S1).
+# Accessors out of line outside the dispatch closure and `optimize(size)`
+# on shipped builds (owner decision 69) −129,411 on c0e4045 to 2,083,635 [M],
+# the ceiling lowered to the measurement plus about 2 KB (S1).
+# Review fixes 1 (B1 private name mangling, B2 `__getattribute__`
+# rejected, B6/B8 numeric and singleton corners; independent review
+# of 18b0533) +2,756 on ca3db9e to 2,086,391 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Review fixes 2 (B7: flat chains compiled, dropped and converted in
+# loops, about 5.5 KB of it the AST's iterative drop; decorators in one
+# call frame; `hash('')` 0) +10,326 on d455c5e to 2,098,534 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# Set order and early stops as CPython (the dummy slot an `add` reuses,
+# the rebuild ending `difference_update`, `intersection_update` taking
+# its result's table; `intersection`, `issubset`, `issuperset` and
+# `isdisjoint` reading a non-set argument only as far as CPython does,
+# lazily in the prelude twin) +2,597 on 7df5282 to 2,101,466 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# Bounded native steps for str (scope decision 65, package P1: nstep ops
+# `STR_FILL`, `STR_JOIN`, `STR_REPLACE`, `STR_SPLIT`, `STR_MAP`,
+# `STR_SCAN` and their shared walk; results built in their arena block a
+# slice per step) +47,293 on 4fb209f to 2,148,775 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Bounded number steps (P3 of scope decision 65: one chunked engine for
+# long `int`/`float`/`complex` texts with CPython's `%.200R` error,
+# `int(s, 2**k)` linear, one-shot `float.fromhex` and `int.to_bytes`, the
+# `math` folds in steps; owner decision (b1), `MAX_BITS` 2^26 and the
+# cost cap on quadratic int work) +19,117 on efd8a58 to 2,168,786 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# The prelude in the sectioned packed form, `method_names` from the method
+# tables and mm-core's unused dirty bit removed (size review levers D and
+# F, review item Q1) −18,782 on 7ac25ef to 2,150,004 [M], the ceiling lowered to the
+# measurement plus about 2 KB (S1).
+# Range iterators that count their items (`reversed()`, slices and `len`
+# at the i64 ends), `range.count`/`range.index`, +1,889; `bin`/`oct`/`hex`
+# written straight into their str's block (a steps.rs Bounded row at
+# 2^26 bits), +916; together +2,805 on 56cabe6 to 2,152,809 [M], the
+# ceiling raised to the measurement plus about 2 KB (S1).
+# Bounded steps over bytes (P2, scope decision 65: `bytes::Job` for every
+# bytes, bytearray, `binascii` and `hashlib` site that grows with its data,
+# `nstep::op::BYTES`; a resumable two-way search; results, copies and
+# lists, tuples and sets of ints built in place; a full bytearray grown a
+# step at a time) +13,211 on 764aaed to 2,166,024 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Bounded json and `unicodedata` steps (P5, scope decision 65:
+# `nstep::op::JSON_SCAN`, a `loads` state machine over a window of input
+# a step; `op::JSON_DUMP`, a `dumps` encoder whose levels survive a step,
+# writing one byte block grown in place by `Heap::append_bytes`;
+# `op::UNI_NORM`; the `ast.parse`/`tokenize` source caps) +23,799 on
+# ce8cb0e to 2,189,823 [M], the ceiling raised to the measurement plus about
+# 2 KB (S1).
+# A long `%` format parsed a window per step (`nstep::op::STR_PCT`, one
+# resumable parse for str and `bytes`; `bytes` fills) and long split and
+# partition pieces copied a window per step +7,230 on 8262ec5 to 2,197,053 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# A dict or set growing an insert at a time grows in steps
+# (`Vm::bulk_grow_top`, `Vm::dict_grow_slice`) +1,666 on 9ad158b to
+# 2,199,323 [M], the ceiling raised to the measurement plus about 2 KB
+# (S1).
+# The dumps text moved to a new block a slice per step (+1,110 hello.wasm),
+# a large block's room in snapshots (+27) and `json.loads` growing a big
+# object's table a slice per step (`Vm::dict_grow_slice`, +2,888) (P5)
+# +4,025 on 2428933 to 2,203,348 [M], the ceiling raised to the measurement plus
+# about 2 KB (S1).
+# Folds (`nstep::op::FOLD`), tuple hashes a slice per call, chunked
+# collects and the set iterator's slice scan (P4 folds) +5,847 on 5dd21cc to 2,209,185 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# Iterators read as they are pulled: `sum`'s CPython stages over any
+# iterator, set and dict builds reading builtin iterators in place (P4
+# folds) +4,599 to 2,213,784 [M], the ceiling raised to the measurement plus about
+# 2 KB (S1).
+# Long str searches a window per step, `str.format`'s long arguments to its
+# twin, a long str's first hash charged, forged `STR_SCAN`/`NUM_TEXT`
+# states refused (the eb78933 review) +2,897 on 34e68d6 to 2,217,236 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# Formatting and repr budgeted by work (the review's T1, T1a and T4: big
+# ints' conversions checked before converting, long texts' repr stepped
+# inside `%` and containers, a huge precision's zeros as a piece) +1,029
+# on the commit before to 2,218,265 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# `math.hypot(*xs)` in steps and `int.from_bytes` as CPython's (P3):
+# +2,311 on e21fdb2 to 2,222,224 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# `x in d.values()` compares the values in place, a step at a time
+# (`nstep::op::DV_IN`) +1,554 on ce62e2a to 2,224,627 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# Guest-built nesting and forged state raise instead of crashing: nested
+# `enumerate`/`zip` read on an arena stack, re programs and saved runs
+# checked before they run, hashlib states checked on load
+# +5,457 on f30f9e7 to 2,230,084 [M], the ceiling raised to the measurement plus
+# about 2 KB (S1).
+# The allocation floor: big list buffers, stepped tuples and set tables
+# unfilled, `list`/`tuple` of a range built in steps (`Vm::range_seq`),
+# long appends and sorts in steps, the `MM_STEP_MS` check in `mm`
+# (integrator) +5,372 on 1c711bf to 2,235,456 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Restore checks of chunked natives' progress and linear dicts' entries
+# (the fuzz pre-run's audit) +1,601 on the commit before to 2,224,674 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# Starred displays, calls and unpacking copied slot to slot (the GC
+# sweep's shapes) +3,543 on 4fe04e1 to 2,225,767 [M], the ceiling raised to
+# the measurement plus about 2 KB (S1).
+# Number formats, padding and big-int division in bounded steps (P3,
+# review T3, T5, U1): +6,893 on 4fe04e1 to 2,229,117 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# enumerate's count goes on into big ints past `i64::MAX`, as CPython's
+# `en_longindex` +1,895 on 1c711bf to 2,231,979 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Long needles and separators searched a step at a time (P5), with
+# T6's `expandtabs` below it: +2,130 on f30f9e7 to 2,226,757 [M], the ceiling
+
+## mm_wasm_guest.wasm: `mm_wasm_guest.wasm` for wasm32-unknown-unknown (was GUEST_BUDGET_BYTES)
+#
+# The guest size budget: the shipped `wasm32-unknown-unknown`
+# `mm_wasm_guest.wasm` (crates/mm-wasm-guest, the mm-wasm interface),
+# after `wasm-opt -Oz`, without `test-hooks`. `hello.wasm` stays the
+# primary budget (owner decision, 2026-11-05). Set about 0.5% above the
+# first measurement, 2,223,853 B [M] on 585c79f: 142,565 B over
+# `hello.wasm`, of which the codec, the exports and the facade calls
+# `hello` does not make (`define`, `reset`, `stubs` +12,660,
+# `Engine::environment` +14,946, the call log +1,469, `set_hint` +2,127,
+# `set_local_timezone` +944; ablations [M]). The four exports added
+# before the v1 freeze (`host_modules`, `set_module_dunders`,
+# `set_int_bits_text`, `set_gc_stress`) took it to 2,230,840 [M], +6,987,
+# under the same ceiling; the review fixes (as `WASM_BUDGET_BYTES`, with
+# the codec's preallocation cap) +10,153 to 2,240,993 [M]; asyncio
+# cancellation (as `WASM_BUDGET_BYTES`) +13,485 to 2,254,478 [M]; the
+# speed landing (as `WASM_BUDGET_BYTES`: +3,120, +1,719, +1,418, +1,028,
+# +1,604, +13,820 on 9306b80) to 2,277,190 [M]; the review follow-ups (as
+# `WASM_BUDGET_BYTES`) +4,809 on 1fe8e2d to 2,282,010 [M]; the asyncio
+# primitives (as `WASM_BUDGET_BYTES`) +36,168 on d6d77f6 to 2,318,178
+# [M]; the aware `datetime` fast paths (as `WASM_BUDGET_BYTES`) +4,069 on
+# 77f20ed to 2,322,247 [M]. The size pass (as `WASM_BUDGET_BYTES`)
+# lowered it: `mm-wasm-alloc` −97,112, the facade at `z` −37,548, the
+# audit fixes −20,204 together (traceback sets −5,280, `debug_quoted`
+# −4,099, the shared header −3,219, merges instead of sorts −7,604), to
+# 2,167,383 [M]; the restore hardening and exact `round` (as
+# `WASM_BUDGET_BYTES`: +3,970 and +785 on 8cf3a11) to 2,172,138 [M];
+# geometric buffer growth (as `WASM_BUDGET_BYTES`) +33 to 2,172,171 [M];
+# the container `repr` hand-off (as `WASM_BUDGET_BYTES`) +2,679 on 863beb1
+# to 2,174,850 [M], the ceiling raised to the measurement plus about 2 KB;
+# the 1 MiB default text limit +17 on 59f0477 to 2,174,867 [M] (0 on
+# `hello.wasm` and native `hello`); the N1 and N2 fixes (as
+# `WASM_BUDGET_BYTES`: +2,290 and +783 on bb34446) to 2,177,940 [M], the
+# ceiling raised to the measurement plus about 2 KB; hints rendered as
+# CPython's traceback renders them (as `WASM_BUDGET_BYTES`) +4,900 on
+# 09ea2b1 to 2,182,840 [M], the ceiling raised to the measurement plus
+# about 2 KB; the third asyncio batch (as `WASM_BUDGET_BYTES`) +21,397 on
+# 1f27970 to 2,204,237 [M], the ceiling raised to the measurement plus
+# about 2 KB; SyntaxError precedence (as `WASM_BUDGET_BYTES`) +904 on
+# f75899d to 2,205,141 [M], under the ceiling; the decoded-module cache
+# (as `WASM_BUDGET_BYTES`) +1,683 on 7541558 to 2,206,824 [M], the
+# ceiling raised to the measurement plus about 2 KB; the import-cost pass
+# (as `WASM_BUDGET_BYTES`; on a72abfe +1,413, +705, +183 and +1,800)
+# +4,270 on 1c03cff to 2,211,094 [M], the ceiling raised to the
+# measurement plus about 2 KB; size pass 2 (as `WASM_BUDGET_BYTES`:
+# −5,444 and −102,771 on b01fd7d) −108,215 to 2,102,879 [M], the
+# ceiling lowered to the measurement plus about 2 KB; the `mod-asyncio`
+# and `mod-json` gates +947 on db2521a to 2,103,826 [M] (the facade's
+# `environment` names only the engine modules a build has), the ceiling
+# set to the measurement plus about 2 KB; the capability gaps of
+# 2026-11-07 (as `WASM_BUDGET_BYTES`: +1,027, +10,346, +48,079 and
+# +6,695 on 266bde7) +66,147 on b1013eb to 2,169,973 [M], the ceiling
+# raised to the measurement plus about 2 KB; the CPython-test
+# core-module pass (as `WASM_BUDGET_BYTES`; +24,763 on 266bde7) +25,410 to
+# 2,195,383 [M], the ceiling raised to the measurement plus about 2 KB;
+# `mod-ast` opt-in and the `?`/`$` tokens (as `WASM_BUDGET_BYTES`:
+# −46,254 and −6 on 168b7ac) to 2,149,327 [M], the ceiling lowered to the
+# measurement plus about 2 KB; the asyncio follow-up of the import-cost
+# pass (as `WASM_BUDGET_BYTES`: +1,279 and +979 on 168b7ac) +2,256 on
+# e7d7b81 to 2,152,202 [M], the ceiling raised to the measurement plus
+# about 2 KB; the 0.1 API pass and mm-wasm v2 (as `WASM_BUDGET_BYTES`,
+# plus the v2 codec and its three exports) +7,342 on c0f37cd to
+# 2,159,544 [M], the ceiling raised to the measurement plus about 2 KB;
+# the prelude chunk cache off on the guest (scope decision 48) −60 on
+# c0f37cd [M], under the ceiling; dunder flags by hash +309 on 8507ad2
+# to 2,159,773 [M], under the ceiling; host-module code once per Engine
+# (scope decision 60; the guest already linked the code generator) +6,467
+# to 2,166,240 [M], the ceiling raised to the measurement plus about 2 KB;
+# the pre-0.1 follow-ups (as `WASM_BUDGET_BYTES`: +212 and +537, under the
+# ceiling at 2,168,014 [M]; `Session::pending` and the optional
+# `mm_pending` export +2,194) to 2,170,208 [M], the ceiling raised to the
+# measurement plus about 2 KB; rebased on 0234ca3 (as `WASM_BUDGET_BYTES`)
+# 2,171,692 [M], under the ceiling; the fuel audit (as
+# `WASM_BUDGET_BYTES`) +6,160 to 2,177,852 [M], the ceiling raised to the
+# measurement plus about 2 KB; the correctness-triage fixes to 2,179,576
+# [M] on 8673563, under the ceiling; the codemode script-time pass (as
+# `WASM_BUDGET_BYTES`) +1,498 to 2,181,074 [M], the ceiling raised to the
+# measurement plus about 2 KB; the fuel audit's follow-ups (as
+# `WASM_BUDGET_BYTES`) +33,166 on e8900af to 2,214,240 [M], the ceiling raised to the
+# measurement plus about 2 KB.
+# The memory audit (as `WASM_BUDGET_BYTES`) +8,339 on f753f3d to
+# 2,222,579 [M], the ceiling raised to the measurement plus about 2 KB.
+# The coverage-map fixes (as `WASM_BUDGET_BYTES`) +2,585 on 83aa5c7 to
+# 2,225,164 [M], the ceiling raised to the measurement plus about 2 KB.
+# The difffuzz triage fixes (as `WASM_BUDGET_BYTES`) +3,953 on 3dbb44b to
+# 2,229,117 [M], the ceiling raised to the measurement plus about 2 KB.
+# The bounded-steps mechanism (scope decision 65: chunked natives, `x in`
+# a long list or tuple, sorts bounded at both ends) +7,591 on 6dfe504 to
+# 2,236,708 [M], the ceiling raised to the measurement plus about 2 KB (S1).
+# The 64 MiB object cap and the out-of-line NSTATE plumbing (owner
+# decision (a) for scope decision 65) +999 on 2563b39 to 2,238,431 [M], the
+# ceiling raised to the measurement plus about 2 KB (S1).
+# `__import__` (as `WASM_BUDGET_BYTES`) +2,034 on 8cd850c to 2,236,374
+# [M], under the ceiling (the 832 KiB shadow stack, 1958bac, made room).
+# The native `re` call path (as `WASM_BUDGET_BYTES`: +293, +13,407,
+# +2,221 and +239 on 1a14986) +16,125 on 3073fdf to 2,252,499 [M], the
+# ceiling raised to the measurement plus about 2 KB (S1).
+# P4 containers (scope decision 65: set and dict algebra, `dict(...)`,
+# `update`, `{**d}`, copies and views in steps through `nstep::op::BULK`,
+# a range read in place; lists and tuples built from slices a batch per
+# step, `SEQ_BUILD`; `count`, `index` and `remove` a slice per step,
+# `SEQ_SCAN`; tables rebuilt a slice per step as they grow, presized at
+# most to the object cap) +38,420 on 3624a3d to 2,289,659 [M], the ceiling raised
+# to the measurement plus about 2 KB (S1).
+# Incremental marking over 32 MiB live with the give-up to a full
+# collection and allocation pacing (scope decision 65, GC decision (d))
+# +11,350 on 5ba19df to 2,301,009 [M], the ceiling raised to the measurement plus
+# about 2 KB (S1).
+# Accessors out of line outside the dispatch closure and `optimize(size)`
+# on shipped builds (owner decision 69) −129,329 on c0e4045 to 2,169,796 [M],
+# the ceiling lowered to the measurement plus about 2 KB (S1).
+# Review fixes 1 (B1 private name mangling, B2 `__getattribute__`
+# rejected, B6/B8 numeric and singleton corners; independent review
+# of 18b0533) +2,751 on ca3db9e to 2,172,547 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Review fixes 2 (B7: flat chains compiled, dropped and converted in
+# loops, about 5.5 KB of it the AST's iterative drop; decorators in one
+# call frame; `hash('')` 0) +10,316 on d455c5e to 2,184,685 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# Set order and early stops as CPython (the dummy slot an `add` reuses,
+# the rebuild ending `difference_update`, `intersection_update` taking
+# its result's table; `intersection`, `issubset`, `issuperset` and
+# `isdisjoint` reading a non-set argument only as far as CPython does,
+# lazily in the prelude twin) +2,587 on 7df5282 to 2,187,819 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# Bounded native steps for str (scope decision 65, package P1: nstep ops
+# `STR_FILL`, `STR_JOIN`, `STR_REPLACE`, `STR_SPLIT`, `STR_MAP`,
+# `STR_SCAN` and their shared walk; results built in their arena block a
+# slice per step) +47,205 on 4fb209f to 2,235,040 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Bounded number steps (as `WASM_BUDGET_BYTES`) +19,043 on efd8a58 to
+# 2,254,974 [M], the ceiling raised to the measurement plus about 2 KB (S1).
+# The prelude in the sectioned packed form, `method_names` from the method
+# tables and mm-core's unused dirty bit removed (size review levers D and
+# F, review item Q1) −18,744 on 7ac25ef to 2,236,230 [M], the ceiling lowered to the
+# measurement plus about 2 KB (S1).
+# Range iterators and `bin`/`oct`/`hex` (as `WASM_BUDGET_BYTES`) +1,886
+# and +918, together +2,804 on 56cabe6 to 2,239,034 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# Bounded steps over bytes (P2, scope decision 65: `bytes::Job` for every
+# bytes, bytearray, `binascii` and `hashlib` site that grows with its data,
+# `nstep::op::BYTES`; a resumable two-way search; results, copies and
+# lists, tuples and sets of ints built in place; a full bytearray grown a
+# step at a time) +13,184 on 764aaed to 2,252,222 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Bounded json and `unicodedata` steps (P5, scope decision 65:
+# `nstep::op::JSON_SCAN`, a `loads` state machine over a window of input
+# a step; `op::JSON_DUMP`, a `dumps` encoder whose levels survive a step,
+# writing one byte block grown in place by `Heap::append_bytes`;
+# `op::UNI_NORM`; the `ast.parse`/`tokenize` source caps) +23,727 on
+# ce8cb0e to 2,275,949 [M], the ceiling raised to the measurement plus about
+# 2 KB (S1).
+# A long `%` format parsed a window per step (`nstep::op::STR_PCT`, one
+# resumable parse for str and `bytes`; `bytes` fills) and long split and
+# partition pieces copied a window per step +7,111 on 8262ec5 to 2,283,060 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# A dict or set growing an insert at a time grows in steps
+# (`Vm::bulk_grow_top`, `Vm::dict_grow_slice`) +1,771 on 9ad158b to
+# 2,285,434 [M], the ceiling raised to the measurement plus about 2 KB
+# (S1).
+# The dumps text moved to a new block a slice per step (+1,110 hello.wasm),
+# a large block's room in snapshots (+27) and `json.loads` growing a big
+# object's table a slice per step (`Vm::dict_grow_slice`, +2,888) (P5)
+# +3,965 on 2428933 to 2,289,399 [M], the ceiling raised to the measurement plus
+# about 2 KB (S1).
+# Folds (`nstep::op::FOLD`), tuple hashes a slice per call, chunked
+# collects and the set iterator's slice scan (P4 folds) +5,866 on 5dd21cc to 2,295,255 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# Iterators read as they are pulled: `sum`'s CPython stages over any
+# iterator, set and dict builds reading builtin iterators in place (P4
+# folds) +4,484 to 2,299,739 [M], the ceiling raised to the measurement plus about
+# 2 KB (S1).
+# Long str searches a window per step, `str.format`'s long arguments to its
+# twin, a long str's first hash charged, forged `STR_SCAN`/`NUM_TEXT`
+# states refused (the eb78933 review) +2,884 on 34e68d6 to 2,303,395 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# Formatting and repr budgeted by work (the review's T1, T1a and T4: big
+# ints' conversions checked before converting, long texts' repr stepped
+# inside `%` and containers, a huge precision's zeros as a piece) +1,026
+# on the commit before to 2,304,421 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# `math.hypot(*xs)` in steps and `int.from_bytes` as CPython's (P3):
+# +2,299 on e21fdb2 to 2,308,356 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# `x in d.values()` compares the values in place, a step at a time
+# (`nstep::op::DV_IN`) +1,545 on ce62e2a to 2,310,754 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# Guest-built nesting and forged state raise instead of crashing: nested
+# `enumerate`/`zip` read on an arena stack, re programs and saved runs
+# checked before they run, hashlib states checked on load
+# +5,445 on f30f9e7 to 2,316,199 [M], the ceiling raised to the measurement plus
+# about 2 KB (S1).
+# The allocation floor: big list buffers, stepped tuples and set tables
+# unfilled, `list`/`tuple` of a range built in steps (`Vm::range_seq`),
+# long appends and sorts in steps, the `MM_STEP_MS` check in `mm`
+# (integrator) +5,428 on 1c711bf to 2,321,627 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Restore checks of chunked natives' progress and linear dicts' entries
+# (the fuzz pre-run's audit) +1,597 on the commit before to 2,310,806 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# Starred displays, calls and unpacking copied slot to slot (the GC
+# sweep's shapes) +3,539 on 4fe04e1 to 2,311,895 [M], the ceiling raised to
+# the measurement plus about 2 KB (S1).
+# Number formats, padding and big-int division in bounded steps (P3,
+# review T3, T5, U1): +6,995 on 4fe04e1 to 2,315,351 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# enumerate's count goes on into big ints past `i64::MAX`, as CPython's
+# `en_longindex` +1,895 on 1c711bf to 2,318,094 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Long needles and separators searched a step at a time (P5), with
+# T6's `expandtabs` below it: +2,123 on f30f9e7 to 2,312,877 [M], the ceiling
+
+## mm_wasm_guest_bundle.wasm: `mm_wasm_guest_bundle.wasm` for wasm32-unknown-unknown (was BUNDLE_GUEST_BUDGET_BYTES)
+#
+# The bundle guest's budget (owner, 2026-11-09): `mm_wasm_guest_bundle.wasm`,
+# the guest built with `host-bundle` for `wasm32-unknown-unknown`, after
+# `wasm-opt -Oz`, with its `mm.prelude` and `mm.stdlib` custom sections
+# (`wasm::shipped_bundle_guest`). Its data segments hold about 350 KB less
+# than the default guest's, which V8 copies into every instance; the file
+# is about the same size. Set at the first measurement plus about 2 KB
+# (S1): 2,237,500 [M] on 8b4b19d, 1,538 B under the default guest.
+# Bounded steps over bytes (P2, scope decision 65: `bytes::Job` for every
+# bytes, bytearray, `binascii` and `hashlib` site that grows with its data,
+# `nstep::op::BYTES`; a resumable two-way search; results, copies and
+# lists, tuples and sets of ints built in place; a full bytearray grown a
+# step at a time) +13,188 on 764aaed to 2,250,688 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Bounded json and `unicodedata` steps (P5, scope decision 65:
+# `nstep::op::JSON_SCAN`, a `loads` state machine over a window of input
+# a step; `op::JSON_DUMP`, a `dumps` encoder whose levels survive a step,
+# writing one byte block grown in place by `Heap::append_bytes`;
+# `op::UNI_NORM`; the `ast.parse`/`tokenize` source caps) +23,719 on
+# ce8cb0e to 2,274,407 [M], the ceiling raised to the measurement plus about
+# 2 KB (S1).
+# A long `%` format parsed a window per step (`nstep::op::STR_PCT`, one
+# resumable parse for str and `bytes`; `bytes` fills) and long split and
+# partition pieces copied a window per step +7,111 on 8262ec5 to 2,281,518 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# A dict or set growing an insert at a time grows in steps
+# (`Vm::bulk_grow_top`, `Vm::dict_grow_slice`) +1,771 on 9ad158b to
+# 2,283,892 [M], the ceiling raised to the measurement plus about 2 KB
+# (S1).
+# The dumps text moved to a new block a slice per step (+1,110 hello.wasm),
+# a large block's room in snapshots (+27) and `json.loads` growing a big
+# object's table a slice per step (`Vm::dict_grow_slice`, +2,888) (P5)
+# +3,965 on 2428933 to 2,287,857 [M], the ceiling raised to the measurement plus
+# about 2 KB (S1).
+# Folds (`nstep::op::FOLD`), tuple hashes a slice per call, chunked
+# collects and the set iterator's slice scan (P4 folds) +5,870 on 5dd21cc to 2,293,717 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# Iterators read as they are pulled: `sum`'s CPython stages over any
+# iterator, set and dict builds reading builtin iterators in place (P4
+# folds) +4,480 to 2,298,197 [M], the ceiling raised to the measurement plus about
+# 2 KB (S1).
+# Long str searches a window per step, `str.format`'s long arguments to its
+# twin, a long str's first hash charged, forged `STR_SCAN`/`NUM_TEXT`
+# states refused (the eb78933 review) +2,884 on 34e68d6 to 2,301,846 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# Formatting and repr budgeted by work (the review's T1, T1a and T4: big
+# ints' conversions checked before converting, long texts' repr stepped
+# inside `%` and containers, a huge precision's zeros as a piece) +1,026
+# on the commit before to 2,302,872 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# `math.hypot(*xs)` in steps and `int.from_bytes` as CPython's (P3):
+# +2,298 on e21fdb2 to 2,306,803 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# `x in d.values()` compares the values in place, a step at a time
+# (`nstep::op::DV_IN`) +1,545 on ce62e2a to 2,309,209 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# Guest-built nesting and forged state raise instead of crashing: nested
+# `enumerate`/`zip` read on an arena stack, re programs and saved runs
+# checked before they run, hashlib states checked on load
+# +5,445 on f30f9e7 to 2,314,654 [M], the ceiling raised to the measurement plus
+# about 2 KB (S1).
+# The allocation floor: big list buffers, stepped tuples and set tables
+# unfilled, `list`/`tuple` of a range built in steps (`Vm::range_seq`),
+# long appends and sorts in steps, the `MM_STEP_MS` check in `mm`
+# (integrator) +5,428 on 1c711bf to 2,320,082 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Restore checks of chunked natives' progress and linear dicts' entries
+# (the fuzz pre-run's audit) +1,588 on the commit before to 2,309,252 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# Starred displays, calls and unpacking copied slot to slot (the GC
+# sweep's shapes) +3,540 on 4fe04e1 to 2,310,343 [M], the ceiling raised to
+# the measurement plus about 2 KB (S1).
+# Number formats, padding and big-int division in bounded steps (P3,
+# review T3, T5, U1): +6,998 on 4fe04e1 to 2,313,801 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# enumerate's count goes on into big ints past `i64::MAX`, as CPython's
+# `en_longindex` +1,895 on 1c711bf to 2,316,549 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Long needles and separators searched a step at a time (P5), with
+# T6's `expandtabs` below it: +2,119 on f30f9e7 to 2,311,328 [M], the ceiling
+
+## hello: native `hello` on x86_64-unknown-linux-gnu, the secondary budget (was SIZE_BUDGET_BYTES)
+#
+# The secondary size budget: native stripped `hello`, built as shipped.
+# History: the own parser (M6) measured 1.84 MB, the bundled stdlib and M9
+# 2.21 MB, recovered conformance 2.264 MB under the owner-approved
+# 2,275,000 bytes with the prebuilt std. Shipped builds (build-std with
+# `panic=immediate-abort`, no unwind tables) dropped std's panic and
+# backtrace machinery and `.eh_frame`; the ceiling sits about 0.5% above the
+# measurement then (docs/spec.md §6). Raised from 1,836,000 for the nine
+# stdlib modules of 2026-11-04, the engine gaps and the 2026-11-05 gap
+# batch, as `WASM_BUDGET_BYTES`; then for the breadth-campaign fixes
+# (+3,008 B to 1,945,304, the printable table, as `WASM_BUDGET_BYTES`),
+# then for `bytearray` (+19,184 B to 1,964,488), then for the second
+# 2026-11-05 gap batch (+16,352 B to 1,980,840, as `WASM_BUDGET_BYTES`),
+# then for the comparison depth fix (+2,640 B to 1,983,480), then for the
+# third gap batch (+17,408 B to 2,000,888: +2,672, +112 and +14,624 in
+# `WASM_BUDGET_BYTES`'s order), then for the embedding hardening
+# (+11,824 B to 2,012,712; +11,248 and +1,248 before the rebase, in
+# `WASM_BUDGET_BYTES`'s order), then for the codemode host API (+37,072 B
+# to 2,049,784, as `WASM_BUDGET_BYTES`), then for the codemode stdlib round
+# (+129,584 B on ac10b28 alone [M]: +42,928, +22,912, +10,960, +1,104,
+# +9,136, +8,736, +2,288, +400 and +1,728, +592, +16,000, +11,488 and
+# +1,312, in `WASM_BUDGET_BYTES`'s order; to 2,180,120 with
+# the host API [M], +130,336 over it), then for the review fixes
+# (+12,928 B on 5568b27 to 2,193,048 [M], as `WASM_BUDGET_BYTES`), then
+# for asyncio cancellation (+14,480 B on 9306b80 to 2,207,528 [M], as
+# `WASM_BUDGET_BYTES`), then for the speed landing (+29,600 B on 9306b80
+# [M]: +6,176, +1,120, +1,744, +800, +1,648 and +18,112, in
+# `WASM_BUDGET_BYTES`'s order; to 2,236,600 with asyncio cancellation),
+# then for the review follow-ups (+5,152 B on 1fe8e2d to 2,241,768 [M], as
+# `WASM_BUDGET_BYTES`), then for the asyncio primitives (+40,160 B on
+# d6d77f6 to 2,281,928 [M], as `WASM_BUDGET_BYTES`), then for the aware
+# `datetime` fast paths (+4,240 B on 77f20ed to 2,286,168 [M], as
+# `WASM_BUDGET_BYTES`). The size pass (as `WASM_BUDGET_BYTES`; the
+# allocator does not apply natively) lowered it: the facade at `z`
+# −18,928, the audit fixes −6,176 together (traceback sets −5,440, the
+# shared header −2,208, `debug_quoted` +1,472, sorts 0), to 2,261,064
+# [M]; the restore hardening and exact `round` (as `WASM_BUDGET_BYTES`:
+# +4,336 and +1,024 on 8cf3a11) to 2,266,424 [M]; geometric buffer growth
+# (as `WASM_BUDGET_BYTES`) +160 to 2,266,584 [M]; the container `repr`
+# hand-off (as `WASM_BUDGET_BYTES`) +3,184 on 863beb1 to 2,269,768 [M],
+# the ceiling raised to the measurement plus about 2 KB; the N1 and N2
+# fixes (as `WASM_BUDGET_BYTES`: +2,224 and +640 on bb34446) to 2,272,632
+# [M], the ceiling raised to the measurement plus about 2 KB; hints
+# rendered as CPython's traceback renders them (as `WASM_BUDGET_BYTES`)
+# +4,256 on 09ea2b1 to 2,276,888 [M], the ceiling raised to the
+# measurement plus about 2 KB; the third asyncio batch (as
+# `WASM_BUDGET_BYTES`) +25,840 on 1f27970 to 2,302,728 [M], the ceiling
+# raised to the measurement plus about 2 KB; SyntaxError precedence (as
+# `WASM_BUDGET_BYTES`) +1,200 on f75899d to 2,303,928 [M], under the
+# ceiling; the decoded-module cache (as `WASM_BUDGET_BYTES`) +2,208 on
+# 7541558 to 2,306,136 [M], the ceiling raised to the measurement plus
+# about 2 KB; the import-cost pass (as `WASM_BUDGET_BYTES`; on a72abfe
+# +1,632, +720, +80 and +2,832) +5,376 on 1c03cff to 2,311,512 [M], the
+# ceiling raised to the measurement plus about 2 KB; size pass 2 (as
+# `WASM_BUDGET_BYTES`: −33,200, natively the whole 47,168-byte `Packed`
+# with its zeros, and −101,520 on b01fd7d) −134,720 to 2,176,792 [M],
+# the ceiling lowered to the measurement plus about 2 KB; the
+# `mod-asyncio` and `mod-json` gates +256 on db2521a to 2,177,048 [M],
+# under the ceiling; the capability gaps of 2026-11-07 (as
+# `WASM_BUDGET_BYTES`: +1,472, +11,312, +52,288 and +8,224 on 266bde7)
+# +73,296 on b1013eb to 2,250,344 [M], the ceiling raised to the
+# measurement plus about 2 KB; the CPython-test core-module pass (as
+# `WASM_BUDGET_BYTES`; +25,728 on 266bde7) +26,352 to 2,276,696 [M], the ceiling
+# raised to the measurement plus about 2 KB; `mod-ast` opt-in and the
+# `?`/`$` tokens (as `WASM_BUDGET_BYTES`: −46,304 and −128 on 168b7ac) to
+# 2,230,584 [M], the ceiling lowered to the measurement plus about 2 KB;
+# the asyncio follow-up of the import-cost pass (as `WASM_BUDGET_BYTES`:
+# +1,888 and +1,424 on 168b7ac) +3,360 on e7d7b81 to 2,234,312 [M], the
+# ceiling raised to the measurement plus about 2 KB; the 0.1 API pass (as
+# `WASM_BUDGET_BYTES`) +3,360 on c0f37cd to 2,237,672 [M], the ceiling
+# raised to the measurement plus about 2 KB; dunder flags by hash +848 on
+# 8507ad2 to 2,238,520 [M], under the ceiling; host-module code once per
+# Engine (as `WASM_BUDGET_BYTES`) +26,720 to 2,265,240 [M], the ceiling
+# raised to the measurement plus about 2 KB; `hello` plus one typed
+# `define`, built the same way, grew only +4,976 (2,289,032 → 2,294,008)
+# [M], since it already linked the generator; the pre-0.1 follow-ups (as
+# `WASM_BUDGET_BYTES`: +1,216 and −1,568, under the ceiling at 2,265,992
+# [M]; `Session::pending` +2,064) to 2,268,056 [M], the ceiling raised to
+# the measurement plus about 2 KB; rebased on 0234ca3 (as
+# `WASM_BUDGET_BYTES`) 2,269,256 [M], under the ceiling; the fuel audit
+# (as `WASM_BUDGET_BYTES`) +6,608 to 2,275,864 [M], the ceiling raised to
+# the measurement plus about 2 KB; the correctness-triage fixes to
+# 2,277,736 [M] on 8673563, under the ceiling; the codemode script-time
+# pass (as `WASM_BUDGET_BYTES`) +1,376 to 2,279,112 [M], the ceiling
+# raised to the measurement plus about 2 KB; the fuel audit's follow-ups
+# (as `WASM_BUDGET_BYTES`) +40,000 on e8900af to 2,319,112 [M], the ceiling raised
+# to the measurement plus about 2 KB.
+# The memory audit (as `WASM_BUDGET_BYTES`) +12,112 on f753f3d to
+# 2,331,224 [M], the ceiling raised to the measurement plus about 2 KB.
+# The coverage-map fixes (as `WASM_BUDGET_BYTES`) +2,400 on 83aa5c7 to
+# 2,333,624 [M], the ceiling raised to the measurement plus about 2 KB.
+# The difffuzz triage fixes (as `WASM_BUDGET_BYTES`; the Unicode 16 case
+# tables +3,024 of it on d2fa244) +4,912 on 3dbb44b to 2,338,536 [M], the
+# ceiling raised to the measurement plus about 2 KB.
+# The bounded-steps mechanism (scope decision 65: chunked natives, `x in`
+# a long list or tuple, sorts bounded at both ends) +12,016 on 6dfe504 to
+# 2,350,552 [M], the ceiling raised to the measurement plus about 2 KB (S1).
+# The 64 MiB object cap and the out-of-line NSTATE plumbing (owner
+# decision (a) for scope decision 65) +1,648 on 2563b39 to 2,352,568 [M], the
+# ceiling raised to the measurement plus about 2 KB (S1).
+# `__import__` (as `WASM_BUDGET_BYTES`) +2,128 on 8cd850c to 2,354,552
+# [M], the ceiling raised to the measurement plus about 2 KB (S1).
+# The native `re` call path (as `WASM_BUDGET_BYTES`: +400, +15,120,
+# +2,832 and +448 on 1a14986) +18,800 on 3073fdf to 2,373,352 [M], the
+# ceiling raised to the measurement plus about 2 KB (S1).
+# P4 containers (scope decision 65: set and dict algebra, `dict(...)`,
+# `update`, `{**d}`, copies and views in steps through `nstep::op::BULK`,
+# a range read in place; lists and tuples built from slices a batch per
+# step, `SEQ_BUILD`; `count`, `index` and `remove` a slice per step,
+# `SEQ_SCAN`; tables rebuilt a slice per step as they grow, presized at
+# most to the object cap) +42,880 on 3624a3d to 2,408,888 [M], the ceiling raised
+# to the measurement plus about 2 KB (S1).
+# Incremental marking over 32 MiB live with the give-up to a full
+# collection and allocation pacing (scope decision 65, GC decision (d))
+# +11,152 on 5ba19df to 2,420,040 [M], the ceiling raised to the measurement plus
+# about 2 KB (S1).
+# Accessors out of line outside the dispatch closure and `optimize(size)`
+# on shipped builds (owner decision 69) −141,088 on c0e4045 to 2,277,464 [M],
+# the ceiling lowered to the measurement plus about 2 KB (S1).
+# Review fixes 1 (B1 private name mangling, B2 `__getattribute__`
+# rejected, B6/B8 numeric and singleton corners; independent review
+# of 18b0533) +2,608 on ca3db9e to 2,280,072 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Review fixes 2 (B7: flat chains compiled, dropped and converted in
+# loops, about 5.5 KB of it the AST's iterative drop; decorators in one
+# call frame; `hash('')` 0) +11,008 on d455c5e to 2,292,504 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# Set order and early stops as CPython (the dummy slot an `add` reuses,
+# the rebuild ending `difference_update`, `intersection_update` taking
+# its result's table; `intersection`, `issubset`, `issuperset` and
+# `isdisjoint` reading a non-set argument only as far as CPython does,
+# lazily in the prelude twin) +3,024 on 7df5282 to 2,295,832 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# Bounded native steps for str (scope decision 65, package P1: nstep ops
+# `STR_FILL`, `STR_JOIN`, `STR_REPLACE`, `STR_SPLIT`, `STR_MAP`,
+# `STR_SCAN` and their shared walk; results built in their arena block a
+# slice per step) +51,920 on 4fb209f to 2,347,848 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Bounded number steps (as `WASM_BUDGET_BYTES`) +18,048 on efd8a58 to
+# 2,367,032 [M], the ceiling raised to the measurement plus about 2 KB (S1).
+# The prelude in the sectioned packed form, `method_names` from the method
+# tables and mm-core's unused dirty bit removed (size review levers D and
+# F, review item Q1) −20,480 on 7ac25ef to 2,346,552 [M], the ceiling lowered to the
+# measurement plus about 2 KB (S1).
+# Range iterators and `bin`/`oct`/`hex` (as `WASM_BUDGET_BYTES`) +3,168
+# and +832, together +4,000 on 56cabe6 to 2,350,552 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# Bounded steps over bytes (P2, scope decision 65: `bytes::Job` for every
+# bytes, bytearray, `binascii` and `hashlib` site that grows with its data,
+# `nstep::op::BYTES`; a resumable two-way search; results, copies and
+# lists, tuples and sets of ints built in place; a full bytearray grown a
+# step at a time) +13,824 on 764aaed to 2,364,424 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Bounded json and `unicodedata` steps (P5, scope decision 65:
+# `nstep::op::JSON_SCAN`, a `loads` state machine over a window of input
+# a step; `op::JSON_DUMP`, a `dumps` encoder whose levels survive a step,
+# writing one byte block grown in place by `Heap::append_bytes`;
+# `op::UNI_NORM`; the `ast.parse`/`tokenize` source caps) +30,448 on
+# ce8cb0e to 2,394,872 [M], the ceiling raised to the measurement plus about
+# 2 KB (S1).
+# A long `%` format parsed a window per step (`nstep::op::STR_PCT`, one
+# resumable parse for str and `bytes`; `bytes` fills) and long split and
+# partition pieces copied a window per step +8,320 on 8262ec5 to 2,403,192 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# A dict or set growing an insert at a time grows in steps
+# (`Vm::bulk_grow_top`, `Vm::dict_grow_slice`) +2,528 on 9ad158b to
+# 2,405,656 [M], the ceiling raised to the measurement plus about 2 KB
+# (S1).
+# The dumps text moved to a new block a slice per step (+1,110 hello.wasm),
+# a large block's room in snapshots (+27) and `json.loads` growing a big
+# object's table a slice per step (`Vm::dict_grow_slice`, +2,888) (P5)
+# +3,856 on 2428933 to 2,409,512 [M], the ceiling raised to the measurement plus
+# about 2 KB (S1).
+# Folds (`nstep::op::FOLD`), tuple hashes a slice per call, chunked
+# collects and the set iterator's slice scan (P4 folds) +6,272 on 5dd21cc to 2,415,736 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# Iterators read as they are pulled: `sum`'s CPython stages over any
+# iterator, set and dict builds reading builtin iterators in place (P4
+# folds) +5,600 to 2,421,336 [M], the ceiling raised to the measurement plus about
+# 2 KB (S1).
+# Long str searches a window per step, `str.format`'s long arguments to its
+# twin, a long str's first hash charged, forged `STR_SCAN`/`NUM_TEXT`
+# states refused (the eb78933 review) +3,248 on 34e68d6 to 2,425,416 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# Formatting and repr budgeted by work (the review's T1, T1a and T4: big
+# ints' conversions checked before converting, long texts' repr stepped
+# inside `%` and containers, a huge precision's zeros as a piece) +2,112
+# on the commit before to 2,427,528 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# `math.hypot(*xs)` in steps and `int.from_bytes` as CPython's (P3):
+# +2,256 on e21fdb2 to 2,430,728 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# `x in d.values()` compares the values in place, a step at a time
+# (`nstep::op::DV_IN`) +1,616 on ce62e2a to 2,433,192 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# Guest-built nesting and forged state raise instead of crashing: nested
+# `enumerate`/`zip` read on an arena stack, re programs and saved runs
+# checked before they run, hashlib states checked on load
+# +6,144 on f30f9e7 to 2,439,328 [M], the ceiling raised to the measurement plus
+# about 2 KB (S1).
+# The allocation floor: big list buffers, stepped tuples and set tables
+# unfilled, `list`/`tuple` of a range built in steps (`Vm::range_seq`),
+# long appends and sorts in steps, the `MM_STEP_MS` check in `mm`
+# (integrator) +7,560 on 1c711bf to 2,446,888 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Restore checks of chunked natives' progress and linear dicts' entries
+# (the fuzz pre-run's audit) +1,632 on the commit before to 2,433,200 [M],
+# the ceiling raised to the measurement plus about 2 KB (S1).
+# Starred displays, calls and unpacking copied slot to slot (the GC
+# sweep's shapes) +5,504 on 4fe04e1 to 2,436,232 [M], the ceiling raised to
+# the measurement plus about 2 KB (S1).
+# Number formats, padding and big-int division in bounded steps (P3,
+# review T3, T5, U1): +8,064 on 4fe04e1 to 2,438,792 [M], the ceiling
+# raised to the measurement plus about 2 KB (S1).
+# enumerate's count goes on into big ints past `i64::MAX`, as CPython's
+# `en_longindex` +1,904 on 1c711bf to 2,441,232 [M], the ceiling raised to the
+# measurement plus about 2 KB (S1).
+# Long needles and separators searched a step at a time (P5), with
+# T6's `expandtabs` below it: +2,176 on f30f9e7 to 2,435,368 [M], the ceiling
+
+# artifact  bytes  why
+hello.wasm 2237500 the ceiling at "Allocation floor: big list buffers, tuples and set tables unfilled; ranges, appends and sorts in steps", measured 2,235,456 there [M]; was WASM_BUDGET_BYTES, its record above
+mm_wasm_guest.wasm 2323700 the ceiling at "Allocation floor: big list buffers, tuples and set tables unfilled; ranges, appends and sorts in steps", measured 2,321,627 there [M]; was GUEST_BUDGET_BYTES, its record above
+mm_wasm_guest_bundle.wasm 2322100 the ceiling at "Allocation floor: big list buffers, tuples and set tables unfilled; ranges, appends and sorts in steps", measured 2,320,082 there [M]; was BUNDLE_GUEST_BUDGET_BYTES, its record above
+hello 2448900 the ceiling at "Allocation floor: big list buffers, tuples and set tables unfilled; ranges, appends and sorts in steps", measured 2,446,888 there [M]; was SIZE_BUDGET_BYTES, its record above
+hello.wasm +900 "Long reprs and byte copies in steps", measured 2,236,374 [M]; record above
+mm_wasm_guest.wasm +900 "Long reprs and byte copies in steps", measured 2,322,542 [M]; record above
+mm_wasm_guest_bundle.wasm +900 "Long reprs and byte copies in steps", measured 2,320,992 [M]; record above
+hello +1500 "Long reprs and byte copies in steps", measured 2,448,312 [M]; record above
+hello.wasm +1600 "Restore checks a chunked native's progress and a linear dict's entries", measured 2,237,973 [M]; record above
+mm_wasm_guest.wasm +1600 "Restore checks a chunked native's progress and a linear dict's entries", measured 2,324,138 [M]; record above
+mm_wasm_guest_bundle.wasm +1600 "Restore checks a chunked native's progress and a linear dict's entries", measured 2,322,595 [M]; record above
+hello +1600 "Restore checks a chunked native's progress and a linear dict's entries", measured 2,449,960 [M]; record above
+hello.wasm +3500 "Starred calls and unpacking copy no items natively; LIST_EXTEND grows once", measured 2,241,490 [M]; record above
+mm_wasm_guest.wasm +3500 "Starred calls and unpacking copy no items natively; LIST_EXTEND grows once", measured 2,327,653 [M]; record above
+mm_wasm_guest_bundle.wasm +3600 "Starred calls and unpacking copy no items natively; LIST_EXTEND grows once", measured 2,326,111 [M]; record above
+hello +5000 "Starred calls and unpacking copy no items natively; LIST_EXTEND grows once", measured 2,454,936 [M]; record above
+hello.wasm +300 "Opt-in GC yield: a collection step ends a fuel slice, without fuel charged", measured 2,241,777 [M]; record above
+mm_wasm_guest.wasm +700 "Opt-in GC yield: a collection step ends a fuel slice, without fuel charged", measured 2,328,347 [M]; record above
+mm_wasm_guest_bundle.wasm +600 "Opt-in GC yield: a collection step ends a fuel slice, without fuel charged", measured 2,326,780 [M]; record above
+hello +400 "Opt-in GC yield: a collection step ends a fuel slice, without fuel charged", measured 2,455,304 [M]; record above
+hello.wasm +400 "expandtabs writes a wide tab a step at a time, str and bytes", measured 2,242,113 [M]; record above
+mm_wasm_guest.wasm +300 "expandtabs writes a wide tab a step at a time, str and bytes", measured 2,328,683 [M]; record above
+mm_wasm_guest_bundle.wasm +400 "expandtabs writes a wide tab a step at a time, str and bytes", measured 2,327,116 [M]; record above
+hello +100 "expandtabs writes a wide tab a step at a time, str and bytes", measured 2,455,496 [M]; record above
+hello.wasm +6900 "Number formats, padding and big-int division in bounded steps", measured 2,249,009 [M]; record above
+mm_wasm_guest.wasm +7000 "Number formats, padding and big-int division in bounded steps", measured 2,335,683 [M]; record above
+mm_wasm_guest_bundle.wasm +7000 "Number formats, padding and big-int division in bounded steps", measured 2,334,107 [M]; record above
+hello +8100 "Number formats, padding and big-int division in bounded steps", measured 2,463,528 [M]; record above
+hello.wasm +1800 "enumerate counts on into big ints past i64::MAX, as CPython's does", measured 2,250,893 [M]; record above
+mm_wasm_guest.wasm +1900 "enumerate counts on into big ints past i64::MAX, as CPython's does", measured 2,337,567 [M]; record above
+mm_wasm_guest_bundle.wasm +1800 "enumerate counts on into big ints past i64::MAX, as CPython's does", measured 2,335,991 [M]; record above
+hello +1800 "enumerate counts on into big ints past i64::MAX, as CPython's does", measured 2,465,384 [M]; record above
+hello.wasm +1800 "Long needles and separators search a step at a time, str and bytes", measured 2,252,698 [M]; record above
+mm_wasm_guest.wasm +1800 "Long needles and separators search a step at a time, str and bytes", measured 2,339,365 [M]; record above
+mm_wasm_guest_bundle.wasm +1800 "Long needles and separators search a step at a time, str and bytes", measured 2,337,794 [M]; record above
+hello +2000 "Long needles and separators search a step at a time, str and bytes", measured 2,467,336 [M]; record above
+hello.wasm +200 "A long list or tuple assigned to a short list slice goes the long way (W5)", measured 2,252,820 [M]; record above
+mm_wasm_guest.wasm +100 "A long list or tuple assigned to a short list slice goes the long way (W5)", measured 2,339,487 [M]; record above
+mm_wasm_guest_bundle.wasm +200 "A long list or tuple assigned to a short list slice goes the long way (W5)", measured 2,337,916 [M]; record above
+hello +100 "A long list or tuple assigned to a short list slice goes the long way (W5)", measured 2,467,416 [M]; record above
+hello.wasm +1000 "Collections where garbage needs them: small charges add up; instructions retry", measured 2,253,872 [M]; record above
+mm_wasm_guest.wasm +1100 "Collections where garbage needs them: small charges add up; instructions retry", measured 2,340,546 [M]; record above
+mm_wasm_guest_bundle.wasm +1000 "Collections where garbage needs them: small charges add up; instructions retry", measured 2,338,975 [M]; record above
+hello +1100 "Collections where garbage needs them: small charges add up; instructions retry", measured 2,468,600 [M]; record above
+hello.wasm +100 "Starred extends and starred calls of functions retry after a collection", measured 2,253,952 [M]; record above
+mm_wasm_guest.wasm +100 "Starred extends and starred calls of functions retry after a collection", measured 2,340,626 [M]; record above
+mm_wasm_guest_bundle.wasm +100 "Starred extends and starred calls of functions retry after a collection", measured 2,339,055 [M]; record above
+hello +300 "Starred extends and starred calls of functions retry after a collection", measured 2,468,808 [M]; record above
+hello.wasm +300 "A list rebuilt in steps counts the buffer it drops as garbage", measured 2,254,263 [M]; record above
+mm_wasm_guest.wasm +300 "A list rebuilt in steps counts the buffer it drops as garbage", measured 2,340,937 [M]; record above
+mm_wasm_guest_bundle.wasm +300 "A list rebuilt in steps counts the buffer it drops as garbage", measured 2,339,366 [M]; record above
+hello +300 "A list rebuilt in steps counts the buffer it drops as garbage", measured 2,469,112 [M]; record above
+hello.wasm +500 "Step str searches near the long-needle cut and with 9+ byte needles", measured 2,254,745 [M]; record above
+mm_wasm_guest.wasm +500 "Step str searches near the long-needle cut and with 9+ byte needles", measured 2,341,419 [M]; record above
+mm_wasm_guest_bundle.wasm +500 "Step str searches near the long-needle cut and with 9+ byte needles", measured 2,339,848 [M]; record above
+hello +700 "Step str searches near the long-needle cut and with 9+ byte needles", measured 2,469,816 [M]; record above
+hello.wasm +500 "A list's += and extend grow once, iterate subclasses, and change nothing on failure", measured 2,255,237 [M]; record above
+mm_wasm_guest.wasm +500 "A list's += and extend grow once, iterate subclasses, and change nothing on failure", measured 2,341,909 [M]; record above
+mm_wasm_guest_bundle.wasm +500 "A list's += and extend grow once, iterate subclasses, and change nothing on failure", measured 2,340,340 [M]; record above
+hello +700 "A list's += and extend grow once, iterate subclasses, and change nothing on failure", measured 2,470,504 [M]; record above
+hello.wasm +100 "enumerate reads its start as CPython does on both paths", measured 2,255,379 [M]; record above
+mm_wasm_guest.wasm +100 "enumerate reads its start as CPython does on both paths", measured 2,342,051 [M]; record above
+mm_wasm_guest_bundle.wasm +100 "enumerate reads its start as CPython does on both paths", measured 2,340,478 [M]; record above
+hello +100 "enumerate reads its start as CPython does on both paths", measured 2,470,616 [M]; record above
+hello.wasm +1200 "An int subclass's __index__ is never called for its value, as in CPython", measured 2,256,516 [M]; record above
+mm_wasm_guest.wasm +1100 "An int subclass's __index__ is never called for its value, as in CPython", measured 2,343,187 [M]; record above
+mm_wasm_guest_bundle.wasm +1200 "An int subclass's __index__ is never called for its value, as in CPython", measured 2,341,618 [M]; record above
+hello +1500 "An int subclass's __index__ is never called for its value, as in CPython", measured 2,472,152 [M]; record above
+hello.wasm +1000 "Multi-part f-strings join long parts in steps", measured 2,257,501 [M]; record above
+mm_wasm_guest.wasm +1000 "Multi-part f-strings join long parts in steps", measured 2,344,164 [M]; record above
+mm_wasm_guest_bundle.wasm +900 "Multi-part f-strings join long parts in steps", measured 2,342,595 [M]; record above
+hello +1000 "Multi-part f-strings join long parts in steps", measured 2,473,176 [M]; record above
+hello.wasm +100 "bytearray copies and iterators; format keeps a __format__ str subclass", measured 2,257,632 [M]; record above
+mm_wasm_guest.wasm +100 "bytearray copies and iterators; format keeps a __format__ str subclass", measured 2,344,295 [M]; record above
+mm_wasm_guest_bundle.wasm +200 "bytearray copies and iterators; format keeps a __format__ str subclass", measured 2,342,726 [M]; record above
+hello +100 "bytearray copies and iterators; format keeps a __format__ str subclass", measured 2,473,288 [M]; record above
+hello.wasm +800 "Starred copies read slots without Heap::read_values: generators Ir back", measured 2,258,405 [M]; record above
+mm_wasm_guest.wasm +800 "Starred copies read slots without Heap::read_values: generators Ir back", measured 2,345,068 [M]; record above
+mm_wasm_guest_bundle.wasm +700 "Starred copies read slots without Heap::read_values: generators Ir back", measured 2,343,499 [M]; record above
+hello +1100 "Starred copies read slots without Heap::read_values: generators Ir back", measured 2,474,312 [M]; record above
+hello.wasm +800 "In-place repeat: the left operand repeats in place, the right never does", measured 2,259,266 [M]; record above
+mm_wasm_guest.wasm +900 "In-place repeat: the left operand repeats in place, the right never does", measured 2,345,927 [M]; record above
+mm_wasm_guest_bundle.wasm +900 "In-place repeat: the left operand repeats in place, the right never does", measured 2,344,352 [M]; record above
+hello +800 "In-place repeat: the left operand repeats in place, the right never does", measured 2,475,176 [M]; record above
+hello.wasm +1300 "Retry marks belong to the instruction that set them, not to fuel slices", measured 2,260,505 [M]; record above
+mm_wasm_guest.wasm +1500 "Retry marks belong to the instruction that set them, not to fuel slices", measured 2,347,449 [M]; record above
+mm_wasm_guest_bundle.wasm +1500 "Retry marks belong to the instruction that set them, not to fuel slices", measured 2,345,874 [M]; record above
+hello +1600 "Retry marks belong to the instruction that set them, not to fuel slices", measured 2,476,776 [M]; record above
+hello.wasm +100 "A snapshot's collection resets the collection trigger; only the retry keeps its count", measured 2,260,608 [M]; record above
+mm_wasm_guest.wasm +100 "A snapshot's collection resets the collection trigger; only the retry keeps its count", measured 2,347,557 [M]; record above
+mm_wasm_guest_bundle.wasm +100 "A snapshot's collection resets the collection trigger; only the retry keeps its count", measured 2,345,982 [M]; record above
+hello.wasm +2700 "str subclasses under `%`, `%b` and no-op formats as CPython (P1 pass 4)", measured 2,263,307 [M]; record above
+mm_wasm_guest.wasm +2700 "str subclasses under `%`, `%b` and no-op formats as CPython (P1 pass 4)", measured 2,350,246 [M]; record above
+mm_wasm_guest_bundle.wasm +2700 "str subclasses under `%`, `%b` and no-op formats as CPython (P1 pass 4)", measured 2,348,676 [M]; record above
+hello +2400 "str subclasses under `%`, `%b` and no-op formats as CPython (P1 pass 4)", measured 2,479,192 [M]; record above
+hello.wasm +5300 "Restore keeps a chunked native's counts in range and its str builds whole", measured 2,268,659 [M]; record above
+mm_wasm_guest.wasm +5300 "Restore keeps a chunked native's counts in range and its str builds whole", measured 2,355,596 [M]; record above
+mm_wasm_guest_bundle.wasm +5400 "Restore keeps a chunked native's counts in range and its str builds whole", measured 2,354,026 [M]; record above
+hello +7600 "Restore keeps a chunked native's counts in range and its str builds whole", measured 2,486,792 [M]; record above
+mm_wasm_guest.wasm +100 "A collection between cells keeps the retry's count too", measured 2,355,670 [M]; record above
+hello +100 "A collection between cells keeps the retry's count too", measured 2,486,888 [M]; record above
+hello.wasm +700 "A list's `+=` reads `a += a` in place and never falls back to `__radd__` on a subclass", measured 2,269,367 [M]; record above
+mm_wasm_guest.wasm +700 "A list's `+=` reads `a += a` in place and never falls back to `__radd__` on a subclass", measured 2,356,341 [M]; record above
+mm_wasm_guest_bundle.wasm +700 "A list's `+=` reads `a += a` in place and never falls back to `__radd__` on a subclass", measured 2,354,771 [M]; record above
+hello +800 "A list's `+=` reads `a += a` in place and never falls back to `__radd__` on a subclass", measured 2,487,624 [M]; record above
+hello.wasm +1900 "format and `%`: str subclass specs and results, numeric subclasses as CPython", measured 2,271,212 [M]; record above
+mm_wasm_guest.wasm +1800 "format and `%`: str subclass specs and results, numeric subclasses as CPython", measured 2,358,187 [M]; record above
+mm_wasm_guest_bundle.wasm +1900 "format and `%`: str subclass specs and results, numeric subclasses as CPython", measured 2,356,614 [M]; record above
+hello +1800 "format and `%`: str subclass specs and results, numeric subclasses as CPython", measured 2,489,464 [M]; record above
+hello.wasm +100 "`gc.collect()` charges the same fuel however the cell is parked", measured 2,271,397 [M]; record above
+mm_wasm_guest.wasm +200 "`gc.collect()` charges the same fuel however the cell is parked", measured 2,358,379 [M]; record above
+mm_wasm_guest_bundle.wasm +200 "`gc.collect()` charges the same fuel however the cell is parked", measured 2,356,806 [M]; record above
+hello -200 "`gc.collect()` charges the same fuel however the cell is parked", measured 2,489,240 [M]; record above
+mm_wasm_guest_bundle.wasm -100 "A set built in bulk keeps the item that fills it past 3/5 in place", measured 2,356,746 [M]; record above
+hello +300 "A set built in bulk keeps the item that fills it past 3/5 in place", measured 2,489,592 [M]; record above
+hello.wasm +400 "A restore inside a retry wait reruns the instruction once", measured 2,271,773 [M]; record above
+mm_wasm_guest.wasm +300 "A restore inside a retry wait reruns the instruction once", measured 2,358,676 [M]; record above
+mm_wasm_guest_bundle.wasm +400 "A restore inside a retry wait reruns the instruction once", measured 2,357,103 [M]; record above
+hello +300 "A restore inside a retry wait reruns the instruction once", measured 2,489,880 [M]; record above

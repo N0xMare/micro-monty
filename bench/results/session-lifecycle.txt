@@ -1,0 +1,1289 @@
+# [M] Native rendering ownership, 2026-11-03
+# Full driver sources, raw timing samples, budget/restore outcomes and semantic
+# output: bench/results/rendering-ownership.json (baseline 15a2c35).
+# Final cargo xtask check: every gate passed; 997 runs / 66784 fresh-process restores.
+# hello bytes: native=2221368 wasip1=1822416 unknown-unknown=1930219
+# 40 normal + 40 GC-stressed budget/restore controls; 245 CPython output lines match.
+# Pinned alternating median ms, before -> after:
+# scalar 0.184860 -> 0.166794 (unstable across trials; no scalar speedup claim)
+# wide 0.242203 -> 0.235558; repr 1.261796 -> 1.337691
+# ascii 2.361399 -> 2.200491; exception 3.283341 -> 3.359287
+# padding 0.775456 -> 0.765273; small-padding 0.346265 -> 0.296363
+# This buys admission; no total-memory, RSS or hard park-latency guarantee.
+
+# [M] Session lifecycle and parser size tradeoff
+# Same lifecycle implementation, release profile, pinned CPU 2
+# 2026-11-02
+rustc 1.99.0 (b940084d7 2026-09-28)
+Model name:                              Intel(R) Xeon(R) Processor @ 2.60GHz
+# Default: parser z, compiler s
+hello_bytes=2204472
+[M] compile small: source_bytes=92 samples_ns=[9460, 9375, 9343, 9448, 9378, 9272, 9294]
+[M] compile large: source_bytes=50006 samples_ns=[6261103, 6252673, 6208843, 6263138, 6133497, 6172188, 6161259]
+[M] reused_cells=256 elapsed_us=6248 snapshot_bytes=237813
+[M] restored_reset_snapshot_bytes=106638
+[M] compile small: source_bytes=92 samples_ns=[9623, 9473, 9609, 9617, 9627, 9573, 9533]
+[M] compile large: source_bytes=50006 samples_ns=[6259831, 6147830, 6147461, 6151771, 6173990, 6137467, 6271542]
+[M] reused_cells=256 elapsed_us=6591 snapshot_bytes=237813
+[M] restored_reset_snapshot_bytes=106638
+# Comparison: parser s, compiler s
+hello_bytes=2219176
+[M] compile small: source_bytes=92 samples_ns=[14653, 8887, 8756, 8723, 8693, 8927, 8956]
+[M] compile large: source_bytes=50006 samples_ns=[5716582, 5668510, 5592009, 5608208, 5591454, 5647313, 5728981]
+[M] reused_cells=256 elapsed_us=6415 snapshot_bytes=237813
+[M] restored_reset_snapshot_bytes=106638
+[M] compile small: source_bytes=92 samples_ns=[8853, 8879, 8983, 8890, 9010, 8882, 8872]
+[M] compile large: source_bytes=50006 samples_ns=[5510154, 5486966, 5472925, 5502401, 5497137, 5579871, 5595369]
+[M] reused_cells=256 elapsed_us=6239 snapshot_bytes=237813
+[M] restored_reset_snapshot_bytes=106638
+
+# [M] Retained-code admission, same toolchain and release profile (parser z)
+# cargo xtask size, 2026-11-02; includes exact-capacity code decoding
+hello: 2205368 bytes stripped (budget 2210000)
+
+# [M] Source/code decode admission, same toolchain/profile, 2026-11-02
+# cargo xtask size
+hello: 2206120 bytes stripped (budget 2210000)
+
+# [M] Frame-storage admission, same toolchain/profile, 2026-11-02
+# cargo xtask check (includes size)
+hello: 2206376 bytes stripped (budget 2210000)
+
+# [M] Sorted-vector futures, before scheduler admission; same toolchain/profile
+# cargo xtask size, 2026-11-02
+hello: 2201336 bytes stripped (budget 2210000)
+
+# [M] Scheduler-table admission, same toolchain/profile, 2026-11-02
+# cargo xtask check (includes size)
+hello: 2205184 bytes stripped (budget 2210000)
+
+# [M] Synthesized signature index and lifetime, same toolchain/profile, 2026-11-02
+# cargo xtask check (includes size)
+hello: 2200064 bytes stripped (budget 2210000)
+
+# [M] Instance-shape admission, fallback and reclamation; same toolchain/profile
+# cargo xtask check (includes size), 2026-11-02
+hello: 2205760 bytes stripped (budget 2210000)
+# Public Session API probe, debug profile, memory limit 8 MiB. Define an empty
+# Wide class, set field0..field1999 to 0..1999 on one instance, check their sum
+# is 1999000, snapshot, restore, and check field1999. No __dict__ access.
+# Before is 353b45d; after includes shape admission and the >32-attribute fallback.
+# /usr/bin/time -v includes the source session, output buffer and restored session;
+# peak RSS is a process measurement, not the configured engine budget.
+before: snapshot_bytes=16358620 max_rss_kib=62584
+after: snapshot_bytes=364656 max_rss_kib=8464
+
+# [M] Weak interning and explicit shape-name roots; same toolchain/profile
+# cargo xtask check (includes size), 2026-11-02
+hello: 2208416 bytes stripped (budget 2210000)
+
+# [M] Direct root tracing and in-place snapshot validation; same toolchain/profile
+# cargo xtask check (includes size), 2026-11-02
+hello: 2208072 bytes stripped (budget 2210000)
+
+# [M] Collector capacity admission, including restore; same toolchain/profile
+# cargo xtask check (includes size), 2026-11-02
+hello: 2206392 bytes stripped (budget 2210000)
+
+# [M] Native string-builder admission, Rust 1.99.0 release, 2026-11-02
+# Before: 205a51d. After: exact-capacity builder reservation.
+# cargo xtask check (includes size)
+hello: 2204824 bytes stripped (budget 2210000)
+# bench/str.py, taskset -c 2, idle machine, three warmups per binary,
+# 31 alternating-order fresh processes each, perf_counter_ns around subprocess.
+# Every stdout checked: 988889 100000 788889 11111
+before_ns=[38801813,38146354,37098434,36356576,36171309,36015430,37874862,40808734,38058204,38211833,37457336,37463886,36639521,37156925,37072922,37427876,37637345,36103321,36232360,36799948,35466996,37208373,36567668,37355233,37447864,36244879,36534607,39359362,39136476,39906162,39330131]
+after_ns=[38991648,39470830,38003955,39422602,37371636,37262756,39754432,41839565,37577846,37896032,39272926,39215797,37175724,39319058,38762357,38581450,38650876,37379755,38082358,38418000,37508670,38699198,38851744,39104724,38482832,38832907,38975537,40633163,40587554,40138846,40864654]
+median_before_ms=37.355233 median_after_ms=38.832907 ratio=1.039557
+# /usr/bin/time peak RSS, 8 MiB engine cap, three fresh processes per build.
+# 128 MiB join/replace output refused with MemoryError on both builds;
+# before first builds the native output, after refuses before allocation.
+# Full probe source and outputs: /tmp/mm-string-memory-after.log.
+# RSS includes process/runtime/allocator costs, not just budgeted storage.
+join_before_rss_kib=[135472,135500,135556]
+join_after_rss_kib=[4476,4448,4376]
+replace_before_rss_kib=[135068,135040,135072]
+replace_after_rss_kib=[3836,3920,3836]
+
+# [M] Fixed VM metadata admission, Rust 1.99.0 release, 2026-11-02
+# cargo xtask check (includes size)
+hello: 2204584 bytes stripped (budget 2210000)
+
+# [M] Iterator buffer accounting, Rust 1.99.0 release, 2026-11-02
+# Before c31ed85836e4be43c98ce6426194375ca5533f54; after this change.
+# CPU 2, idle machine, three warmups and 21 alternating-order fresh processes.
+# perf_counter_ns around subprocess; all outputs checked against expected.txt.
+hello: 2208520 bytes stripped (budget 2210000)
+dict_before_ns=[105758639,102573263,100592105,96947088,96348009,96462572,94044082,93384093,94999599,101076366,98978281,94791099,98554877,95556865,97515219,97761862,103691745,95377615,94041823,92571854,94766163]
+dict_after_ns=[103251258,122030148,99817524,99872244,96624129,95603597,95884880,93882156,96772504,95110153,100914969,99258623,100409639,98594431,101363358,105957948,126642165,100977035,95456458,93091513,97900492]
+dict_median_before_ms=96.462572 dict_median_after_ms=99.258623 ratio=1.028986
+str_before_ns=[43214112,41072155,40513151,57196587,57247656,50117262,41831304,39304624,40660618,38553168,38419118,37562280,37457912,39388963,38969718,39012661,38081907,39073607,38838630,38856185,39066761]
+str_after_ns=[43363693,40292988,42661398,43180450,55256915,54192513,40640826,39172887,44275979,39465530,38657768,39109369,38989188,39472991,39106358,39693077,39009989,39130231,39032125,38901498,39109373]
+str_median_before_ms=39.073607 str_median_after_ms=39.465530 ratio=1.010030
+json_before_ns=[99113849,98651624,100417916,112016763,102023677,99238020,101461217,99988175,99803996,108462553,108468622,122484096,114227384,140162988,147736769,108646135,107435376,102405606,100608429,100542255,103824052]
+json_after_ns=[99890312,98785267,99415938,103342985,99202191,97151526,98608187,101296858,111801867,116876123,110461069,108538541,125772004,140242602,145561113,123823663,106187419,105004515,100915591,101219682,101446088]
+json_median_before_ms=102.405606 json_median_after_ms=103.342985 ratio=1.009154
+
+# [M] Byte builders, Rust 1.99.0 release, 2026-11-02
+# Before 1e05406552f4d2e204ab8c3e000ab015508bade1; after this change.
+hello: 2209296 bytes stripped (budget 2210000)
+# CPU 2, idle machine, three warmups and 21 alternating-order fresh processes.
+# perf_counter_ns around subprocess; every stdout checked: 52306728 (CPython too).
+# Probe source:
+# chunk = b'\xffa\x00b' * 32768
+# text = b'aabb' * 16384
+# total = 0
+# for i in range(24):
+#     a = b'|'.join([chunk] * 8)
+#     b = text.replace(b'aa', b'XYZ')
+#     c = b'\x80z' * 262144
+#     d = b'-12'.zfill(524288)
+#     total += len(a) + len(b) + len(c) + len(d)
+#     total += a[-1] + b[-1] + c[-1] + d[-1]
+# print(total)
+byte_before_ns=[22747516,22103259,21636518,22436843,21775359,22286279,21247366,24381640,23940753,24075692,23913198,23977663,22984155,24465418,23708848,24531334,23799940,23236252,23582657,24033840,24203336]
+byte_after_ns=[22717299,23190239,22265714,23098578,22875053,23732837,25303308,24166719,24264156,25111486,24674960,24873949,25763773,24861423,24738291,24693344,24875179,24223806,25255036,24791947,26552029]
+byte_median_before_ms=23.708848 byte_median_after_ms=24.693344 ratio=1.041524
+# /usr/bin/time peak RSS, default 256 MiB engine cap; three fresh processes each.
+# chunk = b'x' * 262144
+# Evaluate b''.join([chunk] * 1088), then (b'a' * 1088).replace(b'a', chunk).
+# Catch MemoryError for each, then assert b'xy'.join([b'a', b'b']) == b'axyb'.
+# Both versions reject and recover; only the old one builds 272 MiB native output.
+# RSS includes process/runtime/allocator costs, not just budgeted storage.
+byte_before_rss_kib=[283764,283592,283748]
+byte_after_rss_kib=[4964,5068,4744]
+
+# [M] Borrowed byte inputs and admitted case transformations, Rust 1.99.0 release
+# Before f8d86d664479893d9529e36bcc5542fb5b0bb70f; after this change, 2026-11-02.
+hello: 2208328 bytes stripped (budget 2210000)
+# CPU 2, idle machine, three warmups and 21 alternating-order fresh processes.
+# perf_counter_ns around subprocess; every stdout checked: 84468000 (CPython too).
+# Probe source:
+# source = b'aBc def!?' * 256
+# total = 0
+# for i in range(6000):
+#     total += len(source.upper()) + len(source.lower())
+#     total += len(source.title()) + len(source.swapcase()) + len(source.capitalize())
+#     total += source.find(b'def') + source.rfind(b'aBc') + source.count(b'!')
+#     total += source.startswith((b'absent', b'aBc')) + source.endswith(b'?')
+#     total += source.isascii() + source.isalpha()
+# print(total)
+byte_input_before_ns=[46085020,45211757,45754787,45188020,44826197,44858596,44781666,46301740,45748801,49877775,51482200,52084069,44602792,44822899,44737106,43935023,43665621,45690864,44650128,45357511,46058403]
+byte_input_after_ns=[42617260,42585000,42938217,43274164,44241582,42224934,44561051,42772156,45890576,42145402,42272463,43592637,43270020,51486998,42037749,42573522,42098983,43489685,43443144,42132791,51305379]
+byte_input_median_before_ms=45.211757 byte_input_median_after_ms=42.938217 ratio=0.949714
+
+# [M] Borrowed builder inputs, Rust 1.99.0 release, 2026-11-02.
+# Before 36ba3ee61a1fcc943f1a6c0d4a8a199b29d847ef; after this change.
+hello: 2208176 bytes stripped (budget 2210000)
+# CPU 2, idle machine, three warmups and 21 alternating-order fresh processes.
+# perf_counter_ns around subprocess; every stdout checked: 56623776 (CPython too).
+# Probe source:
+# chunk = b'abcd' * 65536
+# total = 0
+# for i in range(24):
+#     total += len(chunk.join([chunk, b'', chunk]))
+#     total += len(chunk.replace(chunk, chunk))
+#     total += len(chunk.ljust(262151, b'!'))
+#     total += len(chunk.rjust(262151, b'!'))
+#     total += len(chunk.center(262151, b'!'))
+#     total += len(chunk.zfill(262151))
+# print(total)
+byte_borrow_before_ns=[34751313,33780246,33604928,33606059,33566521,33613990,34123924,33560961,33217983,34149985,34625708,33342602,33439038,33925107,33940479,34544375,33501114,33802438,34113037,33501217,33592947]
+byte_borrow_after_ns=[31508298,30890548,32258920,32157318,31336979,31229155,31342160,30926473,31448453,31235813,30870130,31178024,31611759,31311834,31392654,31839584,31222790,31052667,31194484,31092935,31164653]
+byte_borrow_median_before_ms=33.613990 byte_borrow_median_after_ms=31.235813 ratio=0.929250
+# /usr/bin/time peak RSS, default 256 MiB engine cap; three fresh processes each.
+# chunk = b'x' * 33554432; result = chunk.replace(chunk, chunk)
+# Every run checks length 33554432 and both end bytes 120.
+# RSS includes process/runtime/allocator costs, not just budgeted storage.
+byte_borrow_before_rss_kib=[200896,200944,200848]
+byte_borrow_after_rss_kib=[102684,102652,102548]
+
+# [M] Byte conversion output admission, Rust 1.99.0 release, 2026-11-02.
+# Before 577413f1f4213a6b3988b021f0e59c64ff1824fc; after this change.
+# cargo xtask check (includes size)
+hello: 2209168 bytes stripped (budget 2210000)
+# CPU 2, idle machine, three warmups and 21 alternating-order fresh processes.
+# perf_counter_ns around subprocess; every stdout checked against CPython.
+# Hex source (stdout 9786688):
+# chunk = b'\xffa\x00b' * 32768
+# total = 0
+# for i in range(32):
+#     result = chunk.hex(':', -3)
+#     total += len(result)
+#     assert result[:6] == 'ff6100'
+# print(total)
+hex_before_ns=[57313707,55620625,58631349,55715776,56401861,55941021,55705123,59221535,62977621,97928928,62187715,56315968,54317990,57614732,57535770,56366064,55628878,56847731,56964311,56897376,54985599]
+hex_after_ns=[16510552,16749921,16833187,16313156,16616476,16597321,16661736,16537138,21690396,27072315,16956099,17544664,17337887,16333610,16702594,16853787,16089184,15860691,17414787,16746192,16593894]
+hex_median_before_ms=56.847731 hex_median_after_ms=16.702594 ratio=0.293813
+# Fromhex source (stdout 3145728):
+# text = 'ff00 41 ' * 32768
+# total = 0
+# for i in range(32):
+#     result = bytes.fromhex(text)
+#     total += len(result)
+#     assert result[:3] == b'\xff\x00A'
+# print(total)
+fromhex_before_ns=[11148972,11396078,11207044,11429365,11292633,10961075,10792698,10793460,10660529,10894120,10719473,15482769,15782518,15764466,15740200,10745485,13140728,13665513,10811790,10934979,10572293]
+fromhex_after_ns=[12397813,13239425,13233092,13447833,13534241,13518251,12777079,12887514,12935863,12825701,12921527,19891557,20702081,21196055,13989133,12992079,18747991,19563971,12984030,12964780,12975141]
+fromhex_median_before_ms=11.148972 fromhex_median_after_ms=13.233092 ratio=1.186934
+# Exact decoded sizing adds a scan; do not treat this as a throughput win.
+# Iterable source (stdout 2097152):
+# items = list(range(256)) * 256
+# total = 0
+# for i in range(32):
+#     result = bytes(items)
+#     total += len(result)
+#     assert result[:3] == b'\x00\x01\x02'
+# print(total)
+iter_before_ns=[9502982,9644510,9102834,9245443,9104321,9856740,9648668,9446476,9257559,9013703,9143670,9031342,9093727,9103124,9083828,9250006,9285897,9603204,8924283,9242321,8969883]
+iter_after_ns=[9114274,9089844,9288151,9522073,9201851,9637285,9362255,9439561,9347500,8928780,9072654,8855831,9216112,9040479,9190168,9182773,9178670,9151875,9048417,9020676,9079329]
+iter_median_before_ms=9.242321 iter_median_after_ms=9.178670 ratio=0.993113
+
+# [M] Byte pieces and split-table admission, Rust 1.99.0 release, 2026-11-02.
+# Before 5114dd7e6059cbd1a0c329122a96472a5816058a; after this change.
+# cargo xtask check (includes size)
+hello: 2208664 bytes stripped (budget 2210000)
+# CPU 2, idle machine, three warmups and 21 alternating-order fresh processes.
+# perf_counter_ns around subprocess; every stdout checked against CPython.
+# Split source (stdout 196640):
+# source = b'ab cd\nef--gh\r\n' * 1024
+# total = 0
+# for i in range(32):
+#     a = source.split()
+#     b = source.rsplit(b'--')
+#     c = source.splitlines()
+#     total += len(a) + len(b) + len(c)
+#     assert a[0] == b'ab' and c[-1] == b'ef--gh'
+# print(total)
+split_before_ns=[9102495,9404708,9361745,9017961,8980996,9273729,10766211,9299255,9289586,9515469,9167027,9185957,9217937,9097100,9275600,9105478,9418189,9242802,9445269,9083952,9088542]
+split_after_ns=[10830501,11574160,11337644,11103811,10893450,10858311,11108037,11137483,11405975,11248346,11188904,11252571,11113178,12379887,11029669,11283333,11218330,11136727,11600021,11050670,11036443]
+split_median_before_ms=9.242802 split_median_after_ms=11.137483 ratio=1.204990
+# Slice source (stdout 33554048):
+# source = b'xy' * 65536
+# total = 0
+# for i in range(64):
+#     a = source[1:-1]
+#     b = source.rstrip(b'y')
+#     c = source.removeprefix(b'x')
+#     d = source.partition(b'y')
+#     total += len(a) + len(b) + len(c) + len(d[2])
+#     assert a[:2] == b'yx' and c[-2:] == b'xy'
+# print(total)
+slice_before_ns=[14391138,14396053,14467361,13678846,13780552,13856194,13643441,13734661,13651735,14141842,14328692,14084769,14187298,14242891,14022315,14026265,13797894,16004377,13897346,13859106,13807996]
+slice_after_ns=[9231497,9100571,9580578,9240126,8934447,9223402,8974370,8840886,9009724,8932686,9153684,9498532,9198312,9157478,9168342,9096091,9229472,9086780,9016933,8911306,9013430]
+slice_median_before_ms=14.022315 slice_median_after_ms=9.100571 ratio=0.649006
+# /usr/bin/time peak RSS, default 256 MiB engine cap; three fresh processes each.
+# chunk = b'x ' * 1048576; pieces = chunk.split()
+# Every run checks len(pieces) == 1048576 and both end pieces == b'x'.
+# RSS includes process/runtime/allocator costs, not just budgeted storage.
+split_before_rss_kib=[69012,69016,68912]
+split_after_rss_kib=[60008,60132,60020]
+
+# [M] Signed slice boundary overflow fix, Rust 1.99.0 release, 2026-11-02.
+# cargo xtask check (includes size)
+hello: 2208680 bytes stripped (budget 2210000)
+
+# [M] Borrowed codec inputs, Rust 1.99.0 release, 2026-11-02.
+# Before 0262c2c1a5e6e9b9f1e97ee9299f8257d2cb5759; after this change.
+# cargo xtask check (includes size)
+hello: 2208376 bytes stripped (budget 2210000)
+# CPU 2, idle machine, three warmups and 21 alternating-order fresh processes.
+# perf_counter_ns around subprocess; every stdout checked against CPython.
+# encode source (stdout 8388608):
+# s = 'aé' * 65536
+# total = 0
+# for i in range(32):
+#     a = s.encode('latin-1')
+#     b = bytes(s, 'ascii', 'replace')
+#     total += len(a) + len(b)
+#     assert a[:2] == b'a\xe9' and b[-2:] == b'a?'
+# print(total)
+codec_encode_before_ns=[32061220,31710352,31782282,31374053,31269456,31893355,31377283,30834954,31221114,30716177,29435928,29918240,30728821,31499460,31437124,31336957,30515974,30138271,30367917,30032634,30335120]
+codec_encode_after_ns=[27818166,28406873,27829282,26973182,26387022,27432166,27946701,26555333,27683264,27059605,26811683,26931633,26248022,26835667,27559577,26159226,27182875,27883124,26298396,27028720,27395270]
+codec_encode_median_before_ms=31.221114 codec_encode_median_after_ms=27.059605 ratio=0.866709
+# decode source (stdout 8388608):
+# s = b'a\xe9' * 65536
+# total = 0
+# for i in range(32):
+#     a = s.decode('latin-1')
+#     b = str(s, 'ascii', 'replace')
+#     total += len(a) + len(b)
+#     assert a[:2] == 'aé' and b[-2:] == 'a�'
+# print(total)
+codec_decode_before_ns=[31086069,32466675,31333844,32296274,31843741,30582195,32297507,30200041,33116179,34082595,32689059,31767668,30439445,30800733,32104832,31896114,31076253,31965067,32483080,31203170,32982723]
+codec_decode_after_ns=[29906004,30563972,30656304,29911616,29675365,30850360,30080650,29622962,30012318,31132610,30985613,29540838,27928088,30384211,30338199,30103778,29795415,30552033,28836423,28523277,29210996]
+codec_decode_median_before_ms=31.896114 codec_decode_median_after_ms=30.012318 ratio=0.940940
+# /usr/bin/time peak RSS, default 256 MiB engine cap; three fresh processes each.
+# RSS includes process/runtime/allocator costs, not just budgeted storage.
+# RSS encode source (stdout 8388608 120 120):
+# s = 'x' * 8388608
+# b = s.encode('ascii')
+# print(len(b), b[0], b[-1])
+codec_encode_before_rss_kib=[61872,61636,61756]
+codec_encode_after_rss_kib=[28920,28872,28908]
+# RSS decode source (stdout 8388608 x x):
+# b = b'x' * 8388608
+# s = b.decode('ascii')
+# print(len(s), s[0], s[-1])
+codec_decode_before_rss_kib=[37180,37176,37140]
+codec_decode_after_rss_kib=[28812,29028,29000]
+
+# [M] Codec output admission, Rust 1.99.0 release, 2026-11-02.
+# Before 111f6875f479974f2c4216b08b08743353c15bd0; after this change.
+# cargo xtask check (includes size)
+hello: 2209928 bytes stripped (budget 2210000)
+# CPU 2, idle machine, three warmups and 21 alternating-order fresh processes.
+# perf_counter_ns around subprocess; every stdout checked against CPython.
+# Same encode/decode sources and expected stdout as the preceding section.
+codec_encode_before_ns=[26421803,27347786,27445049,26237514,26592627,36268401,33723050,30207745,26701579,27122187,27544394,28275087,26777355,28106989,27276832,26737040,28363030,27404087,26910046,29263747,27246787]
+codec_encode_after_ns=[32585517,32401151,32841782,31936917,32479391,46490123,46634411,33063688,33140634,34324069,33590045,33154500,33717964,40971204,34478401,33740897,32832573,35112217,33530001,34629992,33189552]
+codec_encode_median_before_ms=27.347786 codec_encode_median_after_ms=33.530001 ratio=1.226059
+codec_decode_before_ns=[29985569,30588519,32710536,30864098,31958688,31287451,50875830,57245631,30804540,29074483,30124996,30057792,28930006,29042113,29970474,29952178,30053338,30248089,29464124,29839231,29868193]
+codec_decode_after_ns=[31425766,34367531,31335179,30416880,31297004,31035913,31956247,41341553,30448639,29835470,29572580,30335309,30561690,30012186,29964672,29698505,30927378,29806523,29908384,29963470,30637359]
+codec_decode_median_before_ms=30.057792 codec_decode_median_after_ms=30.448639 ratio=1.013003
+# Exact admission adds a sizing scan; this is not a throughput improvement.
+# /usr/bin/time peak RSS, default 256 MiB engine cap; three fresh processes each.
+# Same 8 MiB ASCII sources/output checks as the preceding section.
+codec_encode_before_rss_kib=[29008,28904,28828]
+codec_encode_after_rss_kib=[29000,28880,28792]
+codec_decode_before_rss_kib=[28860,28752,28936]
+codec_decode_after_rss_kib=[29052,28920,28772]
+# A 288 MiB backslash-decoding output, same RSS method (stdout bounded):
+# b = b'\xff' * 75497472
+# try:
+#     b.decode('ascii', 'backslashreplace')
+# except MemoryError:
+#     print('bounded')
+# else:
+#     print('unbounded')
+# assert b'x'.decode() == 'x'
+codec_refusal_before_rss_kib=[373000,372872,372868]
+codec_refusal_after_rss_kib=[151484,151944,151416]
+
+# [M] Borrowed codec names and admitted lookup errors, Rust 1.99.0 release, 2026-11-02.
+# Before c0fd61d89dd0ea7ffef873ddb03c505aa418fd6d; after this change.
+# cargo xtask check (includes size)
+hello: 2209304 bytes stripped (budget 2210000)
+# /usr/bin/time peak RSS, default 256 MiB engine cap; three fresh processes each.
+# Every run printed lookup and passed the length and recovery assertions.
+# name = 'z' * 33554432
+# try:
+#     'x'.encode(name)
+# except LookupError as e:
+#     assert len(e.args[0]) == 33554450
+#     print('lookup')
+# assert b'x'.decode() == 'x'
+codec_name_before_rss_kib=[135404,135464,135476]
+codec_name_after_rss_kib=[102676,102684,102668]
+
+# [M] Direct rendering of string/byte leaves, Rust 1.99.0 release, 2026-11-02.
+# Before 7b531b0bd5a21b7e18021f055cc90582bfb6d143; after this change.
+# cargo xtask check (includes size)
+hello: 2208856 bytes stripped (budget 2210000)
+# CPU 2, idle machine, three warmups and 21 alternating-order fresh processes.
+# perf_counter_ns around subprocess; every stdout checked against CPython.
+# Source (stdout 14942640):
+# s = 'aé\n\x00' * 16384
+# b = b'a\xff\n\x00' * 16384
+# total = 0
+# for i in range(48):
+#     result = repr([s, b])
+#     total += len(result)
+#     assert result[:3] == "['a" and result[-2:] == "']"
+# print(total)
+render_before_ns=[74999242,73273701,66153102,65438968,66199178,66265991,66249038,66178533,69797148,66035839,66214073,65937576,66306040,66902883,65858809,65624228,66061709,66223492,67156127,75191371,66462950]
+render_after_ns=[67180900,67238094,66333818,68547102,76173044,66077111,65371478,66036763,67937330,66680842,66006673,66760079,65792789,67560079,66395265,67123933,66382496,66882232,67646894,68130870,67694154]
+render_median_before_ms=66.223492 render_median_after_ms=66.882232 ratio=1.009947
+# Copy removal, not a measured throughput improvement.
+
+# [M] Streaming container rendering, Rust 1.99.0 release, 2026-11-02.
+# Before 0f0f23a6b9f654c3c4825fb9955d435bb21067ed; after this change.
+# cargo xtask check (includes size)
+hello: 2209464 bytes stripped (budget 2210000)
+# CPU 2, idle machine, three warmups and 21 alternating-order fresh processes.
+# perf_counter_ns around subprocess; every stdout checked against CPython.
+# Source (stdout 2319684):
+# seq = list(range(4096))
+# d = {i: i + 17 for i in seq}
+# for i in seq[::3]:
+#     del d[i]
+# values = [seq, tuple(seq), set(seq), frozenset(seq), d, d.keys(), d.values(), d.items()]
+# total = 0
+# for i in range(12):
+#     for v in values:
+#         total += len(repr(v))
+# print(total)
+render_walk_before_ns=[13741539,13548667,13518253,13649580,13490229,13818822,14081760,14573831,13632029,13617015,13635836,13441484,13580228,13309978,13365093,13701879,13597501,13765090,13780865,13400564,13181380]
+render_walk_after_ns=[14615937,14108069,14349970,14300328,14046917,14960303,14991833,15453895,14311620,14330257,14298406,14463749,13806604,14489744,14041062,14422666,14210811,14613781,14370020,13547878,13809380]
+render_walk_median_before_ms=13.617015 render_walk_median_after_ms=14.330257 ratio=1.052379
+# Uncached initial cursors measured 13.748 -> 18.232 ms (ratio 1.326161).
+# /usr/bin/time peak RSS, default 256 MiB engine cap; three fresh processes each.
+# RSS includes process/runtime/allocator costs, not just budgeted storage.
+# Source (stdout 4000000):
+# x = [17] * 1000000
+# s = repr(x)
+# assert len(s) == 4000000
+# assert s[:8] == '[17, 17,' and s[-8:] == ' 17, 17]'
+# print(len(s))
+render_walk_before_rss_kib=[72848,72772,72904]
+render_walk_after_rss_kib=[19964,19812,19948]
+
+# [M] Nested exception text handoff, Rust 1.99.0 release, 2026-11-02.
+# cargo xtask check (includes size)
+hello: 2209544 bytes stripped (budget 2210000)
+
+# [M] Bounded native rendering output, Rust 1.99.0 release, 2026-11-02.
+# Before 4232ab27c364ffed29e6c1e8419e97c0f305d3e0; after this change.
+# cargo xtask check (includes size)
+hello: 2209816 bytes stripped (budget 2210000)
+# CPU 2, idle machine, three warmups and 21 alternating-order fresh processes.
+# perf_counter_ns around subprocess; every stdout checked against CPython.
+# Printable source (stdout 4194368):
+# s = 'aé' * 65536
+# total = 0
+# for i in range(32):
+#     result = repr(s)
+#     total += len(result)
+#     assert result[:3] == "'aé" and result[-3:] == "aé'"
+# print(total)
+render_cap_printable_before_ns=[23448750,23934789,23917666,23917707,23436838,24387891,25773939,25385209,23764927,24252053,24228029,26014709,24138900,24576924,24095414,24031864,24108600,24028987,24128372,23807119,23831839]
+render_cap_printable_after_ns=[28464508,28729980,29093441,29056557,29033940,28590903,31148573,31217007,28991257,29319108,29216353,29118614,29376522,29396633,29448963,29303043,29196341,29273389,29425651,31317731,28400373]
+render_cap_printable_median_before_ms=24.095414 render_cap_printable_median_after_ms=29.216353
+# ASCII byte source (stdout 4194400):
+# s = b'x' * 131072
+# total = 0
+# for i in range(32):
+#     result = repr(s)
+#     total += len(result)
+#     assert result[:3] == "b'x" and result[-2:] == "x'"
+# print(total)
+render_cap_ascii_before_ns=[7540350,7485465,7501699,7374177,7381366,7368836,7374946,7353096,7375836,7322655,7564710,7624078,7849655,7340300,7314316,7565378,7536702,7365868,7509869,7470570,7514265]
+render_cap_ascii_after_ns=[6614710,6522124,6536699,6510845,6366200,6420860,6408959,6355733,6366372,6339441,6762553,6600708,6678620,6644002,6394893,6455434,6513098,6343609,6545741,6482014,6557237]
+render_cap_ascii_median_before_ms=7.470570 render_cap_ascii_median_after_ms=6.510845
+# Mixed leaf source/output: same as direct rendering of string/byte leaves above.
+render_cap_leaves_before_ns=[63463920,62712385,62348180,64750766,64676374,65027761,63049562,62639776,62782411,64368799,61744258,62773481,61356362,64905181,65702391,64114355,68626494,65194857,63822445,64962567,66712317]
+render_cap_leaves_after_ns=[70499980,68570501,70211036,69586504,71802495,73573004,70111169,68778351,70518506,71268195,68668893,70432518,69414437,68272146,77515702,73747791,75539954,73215458,72053965,72671839,73334771]
+render_cap_leaves_median_before_ms=64.114355 render_cap_leaves_median_after_ms=70.518506
+# Container source/output: same as streaming container rendering above.
+render_cap_containers_before_ns=[12498071,12409189,12574084,12524575,12596912,12620571,12514525,12643314,12530656,12663976,12579060,13780264,12313112,12661141,12561407,12327983,12639119,12946442,12913259,12608544,12641484]
+render_cap_containers_after_ns=[14138475,14213199,14492103,14330040,14259812,14202397,14145713,14417651,14245879,14842653,14227286,14137512,14210851,16226078,13987983,14010414,14439460,14413146,14543935,14541800,14273523]
+render_cap_containers_median_before_ms=12.596912 render_cap_containers_median_after_ms=14.259812
+# Initial per-character bounded writes slowed mixed leaves by 60%; shared
+# quoting, printable runs and fixed-buffer hex escaping reduced it to 10%.
+# The bound still costs 21% on printable Unicode and 13% on mixed containers;
+# ASCII bytes are 13% faster. This is not a general throughput improvement.
+# In-process completion RSS: release facade probe with opt-level 3, fat LTO,
+# one codegen unit and panic=abort; default 256 MiB engine cap. Each fresh
+# process creates a Session, sets text_limit=10 and HostArgs.max_bytes=0,
+# compiles/starts b'\x00' * 16777216, and checks both strings equal
+# "b'\\x00\\x00", both truncation flags true, and no converted value.
+# /usr/bin/time peak RSS includes allocator/runtime overhead, not just budgets.
+render_cap_completion_before_rss_kib=[167928,167768,167864]
+render_cap_completion_after_rss_kib=[36536,36532,36700]
+render_cap_completion_before_capacities=[134217728,134217728]
+render_cap_completion_after_capacities=[10,10]
+
+# [M] Borrowed completion preflight, Rust 1.99.0 release, 2026-11-02.
+# Before 1d6e7cd388737d965206a67711d171ce21191dc3; after this change.
+# cargo xtask size
+hello: 2209976 bytes stripped (budget 2210000)
+# CPU 2, idle machine, three warmups and 21 alternating-order fresh processes.
+# Standalone facade probe: opt-level 3, fat LTO, one codegen unit, panic=abort.
+# Default engine configuration; before timing, create a Session, set
+# text_limit=10 and HostArgs.max_bytes=0, and compile "[17] * 1000000".
+# Instant around Session::start; check repr and str both equal "[17, 17, 1",
+# both truncation flags true and no converted value. /usr/bin/time measures
+# whole-process peak RSS, including allocator/runtime overhead, not just budgets.
+preflight_before_ns=[20595708,22426823,22247564,19474430,18822753,18532294,18328691,18213505,17695557,17556836,17555923,17907664,17829934,17797081,17782069,18002644,17641547,18814209,18447574,18202432,18701668]
+preflight_after_ns=[15305069,16130561,15962845,14610739,13509208,13291080,13348746,13026191,13110149,12997282,12998812,12853856,13009190,13280663,13498741,13826886,13027160,13017539,13645804,13366306,13820092]
+preflight_before_rss_kib=[35168,34948,35164,35020,35056,35020,35176,35124,35104,35068,34952,35004,35104,35012,35212,35100,35000,35128,35108,35112,35128]
+preflight_after_rss_kib=[19576,19476,19576,19672,19676,19672,19624,19676,19608,19680,19624,19652,19656,19676,19664,19408,19580,19608,19504,19632,19576]
+preflight_median_before_ms=18.213505 preflight_median_after_ms=13.348746
+preflight_median_before_rss_kib=35104 preflight_median_after_rss_kib=19624
+# About 27% less execution time and 44% less peak RSS for this wide completion.
+# This removes container copies; it does not admit cursor or seen-set capacity
+# or establish a bound on total session memory or preflight latency.
+
+# [M] Borrowed native exception arguments, Rust 1.99.0 release, 2026-11-02.
+# Before 33e60e7b4c9aaa565ff0cd05ef5f0c0c9aa89b74; after this change.
+# cargo xtask size
+hello: 2209592 bytes stripped (budget 2210000)
+# CPU 2, idle machine, three warmups and 21 alternating-order fresh processes.
+# perf_counter_ns around subprocess including pipe capture; /usr/bin/time RSS.
+# Default engine limits; exception command: mm run FILE, stdout checked 4000000.
+# e = ValueError()
+# e.args = (17,) * 1000000
+# s = str(e)
+# assert len(s) == 4000000
+# assert s[:8] == '(17, 17,' and s[-8:] == ' 17, 17)'
+# print(len(s))
+exc_args_exception_before_ns=[47250941,46380514,46607910,46730970,44302298,47418173,44323369,43842740,43840975,43803677,44064087,53307309,48118369,46931168,47850080,45936968,45880132,46410389,46950677,44980140,43929546]
+exc_args_exception_after_ns=[46237205,45490087,44223382,43506804,43242326,46000108,43067930,43883146,42316645,42974597,53978593,59176451,47904488,47620276,47688598,45218227,43914428,43091713,46762145,45801544,41893764]
+exc_args_exception_before_rss_kib=[31592,31812,31504,31672,31600,31832,31772,31552,31732,31468,31560,31644,31616,31764,31680,31744,31772,31432,31716,31804,31504]
+exc_args_exception_after_rss_kib=[31308,31460,31388,31400,31548,31416,31416,31508,31608,31476,31384,31400,31436,31248,31240,31440,31472,31460,31412,31472,31512]
+# Completion control exercises shared out-of-line slot validation:
+# mm exec --json FILE, with source "[17] * 1000000". Every output matches
+# baseline byte-for-byte (8,000,080 bytes); repr and str each have 4,000,000
+# bytes. This includes rendering/serialization, not isolated preflight cost.
+exc_args_completion_before_ns=[123840222,124463220,122793442,119796547,123109001,125275702,126459327,124584259,121537854,122607391,121703485,121656569,121600814,122982840,122862681,118506610,124004880,145621088,136619294,153707202,149837180]
+exc_args_completion_after_ns=[119980029,123481665,120530987,123074427,123551952,125625257,123450740,127401154,119177399,119575465,117761250,120516280,120898642,122690404,120686652,121231254,123003203,127443494,135756901,134284476,143598202]
+exc_args_completion_before_rss_kib=[82380,82316,82240,82344,82408,82268,82224,82336,82336,82460,82280,82344,82296,82304,82348,82280,82308,82372,82300,82216,82216]
+exc_args_completion_after_rss_kib=[82336,82344,82404,82272,82316,82200,82388,82252,82440,82212,82280,82304,82288,82276,82468,82388,82424,82476,82336,82256,82388]
+exc_args_exception_median_before_ms=46.380514 exc_args_exception_median_after_ms=45.218227
+exc_args_completion_median_before_ms=123.109001 exc_args_completion_median_after_ms=123.003203
+exc_args_exception_median_before_rss_kib=31672 exc_args_exception_median_after_rss_kib=31436
+exc_args_completion_median_before_rss_kib=82308 exc_args_completion_median_after_rss_kib=82336
+# No material peak-RSS improvement demonstrated. These process measurements
+# include argument construction and output allocation, not just the removed
+# temporary argument copy. No general throughput improvement is claimed.
+
+# [M] Rejected size-profile experiments at b41651915935404dcf56c14cce2b811fd93ad2cf.
+# Rust 1.99.0, 2026-11-02. One package override at a time; otherwise unchanged.
+# cargo --config 'profile.release.package.PACKAGE.opt-level=LEVEL' build \
+#   --release -p micro-monty --example hello --locked
+# Do not build mm-cli in the same invocation: its optional stdlib features
+# unify into hello and invalidate comparison with the size gate's default build.
+# Stripped hello bytes:
+# current (core 3, compiler s, parser z, engine 3): 2209592
+# mm-core s: 2237832
+# mm-core z: 2255552
+# mm-compile z: 2219504
+# mm-compile 3: 2276376
+# mm-engine 2: 2202904
+# Only engine 2 shrank hello: 6688 bytes (0.30%). It was rejected because
+# the loop median regressed 6.3%, above the project's 5% regression threshold.
+# CLI built separately with the same override and normal optional modules.
+# CPU 2, idle machine, three warmups and 21 alternating-order fresh processes;
+# perf_counter_ns around subprocess; every stdout matched bench/expected.txt.
+engine_opt3_startup_ns=[3701994,3561459,3517765,3529917,3428727,3502702,3774021,3440860,3422554,3507732,3435203,3432729,3479321,3398295,3287344,3429537,3333709,3374441,3483892,3434508,3521576]
+engine_opt2_startup_ns=[3503185,3746124,3513348,3517757,3590009,3416058,3686991,3496172,3474485,3412554,3411843,3554014,3395920,3511506,3373879,3367689,3491599,3403541,3413087,3503724,3403415]
+engine_opt3_fib_ns=[25643647,26070465,25964505,26026738,26004007,25038272,25009443,26327866,26577149,25959286,26005121,26057943,25251504,26247662,26187581,25449435,25290696,26049615,25904689,25330571,25726950]
+engine_opt2_fib_ns=[26450165,26745880,26380159,26215892,26231338,26414738,25757320,27316517,26503412,26355497,26562589,26201929,26711321,25779781,26201627,26047199,25622951,26275120,25709525,25611610,26985899]
+engine_opt3_loop_ns=[75446605,74837687,73874703,77091964,74702733,76458407,77433641,77718488,74360747,73296655,74860263,74770684,74109242,74050473,76452385,72706204,73160163,73753909,77257827,73676059,74656253]
+engine_opt2_loop_ns=[77260951,79749764,78577397,81422680,80264792,88487942,78678921,79426112,79641319,80370483,77102976,77342955,80304297,76259313,80360029,78110218,78698062,75709170,79636477,80231297,78439369]
+engine_opt3_dict_ns=[104780047,105234229,101569136,102287310,102189064,98281607,114575254,107173242,111474421,103322147,106957199,110289977,110946596,103525808,105498961,106412171,103096192,104119481,107418119,106392109,104638014]
+engine_opt2_dict_ns=[103187071,105969177,102807591,101842354,101809341,99911257,108429913,131248893,107810273,103766010,102745210,101450651,104410926,100012458,107211946,106374505,103740367,111461217,111761158,106170225,103061563]
+engine_opt3_str_ns=[38933270,38286136,40165992,40258708,38970410,38430713,42361300,39516029,39262697,38202684,41742144,39893827,40884053,40296541,40617494,39522737,42691898,38313583,40595152,41946075,40084698]
+engine_opt2_str_ns=[40901847,38092869,40878486,39269946,39565760,38897793,40042503,39436230,38430269,42919199,45115069,40371432,40786483,41311522,54811244,40068818,41880708,40244677,40286943,42807800,41498541]
+engine_opt3_json_ns=[100892236,100332275,101749065,100492516,101430012,103609830,104127083,102610653,99572438,107058724,104053280,99977990,101811435,104180479,103353313,104566404,104115480,100730569,100138704,102578089,103046312]
+engine_opt2_json_ns=[102665320,102071738,130756876,106297631,102011313,98955229,103918833,111179683,102870246,106126923,109704747,103202289,101420725,102195020,100772458,104896075,105920006,102210825,101324567,99607972,102799257]
+engine_opt3_closure_ns=[49694012,50460890,51344645,51682942,51524322,50066802,50822319,49581487,50729511,49181176,51087280,51444050,51776867,48998549,49247969,50748192,50048747,50085798,50658092,49181103,49839028]
+engine_opt2_closure_ns=[49245457,48407697,49955408,49999234,50238729,50128558,48904627,49021020,50152461,48626059,50955552,50675665,61817913,47749477,48435971,48313314,48238789,48365774,50764113,49729341,49225530]
+# No profile override retained. These synthetic cases are not representative
+# embedding acceptance or a fresh comparison against other engines.
+
+# Native formatting hardening, 2026-11-02 [M], Rust 1.99.0, release, panic=abort.
+# Baseline 17e7fdef7b199b401cf8efbc74c8a655f37dcf28; after: width/complex
+# precision preflight, fixed complex formatting, overflow-safe would_fit.
+# hello 2209592 -> 2209824 bytes; unchanged 2210000-byte gate.
+# CPU 2, idle machine, three warmups, 21 alternating fresh-process samples.
+# perf_counter_ns surrounds subprocess; all outputs checked.
+# Format program (mm-cli, normal optional modules; CPython also prints 268000):
+# total = 0
+# for i in range(5000):
+#     total += len(format(i - 2500, '+012,d'))
+#     total += len(format(i / 13, '🙂>18.4f'))
+#     total += len(format(complex(i, -i), '>22.6f'))
+# print(total)
+# Embedding program: default-feature examples/embedding_bench.rs; snapshots,
+# host-call count and all internal result assertions unchanged.
+# Formatting median +2.5%; embedding process median -0.5% (not a speedup claim).
+format_before_ns=[12345336, 13971435, 12511027, 11976688, 12180331, 12206442, 12143110, 11891212, 11833890, 11880867, 11925602, 11888717, 11869013, 12161855, 12163948, 12453452, 11832284, 11865506, 11892026, 11903284, 11916087]
+format_after_ns=[12452063, 12535109, 12566105, 12503838, 12511727, 12319206, 12259657, 12231438, 11950284, 11990781, 11987880, 11986080, 11949619, 11927274, 12354148, 12227022, 12101152, 12242693, 11997483, 12216635, 12076472]
+embedding_before_ns=[8058323, 8018011, 8119898, 7999003, 8077835, 8126041, 8143111, 8109833, 8244516, 8321701, 8321510, 8437395, 8221832, 7932749, 7951102, 7885683, 8002478, 7956621, 8704090, 8378098, 8389184]
+embedding_after_ns=[7956075, 8096211, 8245450, 8128352, 8047721, 8233775, 8076587, 7993856, 8365587, 8319940, 8193880, 8433480, 8249480, 7950752, 7968351, 7934896, 7935789, 7992238, 8056748, 8017074, 8694472]
+
+# Borrowed format-spec parsing, 2026-11-02 [M], Rust 1.99.0, release, panic=abort.
+# Baseline 0ca2b155c1a1ab4ee308f1e2282d23d42bf1bf78; after: Spec::parse
+# borrows UTF-8 slices, without a character vector or copied numeric fields.
+# mm-cli with normal optional modules. hello stays 2209824 bytes. An earlier
+# string-pattern implementation measured 2210576 bytes and was rejected.
+# CPU 2, idle machine, three warmups, 21 alternating fresh-process samples.
+# Time in ns: perf_counter_ns around subprocess; RSS in KiB: separate runs
+# using /usr/bin/time -f RSS_KIB=%M. Every output checked.
+# small: same 5000-iteration format program above, output 268000.
+# width:
+# spec = '0' * 1048576 + '9d'
+# assert format(17, spec) == '000000017'
+# print('width ok')
+# precision:
+# spec = '.' + '0' * 1048576 + '3f'
+# assert format(1.25, spec) == '1.250'
+# print('precision ok')
+# Both long-field assertions also pass on CPython 3.14.
+# Median ms, before -> after: small 12.122476 -> 10.845932 (-10.5%),
+# width 7.299207 -> 5.013800, precision 8.951414 -> 5.326171.
+# Median peak RSS KiB: small 5536 -> 5640 (no general RSS improvement),
+# width 12368 -> 7248, precision 13404 -> 8252. These are whole-process
+# measurements, not parser-only timing or a complete scratch-memory bound.
+spec_small_time_before_ns=[12253225, 12285261, 12244468, 12122476, 12018419, 12100982, 12125469, 11938737, 11948743, 11991958, 12822251, 12064985, 12010365, 11952200, 11941047, 12660004, 12555369, 12205173, 11968584, 12164943, 12146130]
+spec_small_time_after_ns=[11032674, 10979393, 10966286, 11054650, 10728793, 10761714, 10658830, 10716397, 10845932, 10730007, 10797452, 10789315, 10771891, 10753979, 10689979, 10874266, 10977674, 11081006, 10859994, 11002050, 11051992]
+spec_small_rss_before_kib=[5608, 5532, 5536, 5536, 5628, 5500, 5584, 5504, 5432, 5576, 5488, 5600, 5608, 5544, 5576, 5500, 5500, 5552, 5528, 5576, 5476]
+spec_small_rss_after_kib=[5664, 5736, 5564, 5624, 5652, 5716, 5680, 5664, 5764, 5644, 5640, 5616, 5452, 5568, 5656, 5468, 5708, 5624, 5556, 5568, 5620]
+spec_width_time_before_ns=[7599671, 7629093, 7563439, 7445210, 7217750, 7287363, 7297507, 7372905, 7358909, 7465169, 7460853, 7235933, 7240252, 7276625, 7287397, 7237498, 7287656, 7320400, 7299207, 7297630, 7315349]
+spec_width_time_after_ns=[5164282, 5149813, 5084713, 5063553, 4976808, 4886413, 4990888, 5018084, 5075730, 5113281, 5007904, 4922248, 5024080, 4924763, 5013800, 5011094, 5024943, 4948658, 5014681, 4975179, 4928708]
+spec_width_rss_before_kib=[12256, 12336, 12312, 12116, 12248, 12472, 12464, 12456, 12284, 12244, 12356, 12424, 12420, 12456, 12368, 12420, 12228, 12336, 12412, 12516, 12388]
+spec_width_rss_after_kib=[7324, 7260, 7164, 7192, 7204, 7140, 7276, 7148, 7252, 7128, 7184, 7248, 7028, 7256, 7312, 7264, 7256, 7260, 7284, 7180, 7184]
+spec_precision_time_before_ns=[8932777, 8925133, 8858171, 8955267, 8929718, 8953036, 8885541, 9034253, 8909808, 8945186, 8906391, 8951414, 8933427, 8932328, 8960572, 9121074, 9139703, 9148185, 9117953, 8961959, 9524734]
+spec_precision_time_after_ns=[5277513, 5282819, 5322713, 5326171, 5299792, 5312159, 5384667, 5452154, 5430102, 5337098, 5279261, 5295525, 5280481, 5255738, 5341670, 5311796, 5432183, 5476420, 5391216, 5480667, 5482316]
+spec_precision_rss_before_kib=[13336, 13436, 13460, 13404, 13488, 13376, 13496, 13428, 13312, 13352, 13460, 13456, 13252, 13376, 13564, 13396, 13516, 13392, 13364, 13296, 13476]
+spec_precision_rss_after_kib=[8276, 8192, 8416, 8380, 8232, 8240, 8252, 8220, 8316, 8080, 8128, 8360, 8228, 8052, 8336, 8260, 8348, 8340, 8308, 8212, 8236]
+
+# Borrowed formatter inputs, 2026-11-02 [M], Rust 1.99.0, release, panic=abort.
+# Baseline dd97f2aa64e9cb0ff74785a002f4f9ccc9cb2e29; after: builtin format
+# and f-strings pass arena strings through parsing without a spec copy.
+# str.format retains its owned field text; no new arena copy for that path.
+# hello 2209824 -> 2209968 bytes; unchanged 2210000-byte gate.
+# Same CLI features, CPU 2, warmups, alternating 21 samples and time/RSS
+# measurement methods as above. All output checked. small uses the same source.
+# width now exercises both builtin and f-string paths:
+# spec = '0' * 1048576 + '9d'
+# assert format(17, spec) == '000000017'
+# assert f'{17:{spec}}' == '000000017'
+# print('width ok')
+# Also passes on CPython 3.14. Median ms: small 11.290354 -> 11.256074;
+# width 6.883685 -> 6.822327. Median RSS KiB: small 5608 -> 5608;
+# width 7348 -> 7316. No material timing or peak-RSS improvement demonstrated.
+# Whole-process peaks include spec construction, not just the removed copy.
+spec_input_small_time_before_ns=[15650844, 13473999, 16371956, 13205248, 11315101, 11271977, 11326143, 11308015, 11290354, 10811327, 10958084, 12473651, 11157302, 11250289, 11279882, 11298123, 11260230, 11253096, 11345574, 11280234, 11247155]
+spec_input_small_time_after_ns=[15454012, 12991005, 15523312, 15440765, 11265144, 11278672, 11187427, 11256074, 11158436, 11105453, 10908337, 11006977, 11263974, 11231490, 11326783, 11314001, 10930806, 11485645, 11244424, 11229807, 10880929]
+spec_input_small_rss_before_kib=[5704, 5564, 5604, 5664, 5604, 5436, 5620, 5680, 5608, 5740, 5628, 5608, 5736, 5556, 5580, 5604, 5752, 5576, 5572, 5640, 5564]
+spec_input_small_rss_after_kib=[5640, 5568, 5588, 5608, 5608, 5516, 5596, 5616, 5608, 5704, 5712, 5564, 5636, 5508, 5708, 5556, 5484, 5684, 5556, 5696, 5660]
+spec_input_width_time_before_ns=[6876517, 6918143, 6895228, 6866532, 6870453, 6996693, 6982691, 6862696, 6883685, 6898909, 6900173, 6866085, 6776506, 6775949, 6848497, 6812019, 6908235, 6925899, 6829784, 6916662, 7018995]
+spec_input_width_time_after_ns=[6787489, 6792812, 6811460, 6841643, 7006278, 6773707, 6795929, 6808546, 6805064, 6862452, 6801413, 6767684, 6822327, 6834988, 7027957, 6925078, 6836551, 6936252, 6851147, 6753073, 6846315]
+spec_input_width_rss_before_kib=[7428, 7268, 7252, 7344, 7396, 7280, 7336, 7396, 7204, 7304, 7448, 7512, 7348, 7376, 7232, 7396, 7248, 7380, 7452, 7448, 7248]
+spec_input_width_rss_after_kib=[7336, 7352, 7244, 7344, 7264, 7240, 7312, 7316, 7228, 7516, 7492, 7196, 7232, 7400, 7368, 7308, 7244, 7508, 7276, 7440, 7316]
+
+# Native sort workspace, 2026-11-02 [M], Rust 1.99.0, release, panic=abort.
+# Baseline c84e66a45424d9d3ae004bfa89fd71cb23e214c7; after: admit native
+# merge workspace and list.sort input, reuse the list's arena backing buffer.
+# Same mm-cli features. Native hello 2210000 -> 2210552 bytes: the old
+# 2210000-byte gate failed. The owner approved a 2250000-byte ceiling.
+# CPU 2, idle machine; three warmups, 21 alternating fresh-process timings.
+# perf_counter_ns around subprocess; separate /usr/bin/time -f %M runs for RSS.
+# Source:
+# data = [(i * 97) % 1009 - 504 for i in range(100000)]
+# for i in range(40):
+#     data.sort(reverse=bool(i % 2))
+# print(len(data), data[0], data[-1], sum(data))
+# Every output matched CPython 3.14: 100000 504 -504 -602.
+# Median ms: 187.467942 -> 182.149114 (2.8% faster, not a structural speedup).
+# Median peak RSS KiB: 8368 -> 6880, three fresh processes each.
+# Process peaks include initialization, input construction and the allocator;
+# this is not a total session-memory bound or an isolated sort measurement.
+sort_workspace_before_time_ns=[189986127, 192553326, 189838362, 189123133, 187467942, 187082367, 184954990, 190514649, 190361077, 191042228, 188205401, 187097394, 187032669, 183784352, 186205114, 186531326, 188192482, 188010020, 186653626, 181208689, 179178998]
+sort_workspace_after_time_ns=[181840499, 180402542, 188339864, 187236990, 180237322, 184154486, 183909437, 182135302, 241083020, 181033259, 180480623, 181143184, 183425283, 182149114, 184391804, 185696807, 181220701, 182860398, 181294240, 173525602, 183320765]
+sort_workspace_before_rss_kib=[8368, 8296, 8384]
+sort_workspace_after_rss_kib=[7028, 6876, 6880]
+
+# JSON output admission, 2026-11-02 [M], Rust 1.99.0, release, panic=abort.
+# Baseline e3d56cf8a358a3fba81685134d9a74b26a198827; after: reserve native
+# output through arena copying, borrow separators/indent, charge final bytes.
+# Same mm-cli features, CPU 2, otherwise idle; three warmups followed by
+# 21 alternating fresh-process timings with perf_counter_ns around subprocess.
+# Separate /usr/bin/time -f %M RSS runs, three fresh processes per build.
+# rows: bench/json_rows.py, checksum 3865741 50000 3749925000.
+# ascii:
+# import json
+# text = json.dumps('x' * 8388608)
+# assert text[:2] == '"x' and text[-2:] == 'x"'
+# print(len(text))  # 8388610
+# oversized:
+# import json
+# data = '🙂' * (24 * 1024 * 1024)
+# try:
+#     text = json.dumps(data)
+# except MemoryError:
+#     print('bounded')
+# else:
+#     raise AssertionError('oversized output succeeded')
+# print(json.dumps([1, True, None]))
+# Every output matched. Median ms: rows 95.186840 -> 102.478368 (+7.7%);
+# ascii 24.250691 -> 26.404597 (+8.9%). Median peak RSS KiB:
+# ascii 28848 -> 28956 (no improvement), oversized 397504 -> 200956.
+# Whole-process timings/peaks include setup, input construction and allocator
+# behavior. This bounds native JSON output, not total session memory or latency.
+# Initial implementation measured +14% rows / +37% ASCII. Reusing the sizing
+# result to skip escaping scans and borrowing once on no-growth appends reduced
+# overhead. Byte/chunk sizing variants did not improve it and were discarded.
+json_output_rows_before_ns=[96134999, 96593346, 95983632, 97131587, 95991016, 98428424, 92819057, 93995122, 92773920, 93856194, 92753873, 92729272, 92884830, 92422427, 93053565, 95855172, 95276115, 95186840, 95433096, 94722145, 95645519]
+json_output_rows_after_ns=[103088282, 101016110, 101122462, 109378818, 105203192, 105839697, 102433636, 103992756, 102603698, 102434723, 100731932, 98977468, 98846634, 100938154, 99930600, 103418325, 105196125, 107298340, 102478368, 103914114, 99212594]
+json_output_ascii_before_ns=[23734242, 24772308, 24213044, 23686250, 23951134, 23458998, 23350306, 24657487, 24343453, 24250691, 23019350, 23751190, 24291949, 24408933, 25465607, 24804922, 23836304, 28203610, 24700739, 26466928, 23703959]
+json_output_ascii_after_ns=[25297924, 26248289, 26798935, 26686941, 26299611, 25914247, 26122240, 26291199, 26701319, 26572085, 25539700, 25510864, 26441912, 26568669, 37641054, 27086038, 26087455, 35310289, 29902314, 26121147, 26404597]
+json_output_ascii_before_rss_kib=[28948, 28848, 28816]
+json_output_ascii_after_rss_kib=[29028, 28956, 28780]
+json_output_oversized_before_rss_kib=[397504, 397472, 397576]
+json_output_oversized_after_rss_kib=[200956, 200968, 200928]
+# Initial implementation's matched samples, before the two local optimizations:
+json_output_initial_rows_before_ns=[100056436, 101034797, 97952730, 101455817, 103721266, 128902871, 121063930, 111751895, 102681458, 123064373, 109041063, 103462158, 104812460, 104291082, 104433273, 102677161, 113147825, 98706929, 97462606, 99245418, 100223265]
+json_output_initial_rows_after_ns=[115850528, 117220011, 116328594, 119911802, 118355561, 120225277, 163864666, 158104676, 119033335, 119466846, 120011407, 116562021, 118005912, 118552354, 115491526, 114169780, 125130365, 117057841, 116479268, 117208346, 115624646]
+json_output_initial_ascii_before_ns=[27961267, 27539126, 26972226, 26446809, 27649532, 33418452, 28710861, 29050177, 34883413, 44342099, 34079260, 32003867, 30277204, 31111957, 41113637, 34228988, 33081605, 28073499, 26609820, 27862657, 26447980]
+json_output_initial_ascii_after_ns=[36621246, 36918464, 34350335, 35176966, 40777200, 44555834, 37198182, 39066716, 40128618, 44594864, 44468921, 46087728, 40475307, 38939954, 49439125, 39867955, 40667827, 40293019, 34408650, 36895540, 35863225]
+
+# Borrowed JSON containers, 2026-11-02 [M], Rust 1.99.0, release, panic=abort.
+# Baseline fe54fa10601570799b5e81f9dfaa9611fcb20ed4; after: arena cursors
+# replace list/tuple and unsorted-dictionary copies. Sorted copies remain.
+# Same CLI features, CPU 2, idle machine, three warmups, 21 alternating
+# fresh-process timings; perf_counter_ns around subprocess. RSS separately
+# via /usr/bin/time -f %M, three fresh processes each. All outputs checked.
+# rows: bench/json_rows.py, checksum 3865741 50000 3749925000.
+# wide:
+# import json
+# data = [None] * 1000000
+# text = json.dumps(data)
+# assert text[:12] == '[null, null,' and text[-11:] == 'null, null]'
+# print(len(text))  # 6000000
+# Median ms: rows 111.162846 -> 108.117370 (-2.7%);
+# wide 33.586207 -> 30.935807 (-7.9%). Median peak RSS KiB:
+# rows 33908 -> 33816 (no material improvement), wide 30968 -> 23864.
+# These include process startup, input construction, output and allocator;
+# neither a total-memory bound nor an isolated encoder measurement.
+json_cursor_rows_before_ns=[115333560, 115920307, 113790106, 109249343, 112918674, 125830767, 109419785, 113876610, 109493613, 111162846, 109842934, 109714114, 111685021, 109909679, 112627699, 111371559, 112025264, 108882341, 108608279, 107773433, 108038326]
+json_cursor_rows_after_ns=[110032013, 108117370, 107939948, 108693562, 106269395, 109677119, 106318072, 107906279, 107937244, 109084936, 108571056, 109297340, 110641707, 109590783, 110004623, 109532648, 106726615, 107777617, 107783142, 107226548, 105307354]
+json_cursor_wide_before_ns=[33010456, 36783043, 33350746, 33931746, 30693011, 34978337, 36634860, 35577517, 34083284, 34828390, 31815088, 33037237, 33205132, 33586207, 31961369, 33162767, 33495112, 34041080, 33668192, 34486539, 33138453]
+json_cursor_wide_after_ns=[29809129, 31525687, 30071433, 30799294, 28961969, 38151279, 33734932, 31849468, 31251997, 31940672, 30078664, 31102760, 30228121, 29998061, 28318962, 30696368, 29586040, 31309476, 31115898, 32214928, 30935807]
+json_cursor_rows_before_rss_kib=[34052, 33848, 33908]
+json_cursor_rows_after_rss_kib=[33816, 33784, 33960]
+json_cursor_wide_before_rss_kib=[31048, 30960, 30968]
+json_cursor_wide_after_rss_kib=[23872, 23864, 23776]
+
+# Sorted JSON workspace, 2026-11-02 [M], Rust 1.99.0, release, panic=abort.
+# Baseline a4a1ea3e2d628b2d04c26fa549d295049aaf7e0b; after: admitted key
+# and ordered-entry buffers, without the intermediate unsorted pair copies.
+# Same CLI features, CPU 2, idle machine, three warmups, 21 alternating
+# fresh-process timings; perf_counter_ns around subprocess. RSS separately
+# via /usr/bin/time -f %M, three fresh processes each. All outputs checked.
+# import json
+# data = {i: None for i in range(99999, -1, -1)}
+# for _ in range(5):
+#     text = json.dumps(data, sort_keys=True)
+#     assert text.startswith('{"0": null, "1": null, "2": null')
+#     assert text.endswith('"99999": null}')
+# print(len(text))  # 1488890
+# Median ms: 95.128297 -> 93.179875 (2.0% faster).
+# Median peak RSS KiB: 16620 -> 15828. Whole-process measurements include
+# setup, data construction and allocator behavior, not just the sorted tables.
+# This is not complete native-workspace accounting or a total memory bound.
+json_sort_before_ns=[95940725, 97700046, 96820491, 94337688, 94850337, 95128297, 95056323, 92752495, 97466416, 99125548, 93580688, 94165737, 94277453, 92119202, 96258426, 95365637, 95415869, 94541100, 95659326, 95284261, 92619589]
+json_sort_after_ns=[93797151, 93467178, 91041767, 91055877, 93476741, 90366591, 92398196, 106817972, 95851850, 93179875, 91087354, 95008555, 92396549, 97819988, 94567553, 91687659, 93104445, 91618692, 92896629, 93382925, 93971820]
+json_sort_before_rss_kib=[16620, 16752, 16472]
+json_sort_after_rss_kib=[15760, 15848, 15828]
+
+# JSON decoder input/container admission, 2026-11-02 [M], Rust 1.99.0,
+# release, panic=abort. Baseline 4022e935010ab4bb50099bebf7899384312b9cb3;
+# after: charge the native input copy and array/object buffers through arena
+# construction, replacing the periodic count-based heuristic.
+# Same CLI features, CPU 2, idle machine, three warmups, 21 alternating
+# fresh-process timings; perf_counter_ns around subprocess. RSS separately
+# via /usr/bin/time -f %M, three fresh processes each. All outputs checked.
+# bench/json_rows.py: checksum 3865741 50000 3749925000.
+# Median ms: 108.101876 -> 113.053450 (+4.6%). Median peak RSS KiB:
+# 34068 -> 33984, no material change. These are whole-process measurements,
+# including encoding and input construction, not isolated decoder timings.
+# Admission improves budget enforcement, not this workload's throughput/RSS.
+json_decode_rows_before_ns=[109677140, 102868157, 107061782, 110117681, 104480600, 107462098, 107100189, 105924212, 106430915, 113562235, 112233953, 109001943, 111901964, 112418345, 107859555, 106458559, 108101876, 111499721, 108121230, 109289840, 107692810]
+json_decode_rows_after_ns=[108454715, 108410631, 110966258, 110815431, 111134837, 110552970, 110841072, 113307063, 110660713, 113053450, 130837803, 114299144, 117655509, 115306405, 114181087, 111612209, 111918280, 113586991, 113430208, 119526784, 116516520]
+json_decode_rows_before_rss_kib=[34068, 34092, 33924]
+json_decode_rows_after_rss_kib=[34140, 33880, 33984]
+
+# Initial JSON key memo, 2026-11-02 [M], Rust 1.99.0, release, panic=abort.
+# Baseline 137dcbe42ff07639a766baa589e14001ee43c81a; after: admitted
+# half-full hash table of arena keys, no duplicate native key strings.
+# Predates the cached-hash collision filter and escaped-string admission below.
+# Same CLI features, CPU 2, idle machine, three warmups, 21 alternating
+# fresh-process timings; perf_counter_ns around subprocess. Every output checked.
+# rows: bench/json_rows.py, checksum 3865741 50000 3749925000.
+# wide:
+# import json
+# doc = '{' + ','.join('"key-' + str(i) + '":' + str(i) for i in range(4095, -1, -1)) + '}'
+# for _ in range(20):
+#     result = json.loads(doc)
+#     assert len(result) == 4096 and sum(result.values()) == 8386560
+#     assert result['key-0'] == 0 and result['key-4095'] == 4095
+# print('wide memo checksum ok')
+# Median ms: rows 109.109856 -> 110.202201 (+1.0%);
+# wide 27.592798 -> 24.904821 (-9.7%). Whole-process measurements.
+# RSS: public-facade driver supplies a JSON object through a source() host call.
+# Keys are "key-{i:04}-" + "a" * 8192, i descending 4095..0, values null.
+# Resume consumes HostValue::Str(text); its native input is dropped. Next cell
+# loads data, checks length 4096, first key key-4095-..., and key-0000-... is None.
+# /usr/bin/time -f %M, three fresh processes per build, CPU 2, default limits.
+# Median peak RSS: 137404 -> 104416 KiB, including host input and allocator.
+# Not a total-memory or latency guarantee. An initial sorted-reference vector
+# saved similar RSS but slowed rows 9.1% and wide keys 67.3%; it was rejected.
+json_memo_rows_before_ns=[106874790, 109052466, 110237222, 108896412, 109901692, 110411725, 111447277, 109531382, 108580412, 110984940, 110588452, 113823021, 114683059, 109109856, 108915446, 109917427, 107681853, 108400103, 108548962, 105932683, 107840054]
+json_memo_rows_after_ns=[109023181, 111602303, 111284081, 109775045, 106810115, 114521492, 112487554, 111085047, 109544964, 112144669, 111858636, 110398844, 111589998, 108193769, 110202201, 108813027, 108024858, 109878079, 108785200, 110845803, 110030192]
+json_memo_wide_before_ns=[28250896, 28249626, 28165548, 28510074, 27588792, 27457992, 27740202, 27517198, 27546324, 29535126, 28284311, 27633745, 26588218, 27087974, 28379415, 27592798, 27295722, 26346157, 27490058, 27608361, 27274035]
+json_memo_wide_after_ns=[24223504, 25310540, 25099020, 25732213, 25395932, 24980553, 24616937, 24106788, 23814884, 26454516, 25069599, 25110347, 24072301, 24447846, 25529367, 24187913, 24314810, 24624850, 24708945, 25118854, 24904821]
+json_memo_before_rss_kib=[137348, 137432, 137404]
+json_memo_after_rss_kib=[104340, 104416, 104484]
+
+# Final JSON memo/escaped-string admission, 2026-11-02 [M]. Same baseline,
+# toolchain, features, timing/RSS procedure and idle CPU-2 conditions as above.
+# Includes cached full-hash collision rejection and escaped-string buffers
+# admitted through arena copying. Rows, wide keys and RSS driver are above.
+# Additional escape / unicode workloads:
+# import json
+# text = '"' + '\\n' * 1048576 + '"'      # escape
+# text = '"' + '\\u00e9' * 1048576 + '"' # unicode (instead of escape text)
+# for _ in range(4):
+#     result = json.loads(text)
+#     assert len(result) == 1048576
+#     assert result[0] == result[-1] == '\n' # 'é' for unicode
+# print('escaped checksum ok')              # 'unicode checksum ok' for unicode
+# Every output matched. Median ms: rows 109.999337 -> 115.331920 (+4.8%);
+# wide 27.662197 -> 23.996926 (-13.3%); escape 22.073492 -> 24.521471 (+11.1%);
+# unicode 83.408672 -> 80.319428 (-3.7%). Median large-key peak RSS KiB:
+# 137368 -> 104356. Whole-process measurements, not isolated native timings.
+# Budget enforcement costs throughput on rows/repeated short escapes; it is
+# not a universal speedup, a total-memory cap, or a hard latency guarantee.
+json_text_rows_before_ns=[109536208, 106306896, 112451669, 110254004, 112107693, 111397514, 110677963, 110616447, 109720140, 108701383, 109094927, 110218032, 109601895, 109999337, 112063787, 109141852, 129271681, 127828207, 107212290, 107715484, 109129065]
+json_text_rows_after_ns=[114539044, 115773640, 119374400, 116159566, 115082343, 115249117, 115331920, 116724638, 128132527, 113477429, 114564817, 113589502, 113470892, 116414265, 116530260, 115990706, 125984942, 116602456, 113902068, 114984448, 114986742]
+json_text_wide_before_ns=[27482678, 27167740, 27416233, 27905635, 29635903, 27650761, 33377484, 28067606, 28002110, 33808436, 27869549, 29186374, 27590052, 34894059, 27662197, 27493147, 26728654, 26703263, 27368598, 29923949, 26990112]
+json_text_wide_after_ns=[23592525, 23512707, 23553991, 24397167, 28200794, 23996926, 23597066, 23823002, 24063943, 24430248, 24121526, 29106229, 24100746, 28542019, 24292922, 23661713, 23583160, 22894741, 23240497, 27857363, 23644031]
+json_text_escape_before_ns=[20875425, 20377661, 21219754, 21036659, 25463812, 26976889, 22210303, 22073492, 22180949, 22182123, 21433405, 21253026, 21211870, 21200950, 24462797, 22907178, 23392436, 22260723, 21611873, 21274763, 22265286]
+json_text_escape_after_ns=[23604752, 22937647, 23338743, 23515226, 25342996, 32761555, 27268348, 24981206, 24521471, 24163715, 23832207, 23908287, 23641419, 24094082, 24729464, 24628721, 25208996, 25060747, 24355446, 24799281, 25639292]
+json_text_unicode_before_ns=[82972597, 83408672, 82371347, 80986994, 83230282, 82797922, 82545273, 83092920, 84024662, 84075726, 82087925, 84677381, 86400621, 84622806, 85374141, 82831773, 84943145, 84752096, 93954448, 83902119, 82314553]
+json_text_unicode_after_ns=[83243194, 81208472, 79734004, 79830143, 81745220, 78868808, 77963203, 79251725, 79781916, 81270400, 80319428, 90379700, 83481413, 79738051, 80689780, 80336067, 81600630, 79365627, 80322202, 80275057, 79486017]
+json_text_before_rss_kib=[137400, 137368, 137336]
+json_text_after_rss_kib=[104408, 104356, 104356]
+
+# JSON traversal-stack admission, 2026-11-02 [M]. Baseline b4fbae4, after
+# private NativeVec refactor plus admitted encoder/decoder frames. Rust 1.99.0,
+# release mm-cli optional modules, panic=abort, idle machine, CPU 2.
+# Three warmups, 21 alternating fresh-process samples, exact stdout checked.
+# Rows: bench/json_rows.py, expected "3865741 50000 3749925000".
+# Deep workload:
+# import json
+# text = '[' * 50000 + '0' + ']' * 50000
+# for _ in range(4):
+#     value = json.loads(text)
+#     assert json.dumps(value) == text
+# print('deep checksum ok')
+# Whole-process median ms: rows 117.340510 -> 114.134759 (-2.7%);
+# deep 36.675324 -> 38.296515 (+4.4%). Not a universal speedup or latency bound.
+# Both stacks now refuse the 50k-depth regression at 6 MiB and succeed at
+# 16 MiB, with same-budget restore and recovery. Cycle-table storage remains
+# outside admission. Native hello is 2214720 bytes (+1632 from baseline).
+json_stack_rows_before_ns=[119510141, 108907472, 108705731, 110514749, 114487613, 112642162, 117802650, 111064211, 128112480, 120410039, 117581544, 114552782, 118789324, 119197114, 115954471, 117340510, 128785105, 118217172, 123307960, 113821390, 110509477]
+json_stack_rows_after_ns=[131256791, 113305497, 115827677, 110411765, 112266868, 112444278, 122175348, 114134759, 120787373, 116627552, 115235140, 117207290, 116903582, 120898013, 117294715, 113731400, 111149747, 111902538, 111260118, 112945873, 110371836]
+json_stack_deep_before_ns=[35729098, 36665830, 38760016, 37535105, 37878587, 37111184, 37044965, 36245401, 36829753, 37067189, 37882298, 36909547, 35631085, 35828056, 35651665, 35594707, 36285655, 37077304, 36083139, 36675324, 36397464]
+json_stack_deep_after_ns=[37989328, 40286634, 47735383, 39006935, 38800900, 38868368, 38296515, 36542105, 37280153, 37619000, 38304236, 38211661, 38656799, 37083439, 36665044, 37360270, 38080039, 40801989, 38173746, 40411370, 38678323]
+
+# JSON cycle-table admission, 2026-11-02 [M]. Baseline 5ef2e79; same rows
+# and deep workloads, toolchain, features and timing procedure as above.
+# Final code reuses the first lookup on insertions that need no table growth.
+# Whole-process median ms: rows 112.571764 -> 112.463592 (-0.1%);
+# deep 37.239323 -> 38.786159 (+4.2%). Exact stdout matched every run.
+# Separate /usr/bin/time -f %M measurements, three fresh processes per build:
+# row median peak RSS 33992 -> 33928 KiB; deep 17480 -> 15940 KiB.
+# Cycle tracking now refuses at 9 MiB where disabling it still succeeds;
+# 16 MiB succeeds with exact output, recovery and same-budget restore.
+# Capacity follows peak ancestor depth; completed siblings reuse slots.
+# These measurements do not establish a total-memory or park-latency bound.
+json_cycle_rows_before_ns=[112575562, 111565751, 114992727, 113556876, 112413530, 120775263, 108103225, 110182443, 110571943, 111435867, 118938652, 112632326, 117234992, 119544078, 109759264, 111341776, 110645378, 112571764, 112799058, 112641512, 111258346]
+json_cycle_rows_after_ns=[111046061, 113595934, 116822914, 113861019, 114344791, 110186938, 108823572, 106510188, 107615591, 117244898, 115581076, 116264754, 114596288, 120026146, 112463592, 111836683, 108960934, 110691759, 109875593, 112548978, 109581505]
+json_cycle_rows_before_rss_kib=[34048, 33992, 33896]
+json_cycle_rows_after_rss_kib=[34048, 33912, 33928]
+json_cycle_deep_before_ns=[40103599, 38836218, 36530478, 37114615, 37417000, 36919745, 36663353, 37574063, 36913676, 37239323, 40569558, 38868133, 37143837, 36596218, 37279385, 36707409, 36761957, 37262693, 37044179, 38077214, 37372068]
+json_cycle_deep_after_ns=[41495607, 40052586, 39395975, 38373315, 38405637, 37989228, 37652796, 38044561, 38163281, 39661106, 40007919, 39757722, 39629948, 38428857, 37858692, 37848219, 38542301, 39422854, 39266718, 39597368, 38786159]
+json_cycle_deep_before_rss_kib=[17484, 17480, 17480]
+json_cycle_deep_after_rss_kib=[15940, 15840, 15972]
+
+# Native repr traversal admission, 2026-11-02 [M]. Baseline 91ae84b.
+# Rust 1.99.0, release mm-cli optional modules, panic=abort, idle machine,
+# CPU 2; three warmups, 21 alternating fresh processes, exact stdout checked.
+# Scalar: repeat assert repr(1729) == '1729' 100000 times; print('ok').
+# Containers: data = {str(i): [i, i + 3] for i in range(1000)};
+# repeat text = repr(data) 100 times; check prefix/suffix and print(len(text)).
+# Expected length 18679, independently checked with CPython.
+# Deep: wrap integer 7 in 30000 nested lists; repeat five times:
+# assert repr(data) == '[' * 30000 + '7' + ']' * 30000; print('ok').
+# Whole-process medians ms: scalar 18.905396 -> 18.839859 (-0.3%);
+# containers 19.864441 -> 22.442501 (+13.0%); deep 21.887954 -> 24.150357
+# (+10.3%). Admission is a safety tradeoff, not a speed/RSS improvement.
+# Initial separate contains/insert lookups cost +15.8% containers; the final
+# implementation uses insert's existing-identity result for cycle detection.
+# /usr/bin/time -f %M, three separate fresh-process samples per build.
+# Deep median peak RSS 9192 -> 11192 KiB. No total-memory or latency bound.
+repr_traversal_scalar_before_ns=[18763778,18156108,18905396,17981842,19261920,24132383,21546059,18220576,24247602,28628850,22737827,19031561,18295436,20729653,23610523,17817326,17610010,18243386,17835727,18934654,18169089]
+repr_traversal_scalar_after_ns=[19120818,18839859,18638975,17882963,18797687,20549903,18232352,17399693,29553325,30686303,21234327,20173154,20226398,22042255,19551549,17835492,17590513,18960308,17395843,17662010,17810282]
+repr_traversal_containers_before_ns=[20062999,20010782,19871153,19776517,19913435,20809397,19951376,19685733,19899799,19646559,19451395,19461497,19854555,19788724,19573326,19864441,19715731,21763756,20136744,19752958,20012033]
+repr_traversal_containers_after_ns=[22818527,22189714,22500435,22649094,22847744,22442501,22681875,22229595,22508772,22235257,22185599,22465294,22427832,21938000,22065415,21717863,22245360,22796464,22578604,22582589,22410915]
+repr_traversal_deep_before_ns=[21726069,21887954,21878815,22707392,22106275,21950321,21664808,21420002,21746296,21362949,21030333,21470841,21625196,21809718,22101939,22368058,22143538,21981046,21891601,21927086,22324533]
+repr_traversal_deep_after_ns=[23932385,24207301,24347418,24150357,24515692,24560887,23931731,23765004,23946616,23920018,23315196,23353049,24201341,24123780,24871985,24354306,24955948,24831901,23951753,23949673,24934179]
+repr_traversal_scalar_before_rss_kib=[7168,7420,7164]
+repr_traversal_scalar_after_rss_kib=[7220,7208,7368]
+repr_traversal_containers_before_rss_kib=[6304,6388,6444]
+repr_traversal_containers_after_rss_kib=[6376,6376,6428]
+repr_traversal_deep_before_rss_kib=[9104,9336,9192]
+repr_traversal_deep_after_rss_kib=[11192,11044,11284]
+
+# Completion preflight admission, 2026-11-02 [M]. Baseline c1b6c2d.
+# Rust 1.99.0, mm-cli release dependencies, rustc -O -C panic=abort facade
+# driver. Default EngineConfig, text_limit=16, HostArgs.max_bytes=0.
+# Instant around Session::start only; compilation/session setup excluded.
+# CPU 2, idle machine; three warmups, 21 alternating fresh processes.
+# Flat source: [17] * 1000000. Unique source: [[i] for i in range(50000)].
+# Assert repr and str equal respectively "[17, 17, 17, 17," and
+# "[[0], [1], [2], ", both truncated, no host value.
+# Scalar source: for _ in range(100000): assert 'x=%s' % 17 == 'x=17'.
+# Assert Complete(None). Separate /usr/bin/time RSS, three fresh processes.
+# Medians ms: flat 15.430676 -> 11.070950 (-28.3%); unique 6.563874 ->
+# 7.503815 (+14.3%); scalar 28.821113 -> 29.223445 (+1.4%, noisy).
+# The initial cursor implementation reacquired heap slots for every primitive
+# child (flat +15.9%). Final code scans primitive runs under one heap borrow,
+# without changing threshold behavior. Unique-container admission remains a
+# throughput/RSS cost. No total-memory or park-latency bound is established.
+preflight_budget_flat_before_ns=[17523473,15430676,15169873,14643662,14541729,14859133,14752327,14558323,15311686,15478540,15167066,15233482,16719703,16035480,18060758,16945208,16754519,15869075,15139029,16477190,17626900]
+preflight_budget_flat_after_ns=[12562719,11676208,11046737,10712170,10438503,10342824,10578376,10689860,10676831,10538143,11557418,11181898,11534696,11070950,14142509,12460550,11152670,11948178,10798188,10771641,15187061]
+preflight_budget_unique_before_ns=[6943420,7436065,6922547,6400687,6318306,6496405,6452273,6789981,6563874,6590551,6478472,6484934,6454626,6444272,6911543,6704053,6611940,6534457,6628869,6530275,6769070]
+preflight_budget_unique_after_ns=[7471424,7446823,7630749,7455821,7259140,7310712,8143649,7503815,7458600,7550378,7605676,7443127,7525236,7365825,7472317,7530274,7842779,7529932,7543897,7424530,7567380]
+preflight_budget_scalar_before_ns=[27562156,27459081,27995718,27625753,27873296,28933561,28783818,31830877,30774030,29175512,28821113,29229599,28220583,29068724,28492083,30696053,35633498,44032137,43428603,28360662,28093916]
+preflight_budget_scalar_after_ns=[27847715,27506994,27157425,26988604,31473103,30873028,29223445,31762164,31601973,30602998,28618180,31371297,28670864,28980013,28555250,29059649,35624438,40054191,42335046,27968426,29743862]
+preflight_budget_flat_before_rss_kib=[19824,19764,19812]
+preflight_budget_flat_after_rss_kib=[19752,19872,19928]
+preflight_budget_unique_before_rss_kib=[7684,7708,7760]
+preflight_budget_unique_after_rss_kib=[8392,8352,8456]
+preflight_budget_scalar_before_rss_kib=[7348,7268,7356]
+preflight_budget_scalar_after_rss_kib=[7320,7372,7448]
+
+# Borrowed explicit exception-method arguments, 2026-11-02 [M]. Baseline
+# 4f982a0, Rust 1.99.0 release mm-cli, CPU 2, idle machine; three warmups,
+# 21 alternating fresh-process samples, every stdout checked exactly.
+# e = ValueError(); e.args = (17,) * 1000000
+# text = e.__str__() OR text = e.__repr__()
+# Assert suffix '17, 17)' and prefix '(17, 17' / 'ValueError(17, 17'.
+# print(len(text)): expected 4000000 / 4000010 respectively.
+# Whole-process medians ms: str 72.876221 -> 70.195630 (-3.7%);
+# repr 69.273006 -> 67.378704 (-2.7%). Separate /usr/bin/time samples:
+# median peak RSS str 35440 -> 31368 KiB; repr 35440 -> 31384 KiB.
+# This removes copied inputs; rendering output still needs admission.
+exc_method_str_before_ns=[77823198,71900346,75925200,74888120,72158854,81561239,71683299,71005539,70943186,75731448,74821828,72876221,71659406,71726947,70885571,73148802,70614182,79608434,74119689,73040729,70757495]
+exc_method_str_after_ns=[71120445,72785750,68183383,70786705,67787526,69070946,69070755,69802067,67371546,73278478,81191955,70195630,71563953,70610230,69170230,71689511,71330766,69423304,71224891,67314775,67650441]
+exc_method_repr_before_ns=[69742841,69416673,67935608,72085011,74449974,69841891,71375736,70168934,69210286,68184082,67883643,70047552,69273006,67438210,66319183,67329327,67042582,71521462,69621236,67470042,68695536]
+exc_method_repr_after_ns=[66732921,70081485,65668520,68259801,80469293,69237117,66206137,67378704,68569552,68506809,68459607,67393775,67726039,67418173,67035067,67063253,65099115,67256693,66471379,67309640,66589604]
+exc_method_str_before_rss_kib=[35480,35356,35440]
+exc_method_str_after_rss_kib=[31172,31368,31432]
+exc_method_repr_before_rss_kib=[35440,35424,35452]
+exc_method_repr_after_rss_kib=[31244,31628,31384]
+
+# Percent input/output admission, 2026-11-02 [M]. Baseline 21368ed,
+# Rust 1.99.0 release mm-cli, CPU 2, idle machine; three warmups,
+# 21 alternating fresh-process samples. Each runs `mm run` on the source below.
+# short: 20000 repetitions of 'user=%s id=%08d rate=%.2f' % ('é', -17, 1.25);
+# assert result == 'user=é id=-0000017 rate=1.25'; stdout empty.
+# literal: fmt = 'x' * 4194304 + '%s'; text = fmt % 'y';
+# assert len(text) == 4194305 and text.endswith('xy'); print(len(text)).
+# padding: text = '%4194304s' % 'x';
+# assert len(text) == 4194304 and text.endswith(' x'); print(len(text)).
+# escapes: fmt = '%%' * 1048576; text = fmt % ();
+# assert len(text) == 1048576 and text.count('%') == 1048576; print(len(text)).
+# pieces: fmt = '%s/' * 10000; text = fmt % (('abc',) * 10000);
+# assert len(text) == 40000 and text.startswith('abc/abc/')
+# and text.endswith('abc/abc/'); print(len(text)). All stdout checked exactly.
+# Whole-process medians ms: short 19.432830 -> 21.183076 (+9.0%);
+# literal 18.300506 -> 17.687472 (-3.3%); padding 9.027437 -> 8.997339;
+# escapes 9.704551 -> 9.727771; pieces 83.254378 -> 83.289019.
+# The first admitted builder charged each escaped percent separately; batching
+# consecutive escapes removed its +18.3% measured regression. Small-format
+# admission remains a throughput cost. This does not account conversion pieces.
+percent_buffers_short_before_ns=[19997842,20340884,20004609,19050547,19688020,19568148,19651760,19432830,19040754,19319636,19083913,19169620,19401794,19437732,19711567,19754871,19317069,18852159,18743141,20271186,19258490]
+percent_buffers_short_after_ns=[21692756,21475355,21940128,21546395,21101899,21160649,21286521,21535685,20679746,21183076,20806741,20452482,21063597,21137413,21469030,21085528,21442359,21013685,21100912,21749135,21676122]
+percent_buffers_literal_before_ns=[17227107,18544040,18300506,17860703,17873423,17397535,17585760,19111585,18991852,19108354,19589932,19563190,18113375,17828252,17932145,18136222,18381827,19803219,22676929,17616357,18416054]
+percent_buffers_literal_after_ns=[16907313,17662514,17952241,17103294,17970971,17402938,16812135,17551346,18710613,18774177,18389369,17518999,17022022,16824766,17711206,17748262,17868284,17687771,18228119,17687472,17019371]
+percent_buffers_padding_before_ns=[9133447,9156962,9050521,9060811,8985344,8999202,9026826,9060763,8978044,9107720,9027437,9118740,9021280,9208136,9225962,9022362,8987287,9000023,9027749,9010038,9020298]
+percent_buffers_padding_after_ns=[9171235,9051403,9117031,9069522,9017840,8968948,9118837,8919182,8989187,8929565,9079047,8999650,8980956,9016276,9139380,8997339,8968603,8967970,8958389,8971318,8993218]
+percent_buffers_escapes_before_ns=[9741085,9566549,9569860,9582473,9642710,9755614,9716818,9985129,9716811,9646744,9618893,9656239,9577524,9829284,9656421,9719350,9927400,9704551,9673147,9728323,9804086]
+percent_buffers_escapes_after_ns=[9547076,9727771,9742048,9599301,9801606,9837861,9959086,10008119,9666298,9729641,9725128,9602988,9651818,9622083,9797485,9693255,9858358,9666451,9865184,9678031,9902577]
+percent_buffers_pieces_before_ns=[83549639,83284673,84684312,83014240,82015064,83370417,83358842,83297298,83179890,83106321,83071476,83178883,83314622,83294423,84393369,83195780,83254378,82955696,83227030,83307504,83187218]
+percent_buffers_pieces_after_ns=[83349604,83284859,82917336,83250315,83254564,83316334,83370962,83201404,83428470,83395215,83459064,83307628,83425081,83218539,83189711,83289019,83389621,83050970,83286801,83233552,88079261]
+percent_buffers_short_before_rss_kib=[6428,6468,6332]
+percent_buffers_short_after_rss_kib=[6580,6316,6124]
+percent_buffers_literal_before_rss_kib=[24936,24780,24820]
+percent_buffers_literal_after_rss_kib=[24816,24884,24952]
+percent_buffers_padding_before_rss_kib=[12396,12560,12456]
+percent_buffers_padding_after_rss_kib=[12412,12320,12500]
+percent_buffers_escapes_before_rss_kib=[10512,10284,10448]
+percent_buffers_escapes_after_rss_kib=[10324,10364,10500]
+percent_buffers_pieces_before_rss_kib=[4524,4548,4604]
+percent_buffers_pieces_after_rss_kib=[4596,4592,4408]
+
+# Borrowed percent arguments, 2026-11-02 [M]. Baseline 353e2c6, Rust 1.99.0
+# release mm-cli, CPU 2, idle machine. Same short-format source as above.
+# Pieces source above with N = 10000, 20000, 100000; expected stdout 4*N.
+# Every output checked. Three warmups and 21 alternating fresh-process samples
+# for short/10k/20k; one warmup and five alternating samples for 100k.
+# Separate /usr/bin/time -f %M, three samples each. The native formatter now
+# reads one tuple slot instead of cloning N values for each of its N fields.
+# Whole-process medians ms: short 21.039388 -> 20.189980 (-4.0%);
+# 10k 83.407167 -> 3.569362 (23.4x); 20k 325.228735 -> 4.724432 (68.8x);
+# 100k 8338.193757 -> 11.694633 (713.0x). This is a builtin-format workload;
+# user conversions still restart via prelude bytecode. Not a general VM speedup.
+percent_args_short_before_ns=[21487268,21044753,21081522,21232311,20817487,20985165,21863403,21251639,21006551,21964890,20804713,20969632,20737912,21039388,20793975,21052552,20881262,23120612,21247782,20936772,20816779]
+percent_args_short_after_ns=[21029328,20478800,22887587,20655971,20313659,20107288,20209921,20123711,20204164,19995629,20445778,20186816,20189980,20426681,19604889,19962048,20209407,20134915,20038897,20108807,20073488]
+percent_args_10k_before_ns=[82870201,83049719,83764579,83407167,83287858,83573048,81520731,81592812,82829273,84263977,85010330,83518984,83651538,82784880,82999359,83641592,83796322,83214699,83722770,85788513,83321444]
+percent_args_10k_after_ns=[3628658,3229215,3582635,3286012,3677931,3240651,3569362,3228632,3605077,3204087,3688682,3274002,3571384,3267717,3594091,3169555,3603542,3350129,3851663,3499171,3612148]
+percent_args_20k_before_ns=[325341133,332609156,323968720,322920305,324684133,363725081,333765445,325228735,323164715,350022384,334842525,328280427,323835426,323699530,325030414,324306436,323728473,326835171,324757784,331035483,342151786]
+percent_args_20k_after_ns=[5047475,4379056,4676636,4287897,4745688,5703377,4815562,4278440,4707934,4804508,4838419,4466513,4878266,4368821,4895292,4481042,4724432,4346018,4850000,4394380,4898114]
+percent_args_100k_before_ns=[8349471401,8247678890,8417810813,8306617109,8338193757]
+percent_args_100k_after_ns=[11694633,11174154,11800237,11357470,12163220]
+percent_args_short_before_rss_kib=[6292,6428,6344]
+percent_args_short_after_rss_kib=[6220,6296,6380]
+percent_args_10k_before_rss_kib=[4468,4644,4564]
+percent_args_10k_after_rss_kib=[4484,4588,4544]
+percent_args_20k_before_rss_kib=[4952,4664,4936]
+percent_args_20k_after_rss_kib=[4900,4756,4868]
+percent_args_100k_before_rss_kib=[7048,7080,7092]
+percent_args_100k_after_rss_kib=[6576,6496,6296]
+
+# Borrowed percent conversion inputs, 2026-11-02 [M]. Baseline eac0e2d,
+# Rust 1.99.0 release mm-cli, CPU 2, idle machine; three warmups and
+# 21 alternating fresh-process samples; every output checked exactly.
+# short: same 20k mixed-format source above. builtin: same pieces source, N=100000.
+# custom: Text.__str__ increments global calls, returns 'abc'.
+# text = ('%s/' * 1000) % ((Text(),) * 1000); assert text == 'abc/' * 1000
+# and calls == 1000; print(len(text), calls), expected '4000 1000\n'.
+# rejected-char: data = b'x' * 8388608; b'%c' % data must raise TypeError
+# with '%c requires an integer in range(256) or a single byte, not a bytes object of length 8388608'.
+# Assert that message, print('rejected'); raise AssertionError if accepted.
+# Whole-process median ms: short 20.118424 -> 19.651625 (-2.3%);
+# builtin 11.053174 -> 10.278212 (-7.0%); custom 38.645074 -> 26.284993 (-32.0%);
+# rejected-char 11.472597 -> 8.711300 (-24.1%). Separate peak RSS includes setup's
+# native-to-arena copies, so removing a later copy need not lower its maximum.
+percent_inputs_short_before_ns=[20968528,19899551,19968565,20639146,20188982,20893241,21254065,20118424,20057555,20032472,20016623,20008169,20090410,20059515,19855742,20201703,19909986,20637388,20151289,21794969,21707633]
+percent_inputs_short_after_ns=[19794161,19224880,19316119,19351565,20323042,20626830,19808832,19796944,19653138,19450872,19430726,19360160,19409769,19317148,20273728,21092333,19412967,19568895,19651625,20265499,21035842]
+percent_inputs_builtin_before_ns=[10846916,11124321,11137392,13821710,15014080,11446614,11377823,11053174,10909869,10964687,11400370,11204662,10675061,11139405,11026083,11055694,10951970,10885626,10864768,10927244,10998964]
+percent_inputs_builtin_after_ns=[10115705,10221314,10451703,10351772,12009227,10471900,10232404,10310104,10482930,10194610,10205786,10521919,10275476,10184065,10151685,10233364,10282546,10424480,10278212,10041849,10960151]
+percent_inputs_custom_before_ns=[38756878,38819810,37802613,37977966,39886433,38541365,39116246,39194329,38214422,37958953,38560924,38473275,38645074,42910274,38585108,38390279,37871744,39133435,38699418,38662534,41424598]
+percent_inputs_custom_after_ns=[26323826,26359105,26283027,26059387,27505698,26209035,26343843,26387979,25796764,25649882,26597161,26721967,26484626,26284993,26206925,26206128,26085532,26275847,25800380,26336804,27052762]
+percent_inputs_rejected_char_before_ns=[11462148,11430794,11645353,11498039,11416129,11358780,11551804,11699937,11426521,11464228,11832683,11504846,11490007,13910537,12671390,11400284,11804797,11419803,11472597,11463582,11440657]
+percent_inputs_rejected_char_after_ns=[8646578,8306360,8965752,8700233,8568019,8472023,8711300,8843033,8766602,8681850,8840257,8816971,8736303,9925737,9779154,9013240,8754240,8515466,8667777,8455555,8601315]
+percent_inputs_short_before_rss_kib=[6408,6424,6300]
+percent_inputs_short_after_rss_kib=[6480,6384,6464]
+percent_inputs_builtin_before_rss_kib=[6444,6524,6292]
+percent_inputs_builtin_after_rss_kib=[6440,6476,6468]
+percent_inputs_custom_before_rss_kib=[4276,4300,4520]
+percent_inputs_custom_after_rss_kib=[4320,4248,4304]
+percent_inputs_rejected_char_before_rss_kib=[20776,20772,20684]
+percent_inputs_rejected_char_after_rss_kib=[20636,20468,20700]
+
+# Borrowed printing inputs, 2026-11-02 [M]. Baseline 706583f, Rust 1.99.0
+# release mm-cli, CPU 2, idle machine; three warmups, 21 alternating whole-process
+# samples per binary. Timed stdout goes to /dev/null; untimed captured output
+# was checked exactly against the independent expected bytes for both binaries.
+# short: for _ in range(20000): print('abc', 17, 'é', sep='|', end='!')
+# print: data = 'x' * 2097152; repeat print(data, end='') 16 times.
+# write: import sys; same data; repeat assert sys.stdout.write(data) == 2097152
+# 16 times. Both large-output cases emit exactly 33554432 ASCII x bytes.
+# unused-sep: sep = 'x' * 2097152; repeat print('a', sep=sep, end='') 64 times.
+# Whole-process median ms: short 7.800900 -> 6.880421 (-11.8%);
+# print 25.694325 -> 9.062609 (-64.7%); write 9.038920 -> 6.071020 (-32.8%);
+# unused-sep 17.185403 -> 3.595180 (-79.1%). This is a repeat of the initial
+# campaign; short-format medians in that noisier run were 9.065248 -> 7.285743,
+# while large print/write and unused-separator improvements were similar.
+print_inputs_short_before_ns=[7439388,7587349,7513718,7914814,7928748,7958380,8182446,8330893,8290628,8293045,8265254,7810608,7757186,7703034,7649043,7592827,7732607,7800900,7746045,7791606,7803853]
+print_inputs_short_after_ns=[6468897,6804809,6579364,6523959,6992065,7016462,7270576,7314667,7359250,7341204,7299693,6825947,6855548,6877381,6905666,6840660,6826806,6974855,6908053,6719892,6880421]
+print_inputs_print_before_ns=[25694325,25381737,25342438,26100435,26130777,26414201,26025473,25913370,24969816,25315992,25535782,26155051,26149149,25498141,25584354,26305626,25522798,25668399,25140025,26049613,25905307]
+print_inputs_print_after_ns=[8855380,9198941,8867997,9063172,9355050,9170001,9225688,9062609,8920136,8817785,9266832,9039564,9242493,9032195,9210473,9103884,9171739,8900650,8875145,8882315,9014922]
+print_inputs_write_before_ns=[8856957,8900012,8789803,9129013,9320194,9459470,9809748,9862827,8922902,9004913,8949464,9001554,8857053,8960192,9038920,9053324,8989363,9200128,9135671,9114549,9121793]
+print_inputs_write_after_ns=[5952740,6196664,5826193,5728264,6248586,6124023,6532819,6552619,6018401,6027633,6071020,5905646,5918028,5888318,6122545,6050076,6072300,6175968,6137342,6045553,6116206]
+print_inputs_unused_sep_before_ns=[16760325,16876741,17185403,17324181,17136581,16756764,16991460,17239848,16990556,17533453,16963054,17326964,17000368,17198989,16804310,18632141,18283389,19378193,17518258,17208828,17151684]
+print_inputs_unused_sep_after_ns=[3542500,3619114,3688747,3500009,3565231,3533841,3577467,3437596,3595180,3471137,3626401,3496490,3585961,3551853,3706056,4740169,3878432,4348026,3615270,3627316,3843566]
+
+# Print-output admission, 2026-11-02 [M]. Baseline 1d0ec76, same toolchain,
+# sources, CPU 2, /dev/null timing, independent output checks, three warmups,
+# and 21 alternating whole-process samples as the printing-input experiment.
+# The shared builder now sizes arena strings via raw bytes before reserving,
+# avoiding repeated full UTF-8 validation when it must grow.
+# Median ms: short 6.849430 -> 8.367025 (+22.2%); print 9.838523 -> 9.880944
+# (+0.4%); unchanged write control 6.542360 -> 6.553308 (+0.2%);
+# unused-sep 3.884222 -> 3.866251 (-0.5%). Small-print admission costs roughly
+# 76 ns per print in this whole-process workload; the large-output results
+# are effectively unchanged. These costs are not hidden by the prior speedup.
+print_budget_short_before_ns=[6820097,6829393,7656073,6766874,6683191,6686132,6942676,6872861,6783447,6812199,6809340,6812096,6771716,6889014,6849430,7359454,7261327,7609431,7590709,6972571,6887452]
+print_budget_short_after_ns=[9224248,8631140,9503935,8597235,8367025,7993327,8084642,8062774,8208035,8121438,8132398,8100962,8139559,8129496,8249799,8604100,9990646,8485744,8607223,8424513,8653898]
+print_budget_print_before_ns=[9819855,10020093,10100254,9852074,9734320,9809888,9656462,9813379,9718530,9838523,9772739,10014561,9806797,9977026,9820551,9760580,10450463,10087427,9938528,10315534,10302349]
+print_budget_print_after_ns=[9942160,10354165,10570527,9812602,9943963,9832751,9777621,9757845,9826914,9748330,10265369,9843075,9726843,9776871,9815857,9880944,11504894,10090566,10009911,10503758,10094036]
+print_budget_write_before_ns=[6452715,6489016,6377688,6505739,6412791,6731443,6650528,6610475,6505598,6860263,6507378,6950112,6634958,6575402,6503478,6417596,6542360,6594181,6444543,6591373,6547669]
+print_budget_write_after_ns=[6468762,6410140,6520921,6491714,6418321,6525021,6652715,6594878,7050263,6620632,6940131,6518473,6535135,6790192,6553308,6804955,6475709,6546279,6782449,6634467,6707319]
+print_budget_unused_sep_before_ns=[4280395,3930818,3920897,3810761,3851955,3855390,3905081,3880818,3868571,3948986,4073439,3893994,3847712,3836303,3835243,3900725,3776052,3912029,3839148,3884222,3909980]
+print_budget_unused_sep_after_ns=[3795728,3863560,4177107,3963099,3790816,3830343,3930336,3811799,3915525,4438521,3903583,3843153,3863341,3754853,3875191,3817127,3866251,3836105,3901808,4075354,3906679]
+
+# Small native-text growth, 2026-11-02 [M]. Baseline aee46e2, same CPU 2,
+# toolchain, printing recipes, output checks, three warmups and 21 alternating
+# whole-process samples. Nonempty buffers begin at eight bytes when slack fits;
+# exact fallback remains. Small prints 7.970318 -> 7.633263 ms (-4.2%);
+# large prints 8.886683 -> 8.877652 (-0.1%); stream writes 5.885502 -> 5.888073
+# (+0.0%); unused-sep 3.579294 -> 3.591585 (+0.3%).
+# JSON encoding: repeat 20000 times, assert json.dumps({'x': 'a\nbλ', 'y': 17},
+# ensure_ascii=False, separators=(',', ':')) == '{"x":"a\\nbλ","y":17}'.
+# JSON decoding: repeat 20000 times, assert json.loads('"a\\nb\\u03bb"') == 'a\nbλ'.
+# Both emit no output. Encode 40.243566 -> 39.223670 ms (-2.5%);
+# decode 36.312783 -> 35.089164 ms (-3.4%).
+text_growth_short_before_ns=[7793420,7931320,7920979,7980272,7920978,8017739,8038607,8155455,7838859,7962046,7986157,7945574,7909501,8059885,8101694,7970318,7971318,8058622,8023764,7959267,7924521]
+text_growth_short_after_ns=[7526270,7491585,7601282,7670868,7658094,7720112,7637429,8116055,7577324,7644993,7623008,7705225,7678703,7627232,7607488,7668468,7576044,7496383,7633263,7775333,7516463]
+text_growth_print_before_ns=[9059309,8845250,8863735,8813015,8917497,8870713,8982387,9041483,8890318,8880159,8862713,8802945,8751485,9002001,8943766,8759433,8886683,8899384,8881672,9008002,8942510]
+text_growth_print_after_ns=[9038431,9025115,8911190,8876103,8919933,8792129,9087694,8900100,8907001,8842494,8877652,8874254,9383874,8814876,8835682,8808962,8793123,8857864,8842921,8884535,8977264]
+text_growth_write_before_ns=[5737620,5783274,5807331,5781710,5793018,5792799,5914860,5978117,5885502,5960256,5846805,6016067,5829240,5962328,5872303,6041716,5980362,6157422,5966795,5918213,5842197]
+text_growth_write_after_ns=[5794473,5768173,5693325,5787791,5728634,5813436,5722100,5713437,5941238,5838951,5894701,5944791,5888073,5909919,6007456,6090988,6030132,6099759,5998433,5847477,6058688]
+text_growth_unused_sep_before_ns=[3765129,3579294,3705151,3548790,3670185,3623447,3605758,3577796,3509724,3544889,3664736,3520933,3530973,3480146,3583928,3669815,3562808,3504547,3643408,3566907,3659614]
+text_growth_unused_sep_after_ns=[3639612,3658911,3605200,3598638,3594225,3679852,3593186,3557498,3545092,3591585,3594613,3530667,3419808,3550414,3554611,3517836,3630566,3590430,3540235,3605488,3556408]
+text_growth_json_encode_before_ns=[39554566,40049750,41663172,40224041,39166221,40627787,44480479,41535623,41063540,40402490,40243566,39643084,40394059,40869206,40160141,39636347,39229162,40440546,39225432,39798620,40347778]
+text_growth_json_encode_after_ns=[38544790,39192075,40881155,39376219,38933074,40627828,40781154,40234481,40525811,40610966,39221008,38660471,40400857,40187075,39223670,39128106,38928342,39450195,38394800,38998769,38898661]
+text_growth_json_decode_before_ns=[35897432,35831845,36312783,37637433,37361600,37098986,37403960,36247365,35352589,35741194,36825259,36351177,36530688,36863073,36103194,36550956,36820274,35759568,35274631,35954050,36028713]
+text_growth_json_decode_after_ns=[34936089,34930590,35154215,35274614,35891723,35929875,35609808,35038525,33350322,33493300,36177619,36051178,35170232,35017408,35055889,35412454,35520329,34890431,33356526,33555867,35089164]
+
+# Percent conversion text borrowing [M], 2026-11-02.
+# Baseline de6e75f versus its percent.rs arena-slice refactor, Rust 1.99.0,
+# release mm-cli features, whole fresh processes, CPU 2, no concurrent builds/tests.
+# Three warmups, 21 alternating samples per binary; all independent output/assertion
+# checks pass. RSS: three additional /usr/bin/time -f %M runs per binary.
+# Recorded sources below are standalone Python programs run by `mm run FILE`.
+# Durations include startup and assertions, not isolated formatting throughput.
+# Normal and GC-stressed differential reports match separately (GC modes consume
+# different fuel). Large-case assertions also pass independently on CPython 3.14.
+# Short formats unchanged; 100k builtin fields -8.8%, 1000 custom fields -10.5%.
+# Truncated Unicode -94.4%, bytes -70.1%, custom Unicode -94.9%; whole Unicode
+# -18.1%. Peak RSS changes are small; input construction dominates these fixtures.
+short source= "for _ in range(20000):\n    text = 'user=%s id=%08d rate=%.2f' % ('é', -17, 1.25)\nassert text == 'user=é id=-0000017 rate=1.25'\n"
+short before [19472358, 19411368, 19288279, 20261109, 20493477, 19837551, 19639264, 21507274, 20860338, 19559011, 19516268, 19043184, 19332937, 19441888, 19228276, 19495839, 19314472, 19406843, 19271532, 19545028, 19434447] median_ms= 19.472358
+short after [19681193, 19315331, 20343102, 28318222, 20032202, 19365297, 19599928, 19598510, 20017043, 19196768, 19441757, 19278716, 19540631, 19498975, 19528314, 19907704, 19150541, 19335951, 19317738, 19274746, 19414225] median_ms= 19.498975
+short /tmp/mm-percent-pieces-baseline rss_kib= [6452, 6344, 6456]
+short target/release/mm rss_kib= [6452, 6424, 6332]
+builtin source= "fmt = '%s/' * 100000\ntext = fmt % (('abc',) * 100000)\nassert len(text) == 400000 and text.startswith('abc/abc/') and text.endswith('abc/abc/')\nprint(len(text))\n"
+builtin before [10164599, 10158195, 9932974, 9966693, 10038943, 10120256, 10063152, 10385966, 10089645, 10266193, 10168752, 10033953, 10165241, 10208514, 10093998, 10116006, 9954991, 9922614, 10101314, 10293284, 10184897] median_ms= 10.116006
+builtin after [9166157, 9110914, 9131610, 9122308, 9174698, 9184188, 9336781, 9229711, 9339763, 9336905, 9350485, 9334423, 9369531, 9265297, 9334809, 9253871, 9106257, 9122748, 9197631, 9225812, 9458281] median_ms= 9.229711
+builtin /tmp/mm-percent-pieces-baseline rss_kib= [6332, 6300, 6292]
+builtin target/release/mm rss_kib= [6392, 6484, 6448]
+custom source= "calls = 0\nclass Text:\n    def __str__(self):\n        global calls\n        calls += 1\n        return 'abc'\nfmt = '%s/' * 1000\ntext = fmt % ((Text(),) * 1000)\nassert text == 'abc/' * 1000 and calls == 1000\nprint(len(text), calls)\n"
+custom before [26179677, 26216281, 26167500, 26195342, 26085607, 26476683, 26181193, 26444651, 26158789, 26225433, 25639189, 26969419, 26325306, 26393959, 26397686, 27009783, 26333106, 26450430, 26124235, 25676147, 25906410] median_ms= 26.216281
+custom after [23418550, 23539805, 23467908, 23453761, 23317868, 23538854, 23525185, 23323400, 23452379, 23412745, 22963890, 23209795, 23758331, 23551917, 23543349, 23899638, 23393276, 23187048, 23206274, 22821779, 23487066] median_ms= 23.452379
+custom /tmp/mm-percent-pieces-baseline rss_kib= [4352, 4244, 4276]
+custom target/release/mm rss_kib= [4252, 4176, 4220]
+rejected-char source= "data = b'x' * 8388608\ntry:\n    b'%c' % data\nexcept TypeError as exc:\n    assert str(exc) == '%c requires an integer in range(256) or a single byte, not a bytes object of length 8388608'\n    print('rejected')\nelse:\n    raise AssertionError('accepted')\n"
+rejected-char before [8557215, 8582246, 8795682, 8582138, 8626794, 8479940, 8533116, 8543738, 8574469, 8701944, 8589518, 8797349, 8967155, 9121104, 8899793, 8750251, 8620489, 8780238, 8559767, 9054517, 8684931] median_ms= 8.626794
+rejected-char after [8560988, 8620865, 8743550, 8583588, 8775214, 8764690, 8665991, 8963146, 8501404, 8643957, 8714607, 8699884, 9127509, 9003838, 8625849, 8684833, 8707997, 8672955, 8815875, 9043491, 8705992] median_ms= 8.705992
+rejected-char /tmp/mm-percent-pieces-baseline rss_kib= [20464, 20576, 20500]
+rejected-char target/release/mm rss_kib= [20704, 20592, 20552]
+truncated-string source= "data = 'é🙂Z' * 1048576\nfor _ in range(32):\n    text = '%9.2s' % data\n    assert text == '       é🙂'\n"
+truncated-string before [163850385, 164856596, 170846347, 164779169, 166465582, 172807655, 167909666, 162842404, 165620428, 162905928, 163907162, 164157982, 164534992, 164290491, 165500507, 164742817, 164900176, 163435368, 164285100, 163468212, 164079572] median_ms= 164.534992
+truncated-string after [9377444, 8291046, 9213069, 8447084, 11821474, 11640088, 9265042, 8316688, 9298806, 8280927, 9481820, 9372353, 9447668, 8557622, 9504450, 9097146, 9290571, 8194689, 9346962, 8562352, 8783915] median_ms= 9.265042
+truncated-string /tmp/mm-percent-pieces-baseline rss_kib= [18728, 18772, 18552]
+truncated-string target/release/mm rss_kib= [18508, 18464, 18500]
+truncated-bytes source= "data = b'\\x00Zxy' * 2097152\nfor _ in range(32):\n    text = b'%-9.3b' % data\n    assert text == b'\\x00Zx      '\n"
+truncated-bytes before [31106588, 30541453, 31391577, 30847170, 31433225, 31795696, 32395247, 31243170, 31599042, 31072463, 31647726, 31794419, 32562832, 31354732, 31438446, 31145840, 31528958, 30753031, 31120047, 30699776, 31438746] median_ms= 31.391577
+truncated-bytes after [9238928, 8584420, 9481863, 8853775, 9908180, 9240011, 9716529, 9137859, 9553617, 8944864, 10061971, 9560465, 10317499, 9301475, 9591487, 9129739, 9669695, 8926911, 9387822, 8698536, 9548527] median_ms= 9.387822
+truncated-bytes /tmp/mm-percent-pieces-baseline rss_kib= [20920, 20704, 20548]
+truncated-bytes target/release/mm rss_kib= [20668, 20656, 20620]
+whole-string source= "data = 'é🙂Z' * 262144\nfor _ in range(16):\n    text = '%s' % data\n    assert len(text) == 786432 and text.startswith('é🙂Z') and text.endswith('é🙂Z')\n"
+whole-string before [129814549, 128533387, 127675856, 129869961, 129529883, 126170087, 128182277, 125392438, 124125112, 124046066, 129153169, 127786052, 125777952, 124195269, 126350349, 124843299, 126127929, 124334854, 122467512, 123870197, 126047103] median_ms= 126.127929
+whole-string after [106700326, 106119709, 106795507, 106125486, 104441709, 102701147, 102740636, 98955763, 100856298, 100634914, 100317694, 101861362, 104513726, 103897588, 103320255, 104375660, 103547664, 103341926, 100854934, 101772215, 103036219] median_ms= 103.320255
+whole-string /tmp/mm-percent-pieces-baseline rss_kib= [11532, 11632, 11452]
+whole-string target/release/mm rss_kib= [11560, 11344, 11340]
+truncated-custom source= "data = 'é🙂Z' * 1048576\ncalls = 0\nclass Text:\n    def __str__(self):\n        global calls\n        calls += 1\n        return data\nfor _ in range(32):\n    text = '%9.2s' % Text()\n    assert text == '       é🙂'\nassert calls == 32\n"
+truncated-custom before [166278172, 160000854, 159132080, 159505393, 161189937, 162723314, 162325191, 163862305, 160707273, 160931798, 159471228, 157804409, 157871475, 160044588, 158811416, 159704622, 160976322, 157862437, 156433497, 155225841, 157819161] median_ms= 159.704622
+truncated-custom after [9035319, 8000751, 8213326, 7532453, 8609274, 7827180, 8825859, 7927667, 8422192, 7545302, 9031029, 8104893, 8709176, 7795986, 8743927, 7884635, 8621836, 7935252, 8514099, 7850770, 10600776] median_ms= 8.213326
+truncated-custom /tmp/mm-percent-pieces-baseline rss_kib= [18780, 18764, 18812]
+truncated-custom target/release/mm rss_kib= [18464, 18524, 18384]
+
+# [M] Admitted in-record reclamation workspace, 2026-11-03
+# Before: 660d240; after: this reclamation phase. Rust 1.99.0 release, CPU 2.
+# Public Session::start only: compilation/setup/check/snapshot/restore/reset excluded.
+# Three alternating-order process pairs; three warmup cells + 21 samples per process.
+# Every process verifies values and snapshot/restore/reset; traceback fixtures also
+# verify original source lines after reraising. No host callbacks or parking in timing.
+# These fixtures mainly reclaim trailing records after warmup; not a latency bound
+# for arbitrary interior compaction or all persistent sessions. No RSS claim.
+# Build and select the facade rlib as documented in bench/latency.rs, then compile
+# the driver below with rustc --edition=2024 -O -C panic=abort and that --extern.
+# Run: taskset -c 2 DRIVER N KIND (N=0,1000,100000; kinds below).
+# Budget controls: MEMORY_MIB=3,4,8 with N=32, each kind, with and without STRESS=1.
+# All 24 budget controls passed. Budget/stress environment variables unset for timings.
+# BEGIN RECLAMATION DRIVER
+use micro_monty::{Engine, EngineConfig, Progress, Session};
+use std::time::Instant;
+
+fn complete(progress: Progress) {
+    assert!(matches!(progress, Progress::Complete(_)), "{progress:?}");
+}
+
+fn main() {
+    let args: Vec<_> = std::env::args().collect();
+    let n: usize = args[1].parse().unwrap();
+    let kind = &args[2];
+    let mut config = EngineConfig::default();
+    if let Ok(mib) = std::env::var("MEMORY_MIB") {
+        config.limits.memory = mib.parse::<u64>().unwrap() << 20;
+    }
+    let stress = std::env::var_os("STRESS").is_some();
+    let engine = Engine::new(config);
+    let mut session = Session::new(&engine).unwrap();
+    session.set_last_expr_value(false);
+    session.set_gc_stress(stress);
+    let obsolete = engine.compile("def obsolete(): return 123", "obsolete.py").unwrap();
+    complete(session.start(&obsolete));
+    let (setup, check) = match kind.as_str() {
+        "instances" => (
+            format!("class C: pass\nitems = [C() for _ in range({n})]\nfor i, x in enumerate(items):\n    x.a = i\n    x.b = i * 3\ndel obsolete"),
+            format!("assert len(items) == {n}\nassert all(x.a == i and x.b == i * 3 for i, x in enumerate(items))"),
+        ),
+        "functions" => (
+            format!("def make(i):\n    def f(): return i * 3 + 7\n    return f\nitems = [make(i) for i in range({n})]\ndel obsolete"),
+            format!("assert len(items) == {n}\nassert all(f() == i * 3 + 7 for i, f in enumerate(items))"),
+        ),
+        "tracebacks" => (
+            format!("items = []\ndef fail(i):\n    raise ValueError(i)\nfor i in range({n}):\n    try:\n        fail(i)\n    except ValueError as e:\n        items.append(e)\ndel obsolete"),
+            format!("assert len(items) == {n}\nassert all(e.args[0] == i for i, e in enumerate(items))"),
+        ),
+        "tuples" => (
+            format!("items = [(i, i * 3 + 7) for i in range({n})]\ndel obsolete"),
+            format!("assert len(items) == {n}\nassert all(x == (i, i * 3 + 7) for i, x in enumerate(items))"),
+        ),
+        _ => panic!("unknown fixture"),
+    };
+    complete(session.start(&engine.compile(&setup, "setup.py").unwrap()));
+    let churn = engine.compile(if kind == "instances" {
+        "temp = C()\ntemp.transient = 13\ndel temp"
+    } else { "pass" }, "churn.py").unwrap();
+    for sample in 0..24 {
+        let start = Instant::now();
+        complete(session.start(&churn));
+        let ns = start.elapsed().as_nanos();
+        if sample >= 3 {
+            println!("[M] kind={kind} n={n} sample={} start_ns={ns}", sample - 3);
+        }
+    }
+    let check = engine.compile(&check, "check.py").unwrap();
+    complete(session.start(&check));
+    let image = session.snapshot().unwrap();
+    println!("[M] snapshot_bytes={}", image.len());
+    drop(session);
+    let mut session = engine.restore(&image).unwrap();
+    session.set_gc_stress(stress);
+    complete(session.start(&check));
+    if kind == "tracebacks" && n != 0 {
+        let reraised = engine.compile("raise items[-1]", "reraise.py").unwrap();
+        let Progress::Error(error) = session.start(&reraised) else { panic!("missing error") };
+        assert_eq!(error.type_name, "ValueError");
+        assert!(error.traceback.contains("raise ValueError(i)"), "{}", error.traceback);
+        assert!(error.traceback.contains("fail(i)"), "{}", error.traceback);
+    }
+    session.reset().unwrap();
+    complete(session.start(&engine.compile("assert 6 * 7 == 42", "reset.py").unwrap()));
+}
+# END RECLAMATION DRIVER
+{"kind":"tuples","n":0,"samples_ns":{"before":[37102,37574,34646,35399,49105,49126,34665,33452,63980,34294,34345,35327,34703,34277,34240,34664,48783,48964,34314,34250,34405,34692,35332,33191,33919,33726,34486,33738,35575,33964,54817,33593,34034,33857,34007,34665,33941,34111,34150,34228,34844,34419,35591,41816,35146,33719,34226,34177,33991,34491,34442,34332,34386,34245,34159,34335,34236,34437,34373,34328,34253,34960,34716],"after":[32897,35588,32664,33294,33645,33406,33159,33459,33204,38513,33151,50516,33642,33407,33311,33143,33329,32958,33382,33199,33463,31879,33858,31199,33403,33274,79749,33669,30716,30310,53285,33689,33630,33179,38029,33122,33391,33083,31775,33553,33267,33237,56147,34656,53445,39086,33451,33645,34402,38092,30991,47241,33451,34546,33614,33907,35792,48298,47946,33642,33554,33817,33693]},"median_ms":{"before":0.034373,"after":0.033463},"snapshot_bytes":{"before":104884,"after":104884}}
+{"kind":"tuples","n":1000,"samples_ns":{"before":[43078,44411,42045,45782,46119,43326,43074,43304,43013,43074,42920,43269,43184,43299,46284,61931,42700,43189,42782,42809,44314,45971,46844,45172,44186,43434,42416,41985,41989,41626,41601,41509,41531,42168,41942,41643,41766,41434,41497,41456,41527,46059,44946,47070,46010,44273,42950,42467,42415,41855,41675,41647,41477,41572,58442,41750,41703,41733,41651,41725,41686,41682,41698],"after":[51809,56222,44132,42143,55419,47640,70807,40994,60518,41714,40718,55332,40138,40286,40817,40320,42246,40752,40420,40544,55878,40485,42650,87860,42949,41855,45317,41945,41702,41487,42770,41358,199022,41447,41321,41108,55679,56720,40819,56277,42916,42358,43153,43587,41603,41364,41217,41136,41052,41070,42402,41180,40730,40910,40543,56906,40882,40876,40883,40769,40972,40850,40747]},"median_ms":{"before":0.0427,"after":0.041487},"snapshot_bytes":{"before":137087,"after":137087}}
+{"kind":"tuples","n":100000,"samples_ns":{"before":[1685409,1233432,1462930,1438733,1485965,1422200,1160922,1359192,1543411,1091887,1118365,1373050,1447363,1512151,1512555,1514856,1505624,1422376,1459693,1422660,1382554,1216020,1212348,1533253,1087501,1094452,1176650,1534987,1107886,1054575,1241948,1281244,1369270,1207914,1441389,1062664,1253260,1463432,1525522,1534796,1047395,1109907,1113546,1257504,1068066,1066262,1147000,1230491,1083064,1049804,1199759,1061066,1046353,1027225,1024042,1021747,1005849,1072255,1078340,1035866,1033717,1122002,1036881],"after":[1486728,1624554,1286096,1287712,1167298,1109816,1195111,1251820,1137452,1472709,1502910,1139273,1063482,1091059,1165953,1109363,1062514,1126241,1096370,1040980,1119943,1093936,1109710,1060941,1060398,1064459,1127219,1157402,1028537,1064532,1008843,1013344,1014668,1088350,1033759,1019598,1072696,1117312,1076730,1078423,1099057,1196164,900575,953236,944988,921525,910016,1007542,938982,952255,934524,1088221,1211216,1132771,1152407,1108287,1101325,1033256,1000149,910568,920176,954075,1103293]},"median_ms":{"before":1.212348,"after":1.08835},"snapshot_bytes":{"before":3553565,"after":3553565}}
+{"kind":"instances","n":0,"samples_ns":{"before":[58725,63141,65377,42933,75008,39801,39754,39516,40067,39033,39244,49758,43997,44005,38668,38717,38898,38785,38603,38782,43404,52609,55991,56271,41736,44842,39543,40118,39975,39556,39648,60894,39906,39545,39117,39016,39256,39342,39156,39060,38978,38926,52479,57276,55820,42254,40233,39846,45138,62672,40022,45233,44979,40271,39186,39065,39539,38987,39200,43475,39633,38896,38984],"after":[51123,55806,128649,39218,64081,37768,36901,41569,38393,40957,36788,36696,36567,36565,36581,36448,36627,36887,36707,36582,36606,87656,56802,52947,43057,34736,36752,41652,37080,37083,32907,36672,36898,41583,38622,41303,177451,63233,37145,36570,36380,36465,48665,51283,53711,40810,43172,36975,57709,36465,37329,41858,36177,37591,36538,37252,35877,36062,36972,36656,37002,36411,36965]},"median_ms":{"before":0.039846,"after":0.03708},"snapshot_bytes":{"before":105297,"after":105297}}
+{"kind":"instances","n":1000,"samples_ns":{"before":[173704,135709,111712,81233,73009,60390,60758,60829,82202,91292,72942,71828,72033,70979,70526,71715,70927,82464,71595,70751,70627,78769,82456,76616,62269,60421,59724,59114,59408,58775,58789,59421,79472,59199,59014,58624,58566,58802,58615,58838,58218,58551,73575,78980,77672,63252,62407,82664,61137,59862,61191,64595,61679,60411,60859,60421,61174,59769,60152,61983,106840,67222,59617],"after":[121598,111763,91772,96020,89472,86731,70903,53749,53681,63318,87970,63324,52976,52981,63176,63950,63295,63454,53203,74905,64378,104518,107942,76161,74489,78673,67225,67421,85329,88859,97110,93914,73415,73653,72789,88102,78927,66092,63989,63266,82845,62442,71881,71989,50350,53616,56803,52809,52280,52110,72937,52140,55162,52312,52922,51960,48174,51605,66474,62678,52717,52109,97149]},"median_ms":{"before":0.062269,"after":0.066092},"snapshot_bytes":{"before":169836,"after":169836}}
+{"kind":"instances","n":100000,"samples_ns":{"before":[2693520,2670057,2726583,2561781,2671499,2563103,2762528,2695132,2591266,2501390,2584884,2598662,2550448,2690135,2595131,2661359,2825924,2582607,2563642,2565178,2672372,2719253,2653076,2618898,2627057,2566789,2616715,2594020,2499742,2621675,2592772,2506362,2684524,3004917,2798891,2974105,2571565,2560559,2677188,2712366,2711379,2694504,3514805,3428476,3684049,3561825,3787227,4720114,3564530,3037122,3352769,3327173,2954182,3365497,3131713,3111266,2979975,3017083,3083480,3004682,3011937,3508781,3368391],"after":[2071377,1961385,2019047,2025384,1772841,1769297,1822091,1780934,1775760,1804150,1861542,1795872,1866201,1828199,1896851,1753888,1809791,1809652,1796250,1874082,1809915,1875022,1910476,1821969,1925630,1851226,1793855,1828603,1778195,1766934,1760547,1834856,1784821,1833026,1785677,1814238,1768333,1782209,1824747,1782790,1841089,1718218,2464294,2921811,2514869,2397471,2276984,2449880,2375066,3037070,3040349,2740637,2244364,2343030,2335227,2391083,2125843,2016103,2082092,2142789,2292064,2228130,2245196]},"median_ms":{"before":2.694504,"after":1.861542},"snapshot_bytes":{"before":6754426,"after":6754426}}
+{"kind":"functions","n":0,"samples_ns":{"before":[36044,53945,50260,35220,50768,34970,35246,34732,36309,35328,34551,67029,52976,34791,34636,34649,34643,34877,35119,35042,35048,36092,35695,33544,34987,33675,36082,34437,32283,49273,145396,56388,35443,34479,34092,33923,81667,35089,34303,34750,34034,35040,56436,36321,34221,51277,35541,39409,34682,34527,34493,34296,51833,35394,34584,34631,34426,34271,34188,34355,63408,49300,34065],"after":[39618,35413,33321,34310,33769,33484,33368,33555,33458,33615,33353,33259,33375,33303,33492,38111,33845,33612,33470,33349,33379,68433,247929,35612,34165,35808,33464,50622,33139,33247,47864,60778,61565,36036,33719,77713,33159,32819,37383,47188,49984,35216,40275,67915,44642,41532,43906,37309,38387,42597,40554,41600,42100,41256,41848,40406,42153,42009,168001,43459,40416,42162,40724]},"median_ms":{"before":0.03504,"after":0.037383},"snapshot_bytes":{"before":105766,"after":105766}}
+{"kind":"functions","n":1000,"samples_ns":{"before":[93304,100282,103790,102306,100724,119622,100333,102552,100024,99447,99232,98956,144643,117645,100140,99664,99268,99195,100014,99875,99861,160264,112713,79867,78857,76844,109723,91562,76617,76962,106220,91285,100097,76674,81390,76581,76405,76625,76430,76513,76817,76878,104960,81083,78743,79420,77842,77424,76903,104334,180125,96781,78270,76990,77059,77137,92809,77728,74397,76979,76688,76648,107952],"after":[67402,68163,72006,68925,70891,68857,71510,90576,67999,69103,103067,69652,70516,68608,83792,67536,70830,69886,92676,71666,69308,100738,68327,67833,67728,68016,68427,80978,67961,68494,68344,67885,81991,81795,67764,68099,67478,67607,81286,67554,67774,87505,65606,67135,82528,67097,67599,67129,122571,72646,89373,67567,67844,89070,67452,67574,84044,73713,69904,84708,100860,87408,72046]},"median_ms":{"before":0.092809,"after":0.069103},"snapshot_bytes":{"before":218020,"after":218020}}
+{"kind":"functions","n":100000,"samples_ns":{"before":[5489171,6685201,6123290,6299121,6289975,6372283,6455513,6625678,6392395,6011543,6353905,6232581,6169748,6119064,6035763,6379354,5744677,5388576,5775064,6433603,6232726,5707425,5598821,5505325,5297534,5301217,5235277,5650369,5448913,5237367,5268790,5415771,5393959,5253695,5181926,5320808,5683849,5455206,5282508,5500759,5294147,5269691,5365755,5261628,5232024,5363980,5232871,5247248,5323659,5227347,5205891,5286316,5199154,5428583,5609150,5320990,5475860,5335061,5256371,5576432,5516372,5322380,5542985],"after":[4096162,3970289,4709478,4527033,3921726,4042867,4208273,4400985,4233823,4077240,4112936,4439011,4571473,4512219,4114457,4295690,4279934,4216853,3958628,4449565,4164763,4293940,4594759,4424633,4022818,4013870,3896067,4322574,3657657,3642247,3838781,3900602,4062409,4149369,4075686,4046384,4147095,3689664,3851117,3911725,3965048,4226524,3730229,3662028,4117339,3730228,3909155,3675913,3652524,3649431,3718760,3576291,3562137,3592731,3580985,3523165,3545496,3563094,3666795,3559050,3604697,3599903,3539294]},"median_ms":{"before":5.455206,"after":3.970289},"snapshot_bytes":{"before":11554623,"after":11554623}}
+{"kind":"tracebacks","n":0,"samples_ns":{"before":[33637,34746,32677,34109,33946,34265,34169,33961,34020,34271,34254,61268,34358,34114,33999,34288,34165,34177,34383,34026,34103,35548,40751,35181,34653,34667,34105,34113,34021,34161,121999,35055,53241,34312,34289,40554,34793,34159,34033,34084,34034,33916,36185,37477,34197,34974,35478,34736,61463,35143,32650,32566,34443,32667,34669,33131,43786,42387,39096,34602,34863,34718,34472],"after":[33514,34155,32054,33157,33372,54621,32950,33150,32880,32970,32776,33316,33540,32697,32999,33193,32809,32849,33032,33036,32823,34558,36443,36760,56496,33793,39111,34662,33824,33769,33608,33714,33670,33780,33487,33514,33543,33566,33787,33730,33761,33577,39810,40673,34665,34176,33846,34013,34081,34044,33922,33926,33743,34055,33876,33572,34005,33852,33932,34240,33888,33793,33722]},"median_ms":{"before":0.034289,"after":0.033761},"snapshot_bytes":{"before":105938,"after":105938}}
+{"kind":"tracebacks","n":1000,"samples_ns":{"before":[234317,145188,122768,126796,121856,122180,122450,122063,137356,121641,126894,121416,121613,120603,121614,136342,120820,120379,121675,121345,121339,122361,143871,121560,120976,122316,122614,122651,121972,122406,138195,122020,142587,124623,123229,207941,140344,120572,121927,121773,121521,122123,122565,124106,139349,121710,120200,120295,121210,122396,120645,122127,136685,121619,120359,121408,121195,121144,120014,137308,135895,126345,122100],"after":[125424,123814,136942,173641,119137,100089,98254,96853,95064,95614,94313,116348,95587,96037,93184,92413,92771,92684,93407,97839,108641,116198,111276,111489,108368,109243,126123,155508,121491,122516,123456,120006,178799,153399,122287,122310,121585,120199,119927,120940,119253,121986,105042,85059,84747,84585,85221,85225,87177,86447,85710,102559,84876,86298,85110,86890,86600,86694,86661,85943,86872,102024,85913]},"median_ms":{"before":0.1221,"after":0.100089},"snapshot_bytes":{"before":275128,"after":275128}}
+{"kind":"tracebacks","n":100000,"samples_ns":{"before":[14796932,14466344,14356691,14590000,14552920,14400625,14571401,14872634,14355373,14701958,14510877,15794477,17224380,15904391,15390329,16747566,14168592,14582624,17023590,14804867,14382324,13582699,13522712,13699956,14252084,13773215,14058484,13653577,13352178,13850889,14847432,15011225,14572085,13106591,13298457,13670815,13695272,13445953,13466706,14520598,16493812,15635210,14606616,14213978,13759575,17478205,14746116,13388052,13196515,13438227,13346826,13627362,14073048,13857639,13465291,13363229,13184396,13369137,13297426,13114770,13214349,13631675,13259570],"after":[7368462,7444912,7827969,7905273,7650447,7712089,7829115,7848193,7742896,7726045,7876772,8295623,8084945,7988453,7867725,7951953,7700307,7715470,7571389,7577305,7734293,8085706,7913588,8318620,7838140,7967814,7800754,7843759,7818989,7849454,8067251,8145951,7918448,7878526,7755542,7730170,7824927,8110475,7835567,7904641,7808023,7850938,7721787,7379725,7443993,7753057,7607132,7720944,7667360,7633836,7722291,7753635,7663326,7926833,7621076,7627193,7677422,7582924,7678120,7794971,7598145,7666440,7619747]},"median_ms":{"before":14.168592,"after":7.755542},"snapshot_bytes":{"before":17204562,"after":17204562}}
+# cargo xtask check: every gate passed; 997 durability runs / 66784 fresh-process restores.
+# hello bytes: native=2213952 wasip1=1815477 unknown-unknown=1923924

@@ -1,0 +1,9 @@
+c0303e8ab781ca8ceec9d00c6bdd8ead09586e80
+rustc 1.99.0 (b940084d7 2026-09-28)
+ProductName:		macOS
+ProductVersion:		27.2
+BuildVersion:		26B123
+16e4696df15afcffeb21a40ff8c7791cd08c5a8ac19b6cff54d254cbfaf05bb4  target/isolation/release/iso-harness
+549d7d19bc0f961625f63185120481a8c0373002cb960d6e6982f252ba4e2a56  target/isolation/wasm32-unknown-unknown/release/mm_wasm_guest.wasm
+62b4b87a6952b0fb358569ae26e331d397e68bb67f45ef30e67110080a682f9c  target/isolation/wasm32-wasip1/release/mm_wasm_guest.wasm
+22:25  up 8 days,  8:10, 2 users, load averages: 7.70 14.98 12.66

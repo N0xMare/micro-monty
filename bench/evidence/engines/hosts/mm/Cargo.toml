@@ -1,0 +1,30 @@
+[package]
+name = "engines-mm"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+common = { package = "engines-common", path = "../common" }
+micro-monty = { path = "../../../../../crates/micro-monty" }
+
+# The repository's release profile, with its per-crate overrides (Cargo reads
+# profiles from the root manifest only).
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.release.package.mm-parse]
+opt-level = "z"
+
+[profile.release.package.mm-compile]
+opt-level = "s"
+
+[profile.release.package.micro-monty]
+opt-level = "z"
+strip = true

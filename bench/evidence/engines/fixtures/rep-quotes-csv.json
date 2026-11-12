@@ -1,0 +1,131 @@
+{
+ "calls": [
+  {
+   "args": {
+    "symbol": "ACME"
+   },
+   "name": "get_quote",
+   "ok": {
+    "change_pct": 1.24,
+    "currency": "USD",
+    "price": 182.35,
+    "symbol": "ACME"
+   }
+  },
+  {
+   "args": {
+    "symbol": "CYDN"
+   },
+   "name": "get_quote",
+   "ok": {
+    "change_pct": 12.5,
+    "currency": "USD",
+    "price": 8.04,
+    "symbol": "CYDN"
+   }
+  },
+  {
+   "args": {
+    "symbol": "GLBX"
+   },
+   "name": "get_quote",
+   "ok": {
+    "change_pct": -2.81,
+    "currency": "USD",
+    "price": 47.02,
+    "symbol": "GLBX"
+   }
+  },
+  {
+   "args": {
+    "symbol": "INIT"
+   },
+   "name": "get_quote",
+   "ok": {
+    "change_pct": 0.05,
+    "currency": "USD",
+    "price": 310.9,
+    "symbol": "INIT"
+   }
+  },
+  {
+   "args": {
+    "symbol": "OSCP"
+   },
+   "name": "get_quote",
+   "ok": {
+    "change_pct": 0.0,
+    "currency": "USD",
+    "price": 64.48,
+    "symbol": "OSCP"
+   }
+  },
+  {
+   "args": {
+    "symbol": "STRK"
+   },
+   "name": "get_quote",
+   "ok": {
+    "change_pct": -1.02,
+    "currency": "USD",
+    "price": 221.13,
+    "symbol": "STRK"
+   }
+  },
+  {
+   "args": {
+    "symbol": "UMBR"
+   },
+   "name": "get_quote",
+   "ok": {
+    "change_pct": -0.66,
+    "currency": "USD",
+    "price": 12.77,
+    "symbol": "UMBR"
+   }
+  },
+  {
+   "args": {
+    "symbol": "WAYN"
+   },
+   "name": "get_quote",
+   "ok": {
+    "change_pct": 3.9,
+    "currency": "USD",
+    "price": 95.5,
+    "symbol": "WAYN"
+   }
+  },
+  {
+   "args": {
+    "content": "symbol,price,change\nACME,182.35,+1.24%\nCYDN,8.04,+12.50%\nGLBX,47.02,-2.81%\nINIT,310.90,+0.05%\nOSCP,64.48,+0.00%\nSTRK,221.13,-1.02%\nUMBR,12.77,-0.66%\nWAYN,95.50,+3.90%\n",
+    "path": "/out/quotes.csv"
+   },
+   "name": "write_file",
+   "ok": {
+    "bytes_written": 167,
+    "path": "/out/quotes.csv"
+   }
+  }
+ ],
+ "category": "report-formatting",
+ "stdout": "symbol,price,change\nACME,182.35,+1.24%\nCYDN,8.04,+12.50%\nGLBX,47.02,-2.81%\nINIT,310.90,+0.05%\nOSCP,64.48,+0.00%\nSTRK,221.13,-1.02%\nUMBR,12.77,-0.66%\nWAYN,95.50,+3.90%\n\n{'path': '/out/quotes.csv', 'bytes_written': 167}\n",
+ "task": "rep-quotes-csv",
+ "tools": [
+  {
+   "description": "Latest stock quote.",
+   "name": "get_quote",
+   "params": [
+    "symbol"
+   ]
+  },
+  {
+   "description": "Write (create or replace) a text file.",
+   "name": "write_file",
+   "params": [
+    "path",
+    "content"
+   ]
+  }
+ ]
+}

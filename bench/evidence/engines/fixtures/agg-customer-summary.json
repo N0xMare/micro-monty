@@ -1,0 +1,132 @@
+{
+ "calls": [
+  {
+   "args": {
+    "customer_id": 17
+   },
+   "name": "get_customer",
+   "ok": {
+    "country": "GB",
+    "email": "tara.okafor17@example.com",
+    "id": 17,
+    "name": "Tara Okafor",
+    "region": "North",
+    "signup_date": "2025-06-08",
+    "tier": "silver"
+   }
+  },
+  {
+   "args": {
+    "customer_id": 17
+   },
+   "name": "list_orders",
+   "ok": {
+    "next_cursor": null,
+    "orders": [
+     {
+      "currency": "USD",
+      "customer_id": 17,
+      "id": 1201,
+      "order_date": "2026-03-05",
+      "status": "completed",
+      "total": 806.4
+     },
+     {
+      "currency": "USD",
+      "customer_id": 17,
+      "id": 1080,
+      "order_date": "2026-01-20",
+      "status": "refunded",
+      "total": 462.37
+     },
+     {
+      "currency": "USD",
+      "customer_id": 17,
+      "id": 1086,
+      "order_date": "2025-12-10",
+      "status": "pending",
+      "total": 1769.3
+     },
+     {
+      "currency": "USD",
+      "customer_id": 17,
+      "id": 1179,
+      "order_date": "2025-11-22",
+      "status": "cancelled",
+      "total": 1518.3
+     },
+     {
+      "currency": "USD",
+      "customer_id": 17,
+      "id": 1264,
+      "order_date": "2025-11-10",
+      "status": "cancelled",
+      "total": 456.8
+     },
+     {
+      "currency": "USD",
+      "customer_id": 17,
+      "id": 1081,
+      "order_date": "2025-10-28",
+      "status": "completed",
+      "total": 46.15
+     },
+     {
+      "currency": "USD",
+      "customer_id": 17,
+      "id": 1072,
+      "order_date": "2025-10-18",
+      "status": "pending",
+      "total": 1725.66
+     }
+    ]
+   }
+  },
+  {
+   "args": {
+    "completed_total": 852.55,
+    "counts": {
+     "cancelled": 2,
+     "completed": 2,
+     "pending": 2,
+     "refunded": 1
+    },
+    "name": "Tara Okafor"
+   },
+   "name": "submit_answer",
+   "ok": "ok"
+  }
+ ],
+ "category": "api-db-aggregation",
+ "stdout": "{'name': 'Tara Okafor', 'counts': {'completed': 2, 'refunded': 1, 'pending': 2, 'cancelled': 2}, 'completed_total': 852.55}\nok\n",
+ "task": "agg-customer-summary",
+ "tools": [
+  {
+   "description": "Fetch one customer by id.",
+   "name": "get_customer",
+   "params": [
+    "customer_id"
+   ]
+  },
+  {
+   "description": "List orders, newest first, 25 per page. Optional filters.",
+   "name": "list_orders",
+   "params": [
+    "customer_id",
+    "status",
+    "since",
+    "until",
+    "cursor"
+   ]
+  },
+  {
+   "description": "Submit the final answer of this task. Call it once, at the end.",
+   "name": "submit_answer",
+   "params": [
+    "name",
+    "counts",
+    "completed_total"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+# [M] machine: AMD Ryzen 9 8945HS w/ Radeon 780M Graphics, nproc 16, Linux 7.0.0-42-generic; 2026-11-07; pinned with taskset -c 2
+# engine: micro-monty 0.0.0
+# wall clock per process (spawn to exit), 10 timed reps after 1 warm-up
+# program median_ms min_ms
+startup 1.1 1.1
+fib 16.0 15.8
+loop 43.1 43.0
+dict 68.4 68.0
+str 30.7 30.5
+json 67.2 66.8
+closure 29.9 29.7
+classes 62.0 61.7
+generators 118.3 117.2
+exceptions 55.2 54.8
+fmt 101.0 100.0
+sort 76.6 76.0
+interp 115.6 114.3

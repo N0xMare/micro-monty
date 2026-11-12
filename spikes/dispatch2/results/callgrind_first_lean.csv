@@ -1,0 +1,18 @@
+# First lean build (23 hot opcodes, no RETURN special-link check); mm and qjs rows as in callgrind.csv
+dispatch2,callfn,389339343
+dispatch2,closure,546343227
+dispatch2,dictint,359519819
+dispatch2,fib,247262989
+dispatch2,loop,951346860
+mm,callfn,680985253
+mm,closure,975026788
+mm,dictint,532745737
+mm,empty,10754936
+mm,fib,402470992
+mm,loop,1476405192
+qjs,callfn,504645803
+qjs,closure,539637964
+qjs,dictint,368729765
+qjs,empty,1508655
+qjs,fib,252342564
+qjs,loop,838401732

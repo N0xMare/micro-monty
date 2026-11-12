@@ -1,0 +1,456 @@
+{
+ "calls": [
+  {
+   "args": {
+    "limit": 10,
+    "offset": 0
+   },
+   "name": "list_accounts",
+   "ok": {
+    "accounts": [
+     {
+      "account_id": "A001",
+      "balance": 24548.33,
+      "currency": "GBP",
+      "opened": "2022-03-20",
+      "owner": "Omar Larsen",
+      "status": "active"
+     },
+     {
+      "account_id": "A002",
+      "balance": 18249.26,
+      "currency": "USD",
+      "opened": "2025-04-06",
+      "owner": "Ben Kim",
+      "status": "active"
+     },
+     {
+      "account_id": "A003",
+      "balance": 12271.34,
+      "currency": "EUR",
+      "opened": "2020-08-12",
+      "owner": "Ivan Novak",
+      "status": "active"
+     },
+     {
+      "account_id": "A004",
+      "balance": 11706.16,
+      "currency": "GBP",
+      "opened": "2022-01-14",
+      "owner": "Pia Haddad",
+      "status": "active"
+     },
+     {
+      "account_id": "A005",
+      "balance": 17972.83,
+      "currency": "USD",
+      "opened": "2023-07-27",
+      "owner": "Cara Silva",
+      "status": "active"
+     },
+     {
+      "account_id": "A006",
+      "balance": 4906.36,
+      "currency": "GBP",
+      "opened": "2020-04-19",
+      "owner": "Jade Okafor",
+      "status": "active"
+     },
+     {
+      "account_id": "A007",
+      "balance": 23001.4,
+      "currency": "USD",
+      "opened": "2021-06-21",
+      "owner": "Quinn Chen",
+      "status": "active"
+     },
+     {
+      "account_id": "A008",
+      "balance": 5614.08,
+      "currency": "EUR",
+      "opened": "2023-06-26",
+      "owner": "Dev Moreau",
+      "status": "active"
+     },
+     {
+      "account_id": "A009",
+      "balance": 5814.34,
+      "currency": "USD",
+      "opened": "2024-10-05",
+      "owner": "Kai Smith",
+      "status": "active"
+     },
+     {
+      "account_id": "A010",
+      "balance": 22740.77,
+      "currency": "GBP",
+      "opened": "2025-08-01",
+      "owner": "Rosa Garcia",
+      "status": "active"
+     }
+    ],
+    "total": 45
+   }
+  },
+  {
+   "args": {
+    "limit": 10,
+    "offset": 10
+   },
+   "name": "list_accounts",
+   "ok": {
+    "accounts": [
+     {
+      "account_id": "A011",
+      "balance": 15449.98,
+      "currency": "USD",
+      "opened": "2022-05-01",
+      "owner": "Eli Larsen",
+      "status": "active"
+     },
+     {
+      "account_id": "A012",
+      "balance": 6503.53,
+      "currency": "GBP",
+      "opened": "2023-10-24",
+      "owner": "Lena Kim",
+      "status": "active"
+     },
+     {
+      "account_id": "A013",
+      "balance": 2218.67,
+      "currency": "GBP",
+      "opened": "2022-08-30",
+      "owner": "Sam Novak",
+      "status": "active"
+     },
+     {
+      "account_id": "A014",
+      "balance": 13153.18,
+      "currency": "USD",
+      "opened": "2020-04-17",
+      "owner": "Fay Haddad",
+      "status": "closed"
+     },
+     {
+      "account_id": "A015",
+      "balance": 1244.28,
+      "currency": "USD",
+      "opened": "2022-11-15",
+      "owner": "Milo Silva",
+      "status": "active"
+     },
+     {
+      "account_id": "A016",
+      "balance": 11131.44,
+      "currency": "EUR",
+      "opened": "2024-03-31",
+      "owner": "Tara Okafor",
+      "status": "closed"
+     },
+     {
+      "account_id": "A017",
+      "balance": 2829.42,
+      "currency": "USD",
+      "opened": "2020-11-12",
+      "owner": "Gus Chen",
+      "status": "active"
+     },
+     {
+      "account_id": "A018",
+      "balance": 1839.22,
+      "currency": "USD",
+      "opened": "2025-07-22",
+      "owner": "Nina Moreau",
+      "status": "active"
+     },
+     {
+      "account_id": "A019",
+      "balance": 10279.0,
+      "currency": "GBP",
+      "opened": "2021-02-09",
+      "owner": "Ada Smith",
+      "status": "active"
+     },
+     {
+      "account_id": "A020",
+      "balance": 7170.13,
+      "currency": "USD",
+      "opened": "2022-06-25",
+      "owner": "Hana Garcia",
+      "status": "active"
+     }
+    ],
+    "total": 45
+   }
+  },
+  {
+   "args": {
+    "limit": 10,
+    "offset": 20
+   },
+   "name": "list_accounts",
+   "ok": {
+    "accounts": [
+     {
+      "account_id": "A021",
+      "balance": 21128.51,
+      "currency": "USD",
+      "opened": "2024-02-05",
+      "owner": "Omar Larsen",
+      "status": "active"
+     },
+     {
+      "account_id": "A022",
+      "balance": 8035.63,
+      "currency": "USD",
+      "opened": "2025-12-16",
+      "owner": "Ben Kim",
+      "status": "active"
+     },
+     {
+      "account_id": "A023",
+      "balance": 10960.98,
+      "currency": "GBP",
+      "opened": "2022-02-25",
+      "owner": "Ivan Novak",
+      "status": "closed"
+     },
+     {
+      "account_id": "A024",
+      "balance": 2532.0,
+      "currency": "USD",
+      "opened": "2025-02-15",
+      "owner": "Pia Haddad",
+      "status": "closed"
+     },
+     {
+      "account_id": "A025",
+      "balance": 6601.61,
+      "currency": "EUR",
+      "opened": "2024-10-12",
+      "owner": "Cara Silva",
+      "status": "active"
+     },
+     {
+      "account_id": "A026",
+      "balance": 4992.69,
+      "currency": "GBP",
+      "opened": "2020-03-10",
+      "owner": "Jade Okafor",
+      "status": "active"
+     },
+     {
+      "account_id": "A027",
+      "balance": 11113.75,
+      "currency": "EUR",
+      "opened": "2024-03-23",
+      "owner": "Quinn Chen",
+      "status": "frozen"
+     },
+     {
+      "account_id": "A028",
+      "balance": 18875.71,
+      "currency": "USD",
+      "opened": "2022-10-11",
+      "owner": "Dev Moreau",
+      "status": "active"
+     },
+     {
+      "account_id": "A029",
+      "balance": 3551.21,
+      "currency": "USD",
+      "opened": "2025-12-30",
+      "owner": "Kai Smith",
+      "status": "active"
+     },
+     {
+      "account_id": "A030",
+      "balance": 21240.66,
+      "currency": "USD",
+      "opened": "2025-09-24",
+      "owner": "Rosa Garcia",
+      "status": "active"
+     }
+    ],
+    "total": 45
+   }
+  },
+  {
+   "args": {
+    "limit": 10,
+    "offset": 30
+   },
+   "name": "list_accounts",
+   "ok": {
+    "accounts": [
+     {
+      "account_id": "A031",
+      "balance": 16237.45,
+      "currency": "GBP",
+      "opened": "2022-03-07",
+      "owner": "Eli Larsen",
+      "status": "active"
+     },
+     {
+      "account_id": "A032",
+      "balance": 4846.56,
+      "currency": "USD",
+      "opened": "2025-08-14",
+      "owner": "Lena Kim",
+      "status": "active"
+     },
+     {
+      "account_id": "A033",
+      "balance": 19605.48,
+      "currency": "GBP",
+      "opened": "2023-11-11",
+      "owner": "Sam Novak",
+      "status": "active"
+     },
+     {
+      "account_id": "A034",
+      "balance": 8419.55,
+      "currency": "USD",
+      "opened": "2021-05-24",
+      "owner": "Fay Haddad",
+      "status": "frozen"
+     },
+     {
+      "account_id": "A035",
+      "balance": 14021.49,
+      "currency": "GBP",
+      "opened": "2022-11-06",
+      "owner": "Milo Silva",
+      "status": "active"
+     },
+     {
+      "account_id": "A036",
+      "balance": 7244.8,
+      "currency": "USD",
+      "opened": "2022-10-01",
+      "owner": "Tara Okafor",
+      "status": "active"
+     },
+     {
+      "account_id": "A037",
+      "balance": 19547.67,
+      "currency": "EUR",
+      "opened": "2024-09-23",
+      "owner": "Gus Chen",
+      "status": "active"
+     },
+     {
+      "account_id": "A038",
+      "balance": 3364.22,
+      "currency": "USD",
+      "opened": "2021-09-07",
+      "owner": "Nina Moreau",
+      "status": "active"
+     },
+     {
+      "account_id": "A039",
+      "balance": 11102.25,
+      "currency": "GBP",
+      "opened": "2020-08-13",
+      "owner": "Ada Smith",
+      "status": "active"
+     },
+     {
+      "account_id": "A040",
+      "balance": 15026.16,
+      "currency": "EUR",
+      "opened": "2022-05-23",
+      "owner": "Hana Garcia",
+      "status": "active"
+     }
+    ],
+    "total": 45
+   }
+  },
+  {
+   "args": {
+    "limit": 10,
+    "offset": 40
+   },
+   "name": "list_accounts",
+   "ok": {
+    "accounts": [
+     {
+      "account_id": "A041",
+      "balance": 18079.52,
+      "currency": "USD",
+      "opened": "2021-06-10",
+      "owner": "Omar Larsen",
+      "status": "active"
+     },
+     {
+      "account_id": "A042",
+      "balance": 1250.57,
+      "currency": "USD",
+      "opened": "2021-07-27",
+      "owner": "Ben Kim",
+      "status": "active"
+     },
+     {
+      "account_id": "A043",
+      "balance": 23408.16,
+      "currency": "EUR",
+      "opened": "2020-07-20",
+      "owner": "Ivan Novak",
+      "status": "closed"
+     },
+     {
+      "account_id": "A044",
+      "balance": 332.25,
+      "currency": "USD",
+      "opened": "2020-12-10",
+      "owner": "Pia Haddad",
+      "status": "active"
+     },
+     {
+      "account_id": "A045",
+      "balance": 3687.45,
+      "currency": "USD",
+      "opened": "2022-06-20",
+      "owner": "Cara Silva",
+      "status": "active"
+     }
+    ],
+    "total": 45
+   }
+  },
+  {
+   "args": {
+    "active_usd_total": 205207.95,
+    "frozen": [
+     "A027",
+     "A034"
+    ]
+   },
+   "name": "submit_answer",
+   "ok": "ok"
+  }
+ ],
+ "category": "pagination",
+ "stdout": "fetched 45 of 45\nfrozen: ['A027', 'A034']\nactive USD total: 205207.95\nok\n",
+ "task": "page-accounts-offset",
+ "tools": [
+  {
+   "description": "List bank accounts, 10 per page. Pass the offset of the next page to continue.",
+   "name": "list_accounts",
+   "params": [
+    "offset",
+    "limit"
+   ]
+  },
+  {
+   "description": "Submit the final answer of this task. Call it once, at the end.",
+   "name": "submit_answer",
+   "params": [
+    "frozen",
+    "active_usd_total"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,28 @@
+# [M] machine: AMD Ryzen 9 8945HS w/ Radeon 780M Graphics, nproc 16, Linux 7.0.0-42-generic; 2026-11-06; pinned with taskset -c 2
+# engine: monty-runtime 1.4.0
+# wall clock per process (spawn to exit), 10 timed reps after 1 warm-up
+# program median_ms min_ms
+startup 1.7 1.6
+fib 68.6 67.9
+loop 241.0 238.5
+dict 129.0 128.0
+str 48.5 47.1
+json 163.5 162.3
+closure 127.9 126.9
+classes 320.6 316.0
+fmt 126.8 126.1
+sort 210.3 208.1
+interp 304.0 302.2
+# failed generators: generators on monty-runtime 1.4.0: expected `67499550000 138450000 299995 100`, got `` (exit status: 1): error:
+Traceback (most recent call last):
+  File "/home/me/ab/5349520/xtask/../bench/generators.py", line 6, in <module>
+    yield i
+    ~~~~~~~
+NotImplementedError: The monty syntax parser does not yet support yield expressions
+# failed exceptions: exceptions on monty-runtime 1.4.0: expected `33334 99995 25063333 100000 50000`, got `` (exit status: 1): error:
+Traceback (most recent call last):
+  File "/home/me/ab/5349520/xtask/../bench/exceptions.py", line 4, in <module>
+    class Invalid(ValueError):
+    ...<2 lines>...
+            self.code = code
+NotImplementedError: The monty syntax parser does not yet support class inheritance and metaclasses

@@ -1,0 +1,1130 @@
+{
+ "calls": [
+  {
+   "args": {
+    "account_id": "A001"
+   },
+   "name": "get_transactions",
+   "ok": [
+    {
+     "amount": -320.04,
+     "id": "A001-T01",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-04T14:00:00Z"
+    },
+    {
+     "amount": -291.03,
+     "id": "A001-T02",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-04T22:00:00Z"
+    },
+    {
+     "amount": -77.93,
+     "id": "A001-T03",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-07T08:00:00Z"
+    },
+    {
+     "amount": 245.8,
+     "id": "A001-T04",
+     "merchant": "Refund",
+     "timestamp": "2026-02-11T01:00:00Z"
+    },
+    {
+     "amount": -393.25,
+     "id": "A001-T05",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-11T16:00:00Z"
+    },
+    {
+     "amount": 159.18,
+     "id": "A001-T06",
+     "merchant": "Payroll",
+     "timestamp": "2026-02-14T12:00:00Z"
+    },
+    {
+     "amount": -170.17,
+     "id": "A001-T07",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-14T20:00:00Z"
+    },
+    {
+     "amount": -206.82,
+     "id": "A001-T08",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-18T06:00:00Z"
+    },
+    {
+     "amount": -21.4,
+     "id": "A001-T09",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-19T07:00:00Z"
+    },
+    {
+     "amount": -10.04,
+     "id": "A001-T10",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-22T00:00:00Z"
+    },
+    {
+     "amount": -258.28,
+     "id": "A001-T11",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-24T12:00:00Z"
+    },
+    {
+     "amount": -220.71,
+     "id": "A001-T12",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-26T04:00:00Z"
+    }
+   ]
+  },
+  {
+   "args": {
+    "account_id": "A002"
+   },
+   "name": "get_transactions",
+   "ok": [
+    {
+     "amount": -336.79,
+     "id": "A002-T01",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-02T06:00:00Z"
+    },
+    {
+     "amount": -399.67,
+     "id": "A002-T02",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-03T13:00:00Z"
+    },
+    {
+     "amount": -292.02,
+     "id": "A002-T03",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-06T21:00:00Z"
+    },
+    {
+     "amount": -30.44,
+     "id": "A002-T04",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-09T12:00:00Z"
+    },
+    {
+     "amount": -324.55,
+     "id": "A002-T05",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-12T13:00:00Z"
+    },
+    {
+     "amount": -147.82,
+     "id": "A002-T06",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-13T10:00:00Z"
+    },
+    {
+     "amount": -155.66,
+     "id": "A002-T07",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-14T18:00:00Z"
+    },
+    {
+     "amount": 227.22,
+     "id": "A002-T08",
+     "merchant": "Payroll",
+     "timestamp": "2026-02-16T19:00:00Z"
+    },
+    {
+     "amount": -277.22,
+     "id": "A002-T09",
+     "merchant": "Airline",
+     "timestamp": "2026-02-18T22:00:00Z"
+    },
+    {
+     "amount": -152.76,
+     "id": "A002-T10",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-20T17:00:00Z"
+    },
+    {
+     "amount": -325.02,
+     "id": "A002-T11",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-21T07:00:00Z"
+    },
+    {
+     "amount": -123.45,
+     "id": "A002-T12",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-21T20:00:00Z"
+    },
+    {
+     "amount": -177.39,
+     "id": "A002-T13",
+     "merchant": "Airline",
+     "timestamp": "2026-02-25T01:00:00Z"
+    },
+    {
+     "amount": 301.53,
+     "id": "A002-T14",
+     "merchant": "Refund",
+     "timestamp": "2026-02-25T14:00:00Z"
+    },
+    {
+     "amount": 50.44,
+     "id": "A002-T15",
+     "merchant": "Refund",
+     "timestamp": "2026-02-28T15:00:00Z"
+    }
+   ]
+  },
+  {
+   "args": {
+    "account_id": "A003"
+   },
+   "name": "get_transactions",
+   "ok": [
+    {
+     "amount": 272.44,
+     "id": "A003-T01",
+     "merchant": "Refund",
+     "timestamp": "2026-02-03T03:00:00Z"
+    },
+    {
+     "amount": -229.33,
+     "id": "A003-T02",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-04T20:00:00Z"
+    },
+    {
+     "amount": -327.22,
+     "id": "A003-T03",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-06T06:00:00Z"
+    },
+    {
+     "amount": -227.81,
+     "id": "A003-T04",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-08T21:00:00Z"
+    },
+    {
+     "amount": -305.48,
+     "id": "A003-T05",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-11T20:00:00Z"
+    },
+    {
+     "amount": 220.4,
+     "id": "A003-T06",
+     "merchant": "Refund",
+     "timestamp": "2026-02-13T07:00:00Z"
+    },
+    {
+     "amount": -286.62,
+     "id": "A003-T07",
+     "merchant": "Airline",
+     "timestamp": "2026-02-16T06:00:00Z"
+    },
+    {
+     "amount": 139.4,
+     "id": "A003-T08",
+     "merchant": "Refund",
+     "timestamp": "2026-02-16T22:00:00Z"
+    },
+    {
+     "amount": 220.32,
+     "id": "A003-T09",
+     "merchant": "Refund",
+     "timestamp": "2026-02-17T03:00:00Z"
+    },
+    {
+     "amount": -96.46,
+     "id": "A003-T10",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-19T03:00:00Z"
+    },
+    {
+     "amount": -81.6,
+     "id": "A003-T11",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-20T06:00:00Z"
+    },
+    {
+     "amount": -121.38,
+     "id": "A003-T12",
+     "merchant": "Airline",
+     "timestamp": "2026-02-22T10:00:00Z"
+    },
+    {
+     "amount": -231.79,
+     "id": "A003-T13",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-22T22:00:00Z"
+    },
+    {
+     "amount": -82.45,
+     "id": "A003-T14",
+     "merchant": "Airline",
+     "timestamp": "2026-02-23T07:00:00Z"
+    }
+   ]
+  },
+  {
+   "args": {
+    "account_id": "A004"
+   },
+   "name": "get_transactions",
+   "ok": [
+    {
+     "amount": -231.63,
+     "id": "A004-T01",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-02T10:00:00Z"
+    },
+    {
+     "amount": -106.98,
+     "id": "A004-T02",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-03T23:00:00Z"
+    },
+    {
+     "amount": 354.84,
+     "id": "A004-T03",
+     "merchant": "Refund",
+     "timestamp": "2026-02-05T05:00:00Z"
+    },
+    {
+     "amount": -36.28,
+     "id": "A004-T04",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-05T11:00:00Z"
+    },
+    {
+     "amount": -183.44,
+     "id": "A004-T05",
+     "merchant": "Airline",
+     "timestamp": "2026-02-06T23:00:00Z"
+    },
+    {
+     "amount": -16.24,
+     "id": "A004-T06",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-08T02:00:00Z"
+    },
+    {
+     "amount": -52.49,
+     "id": "A004-T07",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-11T16:00:00Z"
+    },
+    {
+     "amount": -378.56,
+     "id": "A004-T08",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-15T07:00:00Z"
+    },
+    {
+     "amount": -116.29,
+     "id": "A004-T09",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-17T04:00:00Z"
+    },
+    {
+     "amount": -97.51,
+     "id": "A004-T10",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-19T02:00:00Z"
+    },
+    {
+     "amount": -38.27,
+     "id": "A004-T11",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-21T02:00:00Z"
+    },
+    {
+     "amount": -140.9,
+     "id": "A004-T12",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-23T22:00:00Z"
+    }
+   ]
+  },
+  {
+   "args": {
+    "account_id": "A005"
+   },
+   "name": "get_transactions",
+   "ok": [
+    {
+     "amount": -294.92,
+     "id": "A005-T01",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-01T18:00:00Z"
+    },
+    {
+     "amount": -32.91,
+     "id": "A005-T02",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-04T01:00:00Z"
+    },
+    {
+     "amount": -53.75,
+     "id": "A005-T03",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-07T14:00:00Z"
+    },
+    {
+     "amount": -299.71,
+     "id": "A005-T04",
+     "merchant": "Airline",
+     "timestamp": "2026-02-09T23:00:00Z"
+    },
+    {
+     "amount": 264.81,
+     "id": "A005-T05",
+     "merchant": "Payroll",
+     "timestamp": "2026-02-11T11:00:00Z"
+    },
+    {
+     "amount": -232.47,
+     "id": "A005-T06",
+     "merchant": "Airline",
+     "timestamp": "2026-02-12T19:00:00Z"
+    },
+    {
+     "amount": -45.38,
+     "id": "A005-T07",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-16T07:00:00Z"
+    },
+    {
+     "amount": -349.83,
+     "id": "A005-T08",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-17T17:00:00Z"
+    },
+    {
+     "amount": 373.17,
+     "id": "A005-T09",
+     "merchant": "Refund",
+     "timestamp": "2026-02-17T23:00:00Z"
+    },
+    {
+     "amount": -63.69,
+     "id": "A005-T10",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-20T17:00:00Z"
+    },
+    {
+     "amount": -357.43,
+     "id": "A005-T11",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-23T17:00:00Z"
+    },
+    {
+     "amount": -197.85,
+     "id": "A005-T12",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-25T05:00:00Z"
+    },
+    {
+     "amount": -5.36,
+     "id": "A005-T13",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-26T19:00:00Z"
+    },
+    {
+     "amount": -323.56,
+     "id": "A005-T14",
+     "merchant": "Airline",
+     "timestamp": "2026-02-28T00:00:00Z"
+    }
+   ]
+  },
+  {
+   "args": {
+    "account_id": "A006"
+   },
+   "name": "get_transactions",
+   "ok": [
+    {
+     "amount": 206.7,
+     "id": "A006-T01",
+     "merchant": "Refund",
+     "timestamp": "2026-02-03T05:00:00Z"
+    },
+    {
+     "amount": -107.51,
+     "id": "A006-T02",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-05T15:00:00Z"
+    },
+    {
+     "amount": -235.58,
+     "id": "A006-T03",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-05T21:00:00Z"
+    },
+    {
+     "amount": 165.8,
+     "id": "A006-T04",
+     "merchant": "Payroll",
+     "timestamp": "2026-02-08T10:00:00Z"
+    },
+    {
+     "amount": -252.61,
+     "id": "A006-T05",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-11T07:00:00Z"
+    },
+    {
+     "amount": -121.3,
+     "id": "A006-T06",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-12T22:00:00Z"
+    },
+    {
+     "amount": 357.02,
+     "id": "A006-T07",
+     "merchant": "Refund",
+     "timestamp": "2026-02-15T23:00:00Z"
+    },
+    {
+     "amount": -153.47,
+     "id": "A006-T08",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-18T11:00:00Z"
+    },
+    {
+     "amount": -224.41,
+     "id": "A006-T09",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-20T15:00:00Z"
+    },
+    {
+     "amount": -185.59,
+     "id": "A006-T10",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-22T14:00:00Z"
+    },
+    {
+     "amount": -64.93,
+     "id": "A006-T11",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-24T06:00:00Z"
+    },
+    {
+     "amount": -129.33,
+     "id": "A006-T12",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-24T12:00:00Z"
+    },
+    {
+     "amount": 256.8,
+     "id": "A006-T13",
+     "merchant": "Refund",
+     "timestamp": "2026-02-26T11:00:00Z"
+    },
+    {
+     "amount": -338.28,
+     "id": "A006-T14",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-28T05:00:00Z"
+    },
+    {
+     "amount": -63.46,
+     "id": "A006-T15",
+     "merchant": "Cafe",
+     "timestamp": "2026-03-03T20:00:00Z"
+    },
+    {
+     "amount": -137.77,
+     "id": "A006-T16",
+     "merchant": "Bookshop",
+     "timestamp": "2026-03-06T20:00:00Z"
+    },
+    {
+     "amount": -20.94,
+     "id": "A006-T17",
+     "merchant": "CloudHost",
+     "timestamp": "2026-03-10T01:00:00Z"
+    },
+    {
+     "amount": -166.38,
+     "id": "A006-T18",
+     "merchant": "Airline",
+     "timestamp": "2026-03-10T20:00:00Z"
+    }
+   ]
+  },
+  {
+   "args": {
+    "account_id": "A007"
+   },
+   "name": "get_transactions",
+   "ok": [
+    {
+     "amount": -318.81,
+     "id": "A007-T01",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-02T10:00:00Z"
+    },
+    {
+     "amount": 322.36,
+     "id": "A007-T02",
+     "merchant": "Payroll",
+     "timestamp": "2026-02-06T03:00:00Z"
+    },
+    {
+     "amount": -146.83,
+     "id": "A007-T03",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-06T11:00:00Z"
+    },
+    {
+     "amount": -361.3,
+     "id": "A007-T04",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-07T06:00:00Z"
+    },
+    {
+     "amount": 11.28,
+     "id": "A007-T05",
+     "merchant": "Refund",
+     "timestamp": "2026-02-10T22:00:00Z"
+    },
+    {
+     "amount": -141.86,
+     "id": "A007-T06",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-13T16:00:00Z"
+    },
+    {
+     "amount": -234.13,
+     "id": "A007-T07",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-14T06:00:00Z"
+    },
+    {
+     "amount": 341.11,
+     "id": "A007-T08",
+     "merchant": "Refund",
+     "timestamp": "2026-02-15T12:00:00Z"
+    },
+    {
+     "amount": 300.79,
+     "id": "A007-T09",
+     "merchant": "Payroll",
+     "timestamp": "2026-02-18T05:00:00Z"
+    },
+    {
+     "amount": -148.52,
+     "id": "A007-T10",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-20T04:00:00Z"
+    },
+    {
+     "amount": -280.09,
+     "id": "A007-T11",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-22T19:00:00Z"
+    },
+    {
+     "amount": -266.34,
+     "id": "A007-T12",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-24T18:00:00Z"
+    },
+    {
+     "amount": -316.46,
+     "id": "A007-T13",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-25T01:00:00Z"
+    },
+    {
+     "amount": -101.57,
+     "id": "A007-T14",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-28T18:00:00Z"
+    }
+   ]
+  },
+  {
+   "args": {
+    "account_id": "A008"
+   },
+   "name": "get_transactions",
+   "ok": [
+    {
+     "amount": -165.24,
+     "id": "A008-T01",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-01T07:00:00Z"
+    },
+    {
+     "amount": -67.35,
+     "id": "A008-T02",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-01T23:00:00Z"
+    },
+    {
+     "amount": -130.51,
+     "id": "A008-T03",
+     "merchant": "Airline",
+     "timestamp": "2026-02-04T20:00:00Z"
+    },
+    {
+     "amount": 187.55,
+     "id": "A008-T04",
+     "merchant": "Refund",
+     "timestamp": "2026-02-05T20:00:00Z"
+    },
+    {
+     "amount": 50.01,
+     "id": "A008-T05",
+     "merchant": "Refund",
+     "timestamp": "2026-02-08T20:00:00Z"
+    },
+    {
+     "amount": -95.29,
+     "id": "A008-T06",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-12T03:00:00Z"
+    },
+    {
+     "amount": -295.09,
+     "id": "A008-T07",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-14T21:00:00Z"
+    },
+    {
+     "amount": -370.55,
+     "id": "A008-T08",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-15T19:00:00Z"
+    },
+    {
+     "amount": -161.86,
+     "id": "A008-T09",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-16T15:00:00Z"
+    },
+    {
+     "amount": -39.79,
+     "id": "A008-T10",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-20T03:00:00Z"
+    },
+    {
+     "amount": 186.97,
+     "id": "A008-T11",
+     "merchant": "Refund",
+     "timestamp": "2026-02-20T21:00:00Z"
+    },
+    {
+     "amount": -174.18,
+     "id": "A008-T12",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-24T07:00:00Z"
+    },
+    {
+     "amount": -45.93,
+     "id": "A008-T13",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-27T06:00:00Z"
+    },
+    {
+     "amount": 210.52,
+     "id": "A008-T14",
+     "merchant": "Refund",
+     "timestamp": "2026-02-28T10:00:00Z"
+    },
+    {
+     "amount": -145.76,
+     "id": "A008-T15",
+     "merchant": "Airline",
+     "timestamp": "2026-03-03T22:00:00Z"
+    }
+   ]
+  },
+  {
+   "args": {
+    "account_id": "A009"
+   },
+   "name": "get_transactions",
+   "ok": [
+    {
+     "amount": -278.07,
+     "id": "A009-T01",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-01T16:00:00Z"
+    },
+    {
+     "amount": 372.71,
+     "id": "A009-T02",
+     "merchant": "Payroll",
+     "timestamp": "2026-02-02T05:00:00Z"
+    },
+    {
+     "amount": -186.14,
+     "id": "A009-T03",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-03T11:00:00Z"
+    },
+    {
+     "amount": 381.52,
+     "id": "A009-T04",
+     "merchant": "Refund",
+     "timestamp": "2026-02-06T13:00:00Z"
+    },
+    {
+     "amount": -279.03,
+     "id": "A009-T05",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-07T09:00:00Z"
+    },
+    {
+     "amount": -249.21,
+     "id": "A009-T06",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-09T16:00:00Z"
+    },
+    {
+     "amount": 5.13,
+     "id": "A009-T07",
+     "merchant": "Payroll",
+     "timestamp": "2026-02-12T03:00:00Z"
+    },
+    {
+     "amount": -395.45,
+     "id": "A009-T08",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-15T01:00:00Z"
+    },
+    {
+     "amount": -241.27,
+     "id": "A009-T09",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-16T20:00:00Z"
+    },
+    {
+     "amount": -296.32,
+     "id": "A009-T10",
+     "merchant": "Airline",
+     "timestamp": "2026-02-19T04:00:00Z"
+    },
+    {
+     "amount": -186.05,
+     "id": "A009-T11",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-20T11:00:00Z"
+    }
+   ]
+  },
+  {
+   "args": {
+    "account_id": "A010"
+   },
+   "name": "get_transactions",
+   "ok": [
+    {
+     "amount": -129.94,
+     "id": "A010-T01",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-02T08:00:00Z"
+    },
+    {
+     "amount": -159.58,
+     "id": "A010-T02",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-05T05:00:00Z"
+    },
+    {
+     "amount": 233.29,
+     "id": "A010-T03",
+     "merchant": "Refund",
+     "timestamp": "2026-02-06T05:00:00Z"
+    },
+    {
+     "amount": -112.89,
+     "id": "A010-T04",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-08T05:00:00Z"
+    },
+    {
+     "amount": -78.1,
+     "id": "A010-T05",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-11T10:00:00Z"
+    },
+    {
+     "amount": -38.24,
+     "id": "A010-T06",
+     "merchant": "Airline",
+     "timestamp": "2026-02-12T12:00:00Z"
+    },
+    {
+     "amount": 371.25,
+     "id": "A010-T07",
+     "merchant": "Refund",
+     "timestamp": "2026-02-14T15:00:00Z"
+    },
+    {
+     "amount": 230.7,
+     "id": "A010-T08",
+     "merchant": "Payroll",
+     "timestamp": "2026-02-18T03:00:00Z"
+    },
+    {
+     "amount": 301.26,
+     "id": "A010-T09",
+     "merchant": "Refund",
+     "timestamp": "2026-02-18T15:00:00Z"
+    },
+    {
+     "amount": -260.48,
+     "id": "A010-T10",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-21T17:00:00Z"
+    },
+    {
+     "amount": -19.01,
+     "id": "A010-T11",
+     "merchant": "Airline",
+     "timestamp": "2026-02-24T18:00:00Z"
+    },
+    {
+     "amount": -356.77,
+     "id": "A010-T12",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-27T03:00:00Z"
+    }
+   ]
+  },
+  {
+   "args": {
+    "account_id": "A011"
+   },
+   "name": "get_transactions",
+   "ok": [
+    {
+     "amount": -275.14,
+     "id": "A011-T01",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-02T10:00:00Z"
+    },
+    {
+     "amount": 235.53,
+     "id": "A011-T02",
+     "merchant": "Refund",
+     "timestamp": "2026-02-03T22:00:00Z"
+    },
+    {
+     "amount": -26.51,
+     "id": "A011-T03",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-06T17:00:00Z"
+    },
+    {
+     "amount": -78.62,
+     "id": "A011-T04",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-09T17:00:00Z"
+    },
+    {
+     "amount": -25.68,
+     "id": "A011-T05",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-10T12:00:00Z"
+    },
+    {
+     "amount": 120.65,
+     "id": "A011-T06",
+     "merchant": "Payroll",
+     "timestamp": "2026-02-11T04:00:00Z"
+    },
+    {
+     "amount": -22.96,
+     "id": "A011-T07",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-12T05:00:00Z"
+    },
+    {
+     "amount": -211.9,
+     "id": "A011-T08",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-14T15:00:00Z"
+    },
+    {
+     "amount": -261.14,
+     "id": "A011-T09",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-17T03:00:00Z"
+    },
+    {
+     "amount": -319.82,
+     "id": "A011-T10",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-19T04:00:00Z"
+    },
+    {
+     "amount": -102.65,
+     "id": "A011-T11",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-20T17:00:00Z"
+    },
+    {
+     "amount": -224.01,
+     "id": "A011-T12",
+     "merchant": "Airline",
+     "timestamp": "2026-02-22T16:00:00Z"
+    },
+    {
+     "amount": -30.87,
+     "id": "A011-T13",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-24T12:00:00Z"
+    }
+   ]
+  },
+  {
+   "args": {
+    "account_id": "A012"
+   },
+   "name": "get_transactions",
+   "ok": [
+    {
+     "amount": -301.2,
+     "id": "A012-T01",
+     "merchant": "Bookshop",
+     "timestamp": "2026-02-03T13:00:00Z"
+    },
+    {
+     "amount": 101.12,
+     "id": "A012-T02",
+     "merchant": "Refund",
+     "timestamp": "2026-02-04T22:00:00Z"
+    },
+    {
+     "amount": -222.63,
+     "id": "A012-T03",
+     "merchant": "Cafe",
+     "timestamp": "2026-02-07T06:00:00Z"
+    },
+    {
+     "amount": -156.14,
+     "id": "A012-T04",
+     "merchant": "CloudHost",
+     "timestamp": "2026-02-09T11:00:00Z"
+    },
+    {
+     "amount": -147.75,
+     "id": "A012-T05",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-11T18:00:00Z"
+    },
+    {
+     "amount": -53.34,
+     "id": "A012-T06",
+     "merchant": "Airline",
+     "timestamp": "2026-02-15T05:00:00Z"
+    },
+    {
+     "amount": -13.24,
+     "id": "A012-T07",
+     "merchant": "Airline",
+     "timestamp": "2026-02-18T06:00:00Z"
+    },
+    {
+     "amount": -29.79,
+     "id": "A012-T08",
+     "merchant": "Grocer",
+     "timestamp": "2026-02-20T20:00:00Z"
+    },
+    {
+     "amount": -122.58,
+     "id": "A012-T09",
+     "merchant": "Airline",
+     "timestamp": "2026-02-22T18:00:00Z"
+    },
+    {
+     "amount": -208.75,
+     "id": "A012-T10",
+     "merchant": "Utility Co",
+     "timestamp": "2026-02-24T22:00:00Z"
+    },
+    {
+     "amount": -5.57,
+     "id": "A012-T11",
+     "merchant": "Airline",
+     "timestamp": "2026-02-28T14:00:00Z"
+    },
+    {
+     "amount": -52.74,
+     "id": "A012-T12",
+     "merchant": "Bookshop",
+     "timestamp": "2026-03-02T17:00:00Z"
+    },
+    {
+     "amount": -288.68,
+     "id": "A012-T13",
+     "merchant": "Grocer",
+     "timestamp": "2026-03-03T16:00:00Z"
+    },
+    {
+     "amount": -88.56,
+     "id": "A012-T14",
+     "merchant": "Utility Co",
+     "timestamp": "2026-03-06T04:00:00Z"
+    },
+    {
+     "amount": -265.93,
+     "id": "A012-T15",
+     "merchant": "Bookshop",
+     "timestamp": "2026-03-07T17:00:00Z"
+    },
+    {
+     "amount": -231.98,
+     "id": "A012-T16",
+     "merchant": "Grocer",
+     "timestamp": "2026-03-11T00:00:00Z"
+    },
+    {
+     "amount": -228.54,
+     "id": "A012-T17",
+     "merchant": "CloudHost",
+     "timestamp": "2026-03-11T23:00:00Z"
+    }
+   ]
+  },
+  {
+   "args": {
+    "account_id": "A002",
+    "low": -2515.57
+   },
+   "name": "submit_answer",
+   "ok": "ok"
+  }
+ ],
+ "category": "numeric-statistics",
+ "stdout": "A001 12 -1564.69\nA002 15 -2515.57\nA003 14 -1137.58\nA004 12 -1043.75\nA005 14 -1618.88\nA006 18 -1215.24\nA007 14 -1340.37\nA008 15 -1121.26\nA009 11 -1352.18\nA010 12 -289.52\nA011 13 -1223.12\nA012 17 -2316.3\n",
+ "task": "stat-max-drawdown",
+ "tools": [
+  {
+   "description": "Transactions of one account since 2026-02-01, oldest first. Negative amounts are debits.",
+   "name": "get_transactions",
+   "params": [
+    "account_id"
+   ]
+  },
+  {
+   "description": "Submit the final answer of this task. Call it once, at the end.",
+   "name": "submit_answer",
+   "params": [
+    "account_id",
+    "low"
+   ]
+  }
+ ]
+}

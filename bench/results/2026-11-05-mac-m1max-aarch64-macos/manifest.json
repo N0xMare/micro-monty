@@ -1,0 +1,39 @@
+{
+  "boundary": "spawn to exit; taskset and optional GNU timeout overhead included",
+  "engines": [
+    {
+      "binary": "/Users/local/.local/bin/python3.14",
+      "name": "cpython",
+      "sha256": "16a1bac7c40871327d591833239cafc6cd060b4d199d3aa4b3048b8d69644bce  /Users/local/.local/bin/python3.14",
+      "version": "CPython 3.14.7"
+    },
+    {
+      "binary": "/Users/local/src/dquickts/qjs",
+      "name": "qjs",
+      "sha256": "15017393ac584b7d0c00a151eb1957d72d694c8be4987044a7d908f9cb288274  /Users/local/src/dquickts/qjs",
+      "version": "qjs QuickJS version 2026-06-04"
+    },
+    {
+      "binary": "/Users/local/src/monty-cli/bin/monty",
+      "name": "monty",
+      "sha256": "6c1d5b14023d213b4a862131739c5431ac980b5f89a3267c75fb6be2c2d39fdd  /Users/local/src/monty-cli/bin/monty",
+      "version": "monty-runtime 1.4.0"
+    },
+    {
+      "binary": "/Users/local/dev/agents/micro-monty/xtask/../target/release/mm",
+      "name": "micro-monty",
+      "sha256": "7a977dd5c38bcbf0ee2d02d12fb3f41249bce5ddb6e9b3d3566936158d5e3cf4  /Users/local/dev/agents/micro-monty/xtask/../target/release/mm",
+      "version": "micro-monty 0.0.0"
+    }
+  ],
+  "head": "5568b27a8a75fb2bd468cd70d3908c57a9c923d1",
+  "machine": "unknown CPU, nproc ?, Darwin 27.2.0; 2026-11-05; not pinned (no taskset or fewer than 3 CPUs)",
+  "order": "program blocks; balanced rotating engine order each round",
+  "reps": 10,
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.1",
+  "schema": 1,
+  "status": "M bench/evidence/isolation/harness/src/backend.rs\n M bench/evidence/isolation/harness/src/perf.rs",
+  "timeout_secs": null,
+  "unix_time_ns": "1793894361240774000",
+  "warmups": 1
+}

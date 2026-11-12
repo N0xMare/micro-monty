@@ -1,0 +1,19 @@
+[package]
+name = "mm-compile"
+description = "micro-monty compiler: engine AST, symbol tables, bytecode, exception tables"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+exclude.workspace = true
+keywords = ["python", "micro-monty", "interpreter", "bytecode", "compiler"]
+categories = ["compilers", "no-std"]
+
+# Path only, so packaging drops it: mm-parse depends on this crate.
+[dev-dependencies]
+mm-parse = { path = "../mm-parse" }
+
+[lints]
+workspace = true

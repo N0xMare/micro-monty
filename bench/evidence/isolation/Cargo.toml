@@ -1,0 +1,43 @@
+# Isolation-mode harness (docs/research/isolation-modes.md). Its own
+# workspace, so wasmtime and the other harness dependencies never enter the
+# engine crates, the root lockfile or `cargo xtask size`.
+[workspace]
+resolver = "3"
+# The mm-wasm crates are permanent: `crates/mm-wasm-abi` and
+# `crates/mm-wasm-guest` (root workspace; run.sh builds the guests there) and
+# `crates/mm-wasm-host` (its own workspace), used by path.
+members = ["service", "worker", "guest", "harness"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+# `test-hooks` arms panic injection (`test_hooks::panic_next`) for the fault
+# matrix; it does not change the build id, and an unarmed hook is one
+# thread-local read per facade operation.
+micro-monty = { path = "../../../crates/micro-monty", features = ["test-hooks"] }
+iso-service = { path = "service" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# The same release profile as the root workspace (docs/spec.md §6).
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.release.package.mm-parse]
+opt-level = "z"
+
+[profile.release.package.mm-compile]
+opt-level = "s"
+
+# What an in-process embedder should ship (docs/spec.md §10.3): unwinding,
+# so the facade can contain an engine panic.
+[profile.release-unwind]
+inherits = "release"
+panic = "unwind"

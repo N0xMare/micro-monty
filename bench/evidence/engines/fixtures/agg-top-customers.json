@@ -1,0 +1,89 @@
+{
+ "calls": [
+  {
+   "args": {
+    "sql": "\nSELECT c.id AS id, c.name AS name, SUM(o.total) AS total\nFROM orders o\nJOIN customers c ON c.id = o.customer_id\nWHERE o.status = 'completed'\nGROUP BY c.id, c.name\nORDER BY total DESC\nLIMIT 6\n"
+   },
+   "name": "query_database",
+   "ok": [
+    {
+     "id": 20,
+     "name": "Ada Smith",
+     "total": 12533.22
+    },
+    {
+     "id": 18,
+     "name": "Gus Chen",
+     "total": 11125.85
+    },
+    {
+     "id": 38,
+     "name": "Gus Chen",
+     "total": 10372.15
+    },
+    {
+     "id": 21,
+     "name": "Hana Garcia",
+     "total": 10012.69
+    },
+    {
+     "id": 29,
+     "name": "Dev Moreau",
+     "total": 7914.53
+    },
+    {
+     "id": 2,
+     "name": "Omar Larsen",
+     "total": 7832.26
+    }
+   ]
+  },
+  {
+   "args": {
+    "top": [
+     {
+      "name": "Ada Smith",
+      "total": 12533.22
+     },
+     {
+      "name": "Gus Chen",
+      "total": 11125.85
+     },
+     {
+      "name": "Gus Chen",
+      "total": 10372.15
+     },
+     {
+      "name": "Hana Garcia",
+      "total": 10012.69
+     },
+     {
+      "name": "Dev Moreau",
+      "total": 7914.53
+     }
+    ]
+   },
+   "name": "submit_answer",
+   "ok": "ok"
+  }
+ ],
+ "category": "api-db-aggregation",
+ "stdout": "[{'id': 20, 'name': 'Ada Smith', 'total': 12533.22}, {'id': 18, 'name': 'Gus Chen', 'total': 11125.85}, {'id': 38, 'name': 'Gus Chen', 'total': 10372.15}, {'id': 21, 'name': 'Hana Garcia', 'total': 10012.69}, {'id': 29, 'name': 'Dev Moreau', 'total': 7914.53}, {'id': 2, 'name': 'Omar Larsen', 'total': 7832.26}]\nok\n",
+ "task": "agg-top-customers",
+ "tools": [
+  {
+   "description": "Run a read-only SQL query against the shop database. Tables: customers(id INTEGER, name TEXT, email TEXT, region TEXT, tier TEXT, signup_date TEXT YYYY-MM-DD, country TEXT); products(id TEXT like \"P01\", name TEXT, category TEXT, price REAL, stock INTEGER); orders(id INTEGER, customer_id INTEGER, order_date TEXT YYYY-MM-DD, status TEXT one of completed/pending/cancelled/refunded, total REAL, currency TEXT); order_items(order_id INTEGER, product_id TEXT, qty INTEGER, unit_price REAL). SQLite dialect.",
+   "name": "query_database",
+   "params": [
+    "sql"
+   ]
+  },
+  {
+   "description": "Submit the final answer of this task. Call it once, at the end.",
+   "name": "submit_answer",
+   "params": [
+    "top"
+   ]
+  }
+ ]
+}

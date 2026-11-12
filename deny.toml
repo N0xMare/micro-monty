@@ -1,0 +1,81 @@
+# cargo-deny (0.20) for the three cargo workspaces: the root one, `fuzz/` and
+# `crates/mm-wasm-host/`. cargo-deny finds this file from either sub-manifest
+# by walking up, so one file serves all three:
+#
+#     cargo deny --all-features check
+#     cargo deny --all-features --manifest-path fuzz/Cargo.toml check
+#     cargo deny --all-features --manifest-path crates/mm-wasm-host/Cargo.toml check
+#
+# `--all-features` takes in optional dependencies, notably mm-parse's
+# `ruff-oracle` (the ruff front end, never in a shipped build). The published
+# crates themselves depend on nothing outside this repository; every
+# third-party crate below comes from the CLI, the cell worker, the wasm
+# targets, the tests, the fuzz harness or the wasmtime reference host.
+
+[graph]
+all-features = true
+
+[advisories]
+# Every RustSec advisory (vulnerability, unmaintained, unsound, notice) and
+# every yanked version fails. Add an `ignore` entry only with a reason.
+yanked = "deny"
+ignore = []
+
+[licenses]
+# A crate passes when its license expression can be satisfied by this list.
+# OR-licensed crates take the permissive choice; the AND parts below are the
+# ones that must each be allowed.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    # wasi (OR MIT), ar_archive_writer (ruff-oracle's build), cranelift and
+    # wasmtime (mm-wasm-host).
+    "Apache-2.0 WITH LLVM-exception",
+    # Our own crates' expression (THIRD_PARTY.md): CPython-derived code and
+    # the Unicode Character Database tables.
+    "PSF-2.0",
+    "Unicode-3.0",
+    # unicode_names2 (ruff-oracle only): `(MIT OR Apache-2.0) AND Unicode-DFS-2016`.
+    "Unicode-DFS-2016",
+    # libfuzzer-sys (fuzz/ only): LLVM's libFuzzer, `(MIT OR Apache-2.0) AND NCSA`.
+    "NCSA",
+    # zstd, zstd-sys, zstd-safe and encoding_rs's AND part (mm-wasm-host
+    # only, through wasmtime's cache); ittapi (`GPL-2.0-only OR BSD-3-Clause`).
+    "BSD-3-Clause",
+    # foldhash (mm-wasm-host only, through wasmtime's hashbrown).
+    "Zlib",
+    # Allowed as an OR alternative; the other side is MIT or Apache-2.0 for
+    # every crate that lists them (memchr, aho-corasick, ryu, zerocopy, ...).
+    "BSD-2-Clause",
+    "BSL-1.0",
+    "Unlicense",
+]
+confidence-threshold = 0.93
+# One list for three workspaces: what fuzz/ and mm-wasm-host need is unused
+# in the root workspace, and the other way round.
+unused-allowed-license = "allow"
+
+[licenses.private]
+# The unpublished crates (mm-cli, mm-cell-worker, xtask, the wasm guest, ...)
+# carry the workspace license too; check them like the rest.
+ignore = false
+
+[bans]
+# Duplicate versions are reported, not refused: today syn 2 and 3 (tokio's
+# macros against serde's) in the root workspace, getrandom and syn in fuzz/,
+# and eight crates in wasmtime's tree. None reaches a published crate.
+multiple-versions = "warn"
+wildcards = "deny"
+# Path dependencies inside a workspace have no version requirement.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# plakous-cell (MIT), pinned by rev for mm-cell-worker until plak publishes
+# it to crates.io (Cargo.toml, [workspace.dependencies]). Not a dependency of
+# any published crate.
+allow-git = ["https://github.com/N0xMare/plak"]
+# fuzz/ and mm-wasm-host do not use it.
+unused-allowed-source = "allow"

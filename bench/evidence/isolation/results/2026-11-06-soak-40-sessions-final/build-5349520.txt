@@ -1,0 +1,6 @@
+25cea1f9e519f19bb86a7e03d0589849c27384d6
+c4da1f6f94efa0d828a8186d6018a44c8b3246542b56f3d75e45c1ab62d83727  target/isolation/release/iso-harness
+8accb19739cd16c262272f98713bfe4147db2e9b8dfd7dd3867c2a5985ec84b3  target/isolation/wasm32-unknown-unknown/release/mm_wasm_guest.wasm
+f969be118ea949b19abfbc31c7cbe7428ae62ec030a184118a43a1b6e54d3c71  target/isolation/wasm32-wasip1/release/mm_wasm_guest.wasm
+rustc 1.99.0 (b940084d7 2026-09-28)
+ProductName:		macOS ProductVersion:		27.2 BuildVersion:		26B123 

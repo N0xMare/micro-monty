@@ -1,0 +1,29 @@
+[package]
+name = "session-templates"
+description = "Session templates against Session::new plus imports (docs/research/session-templates.md)"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99.0"
+license = "MIT"
+publish = false
+
+# Its own workspace, so the harness never enters the engine's build, lockfile
+# or size budget. It links the unchanged facade with its default features (the
+# build `mm-codemode`'s `default` configuration and the mm-wasm guest share).
+[workspace]
+
+[[bin]]
+name = "tpl"
+path = "main.rs"
+
+[dependencies]
+micro-monty = { path = "../../../crates/micro-monty" }
+serde_json = "1"
+
+# The engine's release profile (Cargo.toml at the root).
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

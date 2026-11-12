@@ -1,0 +1,10 @@
+[
+ {"id": "dict-review", "prompt": "Review crates/mm-engine/src/dict.rs for bugs and summarise what you find, with line numbers. Do not modify any files."},
+ {"id": "fuel-loops", "prompt": "Find where fuel is charged in crates/mm-engine/src/builtins.rs and list any loop over guest data that does not charge fuel. Do not modify any files."},
+ {"id": "snapshot-format", "prompt": "Summarise the snapshot format that crates/mm-core/src/snapshot.rs and crates/mm-engine/src/snapshot.rs write: header, sections, and how versions are checked. Do not modify any files."},
+ {"id": "todo-census", "prompt": "Find every TODO, FIXME or XXX comment in the Rust sources under crates/ and report them grouped by crate, with a count per crate. Do not modify any files."},
+ {"id": "loc-census", "prompt": "Count the lines of Rust under each crate's src/ directory in crates/, then report a table of crates by line count and the five largest .rs files with their line counts. Do not modify any files."},
+ {"id": "codec-review", "prompt": "Review crates/mm-cell-worker/src/codec.rs for bugs in how values are converted between the cell protocol and the engine, and summarise what you find. Do not modify any files."},
+ {"id": "own-exceptions", "prompt": "How many test cases under conformance/own exercise exceptions (raise, try or except)? Give the count and a one-line summary of five of them. Do not modify any files."},
+ {"id": "builtins-callbacks", "prompt": "List the builtin functions registered in crates/mm-engine/src/builtins.rs and say which of them can call back into user Python code, and how they do it without nesting the dispatch loop. Do not modify any files."}
+]

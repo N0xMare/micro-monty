@@ -1,0 +1,355 @@
+{
+ "calls": [
+  {
+   "args": {
+    "status": "pending"
+   },
+   "name": "list_orders",
+   "ok": {
+    "next_cursor": "b2Zmc2V0OjI1",
+    "orders": [
+     {
+      "currency": "USD",
+      "customer_id": 3,
+      "id": 1209,
+      "order_date": "2026-03-08",
+      "status": "pending",
+      "total": 565.16
+     },
+     {
+      "currency": "USD",
+      "customer_id": 16,
+      "id": 1032,
+      "order_date": "2026-03-07",
+      "status": "pending",
+      "total": 3345.04
+     },
+     {
+      "currency": "USD",
+      "customer_id": 6,
+      "id": 1069,
+      "order_date": "2026-03-04",
+      "status": "pending",
+      "total": 304.15
+     },
+     {
+      "currency": "USD",
+      "customer_id": 31,
+      "id": 1236,
+      "order_date": "2026-03-02",
+      "status": "pending",
+      "total": 94.68
+     },
+     {
+      "currency": "USD",
+      "customer_id": 11,
+      "id": 1036,
+      "order_date": "2026-02-26",
+      "status": "pending",
+      "total": 1400.5
+     },
+     {
+      "currency": "USD",
+      "customer_id": 40,
+      "id": 1176,
+      "order_date": "2026-02-25",
+      "status": "pending",
+      "total": 94.68
+     },
+     {
+      "currency": "USD",
+      "customer_id": 16,
+      "id": 1049,
+      "order_date": "2026-01-30",
+      "status": "pending",
+      "total": 503.82
+     },
+     {
+      "currency": "USD",
+      "customer_id": 2,
+      "id": 1029,
+      "order_date": "2026-01-27",
+      "status": "pending",
+      "total": 2089.93
+     },
+     {
+      "currency": "USD",
+      "customer_id": 12,
+      "id": 1249,
+      "order_date": "2026-01-22",
+      "status": "pending",
+      "total": 344.76
+     },
+     {
+      "currency": "USD",
+      "customer_id": 6,
+      "id": 1060,
+      "order_date": "2026-01-18",
+      "status": "pending",
+      "total": 2535.1
+     },
+     {
+      "currency": "USD",
+      "customer_id": 39,
+      "id": 1001,
+      "order_date": "2026-01-17",
+      "status": "pending",
+      "total": 1781.67
+     },
+     {
+      "currency": "USD",
+      "customer_id": 13,
+      "id": 1293,
+      "order_date": "2026-01-16",
+      "status": "pending",
+      "total": 466.84
+     },
+     {
+      "currency": "USD",
+      "customer_id": 15,
+      "id": 1058,
+      "order_date": "2026-01-14",
+      "status": "pending",
+      "total": 167.94
+     },
+     {
+      "currency": "USD",
+      "customer_id": 21,
+      "id": 1186,
+      "order_date": "2025-12-29",
+      "status": "pending",
+      "total": 1421.99
+     },
+     {
+      "currency": "USD",
+      "customer_id": 11,
+      "id": 1140,
+      "order_date": "2025-12-28",
+      "status": "pending",
+      "total": 1648.77
+     },
+     {
+      "currency": "USD",
+      "customer_id": 2,
+      "id": 1204,
+      "order_date": "2025-12-27",
+      "status": "pending",
+      "total": 1260.11
+     },
+     {
+      "currency": "USD",
+      "customer_id": 31,
+      "id": 1279,
+      "order_date": "2025-12-19",
+      "status": "pending",
+      "total": 835.74
+     },
+     {
+      "currency": "USD",
+      "customer_id": 12,
+      "id": 1028,
+      "order_date": "2025-12-17",
+      "status": "pending",
+      "total": 1737.72
+     },
+     {
+      "currency": "USD",
+      "customer_id": 17,
+      "id": 1086,
+      "order_date": "2025-12-10",
+      "status": "pending",
+      "total": 1769.3
+     },
+     {
+      "currency": "USD",
+      "customer_id": 4,
+      "id": 1009,
+      "order_date": "2025-12-10",
+      "status": "pending",
+      "total": 1680.6
+     },
+     {
+      "currency": "USD",
+      "customer_id": 38,
+      "id": 1287,
+      "order_date": "2025-12-02",
+      "status": "pending",
+      "total": 707.03
+     },
+     {
+      "currency": "USD",
+      "customer_id": 4,
+      "id": 1259,
+      "order_date": "2025-11-30",
+      "status": "pending",
+      "total": 207.5
+     },
+     {
+      "currency": "USD",
+      "customer_id": 26,
+      "id": 1238,
+      "order_date": "2025-11-30",
+      "status": "pending",
+      "total": 265.9
+     },
+     {
+      "currency": "USD",
+      "customer_id": 16,
+      "id": 1147,
+      "order_date": "2025-11-21",
+      "status": "pending",
+      "total": 593.89
+     },
+     {
+      "currency": "USD",
+      "customer_id": 36,
+      "id": 1150,
+      "order_date": "2025-11-14",
+      "status": "pending",
+      "total": 214.09
+     }
+    ]
+   }
+  },
+  {
+   "args": {
+    "cursor": "b2Zmc2V0OjI1",
+    "status": "pending"
+   },
+   "name": "list_orders",
+   "ok": {
+    "next_cursor": null,
+    "orders": [
+     {
+      "currency": "USD",
+      "customer_id": 28,
+      "id": 1151,
+      "order_date": "2025-11-13",
+      "status": "pending",
+      "total": 1835.5
+     },
+     {
+      "currency": "USD",
+      "customer_id": 28,
+      "id": 1018,
+      "order_date": "2025-11-13",
+      "status": "pending",
+      "total": 1818.05
+     },
+     {
+      "currency": "USD",
+      "customer_id": 7,
+      "id": 1229,
+      "order_date": "2025-11-11",
+      "status": "pending",
+      "total": 2594.54
+     },
+     {
+      "currency": "USD",
+      "customer_id": 24,
+      "id": 1162,
+      "order_date": "2025-11-09",
+      "status": "pending",
+      "total": 547.01
+     },
+     {
+      "currency": "USD",
+      "customer_id": 3,
+      "id": 1263,
+      "order_date": "2025-11-03",
+      "status": "pending",
+      "total": 2064.98
+     },
+     {
+      "currency": "USD",
+      "customer_id": 28,
+      "id": 1213,
+      "order_date": "2025-11-03",
+      "status": "pending",
+      "total": 2515.26
+     },
+     {
+      "currency": "USD",
+      "customer_id": 9,
+      "id": 1210,
+      "order_date": "2025-10-19",
+      "status": "pending",
+      "total": 677.45
+     },
+     {
+      "currency": "USD",
+      "customer_id": 17,
+      "id": 1072,
+      "order_date": "2025-10-18",
+      "status": "pending",
+      "total": 1725.66
+     },
+     {
+      "currency": "USD",
+      "customer_id": 14,
+      "id": 1166,
+      "order_date": "2025-10-17",
+      "status": "pending",
+      "total": 21.04
+     },
+     {
+      "currency": "USD",
+      "customer_id": 37,
+      "id": 1125,
+      "order_date": "2025-10-15",
+      "status": "pending",
+      "total": 371.31
+     },
+     {
+      "currency": "USD",
+      "customer_id": 14,
+      "id": 1076,
+      "order_date": "2025-10-12",
+      "status": "pending",
+      "total": 686.54
+     },
+     {
+      "currency": "USD",
+      "customer_id": 27,
+      "id": 1114,
+      "order_date": "2025-10-03",
+      "status": "pending",
+      "total": 185.76
+     }
+    ]
+   }
+  },
+  {
+   "args": {
+    "count": 37,
+    "total": 41080.01
+   },
+   "name": "submit_answer",
+   "ok": "ok"
+  }
+ ],
+ "category": "pagination",
+ "stdout": "37 41080.01\n",
+ "task": "page-all-pending",
+ "tools": [
+  {
+   "description": "List orders, newest first, 25 per page. Optional filters.",
+   "name": "list_orders",
+   "params": [
+    "customer_id",
+    "status",
+    "since",
+    "until",
+    "cursor"
+   ]
+  },
+  {
+   "description": "Submit the final answer of this task. Call it once, at the end.",
+   "name": "submit_answer",
+   "params": [
+    "count",
+    "total"
+   ]
+  }
+ ]
+}

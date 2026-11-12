@@ -1,0 +1,10 @@
+{
+ "commit": "eb78933a19c8808d1e12a0ce44522478565f134b",
+ "engine_crates_dirty": false,
+ "rounds": 5,
+ "only": [],
+ "core": "2",
+ "started": "2026-11-11T14:42:00+0000",
+ "cpu": "Intel(R) Xeon(R) Processor @ 2.60GHz",
+ "nproc": 16
+}

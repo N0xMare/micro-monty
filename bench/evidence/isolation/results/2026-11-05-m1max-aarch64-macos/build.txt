@@ -1,0 +1,18 @@
+148f0fda2b7d095005d5a6c0fee62ca054c28f14
+rustc 1.99.0 (b940084d7 2026-09-28)
+10
+Darwin host2.local 27.2.0 Darwin Kernel Version 27.2.0: Thu Oct 15 00:02:46 PDT 2026; root:xnu-13432.41.4~25/RELEASE_ARM64_T6000 arm64
+ProductName:		macOS
+ProductVersion:		27.2
+BuildVersion:		26B123
+f6d4104cfef2e944f4830b56286872e8e7392e96d23a71924af36dc42f593251  /Users/local/dev/agents/micro-monty/target/isolation/release/iso-harness
+896a5acba742095375be3a7631326c6f4debbcbcbc78866d55534c483e5f3fec  /Users/local/dev/agents/micro-monty/target/isolation/release/iso-worker
+cef0e86b3ea25f6427dd8882d152edd643f46364082e676d5849ad0eeb3273f6  /Users/local/dev/agents/micro-monty/target/isolation/wasm32-wasip1/release/iso_guest.wasm
+edf44188fae1f1aee3309a0e4f5206a8e1b8016a8cd7fd5036a2b07a97e31cd4  /Users/local/dev/agents/micro-monty/target/isolation/release-unwind/iso-harness
+9d2940beebebdf0fd85a63ba5046826ca1f044c75be709fbcd0136c8dbbc6492  /Users/local/dev/agents/micro-monty/target/isolation-shipped/aarch64-apple-darwin/release/iso-harness
+8c7b32c4af1a207c43438512442f074afb12a4de2e6e60ba1065486b2cc826db  /Users/local/dev/agents/micro-monty/target/isolation/release-unwind/iso-worker
+e8fcd3f09f0ef4194e65ef30dc15054e7b0c1d618ef20b823ab5af6bc49c34c7  /Users/local/dev/agents/micro-monty/target/isolation-shipped/aarch64-apple-darwin/release/iso-worker
+520746759c311b2aeefcba77173ca7583232e6c2bdec4b802c405f22375aa109  /Users/local/dev/agents/micro-monty/target/isolation-shipped/wasm32-wasip1/release/iso_guest.wasm
+a72f1b8e0dc68c795d10c20399675679376a0bc7e185a6dec534a280a4220a8e  /Users/local/dev/agents/micro-monty/target/isolation/wasm32-wasip1/release/mm_wasm_guest.wasm
+acd9730ccada99eaee615d31bfc5c4dcab2cb86c92039284648c565c59a4a50f  /Users/local/dev/agents/micro-monty/target/isolation/wasm32-unknown-unknown/release/mm_wasm_guest.wasm
+36a92664a407bb4b1666730d25af1e607b52f64db0c33451a112b10229c2b8ea  /Users/local/dev/agents/micro-monty/target/isolation-shipped/wasm32-unknown-unknown/release/mm_wasm_guest.wasm

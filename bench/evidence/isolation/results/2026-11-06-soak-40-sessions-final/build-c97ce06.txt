@@ -1,0 +1,4 @@
+c97ce06836df661070e2b900e979ac79518b3deb
+641b98121ada0ee67d7a1e354d9d89d00f93d1ef39a7a4b862a56ee2bee97414  target/isolation/release/iso-harness
+549d7d19bc0f961625f63185120481a8c0373002cb960d6e6982f252ba4e2a56  target/isolation/wasm32-unknown-unknown/release/mm_wasm_guest.wasm
+62b4b87a6952b0fb358569ae26e331d397e68bb67f45ef30e67110080a682f9c  target/isolation/wasm32-wasip1/release/mm_wasm_guest.wasm

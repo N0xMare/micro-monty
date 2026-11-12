@@ -1,0 +1,7 @@
+# Every cargo workspace here (root, fuzz/, crates/mm-wasm-host, the bench
+# evidence hosts and harnesses) builds into its own target/.
+target/
+/fuzz/corpus
+/fuzz/artifacts
+.amp/portals/*
+__pycache__/

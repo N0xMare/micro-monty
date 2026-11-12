@@ -1,0 +1,21 @@
+import re
+from collections import Counter
+from urllib.parse import urlsplit, parse_qs
+
+log = await get_access_log({"date": "2026-03-14"})
+req_re = re.compile(r'"([A-Z]+) (\S+)(?: HTTP/[\d.]+)?"')
+terms = Counter()
+for line in log.splitlines():
+    m = req_re.search(line)
+    if not m:
+        continue
+    parts = urlsplit(m.group(2))
+    if parts.path != "/search":
+        continue
+    qs = parse_qs(parts.query, keep_blank_values=True)
+    for q in qs.get("q", [])[:1]:
+        if q != "":
+            terms[q] += 1
+result = dict(terms.most_common())
+print(result)
+await submit_answer({"terms": result})

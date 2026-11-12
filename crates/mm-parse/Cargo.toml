@@ -1,0 +1,28 @@
+[package]
+name = "mm-parse"
+description = "micro-monty parser front end: Python source to the engine AST (no_std)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+exclude.workspace = true
+keywords = ["python", "micro-monty", "parser", "ast"]
+categories = ["parser-implementations", "no-std"]
+
+[dependencies]
+mm-compile.workspace = true
+# The phase-1 parser, only for the differential test (`ruff-oracle`).
+ruff_python_ast = { version = "0.0.14", optional = true }
+ruff_python_parser = { version = "0.0.14", optional = true }
+# Already a dependency of the two above; needed for the `Ranged` trait.
+ruff_text_size = { version = "0.0.14", optional = true }
+
+[features]
+# `mm_parse::ruff::parse`, the ruff-based phase-1 front end, as an oracle for
+# `tests/ruff_parity.rs` and the `parse` fuzz target. Never in default builds.
+ruff-oracle = ["dep:ruff_python_ast", "dep:ruff_python_parser", "dep:ruff_text_size"]
+
+[lints]
+workspace = true

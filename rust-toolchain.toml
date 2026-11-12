@@ -1,0 +1,7 @@
+[toolchain]
+channel = "1.99.0"
+profile = "minimal"
+# `rust-src`: shipped builds rebuild std (`cargo xtask size` and `wasm`, docs/spec.md §6).
+components = ["clippy", "rustfmt", "rust-src"]
+# `cargo xtask wasm` (part of `check`) builds the facade for both.
+targets = ["wasm32-wasip1", "wasm32-unknown-unknown"]

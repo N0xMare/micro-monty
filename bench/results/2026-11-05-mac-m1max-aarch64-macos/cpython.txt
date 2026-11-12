@@ -1,0 +1,17 @@
+# [M] machine: unknown CPU, nproc ?, Darwin 27.2.0; 2026-11-05; not pinned (no taskset or fewer than 3 CPUs)
+# engine: CPython 3.14.7
+# wall clock per process (spawn to exit), 10 timed reps after 1 warm-up
+# program median_ms min_ms
+startup 14.5 13.7
+fib 30.8 30.3
+loop 180.7 167.5
+dict 83.8 80.5
+str 34.1 33.4
+json 137.3 133.5
+closure 74.9 72.9
+classes 76.7 72.9
+generators 74.1 73.3
+exceptions 60.8 59.7
+fmt 74.6 73.3
+sort 77.6 76.0
+interp 79.1 77.8

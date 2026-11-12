@@ -1,0 +1,30 @@
+machine: Intel(R) Xeon(R) Processor @ 2.60GHz, nproc 16, Linux 6.1.189+; 2026-11-04; pinned with taskset -c 2
+micro-monty: micro-monty 0.0.0
+micro-monty-main: micro-monty-main 0.0.0
+  micro-monty startup    median    3.409 ms
+  micro-monty-main startup    median    3.384 ms
+  micro-monty fib        median   29.764 ms
+  micro-monty-main fib        median   28.087 ms
+  micro-monty loop       median   81.028 ms
+  micro-monty-main loop       median   70.361 ms
+  micro-monty dict       median  146.481 ms
+  micro-monty-main dict       median  123.187 ms
+  micro-monty str        median   54.297 ms
+  micro-monty-main str        median   51.544 ms
+  micro-monty json       median  120.237 ms
+  micro-monty-main json       median  112.603 ms
+  micro-monty closure    median   53.927 ms
+  micro-monty-main closure    median   48.170 ms
+  micro-monty classes    median  152.568 ms
+  micro-monty-main classes    median  144.265 ms
+  micro-monty generators median  323.634 ms
+  micro-monty-main generators median  287.797 ms
+  micro-monty exceptions median  109.685 ms
+  micro-monty-main exceptions median  103.668 ms
+  micro-monty fmt        median  236.455 ms
+  micro-monty-main fmt        median  232.835 ms
+  micro-monty sort       median  182.577 ms
+  micro-monty-main sort       median  174.822 ms
+  micro-monty interp     median  269.368 ms
+  micro-monty-main interp     median  268.094 ms
+wrote /home/user/workspace/repo/xtask/../bench/evidence/results/2026-11-04-main-vs-candidate/session-1

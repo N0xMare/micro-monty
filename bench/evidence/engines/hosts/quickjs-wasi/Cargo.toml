@@ -1,0 +1,20 @@
+[package]
+name = "engines-quickjs-wasi"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+# wasmtime as crates/mm-wasm-host pins it.
+[dependencies]
+common = { package = "engines-common", path = "../common" }
+wasmtime = "=50.0.1"
+wasmtime-wasi = "=50.0.1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

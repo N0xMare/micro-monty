@@ -1,0 +1,42 @@
+{
+ "-": {
+  "steady_ir": 495970.4,
+  "first_ir": 838655,
+  "first_ns": 147199,
+  "median_ns": 44971,
+  "min_ns": 33842,
+  "rss_kib": 109.8
+ },
+ "asyncio": {
+  "steady_ir": 6517982.9,
+  "first_ir": 6716052,
+  "first_ns": 1120111,
+  "median_ns": 812865,
+  "min_ns": 748912,
+  "rss_kib": 390.8
+ },
+ "json,re,collections,asyncio,datetime": {
+  "steady_ir": 31865484.7,
+  "first_ir": 30820537,
+  "first_ns": 5658987,
+  "median_ns": 4111875,
+  "min_ns": 4033286,
+  "rss_kib": 1968.2
+ },
+ "@/home/user/workspace/repo/bench/evidence/import_cost/cells/asyncio_gather.py": {
+  "steady_ir": 7608619.9,
+  "first_ir": 7746880,
+  "first_ns": 2186609,
+  "median_ns": 1071530,
+  "min_ns": 968533,
+  "rss_kib": 415.7
+ },
+ "@/home/user/workspace/repo/bench/evidence/import_cost/cells/asyncio_primitives.py": {
+  "steady_ir": 9428921.7,
+  "first_ir": 9751668,
+  "first_ns": 1854283,
+  "median_ns": 1335017,
+  "min_ns": 1247359,
+  "rss_kib": 448.7
+ }
+}

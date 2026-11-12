@@ -1,0 +1,61 @@
+[package]
+name = "mm-wasm-guest"
+description = "micro-monty as a wasm module speaking the mm-wasm interface (wasm32-unknown-unknown and wasm32-wasip1)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+exclude.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+# The bundle guest: the prelude and bundled modules' bytecode travel as the
+# module's `mm.prelude` and `mm.stdlib` custom sections (appended by
+# `cargo xtask size`) and are read through `mm_host.bundle_read`.
+host-bundle = ["micro-monty/host-bundle"]
+# `mm_test_panic`: arms `micro_monty::test_hooks::panic_next` (the isolation
+# fault matrix). Not in shipped modules.
+test-hooks = ["micro-monty/test-hooks"]
+# The opt-in stdlib modules (docs/sdk.md, "Optional stdlib modules"). They
+# are part of the build id, so a guest built with one restores only its own
+# snapshots; `cargo xtask wasm-host` builds one with `mod-uuid` as the
+# second build of the upgrade test (crates/mm-wasm-host/tests/upgrade.rs).
+mod-uuid = ["micro-monty/mod-uuid"]
+mod-unicodedata = ["micro-monty/mod-unicodedata"]
+mod-html-entities = ["micro-monty/mod-html-entities"]
+
+[dependencies]
+micro-monty.workspace = true
+mm-wasm-abi.workspace = true
+mm-wasm-alloc.workspace = true
+
+# The workspace lints, except that `unsafe_code` is `deny` instead of
+# `forbid`: the import block and the exports' `#[unsafe(no_mangle)]`, the
+# one exception (docs/spec.md §5), allow it. Keep in sync with the
+# workspace's `[workspace.lints]`.
+[lints.rust]
+missing_docs = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+unsafe_code = "deny"
+unused_lifetimes = "deny"
+unused_qualifications = "warn"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "warn"
+dbg_macro = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"

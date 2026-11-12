@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# Orb setup: the pinned Rust toolchain, fetched crates, and CPython 3.14 as the
+# conformance oracle. Idempotent; a warm run downloads nothing. Also runs on
+# aarch64 macOS (Apple Silicon), where valgrind is skipped.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+step() { printf '\n[setup] %s\n' "$*"; }
+# `sha256sum` is missing on older macOS; `shasum` ships with it.
+sha256_check() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum -c -; else shasum -a 256 -c -; fi
+}
+
+# Release-asset names and digests per host: wasmtime's and binaryen's own
+# spellings of the platform.
+case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64)
+    wasmtime_platform=x86_64-linux
+    wasmtime_digest=77c19ee0437991f9ac7837b9c269d9c7076744f85dad263fea5214cc2723c7ff
+    binaryen_platform=x86_64-linux
+    binaryen_digest=2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489
+    ;;
+  Linux-aarch64)
+    wasmtime_platform=aarch64-linux
+    wasmtime_digest=10f9ad1f8539d2e04e041cc622de6a270109ab1e43a6be1f69843c2082166832
+    binaryen_platform=aarch64-linux
+    binaryen_digest=89c07ea56faf38d0fbecf36ca8ec0721756716185f265b568e133d427f299bf8
+    ;;
+  Darwin-arm64)
+    wasmtime_platform=aarch64-macos
+    wasmtime_digest=323dc098dc0455d60f396c404627e967b7033ffcfa29abfffb243126cf82c9d6
+    binaryen_platform=arm64-macos
+    binaryen_digest=ad66da82ac13f163e424b1643f16c6dfcccc98b5966296b43e52d3cab04f84a8
+    ;;
+  *) printf 'Unsupported host: %s %s\n' "$(uname -s)" "$(uname -m)" >&2; exit 1 ;;
+esac
+
+step "rustup"
+if ! command -v rustup >/dev/null 2>&1 && [ ! -x "$HOME/.cargo/bin/rustup" ]; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --profile minimal --default-toolchain none
+fi
+export PATH="$HOME/.cargo/bin:$PATH"
+
+step "toolchain from rust-toolchain.toml"
+# rust-src: the size and wasm gates rebuild std. Listed in rust-toolchain.toml;
+# added explicitly for toolchains installed before it was listed.
+time rustup toolchain install --no-self-update
+rustup component add rust-src --toolchain 1.99.0
+
+step "cargo fetch"
+time cargo fetch --locked
+
+step "CPython 3.14 (conformance oracle)"
+# Pinned: CI checks committed oracle results, and patch releases change error text.
+time uv python install 3.14.7
+
+step "native profiling (software instruction counts)"
+if [ "$(uname -s)" = Darwin ]; then
+  echo "valgrind does not run on macOS; skipped"
+else
+  if ! command -v valgrind >/dev/null 2>&1; then
+    sudo apt-get update -qq
+    time sudo apt-get install -y valgrind
+  fi
+  valgrind --version
+fi
+
+step "fuzz toolchain"
+time rustup toolchain install nightly-2026-11-01 --profile minimal --no-self-update
+if ! cargo +1.99.0 fuzz --version 2>/dev/null | grep -Fxq 'cargo-fuzz 0.13.2'; then
+  time cargo +1.99.0 install cargo-fuzz --version 0.13.2 --locked
+fi
+
+step "cargo-deny (supply-chain check, deny.toml; CI on release tags)"
+if ! cargo +1.99.0 deny --version 2>/dev/null | grep -Fxq 'cargo-deny 0.20.2'; then
+  time cargo +1.99.0 install cargo-deny --version 0.20.2 --locked
+fi
+
+step "wasmtime (wasm snapshot round trips)"
+if ! "$HOME/.local/bin/wasmtime" --version 2>/dev/null | grep -q '^wasmtime 50\.0\.0 '; then
+  archive="wasmtime-v50.0.0-$wasmtime_platform"
+  temp=$(mktemp -d)
+  trap 'rm -rf "$temp"' EXIT
+  curl --fail --location --silent --show-error \
+    "https://github.com/bytecodealliance/wasmtime/releases/download/v50.0.0/$archive.tar.xz" \
+    -o "$temp/wasmtime.tar.xz"
+  printf '%s  %s\n' "$wasmtime_digest" "$temp/wasmtime.tar.xz" | sha256_check
+  tar -xJf "$temp/wasmtime.tar.xz" -C "$temp" "$archive/wasmtime"
+  mkdir -p "$HOME/.local/bin"
+  install -m755 "$temp/$archive/wasmtime" "$HOME/.local/bin/wasmtime"
+  rm -rf "$temp"
+  trap - EXIT
+fi
+
+step "binaryen wasm-opt (shipped wasm builds)"
+if ! "$HOME/.local/bin/wasm-opt" --version 2>/dev/null | grep -q '^wasm-opt version 133 '; then
+  temp=$(mktemp -d)
+  trap 'rm -rf "$temp"' EXIT
+  curl --fail --location --silent --show-error \
+    "https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-$binaryen_platform.tar.gz" \
+    -o "$temp/binaryen.tar.gz"
+  printf '%s  %s\n' "$binaryen_digest" "$temp/binaryen.tar.gz" | sha256_check
+  tar -xzf "$temp/binaryen.tar.gz" -C "$temp"
+  mkdir -p "$HOME/.local/bin"
+  install -m755 "$temp/binaryen-version_133/bin/wasm-opt" "$HOME/.local/bin/wasm-opt"
+  # The macOS build links libbinaryen.dylib through @loader_path/../lib.
+  if [ -f "$temp/binaryen-version_133/lib/libbinaryen.dylib" ]; then
+    mkdir -p "$HOME/.local/lib"
+    install -m644 "$temp/binaryen-version_133/lib/libbinaryen.dylib" "$HOME/.local/lib/libbinaryen.dylib"
+  fi
+  rm -rf "$temp"
+  trap - EXIT
+fi

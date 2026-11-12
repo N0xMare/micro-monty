@@ -1,0 +1,9 @@
+// fib: recursive calls through a global name lookup.
+function fib(n) {
+  if (n < 2) {
+    return n;
+  }
+  return fib(n - 1) + fib(n - 2);
+}
+
+console.log(fib(27));

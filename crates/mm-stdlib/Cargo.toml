@@ -1,0 +1,105 @@
+[package]
+name = "mm-stdlib"
+description = "micro-monty bundled stdlib modules, one cargo feature per module"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+exclude.workspace = true
+keywords = ["python", "micro-monty", "interpreter", "stdlib"]
+categories = ["compilers", "no-std"]
+
+[dependencies]
+mm-engine.workspace = true
+
+# The Python modules (python/) are compiled at build time.
+[build-dependencies]
+mm-compile.workspace = true
+mm-parse.workspace = true
+
+# A disabled module contributes no code: modules register their types through
+# tables, so turning a feature off removes the types, not just the import.
+# Python modules (python/<name>.py or python/<name>/) sit behind `mod-<name>`.
+# The default set is the one the size budget measures (docs/spec.md §12).
+# One feature per module, with the modules it imports; the build script
+# fails if a module imports, when it is imported, a module its feature does
+# not turn on (`check_feature_graph`). `math`, `cmath` and `sys` are engine
+# modules and always built, with no feature. The default module
+# set is micro-monty's `default` feature, which forwards every `mod-*`
+# feature (embedders depend on micro-monty, never on this crate); add a new
+# module feature there too.
+[features]
+default = []
+# The bundled modules' packed code is the host's (`ModuleCache::bundle`,
+# region 1), not linked in.
+host-bundle = ["mm-engine/host-bundle"]
+mod-json = ["mm-engine/json"]
+mod-re = ["mm-engine/re"]
+mod-collections = ["mod-heapq", "mod-abc"]
+mod-itertools = []
+mod-functools = ["mod-collections"]
+mod-datetime = ["mm-engine/datetime", "mod-time", "mod-re", "mod-warnings", "mod-operator"]
+mod-time = ["mod-operator"]
+mod-os = ["mod-operator"]
+mod-pathlib = ["mod-os", "mod-fnmatch"]
+mod-fnmatch = ["mod-re", "mod-os"]
+mod-posixpath = ["mod-os"]
+mod-csv = []
+mod-io = []
+mod-gc = []
+mod-types = []
+mod-contextlib = ["mod-abc", "mod-collections", "mod-functools"]
+mod-traceback = []
+mod-logging = ["mod-time", "mod-traceback", "mod-re", "mod-string"]
+mod-urllib = ["mod-collections", "mod-functools", "mod-re"]
+mod-shlex = ["mod-io", "mod-collections"]
+mod-difflib = ["mod-heapq", "mod-collections", "mod-types", "mod-re"]
+mod-struct = ["mm-engine/struct", "mod-operator"]
+mod-html = ["mod-re"]
+mod-warnings = ["mod-re", "mod-functools"]
+mod-codecs = []
+mod-platform = []
+mod-tempfile = []
+mod-calendar = ["mod-datetime", "mod-enum", "mod-itertools", "mod-warnings"]
+mod-hmac = ["mod-hashlib", "mod-warnings"]
+mod-zlib = ["mod-binascii"]
+mod-zoneinfo = ["mod-datetime", "mod-bisect", "mod-calendar", "mod-collections", "mod-functools", "mod-re", "mod-io", "mod-struct", "mod-os"]
+mod-pprint = ["mod-collections", "mod-types", "mod-io", "mod-re", "mod-dataclasses"]
+mod-fractions = ["mod-re", "mod-functools", "mod-operator"]
+mod-statistics = ["mod-fractions", "mod-random", "mod-bisect", "mod-collections", "mod-itertools"]
+mod-tomllib = ["mod-types", "mod-re", "mod-datetime", "mod-functools", "mod-typing"]
+mod-decimal = ["mod-numbers", "mod-contextvars", "mod-re", "mod-collections", "mod-itertools"]
+mod-numbers = ["mod-abc"]
+mod-contextvars = []
+# Over the own parser (owner request, 2026-11-07; 3 of 2,841 recorded real cells).
+# Opt-in in micro-monty: about 48 KB of `hello.wasm`, mostly the native
+# node builder.
+mod-ast = ["mm-engine/ast", "mod-warnings"]
+# Over the own lexer (owner request, 2026-11-07; 2 of 2,841 recorded real
+# cells); `token` comes with it.
+mod-tokenize = ["mm-engine/tokenize", "mod-collections"]
+# Opt-in in micro-monty; mm-cli enables them.
+# uuid, unicodedata and html.entities, the named-reference table (docs/spec.md §12).
+mod-uuid = ["mod-os", "mod-time", "mod-hashlib", "mod-random"]
+mod-html-entities = ["mod-html"]
+mod-unicodedata = ["mm-engine/unicodedata"]
+mod-random = ["mm-engine/random", "mod-hashlib", "mod-bisect", "mod-itertools", "mod-operator"]
+mod-asyncio = ["mm-engine/asyncio"]
+mod-typing = ["mod-collections", "mod-functools"]
+mod-base64 = ["mod-binascii"]
+mod-binascii = ["mm-engine/binascii"]
+mod-hashlib = ["mm-engine/hashlib", "mod-operator"]
+mod-dataclasses = ["mod-copy"]
+mod-operator = []
+mod-copy = []
+mod-heapq = []
+mod-bisect = []
+mod-string = []
+mod-textwrap = ["mod-re"]
+mod-enum = []
+mod-abc = []
+
+[lints]
+workspace = true

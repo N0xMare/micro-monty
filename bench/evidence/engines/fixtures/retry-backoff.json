@@ -1,0 +1,64 @@
+{
+ "calls": [
+  {
+   "args": {
+    "symbol": "WAYN"
+   },
+   "err": [
+    "RuntimeError",
+    "429 Too Many Requests"
+   ],
+   "name": "get_quote"
+  },
+  {
+   "args": {
+    "symbol": "WAYN"
+   },
+   "err": [
+    "RuntimeError",
+    "429 Too Many Requests"
+   ],
+   "name": "get_quote"
+  },
+  {
+   "args": {
+    "symbol": "WAYN"
+   },
+   "name": "get_quote",
+   "ok": {
+    "change_pct": 3.9,
+    "currency": "USD",
+    "price": 95.5,
+    "symbol": "WAYN"
+   }
+  },
+  {
+   "args": {
+    "attempts": 3,
+    "price": 95.5
+   },
+   "name": "submit_answer",
+   "ok": "ok"
+  }
+ ],
+ "category": "retries-errors",
+ "stdout": "attempt 1: 429 Too Many Requests\nattempt 2: 429 Too Many Requests\n{'symbol': 'WAYN', 'price': 95.5, 'change_pct': 3.9, 'currency': 'USD'} attempts: 3\nok\n",
+ "task": "retry-backoff",
+ "tools": [
+  {
+   "description": "Latest stock quote.",
+   "name": "get_quote",
+   "params": [
+    "symbol"
+   ]
+  },
+  {
+   "description": "Submit the final answer of this task. Call it once, at the end.",
+   "name": "submit_answer",
+   "params": [
+    "price",
+    "attempts"
+   ]
+  }
+ ]
+}

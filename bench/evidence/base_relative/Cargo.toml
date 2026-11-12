@@ -1,0 +1,29 @@
+[package]
+name = "base-relative"
+description = "Prototype: FULL snapshots stored relative to the build's fresh-session image (docs/research/base-relative-snapshots.md)"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99.0"
+license = "MIT"
+publish = false
+
+# Its own workspace, so the prototype never enters the engine's build,
+# lockfile or size budget. It links the unchanged facade.
+[workspace]
+
+[[bin]]
+name = "br"
+path = "main.rs"
+
+[dependencies]
+micro-monty = { path = "../../../crates/micro-monty" }
+mm-core = { path = "../../../crates/mm-core" }
+# The same optional modules as `mm` and the codemode `full` runner.
+mm-stdlib = { path = "../../../crates/mm-stdlib", default-features = false, features = ["default", "mod-fractions", "mod-statistics", "mod-uuid", "mod-tomllib", "mod-decimal", "mod-unicodedata", "mod-html-entities"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
