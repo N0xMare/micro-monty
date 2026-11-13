@@ -2648,6 +2648,26 @@ opens a draft release.
   since it and the base (about 5–6 min in `check` on 16 cores); a cached
   rerun of one program takes 7 s [M]. Calibration [M]: the 0.0.1
   Cranelift spill fails it (fib 1.080, closure 1.102, geomean 1.042).
+- **v8-ir** (release gate only, Linux): `cargo xtask v8-ir` counts V8's
+  instructions on the bench programs (`startup` left out) in both
+  `wasm32-unknown-unknown` guests, plain and bundle, which are built with
+  other `wasm-opt` flags than the wasip1 `mm` wasm-ir counts. Each program
+  runs in its own `node --no-liftoff` process under callgrind, twice in
+  fresh sessions (`hosts/js/bench/count.ts`); the count is the second
+  run's instructions in code without an object file (callgrind's `???`):
+  V8's generated code. The first run holds V8's lazy compiles. A revision
+  whose xtask has `size --head` builds its guests with its own recipe, so
+  a change to the `wasm-opt` flags or the `optimize(size)` marks is
+  counted at its commit; older ones are built with the head's recipe.
+  Base, anchor, accept line (`V8-IR-Accepted:`, `MM_V8_IR_ACCEPT`) and the
+  anchor's least-of history work as wasm-ir's. Limits, on either guest
+  against base and anchor: a program rising past 0.5% or the geomean past
+  0.3%; decreases pass. Counts are cached per guest content, keyed by
+  node's and valgrind's versions, the driver and the program's source, so
+  only a guest whose bytes changed is counted again. Stability [M]: the
+  same guest counts within 0.024% run to run; unrelated commits move a
+  program by 0.00–0.06%. Valgrind runs no AVX-512, so this is V8's AVX2
+  code.
 - **wasm-wall** (advisory, not in `check`): the count cannot see
   host-tuned layout costs (AVX-512 precompiles), so `cargo xtask wasm-wall`
   times the bench programs on wasmtime and V8 (`node --no-liftoff`, steady

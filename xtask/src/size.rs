@@ -245,7 +245,7 @@ const RECIPE_FILES: [&str; 2] = ["xtask/src/main.rs", "xtask/src/wasm.rs"];
 /// size cached under another recipe is never compared with one built
 /// under this one, and a head that lands caches its sizes under the key
 /// it gets as the next change's base.
-fn recipe_key(tree: &Path) -> Result<String, String> {
+pub(crate) fn recipe_key(tree: &Path) -> Result<String, String> {
     let mut code = Vec::new();
     for file in RECIPE_FILES {
         let text = fs::read(tree.join(file)).map_err(|e| format!("cannot read {file}: {e}"))?;
@@ -275,7 +275,7 @@ fn recipe_key(tree: &Path) -> Result<String, String> {
 
 /// Whether commit `sha`'s xtask builds a tree's shipped sizes with its own
 /// recipe (`size --head`): its main.rs carries [`crate::SIZE_HEAD`].
-fn builds_itself(root: &Path, sha: &str) -> bool {
+pub(crate) fn builds_itself(root: &Path, sha: &str) -> bool {
     let args = [
         "grep",
         "-q",
@@ -292,6 +292,12 @@ fn builds_itself(root: &Path, sha: &str) -> bool {
 /// The tree at `tree` builds its shipped artifacts with its own xtask,
 /// into its own `target/`, and returns the sizes it wrote.
 fn build_itself(tree: &Path) -> Result<Sizes, String> {
+    read(&size_head(tree)?)
+}
+
+/// Runs the tree at `tree`'s own `cargo xtask size --head` and returns the
+/// file it wrote: each shipped artifact's size and path ([`write`]).
+pub(crate) fn size_head(tree: &Path) -> Result<PathBuf, String> {
     let file = tree.join("target/size/head.tsv");
     let _ = fs::remove_file(&file);
     // rustup's `cargo`, not `$CARGO`, so the tree's rust-toolchain.toml
@@ -312,7 +318,7 @@ fn build_itself(tree: &Path) -> Result<Sizes, String> {
             tree.display()
         ));
     }
-    read(&file)
+    Ok(file)
 }
 
 /// The paths a shipped build reads; under `crates/`, all but `tests/`.

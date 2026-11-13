@@ -166,7 +166,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let base_sha = sha(&base)?;
     let anchor = match &anchor {
         Some(rev) => Some((rev.clone(), sha(rev)?)),
-        None => default_anchor(&root, &base_sha)?,
+        None => default_anchor(&root, &base_sha, ACCEPTED, "wasm-ir")?,
     }
     .filter(|(_, a)| *a != base_sha);
     let mut sides = vec![
@@ -274,7 +274,7 @@ fn least(counts: &[Counts]) -> Counts {
 
 /// The first-parent commits after `anchor` up to `base`, `base` left out,
 /// whose `INPUTS` differ from the commit before them.
-fn changed_since(root: &Path, anchor: &str, base: &str) -> Result<Vec<String>, String> {
+pub(crate) fn changed_since(root: &Path, anchor: &str, base: &str) -> Result<Vec<String>, String> {
     let list = git(
         root,
         &[
@@ -398,14 +398,20 @@ fn measure(
 }
 
 /// The latest `v*` tag `base` descends from, or the latest commit since it
-/// whose message accepts a rise; an error without such a tag.
-fn default_anchor(root: &Path, base: &str) -> Result<Option<(String, String)>, String> {
+/// whose message has an `accepted` line (a rise accepted); an error,
+/// naming `gate`, without such a tag.
+pub(crate) fn default_anchor(
+    root: &Path,
+    base: &str,
+    accepted: &str,
+    gate: &str,
+) -> Result<Option<(String, String)>, String> {
     let Ok(tag) = git(
         root,
         &["describe", "--tags", "--abbrev=0", "--match", "v*", base],
     ) else {
         return Err(format!(
-            "wasm-ir: no v* tag reachable from {base}, so no anchor: fetch the \
+            "{gate}: no v* tag reachable from {base}, so no anchor: fetch the \
              tags (`git fetch --tags origin`) or name one with --anchor REV"
         ));
     };
@@ -415,7 +421,7 @@ fn default_anchor(root: &Path, base: &str) -> Result<Option<(String, String)>, S
             "log",
             "-1",
             "--format=%H",
-            &format!("--grep=^{ACCEPTED}"),
+            &format!("--grep=^{accepted}"),
             &format!("{tag}..{base}"),
         ],
     )?;
@@ -868,12 +874,12 @@ mod tests {
     fn a_checkout_without_the_tag_has_no_anchor() {
         let dir = repo("tags");
         let first = commit(&dir, "crates/a.rs");
-        let error = default_anchor(&dir, &first).unwrap_err();
+        let error = default_anchor(&dir, &first, ACCEPTED, "wasm-ir").unwrap_err();
         assert!(error.contains("no v* tag"), "{error}");
         git(&dir, &["tag", "v0.0.1"]).unwrap();
         let head = commit(&dir, "crates/b.rs");
         assert_eq!(
-            default_anchor(&dir, &head).unwrap(),
+            default_anchor(&dir, &head, ACCEPTED, "wasm-ir").unwrap(),
             Some(("v0.0.1".to_owned(), first))
         );
         fs::remove_dir_all(&dir).unwrap();

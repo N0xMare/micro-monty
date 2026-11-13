@@ -60,6 +60,7 @@ mod handoffs;
 mod native_ir;
 mod package;
 mod size;
+mod v8_ir;
 mod wasm;
 mod wasm_ir;
 mod wasm_wall;
@@ -153,6 +154,18 @@ tasks:
                              a program rising past 0.5%, unless a commit since
                              the base has a Native-IR-Accepted: line or
                              MM_IR_ACCEPT=<reason> is set
+  v8-ir [options]            V8's instructions (node --no-liftoff, generated
+                             code, the second of two runs) on bench/*.py in
+                             both wasm32-unknown-unknown guests against a base
+                             and an anchor, as wasm-ir (in the release gate):
+                             fails on a program rising past 0.5% or a guest's
+                             geomean past 0.3%; MM_V8_IR_ACCEPT=<reason>
+                             passes a rise
+      --base <rev>           the revision to compare with (default origin/main)
+      --anchor <rev>         the anchor (default: the last v* tag, or the
+                             last commit since with a V8-IR-Accepted: line)
+      --programs <a,b>       only these programs
+      --head-built           the head's guests from target/size/head.tsv
   wasm-ir [options]          wasmtime guest instructions of bench/*.py against
                              a base revision and an anchor (the last v* tag or
                              accepted rise) under callgrind (in check): fails
@@ -202,6 +215,7 @@ fn main() -> ExitCode {
         Some("wasm-wall") => wasm_wall::run(&rest),
         Some("wasm-ir") => wasm_ir::run(&rest),
         Some("native-ir") => native_ir::run(&rest),
+        Some("v8-ir") => v8_ir::run(&rest),
         Some("gc-stress") => gc_stress::run(&rest),
         Some("package") if rest.is_empty() => package::run(),
         Some("docs") if rest.is_empty() => docs::run(),
@@ -545,6 +559,14 @@ fn check(args: &[String]) -> Result<(), String> {
     } else {
         println!("check: wasm-ir and native-ir skipped: valgrind runs on Linux only");
     }
+    if release_gate && cfg!(target_os = "linux") {
+        // V8's instructions on the guests the size-head stage built.
+        stages.push(
+            Stage::new("v8-ir")
+                .after(&["size-head"])
+                .run(task(&["v8-ir", "--head-built"])),
+        );
+    }
     if release_gate {
         stages.push(
             Stage::new("wasm-host")
@@ -582,7 +604,8 @@ fn check(args: &[String]) -> Result<(), String> {
 }
 
 /// Paths (prefixes) whose change makes plain `check` the release gate:
-/// parking, snapshots, the GC and the wasm crates.
+/// parking, snapshots, the GC, the wasm crates and how the wasm guests are
+/// built (`v8-ir` gates that).
 const RELEASE_GATE_PATHS: &[&str] = &[
     "crates/mm-engine/src/interp.rs",
     "crates/mm-engine/src/snapshot.rs",
@@ -592,11 +615,13 @@ const RELEASE_GATE_PATHS: &[&str] = &[
     "crates/micro-monty/src/image.rs",
     "crates/mm-compile/src/encode.rs",
     "crates/mm-wasm-",
+    "xtask/src/wasm.rs",
 ];
 
 /// Why the change since the merge base with `origin/main`, committed or
 /// not (new untracked files included), needs the release gate: a path of [`RELEASE_GATE_PATHS`], Cargo.toml's
-/// `[profile.*]` tables, or no merge base to tell.
+/// `[profile.*]` tables, an `optimize(size)` mark added or removed, or no
+/// merge base to tell.
 fn release_gate_reason(root: &Path) -> Option<String> {
     let git = |args: &[&str]| {
         let out = Command::new("git")
@@ -622,7 +647,14 @@ fn release_gate_reason(root: &Path) -> Option<String> {
     }
     let old = git(&["show", &format!("{base}:Cargo.toml")]).unwrap_or_default();
     let new = fs::read_to_string(root.join("Cargo.toml")).unwrap_or_default();
-    (profile_lines(&old) != profile_lines(&new)).then(|| "Cargo.toml's [profile.*]".to_owned())
+    if profile_lines(&old) != profile_lines(&new) {
+        return Some("Cargo.toml's [profile.*]".to_owned());
+    }
+    let marks = git(&["diff", "-U0", base, "--", "crates"]).unwrap_or_default();
+    marks
+        .lines()
+        .any(|l| (l.starts_with('+') || l.starts_with('-')) && l.contains("optimize(size)"))
+        .then(|| "an optimize(size) mark".to_owned())
 }
 
 /// The lines of `toml`'s `[profile.*]` tables, without comments.
@@ -753,15 +785,26 @@ pub(crate) fn shipped_artifacts(
             wasm::file_size(&native)?
         );
     }
+    measured.extend(shipped_guests(src, dir)?);
+    Ok(measured)
+}
+
+/// The two mm-wasm guests of [`shipped_artifacts`], built from the tree at
+/// `src` into `dir`: each one's name and path.
+pub(crate) fn shipped_guests(
+    src: &Path,
+    dir: &Path,
+) -> Result<Vec<(&'static str, PathBuf)>, String> {
     let guest = shipped_guest_in(src, dir)?;
-    measured.push(("mm_wasm_guest.wasm", guest));
     let bundle = if src == workspace_root() {
         wasm::shipped_bundle_guest(SIZE_TARGET_WASM)?
     } else {
         wasm::bundle_guest_in(src, &dir.join("mm-wasm-bundle"), SIZE_TARGET_WASM)?
     };
-    measured.push(("mm_wasm_guest_bundle.wasm", bundle));
-    Ok(measured)
+    Ok(vec![
+        ("mm_wasm_guest.wasm", guest),
+        ("mm_wasm_guest_bundle.wasm", bundle),
+    ])
 }
 
 /// The target of the primary size budget.
