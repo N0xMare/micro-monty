@@ -8,8 +8,8 @@ codemode source at the harness's pin ($PI_CODEMODE, default
 hosts/js/node_modules/quickjs-wasi; see hosts/js/README.md).
 
 Every measurement is a fresh process pinned to cores 2-5 (`taskset -c $CORE`;
-V8 needs its background threads), the engine order rotating each round, as bench/evidence/engines/run.py
-does: `node --expose-gc bench/node.ts ...` for Node, and one `workerd serve` per
+V8 needs its background threads), the engine order rotating each round, as
+bench/evidence/engines/run.py (at da1c21b5) did: `node --expose-gc bench/node.ts ...` for Node, and one `workerd serve` per
 engine and round for workerd (the Worker bundle of bench/worker, the engine's wasm
 as its `engine.wasm` module). Each record goes to DIR/raw.jsonl; DIR/summary.json
 holds medians over rounds; workload calls are judged by

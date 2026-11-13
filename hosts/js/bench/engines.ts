@@ -3,7 +3,7 @@
  * (node.ts) and the workerd Worker (worker/worker.ts):
  *
  * - `mm`: the mm-wasm guest on this package's host (../src/host.ts), with the
- *   codemode setup of bench/evidence/engines/hosts/mm-wasm: one builtins module
+ *   codemode setup of bench/evidence/engines/hosts/mm-wasm (at da1c21b5): one builtins module
  *   with each tool as a typed function (keyword-only parameters defaulting to
  *   `None`, `dict_as_kwargs`), answered through ../src/driver.ts (awaited calls
  *   and fan-outs as futures, answered in batches).

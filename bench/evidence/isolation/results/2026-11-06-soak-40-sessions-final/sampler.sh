@@ -1,1 +1,0 @@
-while true; do n=$(ps -Ao comm | grep -cE '(^|/)(rustc|cargo)$'); c=$(ps -Ao pcpu,comm | awk '$2 ~ /(rustc|cargo)$/ {s+=$1} END {print s+0}'); echo "$(date -u +%FT%TZ) builds=$n cpu=$c load=$(sysctl -n vm.loadavg)" >> <checkout>/.amp/in/soak874/contention.log; sleep 10; done

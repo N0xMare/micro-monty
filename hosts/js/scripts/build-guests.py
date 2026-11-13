@@ -10,7 +10,7 @@
 - `core35` and `nostdlib`: the same build with the facade's `default` feature list
   replaced by docs/user-guide.md's code-mode list (34 features, "core35") or by nothing. Each builds in its own git
   worktree of HEAD at /home/user/workspace/wtc5 or wtns, the checkout's path
-  length, as bench/evidence/stdlib_profile/removals.py does, so nothing
+  length, as bench/evidence/stdlib_profile/removals.py (at da1c21b5) did, so nothing
   path-dependent moves; only the worktree's crates/micro-monty/Cargo.toml changes.
 
 OUT_DIR (default hosts/js/guests/, ignored by git) receives `<label>.wasm` and

@@ -1,2 +1,0 @@
-wasm32-wasip1 mm_wasm_guest.wasm 2094603 bytes, 1909631 after wasm-opt -Oz
-wasm32-unknown-unknown mm_wasm_guest.wasm 2187068 bytes, 1996809 after wasm-opt -Oz

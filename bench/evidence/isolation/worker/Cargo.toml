@@ -1,9 +1,0 @@
-[package]
-name = "iso-worker"
-description = "Child-process mode: the shared service over length-prefixed frames on stdin/stdout"
-version.workspace = true
-edition.workspace = true
-publish.workspace = true
-
-[dependencies]
-iso-service.workspace = true

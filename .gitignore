@@ -1,5 +1,5 @@
-# Every cargo workspace here (root, fuzz/, crates/mm-wasm-host, the bench
-# evidence hosts and harnesses) builds into its own target/.
+# Every cargo workspace here (root, fuzz/, crates/mm-wasm-host, the codemode
+# real-session tracer) builds into its own target/.
 target/
 /fuzz/corpus
 /fuzz/artifacts

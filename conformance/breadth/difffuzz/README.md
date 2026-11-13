@@ -11,10 +11,11 @@ python3.14 fuzz/difffuzz/difffuzz.py --mm target/release/mm --python python3.14 
 
 - `*.py` here: minimized repros. Run each with `python3.14 -X utf8 F` and
   `mm run F` to compare.
-- `raw/seed-N.py`: the fuzzer's minimized divergences, with both outputs in
-  the header.
-- `run.log`: the fuzzer's output, including the signature table.
 - `cpython-timeouts.txt`: each CPython-timeout seed with its cause.
+- The run's output, `raw/seed-N.py` (the minimized divergences, both outputs
+  in the header) and `run.log` (with the signature table), moved to the
+  `evidence` branch of the private archive `N0xMare/micro-monty-archive`, at
+  the same paths; both are at `da1c21b5` too.
 
 The run's triage report is in git history before the docs were cut to
 `docs/spec.md` and `docs/user-guide.md`.

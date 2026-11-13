@@ -1,5 +1,6 @@
 //! Per-session memory and first-import time of a guest: the bundle guest
-//! against the default guest (bench/evidence/host-bundle/README.md).
+//! against the default guest (bench/evidence/host-bundle/README.md at
+//! da1c21b5).
 //!
 //! cargo run --release --example bundle_mem -- GUEST.wasm [SESSIONS]
 #![allow(

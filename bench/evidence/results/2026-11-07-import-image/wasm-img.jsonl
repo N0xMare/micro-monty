@@ -1,7 +1,0 @@
-{"first_ns":286367,"guest_memory":1966080,"median_ns":153011,"mods":"-"}
-{"first_ns":430893,"guest_memory":1966080,"median_ns":247155,"mods":"json"}
-{"first_ns":1245321,"guest_memory":2293760,"median_ns":1175473,"mods":"re"}
-{"first_ns":1130604,"guest_memory":2293760,"median_ns":1008711,"mods":"collections"}
-{"first_ns":852278,"guest_memory":2293760,"median_ns":852610,"mods":"asyncio"}
-{"first_ns":2196087,"guest_memory":2686976,"median_ns":2129994,"mods":"json,re,collections"}
-{"first_ns":6221605,"guest_memory":3801088,"median_ns":5665638,"mods":"json,re,collections,asyncio,datetime"}

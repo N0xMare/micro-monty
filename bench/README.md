@@ -72,8 +72,8 @@ comparison; `python3 bench/callgrind.py` measures current ones (per program
 and engine, outputs checked: the gated Ir, from glibc's `__libc_start_main`
 onward without `pthread_getattr_np`'s `/proc/self/maps` parsing, which the
 ±0.5% bench rule applies to, and the whole-process Ir; docs/spec.md §12) and `python3 bench/opcost.py` the
-Ir of single operations. See
-[evidence adapters](evidence/) for reproducible public-API probes.
+Ir of single operations. The earlier measurement harnesses and their data
+moved out of the tree (`evidence/README.md`).
 
 ## Native-operation and persistent-session latency
 

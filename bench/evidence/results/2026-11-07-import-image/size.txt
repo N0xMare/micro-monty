@@ -1,7 +1,0 @@
-size: wasm32-unknown-unknown hello.wasm 1999470 bytes (budget 2001200)
-size: native hello 2177048 bytes (budget 2178700)
-size: wasm32-unknown-unknown mm_wasm_guest.wasm 2103826 bytes (budget 2105800)
-# base 61f216c above; all four images (raw) below
-size: wasm32-unknown-unknown hello.wasm 2216014 bytes (budget 2001200)
-size: native hello 2414952 bytes (budget 2178700)
-size: wasm32-unknown-unknown mm_wasm_guest.wasm 2320508 bytes (budget 2105800)

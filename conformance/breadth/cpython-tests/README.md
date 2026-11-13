@@ -6,8 +6,10 @@ test method; a method counts as passing on mm only if it passes on CPython
 with the same shim (`shim/`) and the same transformed source. `modules.txt`
 lists the units. No gate reads these files.
 
-`results/` holds the 2026-11-09 run [M]: `summary.md` (per-module table and
-top failure causes), `units.jsonl` and `methods.jsonl`.
+`report.py` writes `results/`: `summary.md` (per-module table and top
+failure causes), `units.jsonl` and `methods.jsonl`. The 2026-11-09 run's
+[M] moved to the `evidence` branch of the private archive
+`N0xMare/micro-monty-archive`, at the same paths; it is at `da1c21b5` too.
 
 ## Commands
 

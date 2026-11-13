@@ -18,7 +18,7 @@ the types. Nothing here is published; `package.json` is private.
 | `src/driver.ts` | The async code-mode loop: async tools as futures, fan-outs answered in batches, fuel slices with yields and a budget. |
 | `test/host.test.ts` | The reference host's scenarios (`parity.rs`, `upgrade.rs`) with absolute checks. |
 | `scripts/build-guests.py` | The shipped guest plus the `core35` and no-stdlib builds (docs/user-guide.md's lists). |
-| `bench/` | Measurements in Node and workerd against pi's codemode on quickjs-wasi; `bench/results/<date>/` holds the data. |
+| `bench/` | Measurements in Node and workerd against pi's codemode on quickjs-wasi; a run writes `bench/results/<date>/` (the earlier runs' data is at `da1c21b5`, and on the `evidence` branch of the private archive `N0xMare/micro-monty-archive`). |
 
 ## Use
 

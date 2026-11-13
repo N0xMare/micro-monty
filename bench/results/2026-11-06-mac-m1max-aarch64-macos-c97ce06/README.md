@@ -16,7 +16,8 @@ because xtask reads `lscpu`/`nproc`, which macOS lacks.
   recorded.
 - **Load**: the run started only after 30 s with no `cargo` or `rustc`
   process, and none ran during it (a 10 s sampler, `contention.log` in
-  `bench/evidence/isolation/results/2026-11-06-soak-40-sessions-final/`).
+  `bench/evidence/isolation/results/2026-11-06-soak-40-sessions-final/` at
+  `da1c21b5`).
   Load average 10–14 from the owner's desktop apps (a browser, plak).
 
 ## Geomeans over the 12 programs (startup excluded) [M]

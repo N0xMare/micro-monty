@@ -1603,7 +1603,7 @@ timer deadlines.
   write-time dirty-line tracking cost 4–19% execution time on 11 of 13
   bench programs, and snapshot-time comparison against the fresh-session
   image gained no more than the compression prefix below while adding
-  about 22.5 KB to the guest (`bench/evidence/base_relative/`).
+  about 22.5 KB to the guest (`bench/evidence/base_relative/` at `2bcbb8c`).
 
 ```text
 header   magic "MMSNAP\0\x01", format u16 = 1 (SNAPSHOT_FORMAT), build_id [u8;32]
@@ -1786,7 +1786,7 @@ snapshot's per MiB of image: small objects 1.2–1.5 ms/MiB native, 1.0–1.8
 under wasmtime and 0.9–1.7 on V8; large blocks 0.3–0.9. A process's first
 restore takes up to 1.8 ms/MiB, and V8's first call into a new instance adds
 a warm-up (154 ms at 35 MiB) [M, one 16-core Amp orb].
-`bench/evidence/restore-cost/run.sh` reruns these.
+`bench/evidence/restore-cost/run.sh` at `2bcbb8c` reruns these.
 
 ## 10. Host boundary
 
