@@ -2127,6 +2127,7 @@ impl Vm {
             gc_yield: false,
             oom_wait: false,
             oom_rerun: u64::MAX,
+            oom_defer_at: 0,
             consumed_at: u64::MAX,
             tick_epoch: 0,
             gc_inc_stress: false,

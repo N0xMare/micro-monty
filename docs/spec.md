@@ -795,29 +795,28 @@ are the rules above. Where the code falls short, the clause says so under
    `--record` only removes entries; a change that makes a case differ for
    a known cause adds its line by hand, naming the cause and the step
    that closes it. Its first full run (1,416 runs) gave
-   identical reports in all and equal fuel in 1,397 [M]. Some copy and bulk
-   operations the engine does not run again after a collection (§9.2),
-   such as a call's `**kw` (`DICT_UPDATE` mode 1, which
-   `Vm::oom_retry_fault` does not retry [S]), can raise `MemoryError`
-   while garbage not yet collected still counts against the limit, where
-   CPython succeeds, with far less than the limit live: unparked, three
-   `s.copy()` calls of a 2M-item set, each result dropped, raise it at
-   256 MiB with a quarter of the limit live [M, reviewer]. A snapshot
+   identical reports in all and equal fuel in 1,397 [M]. An operation the
+   engine does not run again after a collection (§9.2), such as a call's
+   `**kw` (`DICT_UPDATE` mode 1, which `Vm::oom_retry_fault` does not
+   retry [S]), can raise `MemoryError` while garbage not yet collected
+   still counts against the limit, where CPython succeeds. A snapshot
    collects garbage before it writes the image, which also moves when the
    next collection falls due [E], so such an operation can come out either
    way: raise `MemoryError` unparked and succeed after a restore, or
    succeed unparked and raise after one. The snapshot need not be at the park just before the
    operation: one kept snapshot at an earlier park moved it [M, reviewer].
-   Operations that do run again give the same outcome either way. An
+   Operations that do run again wait for a full collection before they
+   raise, so a snapshot's collection does not decide their outcome; free
+   space fragmentation and the bytes counted outside the arena, which
+   differ after a restore and between targets, still can. An
    operation that fails partway for memory is charged for the work it
    did, so such a snapshot, restored or not, can raise or lower the fuel
    total. The reviewer's `f(*big, **kw)` charged +28,672 units (+0.64%).
    Six such calls under `try` beside a 24 MB pad print `ok` six times
    unparked and `ok ME ok ME ok ME` with a snapshot at every park, and the
-   fuel falls 11% (6,867,483 → 6,107,194 units) [M, reviewer]. Full retry
-   coverage (every operation retried after its collection), which closes
-   both, is being fixed in 0.0.2. Fuel totals also depend on snapshots
-   when a cell indexes or searches a long non-ASCII str: every collection forgets
+   fuel falls 11% (6,867,483 → 6,107,194 units) [M, reviewer]. Retrying
+   these too would close both; it is not built. Fuel totals also depend on snapshots when a
+   cell indexes or searches a long non-ASCII str: every collection forgets
    the char positions, a snapshot collects first, and a restore starts
    without them, so the next walk after any `Session::snapshot()`,
    restored or not, is charged again (`conformance/own/419`: +9,775 units
@@ -1468,27 +1467,50 @@ timer deadlines.
 - **Collect and retry.** Garbage not yet collected counts against the
   memory limit, so a native can fail where a collection would have made
   room. A method of an immutable builtin type (`str`, `bytes`, `int`,
-  `float`, `tuple`, `frozenset`) called straight from a `CALL` that raises
-  `MemoryError` changed nothing and consumed no iterator, so the `CALL`
-  runs again once a collection that started after the failure has ended
-  (`Vm::oom_retry`). It waits as a held mark does (`Vm::gc_held`, below),
-  and runs again once after the steps, also after a snapshot and restore
-  (the rerun mark is in the image). It retries once per failure, and only
-  after at least 1 MiB was allocated since the last collection, so a result
-  that cannot fit raises after one collection. That count is the engine's
-  own (`Heap::allocated_since_own_gc`): a snapshot's collection keeps it
-  (`Heap::keep_allocated_since_gc`; it is in the image), except one taken
-  during the wait, which is that collection, as does a collection between
-  cells (`Vm::collect_now`), so whether an operation runs again does not
-  depend on whether, or where, the host took snapshots. Its fuel is
+  `float`, `tuple`, `frozenset`), a copying method of a mutable one (`copy`
+  of a list, dict or set, `dict.fromkeys`, `set.union`, `intersection`,
+  `difference`, `symmetric_difference`) or a constructor that copies its
+  argument (`list`, `tuple`, `set`, `frozenset`, `dict`), called straight
+  from a `CALL` that raises `MemoryError`, changed nothing and consumed no
+  iterator, so the `CALL` runs again once a collection that started after
+  the failure has ended (`Vm::oom_retry`). That collection is a fresh one:
+  a mark in progress is dropped (`Heap::restart_collection`), so its work
+  follows what is reachable when it starts. It waits as a held mark does
+  (`Vm::gc_held`, below), and runs again once after the steps, also after
+  a snapshot and restore (the rerun mark is in the image). It retries once
+  per failure, so a result that cannot fit raises after one collection; a
+  request larger than the limit, or a size cap refused before the heap is
+  asked (`list(range(10**9))`), raises at once, uncharged
+  (`Heap::take_refused`, `Vm::room_may_help`). No
+  count of bytes allocated decides whether a collection can help: garbage
+  is made by dropping references, which allocates nothing, and a value
+  dropped during an incremental mark survives it (two copies of a 2M-item
+  set made and dropped left the third `MemoryError` with a quarter of the
+  limit live [M]). The failing operation is charged for the collection
+  instead, at once: a unit per 64 bytes of the memory limit, the most one
+  collection marks, capped at `RETRY_CHARGE` (2^20 units;
+  `Vm::collect_for_retry`). The charge is a constant of the session, so it
+  does not depend on how the run is sliced or where snapshots fall (a
+  charge by the live bytes the collection left differed by 4 units after
+  a restore [M]), and a guest that catches `MemoryError` in a loop pays
+  for each collection in fuel. A chunked set or dict operation whose new
+  table does not fit, at its first step or a later one, leaves the table
+  for its next step, which waits for the same collection, charged the same
+  way, and allocates again; a second failure raises (`Vm::oom_defer`). Its
+  work so far is kept. The retried `CALL`'s fuel is
   charged again. An instruction whose native raises `MemoryError` straight
   back to the dispatch loop retries the same way (`Vm::oom_retry_op`): a
   binary operator (`Vm::op_binop`) unless it may have changed its left
   operand first (an in-place operator on a dict or set, or on an instance
   of a subclass of one), an f-string's `BUILD_STRING`, a starred display's
   `LIST_TO_TUPLE`, `UNPACK_EX` from a list or tuple, `LIST_EXTEND` from a
-  list or tuple, `CALL_EX` of a Python function, and `SET_ITEM` (stores are
-  idempotent, and a list slice builds its new buffer before installing it).
+  list or tuple, `CALL_EX` of a Python function, `SET_ITEM` (stores are
+  idempotent, and a list slice builds its new buffer before installing it),
+  `GET_ITEM` of a builtin container (a slice builds only its result),
+  `LIST_APPEND` (a comprehension's list grows into a new buffer before it
+  changes) and `CALL` of a builtin type whose constructor copies its
+  argument (`list(l)`), the last three read at the fault exit
+  (`Vm::oom_retry_fault`).
   User code never runs inside those natives (a dunder runs as a request),
   so it never runs twice. Nothing that drew items from a one-shot iterator
   runs again: `Vm::collect` marks the failure as a rerun's (`oom_rerun`)

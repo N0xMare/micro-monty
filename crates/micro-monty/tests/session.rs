@@ -2624,3 +2624,137 @@ fn two_rounds_of_big_set_operations_fit_the_default_limit() {
         assert_eq!(out, format!("{want}\n"), "N = {n}");
     }
 }
+
+/// A copy beside garbage not yet collected: with a quarter of the default
+/// limit live, two copies made and dropped, the third raised `MemoryError`
+/// where Python 3.14 runs it [M]. The copies of mutable types, the
+/// constructors and slices, and a chunked set or dict operation whose new
+/// table did not fit were not run again after a collection, and a retry
+/// needed 1 MiB allocated since the last collection, which dropping a
+/// value does not allocate. Each now waits for one collection and goes on
+/// (`Vm::oom_retry`, `Vm::oom_defer`).
+#[test]
+fn a_copy_beside_dropped_copies_waits_for_a_collection() {
+    let set = "x = set(range(2_000_000))";
+    let dict = "x = dict.fromkeys(range(2_000_000))";
+    let list = "x = list(range(8_000_000))";
+    for (setup, op) in [
+        (set, "x.copy()"),
+        (set, "x | {1}"),
+        (set, "frozenset(x)"),
+        (set, "set(x)"),
+        (dict, "x.copy()"),
+        (dict, "x | {}"),
+        (dict, "dict.fromkeys(x)"),
+        (dict, "dict(x)"),
+        (dict, "{**x}"),
+        (list, "x.copy()"),
+        (list, "[y for y in x]"),
+        (list, "x[:]"),
+        (list, "list(x)"),
+        (list, "tuple(x)"),
+        (list, "x + []"),
+        (list, "[*x]"),
+    ] {
+        let src = format!(
+            "{setup}\nfor _ in range(3):\n    a = {op}\n    b = {op}\n    a = b = None\n    c = {op}\n    c = None\nprint('ok')\n"
+        );
+        let (p, out) = run(&src);
+        assert!(matches!(p, Progress::Complete(_)), "{op}: {p:?}\n{out}");
+        assert_eq!(out, "ok\n", "{op}");
+    }
+}
+
+/// The same beside a dropped 3M-element set, for keys with a user
+/// `__hash__`: their prelude twins insert each key with its hash
+/// (`_set_insert`, `_dict_insert`), and a table that did not grow raised
+/// `MemoryError` where Python 3.14 runs it [M]. The insert now runs again
+/// after a collection, without calling `__hash__` again.
+#[test]
+fn a_user_hashed_insert_waits_for_a_collection() {
+    let src = "\
+calls = [0]
+class K:
+    def __init__(self, v):
+        self.v = v
+    def __hash__(self):
+        calls[0] += 1
+        return self.v
+    def __eq__(self, o):
+        return self.v is o.v
+xs = [K(i) for i in range(800_000)]
+for op in range(4):
+    g = set(range(3_000_000))
+    g = None
+    calls[0] = 0
+    if op == 0:
+        s = {x: 1 for x in xs}
+    elif op == 1:
+        s = {x for x in xs}
+    elif op == 2:
+        s = set(xs)
+    else:
+        s = dict.fromkeys(xs)
+    assert len(s) == 800_000
+    assert calls[0] == 800_000
+    s = None
+print('ok')
+";
+    let (p, out) = run(src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{out}");
+    assert_eq!(out, "ok\n");
+}
+
+/// A set's new table whose keys fit and whose hashes do not, beside a
+/// kept value at a 64 MiB limit: the keys, dropped, counted as allocated
+/// since the collection the step waited for, so every failure deferred
+/// again and the step collected until its fuel ran out [M]. It raises
+/// `MemoryError` after one collection (`Vm::oom_defer`).
+#[test]
+fn a_table_that_never_fits_raises_after_one_collection() {
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(64 << 20)));
+    let code = engine
+        .compile(
+            "keep = bytearray(30_000_000)\ns = set(range(750_000))\n",
+            "test.py",
+        )
+        .expect("compiles");
+    let mut s = Session::new(&engine).expect("session");
+    s.set_fuel_total(Some(1 << 30));
+    let p = s.start(&code);
+    assert_eq!(error_of(&p).type_name, "MemoryError", "{p:?}");
+}
+
+/// A retry after `MemoryError` waits for a full collection, and charges
+/// the failing operation for it (`Vm::collect_for_retry`), so a guest that
+/// catches `MemoryError` in a loop cannot have collections run for free:
+/// each failing `*` beside 225 MB live costs at least 2^20 units more than
+/// raising `MemoryError` itself. A request past the largest object raises
+/// at once, uncharged.
+#[test]
+fn a_retry_charges_its_collection() {
+    let spent = |body: &str| {
+        let engine = Engine::new(EngineConfig::new());
+        let code = engine
+            .compile(
+                &format!(
+                    "keep = [bytearray(45_000_000) for _ in range(5)]\nfor _ in range(10):\n    try:\n        {body}\n    except MemoryError:\n        pass\n"
+                ),
+                "test.py",
+            )
+            .expect("compiles");
+        let mut s = Session::new(&engine).expect("session");
+        s.set_fuel_total(Some(1 << 40));
+        let p = s.start(&code);
+        assert_eq!(p, Progress::Complete(None), "{body}");
+        (1 << 40) - s.fuel_total().expect("a total")
+    };
+    let failed = spent("b'x' * 60_000_000");
+    let too_big = spent("b'x' * 300_000_000");
+    let raised = spent("raise MemoryError");
+    assert!(too_big < raised + (1 << 20), "{too_big} against {raised}");
+    assert!(
+        failed >= raised + 10 * (1 << 20),
+        "{failed} against {raised}"
+    );
+}

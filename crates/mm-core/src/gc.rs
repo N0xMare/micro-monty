@@ -449,6 +449,20 @@ impl Heap {
         self.inc.forced = true;
     }
 
+    /// Drops a mark in progress and makes a fresh collection due: a retry
+    /// after `MemoryError` waits for one collection, whose work then
+    /// follows the values reachable when it starts, not how far a mark had
+    /// got (whose marks predate the garbage, so finishing it first would
+    /// mark the heap twice).
+    pub fn restart_collection(&mut self) {
+        if self.marking() {
+            self.abandon_mark();
+            self.words.clear_pending_marks();
+            self.bytes.clear_pending_marks();
+        }
+        self.inc.forced = true;
+    }
+
     /// Stress testing: checks every remark against a full mark from the
     /// same roots; a reachable object the incremental mark missed aborts.
     pub fn set_incremental_verify(&mut self, on: bool) {

@@ -386,6 +386,11 @@ impl CodeObj {
 /// [`Vm::specials`].
 pub(crate) const HDR: usize = 2;
 
+/// The most fuel a retry after `MemoryError` charges for its collection
+/// (`Vm::collect_for_retry`): 64 MiB of a limit's worth at a unit per 64
+/// bytes, within a slice's overdraft bound (docs/spec.md §5).
+pub(crate) const RETRY_CHARGE: u64 = 1 << 20;
+
 /// The length of the call instructions plain frames return to.
 pub(crate) const CALL_LEN: usize = mm_compile::bytecode::layout("rbu").words as usize;
 
@@ -830,6 +835,11 @@ pub struct Vm {
     /// lasts until the next safepoint, which a host's fuel slice cannot
     /// move. Not in the image.
     pub(crate) oom_rerun: u64,
+    /// The collection count a chunked step's deferred allocation waits for
+    /// ([`Vm::oom_defer`]), until that allocation succeeds; 0: none. Not in
+    /// the image: a snapshot collects in full, so a restored step at most
+    /// defers once more.
+    pub(crate) oom_defer_at: u64,
     /// The [`Vm::op_stamp`] `consumed` belongs to: entries from an earlier
     /// instruction are dropped, not read. Not in the image.
     pub(crate) consumed_at: u64,
@@ -1069,6 +1079,7 @@ impl Vm {
             gc_yield: false,
             oom_wait: false,
             oom_rerun: u64::MAX,
+            oom_defer_at: 0,
             consumed_at: u64::MAX,
             tick_epoch: 0,
             gc_inc_stress: false,
@@ -1393,11 +1404,36 @@ impl Vm {
     #[cold]
     #[inline(never)]
     pub(crate) fn oom_retry(&mut self, n: &crate::builtins::Native) -> bool {
-        let pure = matches!(
-            n.owner,
-            Some(T::str | T::bytes | T::int | T::float | T::tuple | T::frozenset)
-        );
-        self.oom_retry_if(pure)
+        self.oom_retry_if(Self::native_pure(n))
+    }
+
+    /// Whether builtin `n` changes nothing before its result is allocated,
+    /// so it may run again after a collection ([`Vm::oom_retry`]).
+    fn native_pure(n: &crate::builtins::Native) -> bool {
+        match n.owner {
+            Some(T::str | T::bytes | T::int | T::float | T::tuple | T::frozenset) => true,
+            // Methods of mutable types that only read: they build their
+            // result before anything changes.
+            Some(T::list | T::dict | T::set) if n.name() == "copy" => true,
+            Some(T::dict) => n.name() == "fromkeys",
+            Some(T::set) => matches!(
+                n.name(),
+                "union" | "intersection" | "difference" | "symmetric_difference"
+            ),
+            // The prelude twins' inserts of a key known absent, with its
+            // hash (a comprehension or `set(xs)` over user `__hash__`
+            // keys): a table grows before the entry is written, or the
+            // entry is taken out again (`set_unput`), and nothing compares.
+            None if n.module() == Some("_prelude") => {
+                matches!(n.name(), "_set_insert" | "_dict_insert")
+            }
+            // The constructors that copy their argument.
+            None => {
+                n.module().is_none()
+                    && matches!(n.name(), "list" | "tuple" | "set" | "frozenset" | "dict")
+            }
+            _ => false,
+        }
     }
 
     /// An instruction the dispatch loop ran natively raised `MemoryError`
@@ -1457,12 +1493,30 @@ impl Vm {
             return false;
         };
         let rerun = match bc.get(st.pc).copied().map(crate::interp::op_of) {
-            Some(op::BUILD_STRING | op::LIST_TO_TUPLE) => true,
+            // A list grows into a new buffer before it changes
+            // (`Vm::list_grow`).
+            Some(op::BUILD_STRING | op::LIST_TO_TUPLE | op::LIST_APPEND) => true,
             Some(op::UNPACK_EX | op::LIST_EXTEND) => seq(st.acc),
             Some(op::CALL_EX) => self
                 .stack
                 .get(st.base + operand(bc, st.pc, 0))
                 .is_some_and(|f| f.is_obj_kind(ty::FUNC as u8)),
+            // A builtin type called as a constructor that copies its
+            // argument (`list(l)`); a builtin called directly retries in
+            // `call_native`.
+            Some(op::CALL) => self
+                .stack
+                .get(st.base + operand(bc, st.pc, 0))
+                .and_then(|&f| self.type_of_typeobj(f))
+                .and_then(|t| self.ctor_of(t))
+                .and_then(crate::native)
+                .is_some_and(Self::native_pure),
+            // A subscript read of a builtin container builds only its
+            // result (a slice); a user `__getitem__` runs as a request.
+            Some(op::GET_ITEM) => self
+                .stack
+                .get(st.base + operand(bc, st.pc, 0))
+                .is_some_and(|&o| self.user_class(o).is_none() && !Self::is_class(o)),
             _ => false,
         };
         if !rerun {
@@ -1474,17 +1528,78 @@ impl Vm {
         retry
     }
 
+    /// A chunked step's new table did not fit (`MemoryError` pending) where
+    /// the step can leave it for its next step. Garbage may hold the room
+    /// (a value dropped during an incremental mark survives it, and
+    /// dropping one allocates nothing), so the error is dropped, the guest
+    /// waits for a full collection at the safepoint before that step (held,
+    /// as for a retry: no guest code or fuel between its steps), and the
+    /// next step allocates again; true. A failure again before that
+    /// allocation succeeded (the step clears `oom_defer_at`) stands; false.
+    /// Not a count of bytes allocated since the collection: a table's
+    /// first half that fit, dropped when its second did not, counted as
+    /// progress, and a step at the limit collected for ever.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn oom_defer(&mut self) -> bool {
+        if self.exc_type(self.exc) != T::MemoryError || !self.room_may_help() {
+            return false;
+        }
+        let retried = self.oom_defer_at != 0 && self.heap.stats().collections >= self.oom_defer_at;
+        if retried {
+            self.oom_defer_at = 0;
+            return false;
+        }
+        self.exc = Value::NONE;
+        self.collect_for_retry();
+        self.oom_defer_at = self.gc_wait;
+        true
+    }
+
+    /// Whether the `MemoryError` pending came from the heap refusing a
+    /// request no larger than the memory limit, which a collection may make
+    /// room for: one larger, or a size cap refused before the heap was
+    /// asked (`list(range(10**9))`), raises at once, without a collection
+    /// or its charge.
+    fn room_may_help(&self) -> bool {
+        let refused = self.heap.take_refused();
+        refused != 0 && refused <= self.heap.memory_limit()
+    }
+
+    /// Whether a step deferred its new table ([`Vm::oom_defer`]) and the
+    /// collection it waits for has not ended: the step ends.
+    pub(crate) fn oom_deferred(&self) -> bool {
+        self.oom_defer_at > self.heap.stats().collections
+    }
+
+    /// Asks for the collection a retry after `MemoryError` waits for: a
+    /// fresh one, a mark in progress dropped (`Heap::restart_collection`),
+    /// held as `gc.collect`'s is. Garbage is made by dropping references,
+    /// which allocates nothing, and a value dropped during a mark survives
+    /// it, so no count says a collection cannot help. The failing operation
+    /// is charged for it instead, at once: a unit per 64 bytes of the
+    /// memory limit (what one collection can mark at most), at most
+    /// [`RETRY_CHARGE`] units. A constant of the session, so the charge
+    /// does not depend on how the run is sliced or where snapshots fall,
+    /// and a guest that catches `MemoryError` in a loop pays for each
+    /// collection in fuel.
+    fn collect_for_retry(&mut self) {
+        self.burn((self.heap.memory_limit() / 64).min(RETRY_CHARGE));
+        self.heap.restart_collection();
+        self.collect_in_steps(false);
+    }
+
     fn oom_retry_if(&mut self, pure: bool) -> bool {
         self.fresh_consumed();
         let rerun = core::mem::replace(&mut self.oom_rerun, u64::MAX) == self.op_stamp();
         let retry = !rerun
             && pure
             && self.exc_type(self.exc) == T::MemoryError
+            && self.room_may_help()
             && self.consumed.is_empty()
-            && self.partial.is_none()
-            && self.heap.allocated_since_own_gc() >= 1 << 20;
+            && self.partial.is_none();
         if retry {
-            self.collect_in_steps(false);
+            self.collect_for_retry();
             self.oom_wait = true;
         }
         retry

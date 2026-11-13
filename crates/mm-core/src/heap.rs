@@ -35,7 +35,7 @@
 use crate::space::{self, LARGE_UNITS, Space, Store, header_len};
 use crate::value::Value;
 use alloc::{sync::Arc, vec::Vec};
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 /// Bytes in a full normal segment of either space. Each space's first
 /// segment starts at 32 KiB and grows to this; dedicated segments for large
@@ -284,6 +284,9 @@ pub struct Heap {
     scratch: Arc<AtomicUsize>,
     /// A reservation was made: the counter's own size counts from then on.
     scratch_live: AtomicBool,
+    /// The bytes of the last request refused for room ([`Heap::take_refused`];
+    /// not snapshotted).
+    refused: AtomicU64,
     /// Positions found in non-ASCII strings (not snapshotted).
     pub(crate) str_pos: crate::string::StrPos,
     /// The incremental mark in progress, if any (not snapshotted).
@@ -321,7 +324,7 @@ impl Scratch {
                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                     used.checked_add(extra).filter(|&n| n as u64 <= ceiling)
                 })
-                .map_err(|_| Error::OutOfMemory)?;
+                .map_err(|_| heap.refuse(extra as u64))?;
         } else if bytes < self.bytes {
             self.counter
                 .fetch_sub(self.bytes - bytes, Ordering::Relaxed);
@@ -359,6 +362,7 @@ impl Heap {
             external_bytes: 0,
             scratch: Arc::new(AtomicUsize::new(0)),
             scratch_live: AtomicBool::new(false),
+            refused: AtomicU64::new(0),
             str_pos: crate::string::StrPos::default(),
             inc: crate::gc::Inc::new(),
         }
@@ -463,7 +467,9 @@ impl Heap {
             a
         } else {
             let avail = self.available_bytes();
-            self.words.place_slow(units, avail)?
+            self.words
+                .place_slow(units, avail)
+                .map_err(|e| self.refuse_if(e, units as u64 * 8))?
         };
         let (data, off) = self.words.start(a, units, header.0)?;
         self.objects += 1;
@@ -853,7 +859,9 @@ impl Heap {
             a
         } else {
             let avail = self.available_bytes();
-            self.bytes.place_slow(units, avail)?
+            self.bytes
+                .place_slow(units, avail)
+                .map_err(|e| self.refuse_if(e, units as u64 * 8))?
         };
         let (store, off) = self.bytes.start(a, units, 1 | u64::from(len32) << 32)?;
         self.stats.allocated_since_gc += units as u64 * 8;
@@ -1014,7 +1022,7 @@ impl Heap {
     /// This is not serialized: the engine rebuilds it when restoring its data.
     pub fn set_external_bytes(&mut self, bytes: u64) -> Result<(), Error> {
         if bytes > self.external_bytes && bytes - self.external_bytes > self.available_bytes() {
-            return Err(Error::OutOfMemory);
+            return Err(self.refuse(bytes - self.external_bytes));
         }
         self.external_bytes = bytes;
         Ok(())
@@ -1030,7 +1038,7 @@ impl Heap {
         if !self.scratch_live.load(Ordering::Relaxed) {
             let needed = (bytes as u64).saturating_add((3 * size_of::<usize>()) as u64);
             if needed > self.available_bytes() {
-                return Err(Error::OutOfMemory);
+                return Err(self.refuse(needed));
             }
             self.scratch_live.store(true, Ordering::Relaxed);
         }
@@ -1038,6 +1046,33 @@ impl Heap {
         let mut reservation = Scratch { counter, bytes: 0 };
         reservation.resize(self, bytes)?;
         Ok(reservation)
+    }
+
+    /// [`Heap::refuse`] if a placement failed for room.
+    #[cold]
+    #[inline(never)]
+    fn refuse_if(&self, e: Error, bytes: u64) -> Error {
+        if e == Error::OutOfMemory {
+            self.refuse(bytes);
+        }
+        e
+    }
+
+    /// Records a request of `bytes` refused for room: the last one is what
+    /// [`Heap::take_refused`] gives.
+    #[cold]
+    #[inline(never)]
+    fn refuse(&self, bytes: u64) -> Error {
+        self.refused.store(bytes.max(1), Ordering::Relaxed);
+        Error::OutOfMemory
+    }
+
+    /// The bytes of the last request refused for room since the last call
+    /// (0: none), so a caller can tell a refusal a collection might help
+    /// (a request no larger than the limit) from one it cannot (larger, or
+    /// a cap refused before asking the heap).
+    pub fn take_refused(&self) -> u64 {
+        self.refused.swap(0, Ordering::Relaxed)
     }
 
     /// Unreserved budget after arena, collector and external allocations.
@@ -1077,7 +1112,7 @@ impl Heap {
             .ok_or(Error::OutOfMemory)?;
         let extra = capacity.saturating_sub(self.mark_stack.capacity()) as u64 * 4;
         if extra > self.available_bytes() {
-            return Err(Error::OutOfMemory);
+            return Err(self.refuse(extra));
         }
         self.mark_stack
             .try_reserve_exact(capacity)
@@ -1090,6 +1125,14 @@ impl Heap {
     /// or admitting another object needs more collector/segment metadata.
     #[must_use]
     pub fn would_fit(&self, bytes: u64) -> bool {
+        let fits = self.fits(bytes);
+        if !fits {
+            self.refuse(bytes);
+        }
+        fits
+    }
+
+    fn fits(&self, bytes: u64) -> bool {
         let Some(total) = bytes
             .div_ceil(8)
             .checked_add(1)

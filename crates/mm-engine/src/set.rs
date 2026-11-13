@@ -159,6 +159,10 @@ pub(crate) struct Bulk {
     /// yet, or it has no limit); else growth waits for the next step.
     /// Not saved: each step sets it.
     room: bool,
+    /// The operation goes on in steps (`top`): a new table that does not
+    /// fit waits for a collection and the next step ([`Vm::oom_defer`]).
+    /// Not saved.
+    step: bool,
 }
 
 /// What a step of a bulk operation came to.
@@ -1016,6 +1020,7 @@ impl Vm {
             n: 0,
             res,
             room: true,
+            step: top,
         };
         match self.bulk_run(&mut b, top)? {
             Flow::Done(v) => Ok(v),
@@ -1049,6 +1054,7 @@ impl Vm {
             n,
             res,
             room: true,
+            step: true,
         };
         if !self.bulk_tables_ok(&b) {
             return Err(self.bad_step());
@@ -1188,15 +1194,16 @@ impl Vm {
             // 128 MB takes most of a step.
             b.room = !limit || spent < crate::nstep::STEP_WORK / 4;
             if b.nk == Value::NONE || b.nv == Value::NONE {
-                // `out`'s new table comes at the start of a step.
-                if !b.room {
+                // `out`'s new table comes at the start of a step, after
+                // the collection one that did not fit waits for.
+                if !b.room || self.oom_deferred() {
                     return Ok(Flow::More);
                 }
                 if b.nk == Value::NONE {
                     self.bulk_grow(b, out, usize::try_from(b.j).unwrap_or(usize::MAX))?;
                 } else {
                     let size = b.nk.as_obj().map_or(8, |k| self.obj_len(k) as usize);
-                    b.nv = if Self::is_set(out) {
+                    let nv = if Self::is_set(out) {
                         // A big table's keys come unfilled
                         // (`set_rebuild_start`): marked empty a slice per
                         // step (`j` slots so far), then its hashes.
@@ -1204,11 +1211,19 @@ impl Vm {
                             *units += self.set_keys_fill(b.nk, &mut b.j, left);
                             continue;
                         }
-                        b.j = 0;
-                        self.set_hashes(size)?
+                        self.set_hashes(size).inspect(|_| b.j = 0)
                     } else {
-                        Value::from_ref(self.dict_index_table(size / 2)?, ty::RAW as u8)
+                        self.dict_index_table(size / 2)
+                            .map(|t| Value::from_ref(t, ty::RAW as u8))
                     };
+                    match nv {
+                        Ok(nv) => {
+                            b.nv = nv;
+                            self.oom_defer_at = 0;
+                        }
+                        Err(Raised) if b.step && self.oom_defer() => return Ok(Flow::More),
+                        Err(e) => return Err(e),
+                    }
                 }
                 continue;
             }
@@ -1837,15 +1852,28 @@ impl Vm {
             return Ok(());
         }
         b.nk = Value::UNDEFINED;
-        if Self::is_set(out) {
-            return self.set_rebuild_start(b, n);
+        let r = if Self::is_set(out) {
+            self.set_rebuild_start(b, n)
+        } else {
+            self.dict_reserve(out, n).and_then(|cap| {
+                if let Some(cap) = cap {
+                    // The index comes next (`nv` is `NONE`).
+                    let e = self.dict_entries_table(cap)?;
+                    (b.nk, b.nv, b.j, b.n) = (Value::from_ref(e, ty::BUF as u8), Value::NONE, 0, 0);
+                }
+                Ok(())
+            })
+        };
+        // A table that does not fit comes at the start of a later step,
+        // after a collection (`Vm::oom_defer`).
+        if r.is_err() && b.step && self.oom_defer() {
+            (b.nk, b.j) = (Value::NONE, n as u64);
+            return Ok(());
         }
-        if let Some(cap) = self.dict_reserve(out, n)? {
-            // The index comes next (`nv` is `NONE`).
-            let e = self.dict_entries_table(cap)?;
-            (b.nk, b.nv, b.j, b.n) = (Value::from_ref(e, ty::BUF as u8), Value::NONE, 0, 0);
+        if r.is_ok() {
+            self.oom_defer_at = 0;
         }
-        Ok(())
+        r
     }
 
     /// Action `a` of a phase on item `x` at `at` (dict value `v`, stored
