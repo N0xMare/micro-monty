@@ -69,7 +69,7 @@ use micro_monty::{
 };
 use std::{
     collections::BTreeMap,
-    io::{BufWriter, Write},
+    io::{BufWriter, Read, Write},
     process::ExitCode,
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
@@ -649,6 +649,30 @@ struct HostSide {
 const SNAPSHOT_FILE: &str = "session.mmsnap";
 const STATE_FILE: &str = "state.json";
 
+/// wasmtime's WASI refuses one read or write of more than 128 MiB
+/// (`ENOMEM`) [M], and an image near the default memory limit is larger,
+/// so the image file moves in pieces of this size.
+const IMAGE_PIECE: usize = 16 << 20;
+
+fn write_image(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut file = std::fs::File::create(path)?;
+    bytes
+        .chunks(IMAGE_PIECE)
+        .try_for_each(|piece| file.write_all(piece))
+}
+
+fn read_image(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+    let mut file = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    let mut piece = vec![0; IMAGE_PIECE];
+    loop {
+        match file.read(&mut piece)? {
+            0 => return Ok(bytes),
+            n => bytes.extend_from_slice(&piece[..n]),
+        }
+    }
+}
+
 /// Runs until the cell ends or stops; at a stop, saves the session and the
 /// host side to `d.dir` with the answer the stop needs, prints the park
 /// line and exits.
@@ -734,7 +758,7 @@ fn drive_durable(
         "entropy": host.entropy.as_ref().map_or(0, |e| e.load(Ordering::Relaxed)),
     });
     let written = std::fs::create_dir_all(&d.dir)
-        .and_then(|()| std::fs::write(d.dir.join(SNAPSHOT_FILE), &bytes))
+        .and_then(|()| write_image(&d.dir.join(SNAPSHOT_FILE), &bytes))
         .and_then(|()| std::fs::write(d.dir.join(STATE_FILE), state.to_string()));
     if let Err(e) = written {
         eprintln!("mm: cannot save to {}: {e}", d.dir.display());
@@ -764,7 +788,7 @@ fn resume_json(dir: &std::path::Path) -> ExitCode {
         Ok(v) => v,
         Err(e) => return fail(format!("{}: {e}", dir.join(STATE_FILE).display())),
     };
-    let bytes = match std::fs::read(dir.join(SNAPSHOT_FILE)) {
+    let bytes = match read_image(&dir.join(SNAPSHOT_FILE)) {
         Ok(b) => b,
         Err(e) => return fail(format!("{}: {e}", dir.join(SNAPSHOT_FILE).display())),
     };
