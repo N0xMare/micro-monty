@@ -195,11 +195,11 @@ pub fn check(src: &str) -> Result<(), CompileError> {
                 if w > top {
                     indents.push(w);
                     if indents.len() > MAX_INDENT {
-                        return Err(CompileError {
+                        return Err(CompileError::from(mm_compile::ErrorData {
                             kind: "IndentationError",
                             msg: "too many levels of indentation".into(),
                             pos: at(line, 0),
-                        });
+                        }));
                     }
                 } else {
                     while indents.len() > 1 && indents.last().copied().unwrap_or(0) > w {

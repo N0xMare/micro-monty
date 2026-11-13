@@ -386,7 +386,7 @@ impl<'s, 'a> Parser<'s, 'a> {
                 .lex_err
                 .take()
                 .unwrap_or_else(|| self.err_at("invalid syntax", t.s, t.e)),
-            T::Indent => CompileError {
+            T::Indent => CompileError::from(mm_compile::ErrorData {
                 kind: "IndentationError",
                 msg: "unexpected indent".into(),
                 pos: {
@@ -398,7 +398,7 @@ impl<'s, 'a> Parser<'s, 'a> {
                         end_col: col,
                     }
                 },
-            },
+            }),
             T::Newline | T::End if t.s == t.e => {
                 let p = self.lines.pos(t.s, t.s);
                 CompileError::syntax(
@@ -569,11 +569,11 @@ impl<'s, 'a> Parser<'s, 'a> {
                 if t.k == T::End {
                     pos = self.lines.pos(self.prev_end, self.prev_end);
                 }
-                return Err(CompileError {
+                return Err(CompileError::from(mm_compile::ErrorData {
                     kind: "IndentationError",
                     msg: format!("expected an indented block after {what} on line {line}"),
                     pos,
-                });
+                }));
             }
             self.bump();
             loop {
@@ -1855,11 +1855,11 @@ impl<'s, 'a> Parser<'s, 'a> {
             if t.k == T::Error {
                 return Err(self.fail());
             }
-            return Err(CompileError {
+            return Err(CompileError::from(mm_compile::ErrorData {
                 kind: "IndentationError",
                 msg: format!("expected an indented block after 'match' statement on line {line}"),
                 pos: self.lines.pos(t.s, t.e),
-            });
+            }));
         }
         self.bump();
         let mut cases = Vec::new();

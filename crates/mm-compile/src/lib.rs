@@ -52,7 +52,7 @@ pub mod symtable;
 
 pub use compiler::{MAX_NESTING, Options, compile, match_kind};
 pub use encode::{DecodeError, SharedStrings, section};
-pub use error::CompileError;
+pub use error::{CompileError, ErrorData};
 
 /// The lines of source `text` as positions number them: each `\n`,
 /// `\r\n` or lone `\r` ends one (CPython translates line endings before

@@ -468,7 +468,7 @@ fn chains_and_nesting() {
         // tokens (they count depth at different nodes); what must agree is
         // whether the source compiles and which error it raises.
         let too_deep = |r: Result<Module, CompileError>| match r {
-            Err(e) if e.kind == "RecursionError" => Some(e.msg),
+            Err(e) if e.kind == "RecursionError" => Some(e.msg.clone()),
             _ => None,
         };
         let own = too_deep(mm_parse::parse(s));

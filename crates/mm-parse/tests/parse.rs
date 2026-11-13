@@ -1185,7 +1185,7 @@ fn tokenizer_and_parser_errors_take_cpythons_precedence() {
                 continue;
             }
             Err(e) => (
-                e.msg,
+                e.msg.clone(),
                 e.pos.line as usize,
                 e.pos.col as usize + 1,
                 if end == 0 {
@@ -1233,7 +1233,7 @@ fn syntax_errors_match_cpython() {
 fn lone_carriage_returns_end_lines_as_in_cpython() {
     let error = |src: &str| {
         let e = mm_parse::parse(src).unwrap_err();
-        (e.kind, e.msg, e.pos.line, e.pos.col + 1)
+        (e.kind, e.msg.clone(), e.pos.line, e.pos.col + 1)
     };
     for nl in ["\r", "\r\n"] {
         let src = format!("x = 1{nl}{}{}", "(".repeat(201), ")".repeat(201));

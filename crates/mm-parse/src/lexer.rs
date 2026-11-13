@@ -522,11 +522,11 @@ impl Lx<'_, '_> {
     }
 
     fn err(&self, kind: &'static str, msg: String, start: usize, end: usize) -> CompileError {
-        CompileError {
+        CompileError::from(mm_compile::ErrorData {
             kind,
             msg,
             pos: at(self.lines, start, end),
-        }
+        })
     }
 
     fn syntax(&self, msg: String, start: usize, end: usize) -> CompileError {

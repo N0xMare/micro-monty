@@ -11,6 +11,20 @@ behind 0.0.1. The commit hashes in the 0.0.1 entry are pre-release history,
 kept in the private archive `N0xMare/micro-monty-archive` (branch
 `history-0.0.1`; docs/history/README.md maps them).
 
+## 0.0.2 (unreleased)
+
+### Changed
+
+- `mm-compile`'s `CompileError` is boxed: it is now
+  `CompileError(Box<ErrorData>)`, and its `kind`, `msg` and `pos` fields
+  moved to the new public `ErrorData`. Reads such as `e.msg` still compile
+  through `Deref`; a struct literal becomes
+  `CompileError::from(ErrorData { .. })`, and moving a field out needs a
+  clone. A `Result<(), CompileError>` shrinks from 56 to 8 bytes on x86_64.
+  The shipped `hello.wasm` falls by 54,039 B and native `hello` by
+  42,912 B [M]. The facade's `micro_monty::CompileError`, the mm-wasm ABI
+  and the build id do not change.
+
 ## 0.0.1 (2026-11-12)
 
 The first release: the engine, its Rust SDK, the `mm` CLI and an mm-wasm
