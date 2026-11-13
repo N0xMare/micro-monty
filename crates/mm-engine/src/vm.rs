@@ -1181,7 +1181,9 @@ impl Vm {
         let obj = self.type_obj(T::object);
         self.missing = self.new_instance(obj, 0)?;
         self.empty_tuple = self.alloc_tuple(&[])?;
-        self.prelude_globals = self.new_globals_dict()?;
+        // Room for what `init_prelude` binds: growing to it from 8 entries
+        // cost startup about 15k Ir [M].
+        self.prelude_globals = self.new_globals_dict(64)?;
         self.init_prelude()?;
         let args = self.alloc_tuple(&[])?;
         let t = self.types[T::MemoryError as usize];
@@ -1191,7 +1193,7 @@ impl Vm {
 
     /// New globals (`__name__` = `'__main__'`) and an empty module table.
     fn fresh_globals(&mut self) -> Result<(), Raised> {
-        self.globals = self.new_globals_dict()?;
+        self.globals = self.new_globals_dict(8)?;
         self.modules = self.new_dict()?;
         self.std_globals.fill(Value::NONE);
         let n = self.intern("__name__")?;
@@ -1204,8 +1206,8 @@ impl Vm {
     }
 
     /// A new globals dict (indexed, flagged [`GLOBALS_FLAG`]).
-    pub(crate) fn new_globals_dict(&mut self) -> Result<Value, Raised> {
-        let d = self.new_dict_indexed(8)?;
+    pub(crate) fn new_globals_dict(&mut self, cap: usize) -> Result<Value, Raised> {
+        let d = self.new_dict_indexed(cap)?;
         if let Some(r) = d.as_obj() {
             let _ = self.heap.set_flags(r, GLOBALS_FLAG);
         }

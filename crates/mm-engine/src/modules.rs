@@ -684,7 +684,7 @@ impl Vm {
             self.std_codes[i] = Some((first, end, entry));
             entry
         };
-        let g = self.new_globals_dict()?;
+        let g = self.new_globals_dict(8)?;
         let module = self.new_module_with(m.name, g)?;
         let k = self.intern("__name__")?;
         let n = self.vslot(module, module_slot::NAME);
