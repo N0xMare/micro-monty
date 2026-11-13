@@ -2314,6 +2314,11 @@ impl Vm {
             key
         };
         if Vm::is_heap_int(key) && self.int_of(key).is_none() && Vm::is_sequence_type(t) {
+            // A range computes with the int itself (CPython's
+            // `compute_range_item`), so it is only out of range.
+            if t == T::range {
+                return Err(self.err(T::IndexError, "range object index out of range"));
+            }
             return Err(self.index_overflow(T::IndexError));
         }
         let is_slice = key.is_obj_kind(ty::SLICE as u8);

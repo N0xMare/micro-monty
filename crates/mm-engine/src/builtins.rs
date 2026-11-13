@@ -2417,6 +2417,8 @@ impl Vm {
             } else if let (None, Some(m)) = (n.owner, n.module()) {
                 // Module functions are named with their module.
                 format!("{m}.{q}() takes no keyword arguments")
+            } else if let (Some(t), "__init__") = (n.owner, n.name()) {
+                format!("{}() takes no keyword arguments", t.name())
             } else {
                 format!("{q}() takes no keyword arguments")
             };
@@ -2758,12 +2760,16 @@ impl Vm {
             )
         } else {
             let s = |k: u32| if k == 1 { "" } else { "s" };
+            // A builtin type's `__init__` names the type, as CPython's.
+            let name = match n.owner {
+                Some(t) if n.name() == "__init__" => t.name(),
+                _ => n.name(),
+            };
             if min == max {
-                format!("{} expected {min} argument{}, got {got}", n.name(), s(min))
+                format!("{name} expected {min} argument{}, got {got}", s(min))
             } else if got < min {
                 format!(
-                    "{} expected at least {min} argument{}, got {got}",
-                    n.name(),
+                    "{name} expected at least {min} argument{}, got {got}",
                     s(min)
                 )
             } else if matches!(
@@ -2773,8 +2779,7 @@ impl Vm {
                 format!("{}() takes at most {max} arguments ({got} given)", n.name())
             } else {
                 format!(
-                    "{} expected at most {max} argument{}, got {got}",
-                    n.name(),
+                    "{name} expected at most {max} argument{}, got {got}",
                     s(max)
                 )
             }

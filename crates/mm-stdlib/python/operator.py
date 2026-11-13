@@ -231,7 +231,7 @@ def length_hint(obj, default=0):
     if val is NotImplemented:
         return default
     if not isinstance(val, int):
-        msg = f'__length_hint__ must be integer, not {type(val).__name__}'
+        msg = f'__length_hint__ must be an integer, not {type(val).__name__}'
         raise TypeError(msg)
     if val < 0:
         msg = '__length_hint__() should return >= 0'

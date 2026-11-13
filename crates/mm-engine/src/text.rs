@@ -1395,10 +1395,24 @@ impl Vm {
                 T::Match => {
                     let (a, b, g) = crate::re::match_repr_parts(self, v)?;
                     let _ = write!(writer!(), "<re.Match object; span=({a}, {b}), match=");
-                    let res = work.push(&mut self.heap, Work::Lit(">"));
-                    self.hx_o(res)?;
-                    let res = work.push(&mut self.heap, Work::Val(g, depth + 1));
-                    self.hx_o(res)?;
+                    if Vm::is_str(g) || self.type_of(g) == T::bytes {
+                        // `%.50R`: the group's repr cut at 50 characters (the writer
+                        // counts bytes, 4 at most per character).
+                        let mut r = String::new();
+                        let (data, bytes) = if Vm::is_str(g) {
+                            (self.str_bytes(g), false)
+                        } else {
+                            (self.bytes_data(g), true)
+                        };
+                        quoted_repr(data, bytes, &mut ReprWriter::new(&mut r, 50 * 4));
+                        let cut = r.char_indices().nth(50).map_or(r.len(), |(i, _)| i);
+                        let _ = write!(writer!(), "{}>", &r[..cut]);
+                    } else {
+                        let res = work.push(&mut self.heap, Work::Lit(">"));
+                        self.hx_o(res)?;
+                        let res = work.push(&mut self.heap, Work::Val(g, depth + 1));
+                        self.hx_o(res)?;
+                    }
                 }
                 T::module => {
                     let _ = write!(writer!(), "<module '{}' (built-in)>", self.module_name(v));

@@ -204,6 +204,14 @@ def _deepcopy_method(x, memo):  # Copy instance methods
 
 d[_MethodType] = _deepcopy_method
 
+
+def _deepcopy_slice(x, memo, deepcopy=deepcopy):
+    # CPython reduces a slice to `slice(start, stop, step)`.
+    return slice(deepcopy(x.start, memo), deepcopy(x.stop, memo), deepcopy(x.step, memo))
+
+
+d[slice] = _deepcopy_slice
+
 del d
 
 
@@ -236,10 +244,10 @@ def _reduce(x):
         getstate = getattr(cls, "__getstate__", None)
         state = getstate(x) if getstate is not None else getattr(x, '__dict__', None)
         return (cls, (list(x),), state or None)
-    # A builtin type (no class `__dict__` in micro-monty) has no default
-    # reduction here; a user class may well live in `builtins` (code run
-    # without a `__name__`).
-    if getattr(cls, '__dict__', None) is None or cls is type(sys):
+    # A builtin type (its `__dict__` has no `__module__` in micro-monty)
+    # has no default reduction here; a user class may well live in
+    # `builtins` (code run without a `__name__`).
+    if '__module__' not in (getattr(cls, '__dict__', None) or ()) or cls is type(sys):
         raise TypeError(f"cannot pickle '{cls.__name__}' object")
     getnewargs = getattr(cls, "__getnewargs__", None)
     if getnewargs is not None:

@@ -194,6 +194,9 @@ def _slice_bound(i, n):
     return i
 
 
+_DEQUE_FIELDS = ('_items', '_head', '_maxlen', '_state')
+
+
 class deque:
     __mm_tpname__ = 'collections.deque'
     __abc_tpflags__ = 1 << 5  # a sequence to `match`
@@ -354,7 +357,11 @@ class deque:
     __copy__ = copy
 
     def __reduce__(self):
-        return type(self), ((), self._maxlen), None, iter(self)
+        # CPython's `deque_reduce`: a subclass instance's attributes are
+        # its state (not the deque's own fields here).
+        state = {k: v for k, v in self.__dict__.items() if k not in _DEQUE_FIELDS} or None
+        args = () if self._maxlen is None else ((), self._maxlen)
+        return type(self), args, state, iter(self)
 
     def count(self, *args):
         if len(args) != 1:

@@ -628,10 +628,29 @@ impl Vm {
                 }
             }
         }
+        let flags = self.own_tpname_flag(c, flags);
         if let Some(r) = c.as_obj() {
             self.set_raw(r, cls::FLAGS, Self::index_flag(flags));
         }
         n as u64
+    }
+
+    /// `flags` with [`f::TPNAME`] only when class `c` itself defines
+    /// `__mm_tpname__`: a subclass of a class that stands in for a C type
+    /// names itself, as a heap type's `tp_name` is its own, so the name
+    /// lookups that test the flag (`Vm::type_name`, `Vm::class_tpname`)
+    /// find the class's own entry or none. Kept out of those lookups:
+    /// `type_name` is inlined into dispatch, and any other lookup there
+    /// moved the wasm guest's hot loop by 2.1% (fib, loop, closure) [M].
+    fn own_tpname_flag(&self, c: Value, flags: u64) -> u64 {
+        if flags & f::TPNAME == 0 {
+            return flags;
+        }
+        let own = self
+            .find_interned("__mm_tpname__")
+            .and_then(|k| self.dict_get_str(self.vslot(c, cls::DICT), k))
+            .is_some();
+        if own { flags } else { flags & !f::TPNAME }
     }
 
     /// `flags` without [`f::INDEX`] for a subclass of `int`.
@@ -657,6 +676,7 @@ impl Vm {
         }
         let inherited = p.as_obj().map_or(0, |r| self.raw(r, cls::FLAGS));
         let flags = self.own_flags(c, &mut 0) | inherited;
+        let flags = self.own_tpname_flag(c, flags);
         if let Some(r) = c.as_obj() {
             self.set_raw(r, cls::FLAGS, Self::index_flag(flags));
         }
