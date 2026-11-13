@@ -55,6 +55,8 @@ use mm_compile::{CompileError, ast::Module};
 /// file; `compile()` of a string says "source code string ...").
 pub const NULL_BYTES: &str = "source code cannot contain null bytes";
 
+pub use lexer::nfkc_push;
+
 /// `name` as an identifier in source means it: NFKC applied as the lexer
 /// applies it, or `Err` with the first character whose NFKC micro-monty
 /// does not carry (the lexer refuses such an identifier).

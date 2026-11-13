@@ -447,7 +447,7 @@ than they catch an exception \[E\].
 | `int` | `Int(i64)`, or `BigInt(String)` in decimal past `i64` | |
 | `list`, `tuple` | `List`, `Tuple` | a value that goes host → guest → host comes back unchanged |
 | `dict` with `str` keys | `Dict(Vec<(String, HostValue)>)` | insertion order kept |
-| named tuple | `Record { name, fields }` | a `Record` from the host becomes a named tuple instance; its name and field names must be ones `collections.namedtuple` accepts without renaming (identifiers, not keywords; fields not starting with `_`, none repeated), else `TypeError` in the guest with namedtuple's message |
+| named tuple | `Record { name, fields }` | a `Record` from the host becomes a named tuple instance; its name and field names must be ones `collections.namedtuple` accepts without renaming (identifiers, not keywords; fields not starting with `_`, none repeated), else `ValueError` in the guest with namedtuple's message; two fields NFKC makes equal (`ﬁ`, `fi`), or a field holding a character whose NFKC micro-monty does not carry (`ℌ`), raise `SyntaxError` |
 | host class instance | `Object { class, fields }` | see [Host classes](#host-classes) |
 | anything else (sets, functions, instances, non-`str` keys) | none: strict mode raises `TypeError` in Python before the call | with `HostArgs { lenient: true }` it arrives as `Unconverted::{Opaque, KeyNotStr, TooDeep, TooLarge}` |
 
@@ -1441,6 +1441,16 @@ differs:
   bounds must fit in 64 bits: `range(2**63)` raises `OverflowError`.
 - **Objects.** One object holds at most 64 MiB whatever the memory limit.
   `namedtuple` and dataclasses take at most 126 fields.
+- **`namedtuple` field names** that NFKC makes equal raise CPython's
+  `SyntaxError` only where micro-monty carries the mapping (fullwidth
+  ASCII, mathematical Latin letters and digits, the Latin ligatures, `ſ`,
+  `ª`, `º`, `µ`): those characters are replaced and the rest kept, so
+  other such pairs are accepted, each field reading as itself: 2,879 of
+  the 3,640 single code points whose pair CPython refuses
+  (`['ℌ', 'H']`), and composed sequences (`['é', 'e\u0301']`). Where a
+  refused field keeps a character CPython's NFKC changes, the
+  `SyntaxError` names micro-monty's key (`'e\u0301'` for CPython's
+  `'é'` in `['ｅ\u0301', 'e\u0301']`) at CPython's offsets.
 - **`json.loads` with hooks** parses the whole document before calling any
   hook, and nesting deeper than CPython's recursion limit parses.
 - **`dir()`** of a builtin type lists its method table plus a fixed set of

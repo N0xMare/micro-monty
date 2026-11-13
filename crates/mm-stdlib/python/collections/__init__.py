@@ -2,7 +2,7 @@
 # (PSF license, see THIRD_PARTY.md). namedtuple builds its methods without
 # exec; deque is written here (CPython's is C).
 
-from _mm import backing as _backing, signature as _signature
+from _mm import backing as _backing, nfkc_table as _nfkc_table, signature as _signature
 
 __all__ = ['ChainMap', 'Counter', 'OrderedDict', 'UserDict', 'UserList',
            'UserString', 'defaultdict', 'deque', 'namedtuple']
@@ -47,6 +47,33 @@ def _field_getter(index):
     return property(get, doc=f'Alias for field number {index}')
 
 
+_nfkc = None
+
+
+def _nfkc_duplicates(field_names):
+    # The SyntaxError CPython's compile of `lambda _cls, <fields>: ...`
+    # raises for the first field NFKC makes equal to an earlier one, with
+    # the lexer's NFKC (`_mm.nfkc_table`): characters micro-monty maps are
+    # replaced, the rest kept. Where a field keeps a character CPython's
+    # NFKC changes, the message names this key, not CPython's; the offsets
+    # are CPython's either way.
+    global _nfkc
+    if _nfkc is None:
+        _nfkc = _nfkc_table()
+    seen = set()
+    for index, name in enumerate(field_names):
+        key = name if name.isascii() else name.translate(_nfkc)
+        if key in seen:
+            offset = 14 + sum(len(f.encode()) + 2 for f in field_names[:index])
+            e = SyntaxError(f"duplicate argument '{key}' in function definition")
+            e.filename = '<string>'
+            e.lineno = e.end_lineno = 1
+            e.offset = offset
+            e.end_offset = offset + len(name.encode())
+            raise e
+        seen.add(key)
+
+
 def namedtuple(typename, field_names, *, rename=False, defaults=None, module=None):
     if isinstance(field_names, str):
         field_names = field_names.replace(',', ' ').split()
@@ -84,6 +111,10 @@ def namedtuple(typename, field_names, *, rename=False, defaults=None, module=Non
             raise TypeError('Got more default values than field names')
         field_defaults = dict(reversed(list(zip(reversed(field_names),
                                                 reversed(defaults)))))
+    # CPython then compiles `__new__` from the names, which NFKC-normalizes
+    # them.
+    if not all(map(str.isascii, field_names)):
+        _nfkc_duplicates(field_names)
 
     field_names = tuple(field_names)
     num_fields = len(field_names)

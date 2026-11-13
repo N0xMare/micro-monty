@@ -15,6 +15,28 @@ pub(crate) const MAX_SYNTH: usize = 4096;
 /// Most parameters a synthesized signature takes (registers are bytes).
 pub(crate) const MAX_PARAMS: usize = 126;
 
+/// `_mm.nfkc_table()`: a `str.translate` table of every character the
+/// lexer's NFKC maps (`mm_parse::nfkc_push`) to what it maps it to, so
+/// `collections.namedtuple` compares its fields as CPython's compile of
+/// `__new__` does, in charged steps that park. Built once per session.
+#[cfg_attr(mm_shipped, optimize(size))]
+pub(crate) fn mm_nfkc_table(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
+    // The last character the lexer maps is U+1D7FF.
+    const LAST: u32 = 0x1D7FF;
+    let table = vm.new_dict()?;
+    let mut to = String::new();
+    for c in (0x80..=LAST).filter_map(char::from_u32) {
+        to.clear();
+        mm_parse::nfkc_push(&mut to, c);
+        if to.chars().ne(core::iter::once(c)) {
+            let (k, v) = (vm.new_int(i64::from(u32::from(c)))?, vm.new_str(&to)?);
+            vm.dict_set(table, k, v)?;
+        }
+    }
+    vm.burn(u64::from(LAST) / 64);
+    Ok(table)
+}
+
 /// `_mm.signature(name, qualname, params, kwonly, defaults, kwdefaults,
 /// impl)`: a Python function named `name`/`qualname` whose parameters are
 /// `params` (positional) and `kwonly` (keyword-only), with `defaults` (a

@@ -543,6 +543,22 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "t = s.translate({97: 'x'})",
         1,
     ),
+    // namedtuple's NFKC check: a name per step (`str.translate` with
+    // `_mm.nfkc_table`), the duplicates in a set. One native over every
+    // name ran 3.9 s for 50,000 and 3.7 s for 120 names of 1 MB
+    // [M, reviewer].
+    (
+        Row::Bounded,
+        "from collections import namedtuple\nnames = ['ｆ%d' % i for i in range(50_000)] + ['f0']",
+        "try:\n    namedtuple('T', names)\nexcept SyntaxError:\n    pass",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "from collections import namedtuple\np = 'ｘ' * 333_333\nnames = [p + '%03d' % i for i in range(125)] + ['x' * 333_333 + '000']",
+        "try:\n    namedtuple('T', names)\nexcept SyntaxError:\n    pass",
+        1,
+    ),
     (Row::Bounded, "s = 'a' * 60_000_000", "n = s.count('a')", 1),
     (
         Row::Bounded,

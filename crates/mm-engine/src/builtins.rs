@@ -1300,6 +1300,15 @@ const DEFS: &[Def] = &[
     #[cfg(feature = "tokenize")]
     m!("tokenize", "_tokens", 1, 1, NO, NO, crate::tokmod::tokens),
     m!("_mm", "signature", 7, 7, NO, NO, crate::mmmod::mm_signature),
+    m!(
+        "_mm",
+        "nfkc_table",
+        0,
+        0,
+        NO,
+        NO,
+        crate::mmmod::mm_nfkc_table
+    ),
     m!("_mm", "backing", 1, 1, NO, NO, crate::mmmod::mm_backing),
     // Also `method`'s constructor (see `ctor`).
     m!("_mm", "method", 2, 2, NO, NO, crate::mmmod::mm_method),

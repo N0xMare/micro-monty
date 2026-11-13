@@ -44,6 +44,19 @@ hashes are pre-release history, kept in the private archive
   and `SyntaxError` for fields NFKC makes equal, such as `ﬁ` and `fi`. A
   field name holding a character whose NFKC micro-monty does not carry,
   such as `ℌ`, is refused with the lexer's `SyntaxError`.
+- `collections.namedtuple` refuses two fields NFKC makes equal with
+  CPython's `SyntaxError` (after its `defaults` check) where micro-monty
+  carries the mapping: fullwidth ASCII, mathematical Latin letters and
+  digits, the Latin ligatures, `ſ`, `ª`, `º`, `µ`. Characters
+  micro-monty maps are replaced and the rest kept, so `['café', 'á']` is
+  accepted and `['ｅ\u0301', 'e\u0301']` refused, as in CPython, but
+  pairs CPython refuses are accepted too: of the 3,640 single code points
+  whose pair CPython refuses, micro-monty refuses 761 and accepts 2,879
+  (`ℌ` and `H`, CJK compatibility ideographs, Arabic presentation forms),
+  and composed sequences such as `['é', 'e\u0301']`. Such fields never
+  collide: each reads as itself. Where a refused field keeps a character
+  CPython's NFKC changes, the message names micro-monty's key
+  (`'e\u0301'` where CPython names `'é'`); the offsets are CPython's.
 - `str.isidentifier` is exact for Unicode 16 without `mod-unicodedata`
   (it accepted `x²` and refused `a·b`): XID_Start and XID_Continue tables
   of 4,388 B. With the name check, `hello.wasm` +6,357 B, native `hello`

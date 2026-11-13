@@ -240,31 +240,39 @@ fn prefix(w: &[u8]) -> Option<u8> {
 pub(crate) fn nfkc_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.chars() {
-        let u = c as u32;
-        match u {
-            0xFF10..=0xFF19 | 0xFF21..=0xFF3A | 0xFF41..=0xFF5A | 0xFF3F => {
-                out.push(char::from_u32(u - 0xFF00 + 0x20).unwrap_or(c));
-            }
-            0x1D400..=0x1D6A3 => {
-                let k = (u - 0x1D400) % 52;
-                let ch = if k < 26 { 0x41 + k } else { 0x61 + k - 26 };
-                out.push(char::from_u32(ch).unwrap_or(c));
-            }
-            0x1D7CE..=0x1D7FF => out.push(char::from_u32(0x30 + (u - 0x1D7CE) % 10).unwrap_or(c)),
-            0xFB00 => out.push_str("ff"),
-            0xFB01 => out.push_str("fi"),
-            0xFB02 => out.push_str("fl"),
-            0xFB03 => out.push_str("ffi"),
-            0xFB04 => out.push_str("ffl"),
-            0xFB05 | 0xFB06 => out.push_str("st"),
-            0x017F => out.push('s'),
-            0x00AA => out.push('a'),
-            0x00BA => out.push('o'),
-            0x00B5 => out.push('\u{03BC}'),
-            _ => out.push(c),
-        }
+        nfkc_push(&mut out, c);
     }
     out
+}
+
+/// Pushes what `nfkc_name` makes of `c` to `out`: `c` itself unless it
+/// is one of the characters micro-monty maps. Not inlined: the lexer and
+/// `_mm.nfkc_table` share one copy of the mapping.
+#[inline(never)]
+pub fn nfkc_push(out: &mut String, c: char) {
+    let u = c as u32;
+    match u {
+        0xFF10..=0xFF19 | 0xFF21..=0xFF3A | 0xFF41..=0xFF5A | 0xFF3F => {
+            out.push(char::from_u32(u - 0xFF00 + 0x20).unwrap_or(c));
+        }
+        0x1D400..=0x1D6A3 => {
+            let k = (u - 0x1D400) % 52;
+            let ch = if k < 26 { 0x41 + k } else { 0x61 + k - 26 };
+            out.push(char::from_u32(ch).unwrap_or(c));
+        }
+        0x1D7CE..=0x1D7FF => out.push(char::from_u32(0x30 + (u - 0x1D7CE) % 10).unwrap_or(c)),
+        0xFB00 => out.push_str("ff"),
+        0xFB01 => out.push_str("fi"),
+        0xFB02 => out.push_str("fl"),
+        0xFB03 => out.push_str("ffi"),
+        0xFB04 => out.push_str("ffl"),
+        0xFB05 | 0xFB06 => out.push_str("st"),
+        0x017F => out.push('s'),
+        0x00AA => out.push('a'),
+        0x00BA => out.push('o'),
+        0x00B5 => out.push('\u{03BC}'),
+        _ => out.push(c),
+    }
 }
 
 /// Is `c` a character NFKC changes that [`nfkc_name`] does not map
