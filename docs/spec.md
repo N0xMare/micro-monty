@@ -1140,9 +1140,17 @@ tags           1 SmallInt (i48) | 2 Ref (u32 offset, optional kind byte)
   mimalloc and line/block marking from Immix, and is the most heavily
   property-tested and fuzzed code in the repository.
 - **Non-moving:** size-class free lists, large objects as contiguous runs, no
-  compaction. An object's `id()` does not change while it lives; which
-  address a new object gets depends on when collections run (§5.1,
-  clause 4).
+  compaction. A block of up to 504 bytes fills freed space before the bump
+  frontier, and a bigger one bumps first: a small object kept after each
+  block of a growing series (`rows = rows + [row]`) once split the space
+  the series freed into blocks each just too short for the next, and such
+  a loop raised `MemoryError` with under 2 MB live. A bigger block takes
+  room rounded up to one of 64 sizes per doubling (except when bumped in a
+  segment that is not yet full-size, where the room would only fill more),
+  the rest a hole that is reused with it once it dies, so a slightly longer
+  block fits where a temporary was (`prefix + str(i)`). An object's `id()`
+  does not change while it lives; which address a new object gets depends
+  on when collections run (§5.1, clause 4).
 - Header (one word): `type:16 | flags:8 | nvals:8 | len:32`. `nvals` counts the
   leading value slots the GC traces (255 = all slots); the rest are raw words.
   Shape ids live in a value slot as a SmallInt. A side object-start bitmap

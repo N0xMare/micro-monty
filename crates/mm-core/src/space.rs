@@ -25,11 +25,21 @@
 //! Free blocks of 2..=`SMALL_MAX` units sit on exact-size lists, bigger ones
 //! on power-of-two bins searched first-fit; the link is unit 1 of the block.
 //! A one-unit free block is a hole, reclaimed by coalescing at the next sweep.
-//! Allocation order: exact list, the smallest bigger small block (split),
-//! the current free run, bump in the current segment, a medium free block
-//! (whose rest becomes the free run, carved front to back), then growing the
-//! bump segment, then a fresh segment. Sweep rebuilds every list from scratch, coalescing adjacent free
-//! blocks, and releases segments with nothing live.
+//! A small block (up to `SMALL_MAX` units) is placed from its exact list,
+//! the smallest bigger small block (split), the free run (a medium free
+//! block carved front to back; when it is too short, the next listed one),
+//! then by bumping. While there is no run no medium free block is listed:
+//! listing one makes it the run (`Space::arm_run`). A medium block is bumped
+//! first, then placed in a medium free block (its rest listed again), then
+//! carved from the run; it takes its room (`medium_room`), the rest of which
+//! is a hole, except when bumped in a segment that is not full-size. Then the bump segment grows, then a fresh segment comes. Small
+//! blocks fill freed space before the frontier, so a long-lived small object
+//! is not left after each block of a growing series (`rows = rows + [row]`):
+//! there it split the space the series freed into blocks each just too
+//! short for the next, and the heap committed a block per round until
+//! `MemoryError` with under 2 MB live. Sweep rebuilds every list from
+//! scratch, coalescing adjacent free blocks, makes the first medium one the
+//! run and releases segments with nothing live.
 
 use alloc::{boxed::Box, vec, vec::Vec};
 
@@ -290,6 +300,17 @@ impl Space<Vec<u8>> {
         self.committed = self.committed - old + new;
         Ok(())
     }
+}
+
+/// The room a medium block of `n` units is placed in: `n` rounded up to
+/// one of 64 sizes per doubling (at most 1.6% more). A block that dies
+/// leaves its room, so a slightly bigger block fits where it was: a
+/// temporary beside a result a few units longer (`prefix + str(i)`,
+/// `base[:] + [i]`) once left holes each just too short for the next
+/// result, which needed twice the memory.
+fn medium_room(n: usize) -> usize {
+    let g = 1 << (n.ilog2() - 6);
+    ((n + g - 1) & !(g - 1)).min(LARGE_UNITS - 1)
 }
 
 /// Is a block of `n` units, header included, over `MAX_OBJECT_BYTES`?
@@ -586,38 +607,51 @@ impl<S: Store> Space<S> {
 
     /// Places a block of `n >= 1` units in memory already committed (a free
     /// list, the free run or the bump segment), or `None` if it needs a new
-    /// segment ([`Space::place_slow`]). Needs no budget, so the caller
-    /// computes the budget only on the slow path. Only `start` writes the
-    /// header. The common cases (exact list, run, bump) are inline; splitting
-    /// a bigger listed block is out of line.
+    /// segment ([`Space::place_slow`]), in the order the module docs give.
+    /// Needs no budget, so the caller computes the budget only on the slow
+    /// path. Only `start` writes the header. The common cases (exact list,
+    /// run, bump) are inline; taking a bigger listed block is out of line.
     #[allow(
         clippy::inline_always,
         reason = "the lazy sweep's slow path otherwise un-inlines it: str +1.4% Ir [M]"
     )]
     #[inline(always)]
     pub(crate) fn place_fast(&mut self, n: usize) -> Option<u32> {
-        if n <= SMALL_MAX
-            && let Some(a) = self.lists.pop_small(&self.segs, n)
-        {
-            return Some(a);
+        if n <= SMALL_MAX {
+            if let Some(a) = self.lists.pop_small(&self.segs, n) {
+                return Some(a);
+            }
+            // Best fit among small blocks before carving the run.
+            if n < SMALL_MAX
+                && self.lists.mask & (u64::MAX << (n + 1)) != 0
+                && let Some(a) = self.split_small(n)
+            {
+                return Some(a);
+            }
+            if let Some(a) = self.carve_run(n) {
+                return Some(a);
+            }
+            // Without a run no medium block is listed (`arm_run`), so only
+            // a run too short for `n` can be replaced from freed medium space.
+            if self.run.0 == 0 {
+                return self.bump(n);
+            }
         }
-        if n >= LARGE_UNITS {
-            return None;
+        self.place_rest(n)
+    }
+
+    /// Places what `place_fast` does not inline: a medium block
+    /// ([`Space::place_medium`]), or a small block the run is too short
+    /// for ([`Space::next_run`]), bumped if no medium free block is listed.
+    /// One cold call keeps the inlined small path's registers: with two
+    /// calls there wasm32 str rose 0.7%, without `cold` native str 0.2% [M].
+    #[cold]
+    #[inline(never)]
+    fn place_rest(&mut self, n: usize) -> Option<u32> {
+        if n > SMALL_MAX {
+            return self.place_medium(n);
         }
-        // Best fit among small blocks before carving the run.
-        if n < SMALL_MAX
-            && self.lists.mask & (u64::MAX << (n + 1)) != 0
-            && let Some(a) = self.split_small(n)
-        {
-            return Some(a);
-        }
-        if let Some(a) = self.carve_run(n) {
-            return Some(a);
-        }
-        if let Some(a) = self.bump(n) {
-            return Some(a);
-        }
-        self.take_medium(n)
+        self.next_run(n).or_else(|| self.bump(n))
     }
 
     /// The smallest listed small block bigger than `n` units, its rest
@@ -632,16 +666,92 @@ impl<S: Store> Space<S> {
         Some(a)
     }
 
-    /// A medium free block of at least `n` units; its rest becomes the run
-    /// and the old run's rest goes back on the lists.
+    /// Replaces a run too short for a small block of `n` units: its rest
+    /// goes back on the lists and a medium free block, if one is listed,
+    /// becomes the run.
+    #[cold]
     #[inline(never)]
-    fn take_medium(&mut self, n: usize) -> Option<u32> {
-        let (a, m) = self.lists.take_fit(&mut self.segs, n)?;
-        let (seg, off) = split(a);
+    fn next_run(&mut self, n: usize) -> Option<u32> {
         self.retire_run();
-        self.run = (seg, off + n, off + m);
-        self.mark_run_rest();
+        self.arm_run();
+        self.carve_run(n)
+    }
+
+    /// Keeps the invariant that, while there is no run, no medium free block
+    /// is listed: the first one listed becomes the run. Called wherever
+    /// medium blocks are listed (sweeps, a retired bump tail, a medium
+    /// block's rest), so small blocks fill freed space before the frontier
+    /// and the hot path tests only the run. Its choice follows from the
+    /// lists alone, which a restore's sweep rebuilds.
+    fn arm_run(&mut self) {
+        if self.run.0 != 0 {
+            return;
+        }
+        if let Some((a, m)) = self.lists.take_fit(&mut self.segs, 1) {
+            let (seg, off) = split(a);
+            self.run = (seg, off, off + m);
+        }
+    }
+
+    /// Places a medium block of `n` units: bump, then a medium free block
+    /// whose rest is listed again, then the run. Out of line: medium blocks
+    /// are rarer and their callers fill them, and inlined it slowed the
+    /// small path.
+    #[inline(never)]
+    fn place_medium(&mut self, n: usize) -> Option<u32> {
+        if n >= LARGE_UNITS {
+            return None;
+        }
+        if let Some(a) = self.bump_medium(n) {
+            return Some(a);
+        }
+        let Some((a, m)) = self.lists.take_fit(&mut self.segs, n) else {
+            // The run is freed medium space too, held for small blocks.
+            return self.carve_run(n);
+        };
+        let room = medium_room(n).min(m);
+        self.pad(a, n, room);
+        let (seg, off) = split(a);
+        if m > room
+            && let Some(s) = self.segs.get_mut(seg)
+        {
+            self.lists.file(s, seg, off + room, m - room);
+            self.arm_run();
+        }
         Some(a)
+    }
+
+    /// Bumps a medium block of `n` units with its room (`medium_room`), or
+    /// without it if only the block fits or the bump segment is not
+    /// full-size. A small segment is filled 4 KiB at a time as the bump
+    /// reaches it (`fill_restored`), and the series that need rooms outgrow
+    /// it, so a room there would only fill more: at startup one more 4 KiB
+    /// fill, +0.58% Ir [M]. The test reads `cap`, which the image holds.
+    fn bump_medium(&mut self, n: usize) -> Option<u32> {
+        let room = medium_room(n);
+        if self
+            .segs
+            .get(self.bump)
+            .is_some_and(|s| s.cap() == SEG_UNITS)
+            && let Some(a) = self.bump(room)
+        {
+            self.pad(a, n, room);
+            return Some(a);
+        }
+        self.bump(n)
+    }
+
+    /// Makes units `n..room` after the block placed at `a` a hole: free,
+    /// not listed, so the block's room stays free while it lives and is
+    /// reused with it once it dies (sweep coalesces them).
+    fn pad(&mut self, a: u32, n: usize, room: usize) {
+        let (seg, off) = split(a);
+        if room > n
+            && let Some(s) = self.segs.get_mut(seg)
+        {
+            s.data
+                .write(off + n, u64::from(S::free_len(room - n)) << 32);
+        }
     }
 
     /// Places a block of `n` units that `place_fast` could not: in a new
@@ -668,7 +778,12 @@ impl<S: Store> Space<S> {
             return Ok(a);
         }
         fresh?;
-        self.bump(n).ok_or(Error::OutOfMemory)
+        if n > SMALL_MAX {
+            self.bump_medium(n)
+        } else {
+            self.bump(n)
+        }
+        .ok_or(Error::OutOfMemory)
     }
 
     /// The capacity the bump segment grows to so that `n` more units fit,
@@ -821,6 +936,7 @@ impl<S: Store> Space<S> {
             s.data.fill_to(end);
             self.lists.file(s, self.bump, top, end - top);
             s.top = end;
+            self.arm_run();
         }
         // A small first segment is initialized as the bump allocator
         // reaches it (`fill_restored`); a full one comes zeroed from the
@@ -1000,6 +1116,7 @@ impl<S: Store> Space<S> {
                 self.release(idx);
             }
         }
+        self.arm_run();
         out
     }
 
@@ -1042,6 +1159,7 @@ impl<S: Store> Space<S> {
         s.used = walk(&mut self.lists, s, m, idx, false, &mut out);
         m.fill(0);
         self.lazily_freed += out.freed_units;
+        self.arm_run();
     }
 
     /// Sweeps every pending segment.

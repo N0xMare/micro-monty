@@ -665,6 +665,61 @@ fn garbage_never_fills_a_small_memory_limit() {
     }
 }
 
+/// A series of ever-larger blocks with a small object kept beside each, as
+/// an accumulate loop builds one. Small objects were once bumped at the
+/// frontier before freed space was reused: each kept object landed just past
+/// the block the round before freed, so every freed block was a little too
+/// short for the next and the heap committed a block per round. At 256 MiB
+/// these loops raised `MemoryError` at 10,540 to 15,378 rounds with under
+/// 2 MB live, and 4,000 rounds needed 20 to 48 MiB; they now need 1 to 2 MiB
+/// [M]. `CPython` completes them in a few MB.
+#[test]
+fn a_growing_series_beside_kept_small_objects_reuses_its_space() {
+    for (src, want) in [
+        (
+            "rows = []\nfor i in range(4000):\n    rows = rows + [(i, 'row')]\n\
+             print(len(rows), rows[-1])\n",
+            "4000 (3999, 'row')\n",
+        ),
+        (
+            "res = ()\nfor i in range(4000):\n    res += ({'id': i},)\n\
+             print(len(res), res[-1])\n",
+            "4000 {'id': 3999}\n",
+        ),
+        (
+            "keep = []\nfor n in range(1, 4000):\n    keep.append((n,))\n    t = [None] * n\n\
+             print(len(keep), len(t))\n",
+            "3999 3999\n",
+        ),
+    ] {
+        let (p, out) = run_with(Limits::new().with_memory(8 << 20), src);
+        assert!(matches!(p, Progress::Complete(_)), "{src}: {p:?}");
+        assert_eq!(out, want, "{src}");
+    }
+}
+
+/// Heavy churn of mixed sizes (small tuples and dicts, medium lists, byte
+/// blocks up to 20 KB) beside a growing series stays near `CPython`'s peak:
+/// `CPython` peaks at 12.6 MB traced and 24.6 MB resident; it completes at
+/// 23 MiB and from 25 MiB here (where collections fall decides the edge), and
+/// needed 128 MiB when small objects were bumped before freed space was
+/// reused [M].
+#[test]
+fn mixed_size_churn_stays_near_cpythons_peak() {
+    let src = "import random\nrng = random.Random(534)\nlive = [None] * 3000\nrows = []\n\
+               for i in range(48_000):\n    k = rng.randrange(8)\n    if k < 4:\n        \
+               v = (i, 'x' * rng.randrange(40))\n    elif k < 6:\n        \
+               v = {'id': i, 'tags': [i] * rng.randrange(8)}\n    elif k == 6:\n        \
+               v = [i] * rng.randrange(64, 4000)\n    else:\n        \
+               v = 'y' * rng.randrange(500, 20000)\n    \
+               live[rng.randrange(len(live))] = v\n    if i % 4 == 0:\n        \
+               rows = rows + [(i, 'row')]\n\
+               print(len(rows), sum(len(x) for x in live if x is not None))\n";
+    let (p, out) = run_with(Limits::new().with_memory(32 << 20), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    assert_eq!(out, "12000 4712216\n");
+}
+
 /// A one-char str of a Latin-1 char is shared, as an ASCII one is and as
 /// `CPython` shares them: the chars of a long text then cost a slot each. They
 /// once cost a str each, about 74 B per char, so `tuple('é' * 8_000_000)`
