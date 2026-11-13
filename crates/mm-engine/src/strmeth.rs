@@ -303,7 +303,9 @@ fn str_arg(vm: &mut Vm, v: Value, what: &str) -> Result<String, Raised> {
         return Ok(s);
     }
     let sp = if what.is_empty() { "" } else { " " };
-    let tn = if v == Value::NONE {
+    // A named argument's error says "None", as CPython's
+    // `_PyArg_BadArgument`; `partition`'s (no name) gives the type name.
+    let tn = if v == Value::NONE && !what.is_empty() {
         "None"
     } else {
         vm.type_name(v)
@@ -312,12 +314,20 @@ fn str_arg(vm: &mut Vm, v: Value, what: &str) -> Result<String, Raised> {
     Err(vm.err(T::TypeError, &msg))
 }
 
+/// An optional argument CPython also takes as None (a separator, strip
+/// chars, a search bound).
 fn opt(v: Value) -> Option<Value> {
     if v == Value::UNDEFINED || v == Value::NONE {
         None
     } else {
         Some(v)
     }
+}
+
+/// An optional argument CPython converts when given, None included
+/// (a count, a tab size, a fill character).
+fn given(v: Value) -> Option<Value> {
+    (v != Value::UNDEFINED).then_some(v)
 }
 
 /// Byte ranges of a `str`'s pieces, admitted as they grow: `n` bytes can
@@ -420,7 +430,7 @@ fn join_values(vm: &mut Vm, sep: Value, items: &[Value]) -> Result<Value, Raised
 }
 
 fn maxsplit(vm: &mut Vm, v: Value) -> Result<i64, Raised> {
-    match opt(v) {
+    match given(v) {
         None => Ok(-1),
         Some(x) => vm.int_arg(x, "maxsplit"),
     }
@@ -590,7 +600,11 @@ fn strip_impl(
     let s = this_value(vm, a, name)?;
     let set: Option<Vec<char>> = match opt(vm.arg_o(a, 1)) {
         None => None,
-        Some(c) => Some(str_arg(vm, c, "strip arg")?.chars().collect()),
+        Some(c) if Vm::is_str(vm.unbx(c)) => Some(str_arg(vm, c, "")?.chars().collect()),
+        Some(_) => {
+            let msg = format!("{name} arg must be None or str");
+            return Err(vm.err(T::TypeError, &msg));
+        }
     };
     if big_text(vm, s, CHAR_UNIT) {
         let chars = match &set {
@@ -757,7 +771,7 @@ pub(crate) fn replace(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = this_value(vm, &a, "replace")?;
     let old = str_arg_value(vm, vm.arg_o(&a, 1), "replace() argument 1")?;
     let new = str_arg_value(vm, vm.arg_o(&a, 2), "replace() argument 2")?;
-    let count = match opt(vm.arg_o(&a, 3)) {
+    let count = match given(vm.arg_o(&a, 3)) {
         None => usize::MAX,
         Some(c) => usize::try_from(vm.int_arg(c, "count")?).unwrap_or(usize::MAX),
     };
@@ -1820,7 +1834,7 @@ pub(crate) fn zfill(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 pub(crate) fn expandtabs(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     this_value(vm, &a, "expandtabs")?;
-    let size = match opt(vm.arg_o(&a, 1)) {
+    let size = match given(vm.arg_o(&a, 1)) {
         None => 8,
         Some(v) => {
             // A C int.
@@ -1903,9 +1917,16 @@ fn tabs(s: &str, size: i64, out: &mut dyn FnMut(char, usize)) {
 fn pad(vm: &mut Vm, a: &CallArgs, name: &str, align: char) -> Result<Value, Raised> {
     let sv = this_value(vm, a, name)?;
     let w = vm.int_arg(vm.arg_o(a, 1), "width")?;
-    let fill = match opt(vm.arg_o(a, 2)) {
+    let fill = match given(vm.arg_o(a, 2)) {
         None => ' ',
         Some(f) => {
+            if !Vm::is_str(vm.unbx(f)) {
+                let msg = format!(
+                    "The fill character must be a unicode character, not {}",
+                    vm.type_name(f)
+                );
+                return Err(vm.err(T::TypeError, &msg));
+            }
             let fs = str_arg(vm, f, "fill character")?;
             let mut cs = fs.chars();
             match (cs.next(), cs.next()) {

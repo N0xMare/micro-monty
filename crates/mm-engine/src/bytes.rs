@@ -961,31 +961,36 @@ impl Vm {
             .map_err(|_| mm_core::Error::OutOfMemory);
         vm.hx_o(res)?;
         for &x in items {
-            out.push(vm.int_byte(x, ba, None)?);
+            out.push(vm.int_byte(x, ba)?);
         }
         Ok((charge, out))
     }
 
+    /// Whether byte item `x` is an object whose `__index__` (Python code)
+    /// gives its value.
+    fn byte_needs_index(&self, x: Value) -> bool {
+        // An int subclass (IntEnum) is its value.
+        let x = match self.backing(x) {
+            Some(b) if Vm::is_intlike(b) => b,
+            _ => x,
+        };
+        !Vm::is_intlike(x) && self.uflags(x) & crate::class::f::INDEX != 0
+    }
+
     /// Item `x` of an iterable of ints making a `bytearray` (`ba`) or
-    /// `bytes`, as a byte. An `__index__` object needs Python code: the
-    /// prelude's when `name` is `None`, else the error the prelude raises
-    /// for `name()` (a later step cannot hand off).
+    /// `bytes`, as a byte. An `__index__` object needs Python code.
     #[inline(never)]
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn int_byte(&mut self, x: Value, ba: bool, name: Option<&str>) -> Result<u8, Raised> {
+    fn int_byte(&mut self, x: Value, ba: bool) -> Result<u8, Raised> {
+        if self.byte_needs_index(x) {
+            return Err(self.need_py());
+        }
         // An int subclass (IntEnum) is its value.
         let x = match self.backing(x) {
             Some(b) if Vm::is_intlike(b) => b,
             _ => x,
         };
         if !Vm::is_intlike(x) {
-            if self.uflags(x) & crate::class::f::INDEX != 0 {
-                let Some(name) = name else {
-                    return Err(self.need_py());
-                };
-                let msg = format!("micro-monty does not support user-defined objects in {name}()");
-                return Err(self.err(T::TypeError, &msg));
-            }
             let msg = format!(
                 "'{}' object cannot be interpreted as an integer",
                 self.type_name(x)
@@ -1099,6 +1104,8 @@ fn this_value(vm: &mut Vm, a: &CallArgs, name: &str) -> Result<Value, Raised> {
     Ok(s)
 }
 
+/// An optional argument CPython also takes as None (a separator, strip
+/// bytes, a search bound).
 #[cfg_attr(mm_shipped, optimize(size))]
 fn opt(v: Value) -> Option<Value> {
     if v == Value::UNDEFINED || v == Value::NONE {
@@ -1106,6 +1113,12 @@ fn opt(v: Value) -> Option<Value> {
     } else {
         Some(v)
     }
+}
+
+/// An optional argument CPython converts when given, None included
+/// (a count, a tab size, `hex`'s separator and group size).
+fn given(v: Value) -> Option<Value> {
+    (v != Value::UNDEFINED).then_some(v)
 }
 
 /// An optional search bound (`d` when absent) as a slice index: an
@@ -1348,7 +1361,7 @@ pub(crate) fn endswith(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn maxsplit(vm: &mut Vm, v: Value) -> Result<i64, Raised> {
-    match opt(v) {
+    match given(v) {
         None => Ok(-1),
         Some(x) => vm.int_arg(x, "maxsplit"),
     }
@@ -1505,7 +1518,7 @@ pub(crate) fn replace(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let source = this_value(vm, &a, "replace")?;
     let old = vm.need_bytes(vm.arg_o(&a, 1))?;
     let new = vm.need_bytes(vm.arg_o(&a, 2))?;
-    let count = match opt(vm.arg_o(&a, 3)) {
+    let count = match given(vm.arg_o(&a, 3)) {
         None => -1,
         Some(c) => vm.int_arg(c, "count")?,
     };
@@ -1630,10 +1643,12 @@ fn fill_arg(vm: &mut Vm, v: Value, name: &str) -> Result<u8, Raised> {
             Err(vm.err(T::TypeError, &msg))
         }
         None => {
-            let msg = format!(
-                "{name}() argument 2 must be a byte string of length 1, not {}",
+            let tn = if v == Value::NONE {
+                "None"
+            } else {
                 vm.type_name(v)
-            );
+            };
+            let msg = format!("{name}() argument 2 must be a byte string of length 1, not {tn}");
             Err(vm.err(T::TypeError, &msg))
         }
     }
@@ -1831,7 +1846,7 @@ pub(crate) fn hex(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let source = this_value(vm, &a, "hex")?;
     let sep = vm.arg_o(&a, 1);
     let per = vm.arg_o(&a, 2);
-    let sep: Option<char> = match opt(sep) {
+    let sep: Option<char> = match given(sep) {
         None => None,
         Some(v) => {
             let pair = if Vm::is_str(v) {
@@ -1853,7 +1868,7 @@ pub(crate) fn hex(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             }
         }
     };
-    let per: i64 = match opt(per) {
+    let per: i64 = match given(per) {
         None => 1,
         Some(v) => {
             if !Vm::is_intlike(v) {
@@ -1986,7 +2001,7 @@ pub(crate) fn maketrans(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn expandtabs(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let source = this_value(vm, &a, "expandtabs")?;
-    let size = match opt(vm.arg_o(&a, 1)) {
+    let size = match given(vm.arg_o(&a, 1)) {
         None => 8,
         Some(v) => {
             let n = if Vm::is_heap_int(vm.unbx(v)) {
@@ -3300,11 +3315,7 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     fn job_ints(&mut self, j: &mut Job, start: u64) -> Result<Option<Value>, Raised> {
         let res = j.w[W_RES];
-        let (ba, name) = match res {
-            R_BYTES => (false, "bytes"),
-            R_BYTEARRAY => (true, "bytearray"),
-            _ => (true, "extend"),
-        };
+        let ba = res != R_BYTES;
         loop {
             let (i, end) = (j.at(W_I), j.at(W_END));
             let out = if res == R_APPEND {
@@ -3346,10 +3357,23 @@ impl Vm {
                 if k < n {
                     // Not a small int: a big int, `__index__` or an error.
                     let x = self.ints_words(j.v[0]).get(i + k).copied();
-                    let r = match x.and_then(Value::from_bits) {
-                        Some(x) => self.int_byte(x, ba, Some(name)),
-                        None => Err(self.bad_step()),
-                    };
+                    let x = x.and_then(Value::from_bits).unwrap_or(Value::UNDEFINED);
+                    if self.byte_needs_index(x) {
+                        // An `__index__` item: the whole conversion again in
+                        // the prelude, each item in order, as CPython's
+                        // (what was appended goes first).
+                        let to = if res == R_APPEND {
+                            self.ba_resize(j.v[3], j.at(W_A), usize::MAX)?;
+                            j.v[3]
+                        } else {
+                            self.type_obj(if ba { T::bytearray } else { T::bytes })
+                        };
+                        let args = alloc::vec![j.v[0], to];
+                        return self
+                            .prelude_request("_ints_index", args, crate::cont::Cont::None)
+                            .map(Some);
+                    }
+                    let r = self.int_byte(x, ba);
                     match r {
                         Ok(c) => {
                             buf[m] = c;

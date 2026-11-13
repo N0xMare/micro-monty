@@ -1272,6 +1272,18 @@ pub(crate) fn bi_complex(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         }
         return vm.num_from_text(r, true);
     }
+    if i != Value::UNDEFINED && [r, i].iter().any(|&v| vm.user_class(v).is_some()) {
+        // A user number among two: the prelude twin, in CPython's order
+        // (`real`'s `__complex__`, both type checks, then `__float__`),
+        // with an absent `real` as CPython's 0.
+        let r = if r == Value::UNDEFINED {
+            Value::int(0).unwrap_or(Value::NONE)
+        } else {
+            r
+        };
+        let t = vm.alloc_tuple(&[r, i])?;
+        return vm.prelude_request("_complex", alloc::vec![t], crate::cont::Cont::None);
+    }
     let (cr, cr_complex) = vm.complex_arg(r, i == Value::UNDEFINED, "real")?;
     let (ci, ci_complex) = if i == Value::UNDEFINED {
         (C { re: cr.im, im: 0.0 }, false)

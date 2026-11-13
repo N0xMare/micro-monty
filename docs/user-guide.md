@@ -1462,11 +1462,11 @@ differs:
   identity-hashed objects can differ between runs sliced differently \[M\].
   `id` stays unique among live objects and fixed for an object's life across
   parks and restores; `is` and value-hashed containers are unaffected.
-- **Smaller ones.** `io.StringIO.seek` accepts a float; `bytes.hex(None)` is
-  accepted; a set display of constants whose hashes collide can iterate in
-  another order; a dataclass's `__doc__` is `None`; `re`'s ignore-case
-  matching misses a few case folds (`ﬅ`/`ﬆ`, the Kelvin sign in a class
-  range); `OSError(2, 'x')` is not a `FileNotFoundError` \[M\].
+- **Smaller ones.** `io.StringIO.seek` accepts a float; a set display of
+  constants whose hashes collide can iterate in another order; a
+  dataclass's `__doc__` is `None`; `re`'s ignore-case matching misses a
+  few case folds (`ﬅ`/`ﬆ`, the Kelvin sign in a class range);
+  `OSError(2, 'x')` is not a `FileNotFoundError` \[M\].
 
 ### Code size limits
 

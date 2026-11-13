@@ -5086,6 +5086,12 @@ fn bi_round(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         return Ok(r);
     }
     let v = vm.unbx(v);
+    // The number's type first, as CPython looks `__round__` up before it
+    // converts `ndigits`.
+    if !Vm::is_heap_int(v) && vm.int_of_o(v).is_none() && v.as_float().is_none() {
+        let msg = format!("type {} doesn't define __round__ method", vm.type_name(v));
+        return Err(vm.err(T::TypeError, &msg));
+    }
     let nd = if nd == Value::UNDEFINED || nd == Value::NONE {
         None
     } else {
@@ -5141,12 +5147,8 @@ fn bi_round(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         };
         return vm.int_from_i128(q * p);
     }
-    let Some(f) = v.as_float() else {
-        return Err(vm.err(
-            T::TypeError,
-            &format!("type {} doesn't define __round__ method", vm.type_name(v)),
-        ));
-    };
+    // A float here (the type check above).
+    let f = v.as_float().unwrap_or_default();
     match nd {
         None => {
             if !f.is_finite() {

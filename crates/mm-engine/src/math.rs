@@ -491,7 +491,12 @@ pub(crate) fn m_frexp(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn m_ldexp(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let x = arg_f(vm, &a, 0)?;
-    let e = vm.integer(vm.arg_o(&a, 1))?;
+    // An int (or subclass) only: CPython's `PyLong_Check`, no `__index__`.
+    let e = vm.arg_o(&a, 1);
+    if !Vm::is_intlike(vm.unbx(e)) {
+        return Err(vm.err(T::TypeError, "Expected an int as second argument to ldexp."));
+    }
+    let e = vm.integer(e)?;
     let e = e
         .to_i64()
         .unwrap_or(if e.neg { i64::MIN / 2 } else { i64::MAX / 2 });

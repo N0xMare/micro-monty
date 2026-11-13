@@ -411,14 +411,29 @@ def _index(x):
     return r
 
 
+def _slice_part(x):
+    # A slice index as `_key` passes it on, or `_key` if it is not one.
+    if _has_index(x):
+        return _index(x)
+    if x is None or isinstance(x, int):
+        return x
+    return _key
+
+
 def _key(k):
-    # A subscript with `__index__` objects as (slice) indices.
+    # A subscript with `__index__` objects as (slice) indices. A slice's
+    # in CPython's order (`PySlice_Unpack`): the step, the start, then the
+    # stop, up to the first that is not an index, which the native raises
+    # for (the ones after it are not read, None here).
     if type(k) is slice:
-        a = k.start
-        b = k.stop
-        c = k.step
-        return slice(_index(a) if _has_index(a) else a, _index(b) if _has_index(b) else b,
-                     _index(c) if _has_index(c) else c)
+        c = _slice_part(k.step)
+        if c is _key:
+            return slice(None, None, k.step)
+        a = _slice_part(k.start)
+        if a is _key:
+            return slice(k.start, None, c)
+        b = _slice_part(k.stop)
+        return slice(a, k.stop if b is _key else b, c)
     if _has_index(k):
         r = _index(k)
         if not -9223372036854775808 <= r <= 9223372036854775807:
@@ -1141,10 +1156,31 @@ def _complex_part(x):
     return x
 
 
+def _complex_real(x):
+    t = type(x)
+    return (isinstance(x, (int, float, complex)) or hasattr(t, '__float__')
+            or hasattr(t, '__index__'))
+
+
 def _complex(a):
-    if len(a) > 1:
-        return complex(_complex_part(a[0]), _complex_part(a[1]))
-    return complex(_complex_part(a[0]))
+    if len(a) == 1:
+        return complex(_complex_part(a[0]))
+    # CPython's order: `real`'s `__complex__`, the type checks of both,
+    # then `__float__` (else `__index__`) of each that is not complex.
+    # `imag`'s `__complex__` is not used.
+    r = a[0]
+    i = a[1]
+    if hasattr(type(r), '__complex__'):
+        r = _complex_part(r)
+    if not _complex_real(r):
+        raise TypeError(f"complex() argument 'real' must be a real number, not {_type_name(r)}")
+    if not _complex_real(i):
+        raise TypeError(f"complex() argument 'imag' must be a real number, not {_type_name(i)}")
+    if not isinstance(r, complex):
+        r = float(r)
+    if not isinstance(i, complex):
+        i = float(i)
+    return complex(r, i)
 
 
 def _hash(a):
@@ -1257,7 +1293,22 @@ def _mcall(f, args, kw):
             raise ValueError('Inputs are not the same length')
         return f(ps, qs) if total is _MISSING else total
     if name == 'math.dist':
-        return f([_mreal(x) for x in args[0]], [_mreal(x) for x in args[1]])
+        # CPython's order: p[i], then q[i], up to the first that is not a
+        # real number, which the native then raises for.
+        p = tuple(args[0])
+        q = tuple(args[1])
+        if len(p) != len(q):
+            return f(p, q)
+        ps = []
+        qs = []
+        for i in range(len(p)):
+            x = _mreal(p[i])
+            y = _mreal(q[i]) if type(x) in (int, bool, float) else 0.0
+            ps.append(x)
+            qs.append(y)
+            if type(x) not in (int, bool, float) or type(y) not in (int, bool, float):
+                break
+        return f(ps, qs)
     if (name == 'math.gcd' or name == 'math.lcm') and len(args) > 2:
         # Pairwise, as CPython's loop: each pair a native call, with its
         # own estimate and step.
@@ -1276,26 +1327,49 @@ def _mcall(f, args, kw):
             return 0
         return a * (b // __import__('math').gcd(a, b))
     real = name[:5] == 'math.' and name not in _MATH_INTS
+    indexed = False
     for a in args:
         if name == 'math.fsum':
             new.append(_pulled(a, f, _mreal, _is_float))
             changed = True
-        elif _lazy(a, 1):
+        elif _lazy(a, 1) or (type(a) in (list, tuple) and (
+                (name == 'bytes' or name == 'bytearray') and not new
+                or name == 'extend' and len(new) == 1 and isinstance(new[0], bytearray))):
+            # Byte items (also in a list or tuple) take `__index__`, one
+            # at a time, as CPython's `bytes`, `bytearray` and `extend`.
             if name == 'bytes' or name == 'bytearray':
-                a = _pulled(a, f, None, _is_byte)
+                a = _pulled(a, f, _byte_item, _is_byte)
             elif name == 'extend':
-                a = _pulled(a, bytearray, None, _is_byte)
+                a = _pulled(a, bytearray, _byte_item, _is_byte)
             else:
                 a = list(a)
             new.append(a)
             changed = True
+        elif name == 'int' and not new and len(args) == 2:
+            # int(x, base): `x` is text, never converted (CPython converts
+            # the base, then refuses anything else).
+            new.append(a)
+        elif real and name == 'math.ldexp' and new:
+            # Its exponent is an int, never converted (CPython's PyLong_Check).
+            new.append(a)
         elif real and type(a) not in (int, bool, float) and (
                 getattr(type(a), '__float__', None) is not None or _has_index(a)):
             new.append(_mreal(a))
             changed = True
-        elif _has_index(a):
+        elif real and changed and type(a) not in (int, bool, float):
+            # Not a real number: CPython converts no argument after it, and
+            # the native raises for it (the ones after it stand in as 0).
+            new.append(a)
+            new.extend([0] * (len(args) - len(new)))
+            break
+        elif _has_index(a) and not indexed:
+            # Only the first: the native, called again, hands back here
+            # for the next int it needs, so an argument it takes as an
+            # object (`list.insert`'s item) keeps its value, and a bad one
+            # raises before later ones run their `__index__`.
             new.append(_index(a))
             changed = True
+            indexed = True
         else:
             new.append(a)
     if not changed:
@@ -1328,6 +1402,19 @@ def _is_float(x):
 
 def _is_byte(x):
     return type(x) is int and 0 <= x <= 255
+
+
+def _byte_item(x):
+    return _index(x) if _has_index(x) else x
+
+
+def _ints_index(src, to):
+    # bytes or bytearray (`to` the type) of a list, tuple or set, or
+    # `to.extend(src)`, with an item whose `__index__` gives its value:
+    # the items converted one at a time, as CPython's.
+    if to is bytes or to is bytearray:
+        return to(_pulled(src, to, _byte_item, _is_byte))
+    bytearray.extend(to, _pulled(src, bytearray, _byte_item, _is_byte))
 
 
 def _collect_rest(xs, it, f, a, kw):
@@ -1704,7 +1791,13 @@ def _seq_find(seq, x, start, stop):
 
 
 def _list_index(a, t='list'):
-    b = [_index(v) if _has_index(v) else v for v in a[2:4]]
+    b = []
+    for v in a[2:4]:
+        if _has_index(v):
+            v = _index(v)
+        elif not isinstance(v, int):
+            raise TypeError('slice indices must be integers or have an __index__ method')
+        b.append(v)
     i = _seq_find(a[0], a[1], b[0] if b else 0, b[1] if len(b) > 1 else 9223372036854775807)
     if i < 0:
         raise ValueError(f'{t}.index(x): x not in {t}')
