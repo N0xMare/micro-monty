@@ -22,7 +22,7 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{command_output, cpython_oracle_version, micro_monty_binary, python, workspace_root};
+use crate::{command_output, cpython_oracle_version, python, workspace_root};
 
 /// Benchmark names in reporting order, with their file stem in `bench/`.
 /// `json` lives in `json_rows.*` so the script cannot shadow the stdlib module.
@@ -60,7 +60,8 @@ enum Engine {
     Djs,
     /// Monty's CLI, optional: `$MONTY` or `monty` on `PATH`.
     Monty,
-    /// micro-monty's `mm run`: `$MM`, else `target/release/mm` built by cargo.
+    /// micro-monty's `mm run`: `$MM`, else `mm` built natively as shipped
+    /// (`cargo xtask shipped-mm`'s binary).
     MicroMonty,
     /// An independently built accepted-main control, supplied as `$MM_MAIN`.
     MicroMontyMain,
@@ -157,7 +158,7 @@ impl Engine {
             }
             Self::MicroMonty | Self::MicroMontyMain => {
                 let binary = if self == Self::MicroMonty {
-                    micro_monty_binary()?
+                    crate::shipped_mm_binary()?
                 } else {
                     from_env_or_path("MM_MAIN", "mm-main")?
                 };

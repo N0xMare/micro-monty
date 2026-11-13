@@ -7,7 +7,8 @@ Each case is a loop body run N and 2N times inside a function; the
 difference over N is the cost of one iteration, startup excluded. The
 `loop` case (an empty body) is subtracted from the others, so a row is the
 body's own cost. Engines as in `callgrind.py` (defaults: CPython 3.14 and
-`target/release/mm run`). Prints a Markdown table of Ir per operation.
+the shipped native `mm`, `target/<host>/release/mm run`, which `cargo
+xtask shipped-mm` builds). Prints a Markdown table of Ir per operation.
 """
 
 import argparse
@@ -18,6 +19,8 @@ import shlex
 import subprocess
 import sys
 import tempfile
+
+from callgrind import shipped_mm
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -102,7 +105,7 @@ def main():
     a = ap.parse_args()
     engines = [e.split("=", 1) for e in a.engine] or [
         ["cpython", os.environ.get("PYTHON", "python3.14")],
-        ["mm", os.path.join(ROOT, "target/release/mm") + " run"],
+        ["mm", shlex.quote(shipped_mm()) + " run"],
     ]
     names = list(CASES) if not a.only else ["loop"] + a.only.split(",")
     tmp = tempfile.mkdtemp(prefix="opcost-")

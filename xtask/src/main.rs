@@ -809,9 +809,16 @@ fn shipped_guest_in(src: &Path, dir: &Path) -> Result<PathBuf, String> {
     wasm::optimize(&dir.join(format!("{target}/release/mm_wasm_guest.wasm")))
 }
 
-/// Builds `mm` natively as shipped, `target/<host>/release/mm`: the binary
-/// `bench/callgrind.py` measures by default.
+/// Builds `mm` natively as shipped and prints its path,
+/// `target/<host>/release/mm`: the binary `bench/callgrind.py` measures by
+/// default.
 fn shipped_mm() -> Result<(), String> {
+    println!("{}", build_shipped_mm()?.display());
+    Ok(())
+}
+
+/// `mm` built natively as shipped ([`shipped_build`]): its path.
+fn build_shipped_mm() -> Result<PathBuf, String> {
     let host = host_target()?;
     let status = shipped_build(&host)
         .args(["--package", "mm-cli", "--bin", "mm"])
@@ -820,13 +827,17 @@ fn shipped_mm() -> Result<(), String> {
     if !status.success() {
         return Err(format!("shipped release build of mm for {host} failed"));
     }
-    println!(
-        "{}",
-        workspace_root()
-            .join(format!("target/{host}/release/mm"))
-            .display()
-    );
-    Ok(())
+    Ok(workspace_root().join(format!("target/{host}/release/mm")))
+}
+
+/// The `mm` that measurements time: `$MM` if set, else `mm` built natively
+/// as shipped.
+pub(crate) fn shipped_mm_binary() -> Result<PathBuf, String> {
+    if env::var_os("MM").is_some_and(|value| !value.is_empty()) {
+        micro_monty_binary()
+    } else {
+        build_shipped_mm()
+    }
 }
 
 /// `cargo build --release` for `target` the way shipped binaries are built
