@@ -1807,6 +1807,7 @@ fn subj_len(vm: &Vm, subj: Value) -> usize {
 }
 
 /// `pos` and `endpos` as a `Match` keeps them: clamped to the subject.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn clamp_span(vm: &Vm, subj: Value, pos: i64, endpos: i64) -> [u64; 2] {
     let n = i64::try_from(subj_len(vm, subj)).unwrap_or(i64::MAX);
     [
@@ -1869,6 +1870,7 @@ pub(crate) fn re_match(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// A `re.Match` of pattern `p` over `subj`: `span` its clamped `pos` and
 /// `endpos`, `f` the match's byte spans, `c` its `lastindex` and char
 /// spans (as `Slice::out`).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn build_match(
     vm: &mut Vm,
     p: Value,
@@ -1922,6 +1924,7 @@ fn words_bytes(vm: &mut Vm, words: &[u32]) -> Result<Value, Raised> {
 }
 
 /// Group `g`'s `[char start, char end, byte start, byte end]` (-1 unset).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn mspan(vm: &Vm, m: Value, g: usize) -> [i64; 4] {
     let Some(r) = m.as_obj() else {
         return [-1; 4];
@@ -2094,6 +2097,7 @@ pub(crate) fn match_span(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `(start, end)` as a tuple.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn span_tuple(vm: &mut Vm, s: [i64; 4]) -> Result<Value, Raised> {
     let (a, b) = (vm.new_int(s[0])?, vm.new_int(s[1])?);
     vm.alloc_tuple(&[a, b])

@@ -306,6 +306,7 @@ impl Vm {
     /// One step of a long `%` format (`nstep::op::STR_PCT`): state values
     /// `[fmt, args, current args, pre, pieces so far]`, raw words after
     /// the operation `[next byte, argidx, arglen, used, flags]`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn pct_step(&mut self, state: Value) -> Result<Step, Raised> {
         let Some(([fmt, given, args, pre, list], [_, i, argidx, arglen, used, flags])) =
             self.nstate_get::<5, 6>(op::STR_PCT, state)

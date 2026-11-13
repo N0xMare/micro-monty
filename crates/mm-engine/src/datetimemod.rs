@@ -17,6 +17,7 @@ fn int(v: i64) -> Value {
 }
 
 #[inline(never)]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn digits(b: &[u8]) -> Option<i64> {
     if b.is_empty() || b.len() > 12 || !b.iter().all(u8::is_ascii_digit) {
         return None;
@@ -24,10 +25,12 @@ fn digits(b: &[u8]) -> Option<i64> {
     Some(b.iter().fold(0, |n, &c| n * 10 + i64::from(c - b'0')))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn is_leap(y: i64) -> bool {
     y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn days_in_month(y: i64, m: i64) -> i64 {
     match m {
         2 if is_leap(y) => 29,
@@ -42,6 +45,7 @@ const BEFORE: [i64; 13] = [0, 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 
 
 /// `ymd_to_ord`: days since 0001-01-01, plus one.
 #[inline(never)]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn ordinal(y: i64, m: i64, d: i64) -> i64 {
     let p = y - 1;
     let leap = i64::from(m > 2 && is_leap(y));
@@ -49,6 +53,7 @@ fn ordinal(y: i64, m: i64, d: i64) -> i64 {
 }
 
 /// `ord_to_ymd`, for `n >= 1`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn from_ordinal(n: i64) -> (i64, i64, i64) {
     // A year has at most 366 days, so the guess is at most a year early.
     let mut y = (n - 1) * 400 / 146_097 + 1;
@@ -64,6 +69,7 @@ fn from_ordinal(n: i64) -> (i64, i64, i64) {
     (y, m, left + 1)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn valid_date(y: i64, m: i64, d: i64) -> bool {
     (1..=9999).contains(&y) && (1..=12).contains(&m) && d >= 1 && d <= days_in_month(y, m)
 }
@@ -71,11 +77,13 @@ fn valid_date(y: i64, m: i64, d: i64) -> bool {
 // ------------------------------------------------------- fromisoformat
 
 /// The byte at `i`, NUL past the end (C reads the terminator).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn at(b: &[u8], i: usize) -> u8 {
     b.get(i).copied().unwrap_or(0)
 }
 
 #[inline(never)]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn parse_digits(b: &[u8], p: &mut usize, n: usize) -> Option<i64> {
     let mut v = 0;
     for _ in 0..n {
@@ -89,6 +97,7 @@ fn parse_digits(b: &[u8], p: &mut usize, n: usize) -> Option<i64> {
     Some(v)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn iso_to_ymd(y: i64, w: i64, d: i64) -> Option<(i64, i64, i64)> {
     if !(1..=9999).contains(&y) {
         return None;
@@ -108,6 +117,7 @@ fn iso_to_ymd(y: i64, w: i64, d: i64) -> Option<(i64, i64, i64)> {
 }
 
 /// `parse_isoformat_date` on `b`, `len` its date part.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn parse_isoformat_date(b: &[u8], len: usize) -> Option<(i64, i64, i64)> {
     let mut p = 0;
     let year = parse_digits(b, &mut p, 4)?;
@@ -140,6 +150,7 @@ fn parse_isoformat_date(b: &[u8], len: usize) -> Option<(i64, i64, i64)> {
 
 /// `parse_hh_mm_ss_ff` from `p` to `end`: `Err` for its negative codes,
 /// else whether something other than the end follows, and the fields.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn parse_hh_mm_ss_ff(b: &[u8], mut p: usize, end: usize) -> Result<(bool, [i64; 4]), ()> {
     let mut v = [0; 4];
     let mut sep = true;
@@ -181,6 +192,7 @@ fn parse_hh_mm_ss_ff(b: &[u8], mut p: usize, end: usize) -> Result<(bool, [i64; 
 
 /// `parse_isoformat_time` on `b[start..]`: the fields and the UTC offset
 /// in microseconds (`None` without one).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn parse_isoformat_time(b: &[u8], start: usize) -> Option<([i64; 4], Option<i64>)> {
     let end = b.len();
     let mut tz = start;
@@ -206,6 +218,7 @@ fn parse_isoformat_time(b: &[u8], start: usize) -> Option<([i64; 4], Option<i64>
 }
 
 /// `_find_isoformat_datetime_separator` (`None` for its -1).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn find_separator(b: &[u8]) -> Option<usize> {
     let len = b.len();
     if len == 7 {
@@ -243,6 +256,7 @@ fn find_separator(b: &[u8]) -> Option<usize> {
 /// `datetime_fromisoformat`'s parse of a string of at least 7 characters
 /// (`datetime.fromisoformat` checks): `(y, m, d, h, mi, s, us)` and the
 /// offset.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn iso_datetime(b: &[u8]) -> Option<([i64; 7], Option<i64>)> {
     if b.len() < 7 {
         return None;
@@ -271,6 +285,7 @@ fn iso_datetime(b: &[u8]) -> Option<([i64; 7], Option<i64>)> {
 /// off, ok)`, `off` the UTC offset in microseconds or `None`, `ok` 1 when
 /// every field is in range, 0 when the constructor must check them and 2
 /// for the hour-24 error after the zone (`datetime`).
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn dt_iso(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (s, kind) = (vm.arg_o(&a, 0), vm.int_of_o(vm.arg_o(&a, 1)).unwrap_or(-1));
     if !Vm::is_str(s) {
@@ -365,6 +380,7 @@ const D: (u8, u8) = (b'0', b'9');
 const SP: (u8, u8) = (b' ', b' ');
 
 /// `_MAPPING`'s alternatives for the numeric directives, in order.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn alts(d: u8) -> &'static [Alt] {
     match d {
         b'd' => &[
@@ -438,6 +454,7 @@ const A_MONTH: [&str; 12] = [
 ];
 const AM_PM: [&str; 2] = ["am", "pm"];
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn names(d: u8) -> &'static [&'static str] {
     match d {
         b'A' => &F_WEEKDAY,
@@ -448,11 +465,13 @@ fn names(d: u8) -> &'static [&'static str] {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn is_ws(c: u8) -> bool {
     // `str.isspace` on ASCII, as the regex's `\s` matches.
     matches!(c, b' ' | b'\t'..=b'\r' | 0x1c..=0x1f)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn has(s: &[u8], i: usize, lo: u8, hi: u8) -> bool {
     s.get(i).is_some_and(|&x| (lo..=hi).contains(&x))
 }
@@ -460,6 +479,7 @@ fn has(s: &[u8], i: usize, lo: u8, hi: u8) -> bool {
 /// The end of `%z`'s `k`-th way to match at `p`, in the order the regex
 /// `[+-]\d\d:?[0-5]\d(:?[0-5]\d(\.\d{1,6})?)?|(?-i:Z)` tries them.
 #[inline(never)]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn z_end(s: &[u8], p: usize, k: usize) -> Step {
     let mut ends = [0usize; 32];
     let mut n = 0;
@@ -517,6 +537,7 @@ enum Step {
     Out,
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn step(hit: bool, end: usize) -> Step {
     if hit { Step::Hit(end) } else { Step::Miss }
 }
@@ -524,6 +545,7 @@ fn step(hit: bool, end: usize) -> Step {
 /// `t`'s `k`-th alternative at `p`. A whitespace run counts a step per
 /// 16 bytes it scans toward [`MAX_STEPS`] (each alternative rescans it).
 #[inline(never)]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn alt_end(t: Tok, s: &[u8], p: usize, k: usize, steps: &mut u32) -> Step {
     match t {
         Tok::Lit(_) if k > 0 => Step::Out,
@@ -582,6 +604,7 @@ fn alt_end(t: Tok, s: &[u8], p: usize, k: usize, steps: &mut u32) -> Step {
 /// a directive given twice (a regex error) or `%d` without a year (a
 /// warning).
 #[inline(never)]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn tokens(f: &[u8]) -> Option<Vec<Tok>> {
     // Each token takes a matching step: a format with more than
     // `MAX_STEPS` goes to the Python path whatever the input.
@@ -632,12 +655,14 @@ fn tokens(f: &[u8]) -> Option<Vec<Tok>> {
 const MAX_STEPS: u32 = 4096;
 
 #[inline(never)]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn num(s: &[u8]) -> i64 {
     s.iter()
         .filter(|x| x.is_ascii_digit())
         .fold(0, |n, &c| n * 10 + i64::from(c - b'0'))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn index_of(d: u8, s: &[u8]) -> i64 {
     names(d)
         .iter()
@@ -648,6 +673,7 @@ fn index_of(d: u8, s: &[u8]) -> i64 {
 /// `_strptime`'s results: `(year, month, day, hour, minute, second,
 /// weekday, julian, -1, None, gmtoff)`, `fraction`, `gmtoff_fraction`.
 #[inline(never)]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn strptime(s: &[u8], f: &[u8], steps: &mut u32) -> Option<[Option<i64>; 13]> {
     let toks = tokens(f)?;
     // The `re.match`: the first way through in the regex's order.
@@ -783,6 +809,7 @@ fn strptime(s: &[u8], f: &[u8], steps: &mut u32) -> Option<[Option<i64>; 13]> {
 /// `_mm.dt_strptime(data, format)`: `_strptime`'s result, `((year, month,
 /// day, hour, minute, second, weekday, julian, -1, None, gmtoff),
 /// fraction, gmtoff_fraction)`, or `None` if this does not parse it.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn dt_strptime(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (s, f) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if !Vm::is_str(s) || !Vm::is_str(f) {
@@ -815,6 +842,7 @@ pub(crate) fn dt_strptime(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// `_mm.dt_ord(y, m, d)`: `date(y, m, d).toordinal()` for a valid date,
 /// else `None` (the Python caller then takes its own path).
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn dt_ord(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let f = |i: u32| vm.int_of_o(vm.arg_o(&a, i));
     Ok(match (f(0), f(1), f(2)) {
@@ -825,6 +853,7 @@ pub(crate) fn dt_ord(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `_mm.dt_ymd(n)`: `date.fromordinal(n)`'s `(year, month, day)` for
 /// `1 <= n <= date.max.toordinal()`, else `None`.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn dt_ymd(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     match vm.int_of_o(vm.arg_o(&a, 0)) {
         Some(n) if (1..=3_652_059).contains(&n) => {

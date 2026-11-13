@@ -1425,6 +1425,7 @@ impl Vm {
     }
 
     /// One step of a long `x in s` ([`Vm::seq_in_scan`]).
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn seq_in_step(&mut self, state: Value) -> Result<crate::nstep::Step, Raised> {
         use crate::nstep::{Step, op};
         let Some(([s, x], [_, i, neg])) = self.nstate_get::<2, 3>(op::SEQ_IN, state) else {
@@ -1508,6 +1509,7 @@ impl Vm {
     }
 
     /// One step of a long `x in d.values()` ([`Vm::dv_in_scan`]).
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn dv_in_step(&mut self, state: Value) -> Result<crate::nstep::Step, Raised> {
         use crate::nstep::{Step, op};
         let Some(([v, x], [_, i, neg])) = self.nstate_get::<2, 3>(op::DV_IN, state) else {
@@ -1557,6 +1559,7 @@ impl Vm {
     }
 
     /// One step of a [`Vm::seq_build`].
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn seq_build_step(&mut self, state: Value) -> Result<crate::nstep::Step, Raised> {
         use crate::nstep::{Step, op};
         let Some((r, raw)) = self.nstate_get::<6, 23>(op::SEQ_BUILD, state) else {
@@ -1573,6 +1576,7 @@ impl Vm {
 
     /// Batches of build `w` on registers `r` until done (its value) or a
     /// step's work is spent (`None`, `w` updated).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn seq_build_run(&mut self, r: &[Value; 6], w: &mut Build) -> Result<Option<Value>, Raised> {
         let start = self.work;
         let mut units = 0u64;
@@ -1720,6 +1724,7 @@ impl Vm {
     /// CPython's one copy, here a slice per step; `None` for any other.
     /// `list.extend` and `[*src]` (`LIST_EXTEND`).
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn list_extend_long(
         &mut self,
         l: Value,
@@ -1848,6 +1853,7 @@ impl Vm {
     }
 
     /// One step of a [`Vm::seq_scan`].
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn seq_scan_step(&mut self, state: Value) -> Result<crate::nstep::Step, Raised> {
         use crate::nstep::{Step, op};
         let Some(([s, x], [_, kind, i, stop, c, z])) = self.nstate_get::<2, 6>(op::SEQ_SCAN, state)
@@ -1865,6 +1871,7 @@ impl Vm {
     /// A step of a scan, `raw` its `kind, i, stop, count`: its value, or
     /// `None` with more to go. An item whose `==` needs Python code hands
     /// the rest to `_seq_scan_rest`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn seq_scan_run(
         &mut self,
         s: Value,
@@ -1924,6 +1931,7 @@ impl Vm {
     /// `l[start:..:step] = v` (`len` items) for a long list `l`, in
     /// steps: the new items of a list or tuple `v` are read in place,
     /// any other iterable's collected first. `None` for the short form.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn list_assign_long(
         &mut self,
         l: Value,
@@ -1977,6 +1985,7 @@ impl Vm {
 
     /// `del l[key]` for a long list `l` (`n` items), in steps; `None` for
     /// a key the short form handles (and its errors).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn list_del_long(
         &mut self,
         l: Value,
@@ -2997,6 +3006,7 @@ impl Vm {
     /// `en_longindex`. Raw word 2 stays at `i64::MAX`.
     #[cold]
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn enum_big(&mut self, r: Ref) -> Result<Value, Raised> {
         let n = match self.slot(r, 1) {
             Value::NONE => self.new_int(i64::MAX)?,

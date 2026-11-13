@@ -46,6 +46,7 @@ struct Build<'a> {
 }
 
 /// `ast._parse(source, mode, filename, module)`.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn ast_parse(vm: &mut Vm, a: CallArgs) -> R {
     let (src, mode, file, ns) = (
         vm.arg_o(&a, 0),
@@ -115,6 +116,7 @@ pub(crate) fn ast_parse(vm: &mut Vm, a: CallArgs) -> R {
 /// The `SyntaxError` (or `IndentationError`, `TabError`) CPython's
 /// `compile` raises: `(msg, (filename, lineno, offset, text, end_lineno,
 /// end_offset))`, with 1-based character offsets.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn syntax_error(vm: &mut Vm, e: &CompileError, src: &str, file: Value, exec: bool) -> Raised {
     let t = match e.kind {
         "IndentationError" => T::IndentationError,
@@ -200,6 +202,7 @@ fn syntax_error(vm: &mut Vm, e: &CompileError, src: &str, file: Value, exec: boo
 impl Build<'_> {
     /// A node of class `class` (from `ast.py`) with `fields`, and the
     /// position attributes when `pos` is given.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn node(&mut self, class: &str, fields: &[(&str, Value)], pos: Option<Pos>) -> R {
         self.vm.burn(1);
         let k = self.vm.intern(class)?;
@@ -219,6 +222,7 @@ impl Build<'_> {
     }
 
     /// Sets node `o`'s position attributes to `p`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn set_pos(&mut self, o: Value, p: Pos) -> Result<(), Raised> {
         let (c, ec) = (self.col(p.line, p.col), self.col(p.end_line, p.end_col));
         for (f, v) in [
@@ -235,6 +239,7 @@ impl Build<'_> {
     }
 
     /// The UTF-8 byte column of (line, character column).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn col(&self, line: u32, col: u32) -> usize {
         self.lines.offset(line, col) - self.lines.start(line)
     }
@@ -243,14 +248,17 @@ impl Build<'_> {
         self.vm.new_str(s)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn opt_str(&mut self, s: Option<&String>) -> R {
         s.map_or(Ok(Value::NONE), |s| self.vm.new_str(s))
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn list(&mut self, items: &[Value]) -> R {
         self.vm.new_list(items)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn strs(&mut self, names: &[String]) -> R {
         let v = names
             .iter()
@@ -259,6 +267,7 @@ impl Build<'_> {
         self.list(&v)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn stmts(&mut self, body: &[Stmt]) -> R {
         let v = body
             .iter()
@@ -269,6 +278,7 @@ impl Build<'_> {
 
     /// An `if` and its `elif` arms, built from the last arm back: an
     /// `elif` chain nests as deeply as it is long.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn if_chain(&mut self, s: &Stmt) -> R {
         let mut arms = Vec::new();
         let mut cur = s;
@@ -305,6 +315,7 @@ impl Build<'_> {
         Ok(node)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn exprs(&mut self, es: &[Expr], ctx: Ctx) -> R {
         let v = es
             .iter()
@@ -313,15 +324,18 @@ impl Build<'_> {
         self.list(&v)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn opt(&mut self, e: Option<&Expr>, ctx: Ctx) -> R {
         e.map_or(Ok(Value::NONE), |e| self.expr(e, ctx))
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn ctx(&mut self, c: Ctx) -> R {
         self.op(["Load", "Store", "Del"][c as usize])
     }
 
     /// The shared instance of context or operator class `name`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn op(&mut self, name: &str) -> R {
         let k = self.vm.intern(name)?;
         match self.vm.dict_get_str(self.one, k) {
@@ -331,6 +345,7 @@ impl Build<'_> {
     }
 
     #[allow(clippy::too_many_lines, reason = "one arm per statement kind")]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn stmt(&mut self, s: &Stmt) -> R {
         let p = Some(s.pos);
         let no = Value::NONE;
@@ -519,6 +534,7 @@ impl Build<'_> {
         }
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn aliases(&mut self, names: &[mm_compile::ast::Alias]) -> R {
         let mut v = Vec::with_capacity(names.len());
         for a in names {
@@ -529,6 +545,7 @@ impl Build<'_> {
         self.list(&v)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn funcdef(&mut self, f: &FuncDef) -> R {
         let name = self.str(&f.name)?;
         let args = self.arguments(&f.params)?;
@@ -555,6 +572,7 @@ impl Build<'_> {
         )
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn classdef(&mut self, c: &ClassDef) -> R {
         let name = self.str(&c.name)?;
         let bases = self.exprs(&c.bases, Ctx::Load)?;
@@ -586,6 +604,7 @@ impl Build<'_> {
         )
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn args(&mut self, ps: &[Param]) -> R {
         let v = ps
             .iter()
@@ -628,6 +647,7 @@ impl Build<'_> {
         )
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn keywords(&mut self, kws: &[Keyword]) -> R {
         let mut v = Vec::with_capacity(kws.len());
         for k in kws {
@@ -638,6 +658,7 @@ impl Build<'_> {
         self.list(&v)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn comps(&mut self, gens: &[Comprehension]) -> R {
         let mut v = Vec::with_capacity(gens.len());
         for g in gens {
@@ -654,6 +675,7 @@ impl Build<'_> {
         self.list(&v)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn constant(&mut self, c: &Const) -> R {
         Ok(match c {
             Const::None => Value::NONE,
@@ -674,6 +696,7 @@ impl Build<'_> {
     }
 
     /// The `Pos` of byte range `s..e`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn span(&self, s: usize, e: usize) -> Pos {
         let at = |o: usize| self.lines.loc(u32::try_from(o).unwrap_or(u32::MAX));
         let ((line, col), (end_line, end_col)) = (at(s), at(e));
@@ -686,6 +709,7 @@ impl Build<'_> {
     }
 
     /// The byte offset of character position `(line, col)`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn off(&self, line: u32, col: u32) -> usize {
         self.lines.offset(line, col)
     }
@@ -693,6 +717,7 @@ impl Build<'_> {
     /// The byte range of the literal before `next`: `base`, or, when `next`
     /// is a debug field (`{x=}`), extended over its text up to the `=` and
     /// the spaces after it (starting after the `{` when `base` is empty).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn with_debug(
         &self,
         base: Option<(usize, usize)>,
@@ -716,6 +741,7 @@ impl Build<'_> {
     }
 
     /// A `Constant` literal part over bytes `a..b`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn lit(&mut self, text: &str, a: usize, b: usize) -> R {
         let p = self.span(a, b.max(a));
         let s = self.str(text)?;
@@ -725,6 +751,7 @@ impl Build<'_> {
     /// An f-string at `pos` as a `JoinedStr`. A literal part spans the
     /// string pieces and f-string text it was joined from (the own lexer's
     /// tokens outside this f-string's fields), as CPython's does.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn fstring(&mut self, parts: &[FPart], pos: Pos) -> R {
         let (s, e) = (
             self.off(pos.line, pos.col),
@@ -836,6 +863,7 @@ impl Build<'_> {
     /// `e`'s node. A chain (`a + b + ...`, `x.f().g[0]`, `a if c else b if
     /// ...`) nests as deeply as it is long, so it is built in a loop from
     /// its innermost operand out.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn expr<'e>(&mut self, e: &'e Expr, ctx: Ctx) -> R {
         let link = |e: &'e Expr| match &e.kind {
             ExprKind::IfExp(_, _, o) => Some(&**o),
@@ -861,6 +889,7 @@ impl Build<'_> {
     /// One node, with its chain operand (`expr`'s `link`) already built
     /// when `chained` is given.
     #[allow(clippy::too_many_lines, reason = "one arm per expression kind")]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn one(&mut self, e: &Expr, ctx: Ctx, chained: Option<Value>) -> R {
         let p = Some(e.pos);
         let load = Ctx::Load;
@@ -1050,10 +1079,12 @@ impl Build<'_> {
     }
 
     /// A chain operand: the node `expr` built already, else `e`'s.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn chained(&mut self, chained: Option<Value>, e: &Expr) -> R {
         chained.map_or_else(|| self.expr(e, Ctx::Load), Ok)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn patterns(&mut self, ps: &[Pattern]) -> R {
         let v = ps
             .iter()
@@ -1062,6 +1093,7 @@ impl Build<'_> {
         self.list(&v)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn pattern(&mut self, pat: &Pattern) -> R {
         let p = Some(pat.pos);
         match &pat.kind {
@@ -1135,6 +1167,7 @@ impl Build<'_> {
 /// A generator expression without its own parentheses: it starts where its
 /// element does or ends where its last clause does (its own parentheses
 /// would surround both; `f((x) for x in (y))` is taken as parenthesized).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bare_genexp(g: &Expr) -> bool {
     let ExprKind::GenExp(elt, gens) = &g.kind else {
         return false;
@@ -1144,6 +1177,7 @@ fn bare_genexp(g: &Expr) -> bool {
         || last.is_some_and(|p| (p.end_line, p.end_col) == (g.pos.end_line, g.pos.end_col))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn binop(op: BinOp) -> &'static str {
     [
         "Add", "Sub", "Mult", "Div", "FloorDiv", "Mod", "Pow", "LShift", "RShift", "BitAnd",
@@ -1151,6 +1185,7 @@ fn binop(op: BinOp) -> &'static str {
     ][op as usize]
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn cmpop(op: CmpOp) -> &'static str {
     match op {
         CmpOp::Eq => "Eq",

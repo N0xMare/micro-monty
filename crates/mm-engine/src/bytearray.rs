@@ -178,6 +178,7 @@ impl Vm {
 
     /// A [`job::GROW`] job: bytes `W_I..W_END` of the bytearray (value slot
     /// 3) into the block in slot 2, which it then holds, and its operation.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn ba_grow_step(
         &mut self,
         j: &mut Job,
@@ -425,6 +426,7 @@ impl Vm {
     /// ([`job::SET_STRIDE`]: byte `k` of the source to `start + k * step`)
     /// or deleted ([`job::DEL_STRIDE`]: the bytes kept moved down, a read
     /// and a write position).
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn ba_stride_step(
         &mut self,
         j: &mut Job,

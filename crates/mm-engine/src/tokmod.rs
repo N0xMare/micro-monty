@@ -16,6 +16,7 @@ use mm_parse::lines::Lines;
 const MAX_SOURCE: usize = 64 * 1024;
 
 /// `tokenize._tokens(source)`.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn tokens(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let src = vm.arg_o(&a, 0);
     if !Vm::is_str(src) {
@@ -83,6 +84,7 @@ pub(crate) fn tokens(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.alloc_tuple(&[list, err])
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pair(vm: &mut Vm, a: u32, b: u32) -> Result<Value, Raised> {
     let a = vm.new_int(i64::from(a))?;
     let b = vm.new_int(i64::from(b))?;

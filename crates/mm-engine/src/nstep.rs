@@ -210,6 +210,7 @@ impl Vm {
     /// [`STEP_WORK`]: a state of value slots `vals` and raw words `raw`
     /// (after the operation word), and a request to `_steps`, which runs
     /// the next steps a call each.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn chunk_rest(
         &mut self,
         op: u8,
@@ -282,6 +283,7 @@ impl Vm {
     }
 
     #[cold]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn bad_step(&mut self) -> Raised {
         self.err(T::SystemError, "micro-monty: bad native continuation")
     }

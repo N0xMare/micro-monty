@@ -153,6 +153,7 @@ impl Vm {
     /// (memo 2^19 to 2^20 entries: 38 MiB free, 32 MiB of tables) raised
     /// `MemoryError` at 256 MiB, and needs 242.5 MiB in one step [M]; a
     /// set's growth to 8M slots leaves 15 MiB [M] and goes in steps.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn grow_in_steps(&self, bytes: usize) -> bool {
         let left = self.heap.available_bytes().saturating_sub(bytes as u64);
         left >= self.heap.memory_limit() / 32
@@ -1006,6 +1007,7 @@ impl Vm {
     /// range, or a builtin iterator that runs no Python code, an item at a
     /// time as CPython reads it), or a list of the items of any other
     /// iterable.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn bulk_src(&mut self, v: Value) -> Result<Value, Raised> {
         if matches!(
             v.obj_kind().map(u16::from),
@@ -1137,6 +1139,7 @@ impl Vm {
     /// in; the value is register `res` (`res::NONE`, or 2 for `v`). Keys
     /// hashed in Python never come here: their stores run in the prelude
     /// twins, whose growth is one step.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn bulk_grow_top(
         &mut self,
         out: Value,
@@ -1238,6 +1241,7 @@ impl Vm {
     }
 
     /// One step of a bulk operation ([`Vm::bulk`]).
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn bulk_step(&mut self, state: Value) -> Result<crate::nstep::Step, Raised> {
         use crate::nstep::{Step, op};
         let Some((v, [_, prog, pc, i, j, n, res])) = self.nstate_get::<8, 7>(op::BULK, state)
@@ -1281,6 +1285,7 @@ impl Vm {
     /// and index for at least its entries, and progress inside the old
     /// table. Images are trusted but checked (docs/spec.md §9.3): another
     /// object here made the rehash probe a full table for ever.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bulk_tables_ok(&self, b: &Bulk) -> bool {
         if b.nk == Value::UNDEFINED {
             return true;
@@ -1338,6 +1343,7 @@ impl Vm {
 
     /// The rest of bulk operation `b` in the prelude's `_bulk`, from the
     /// item that needs Python code.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bulk_py(&mut self, b: &Bulk) -> Result<Value, Raised> {
         let regs = self.alloc_tuple(&b.r)?;
         let mut args = alloc::vec![regs];
@@ -1350,6 +1356,7 @@ impl Vm {
 
     /// Steps of `b` until it is done, or, with `limit`, until a step's
     /// work is spent.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bulk_run(&mut self, b: &mut Bulk, limit: bool) -> Result<Flow, Raised> {
         let start = self.work;
         let mut units = 0u64;
@@ -1520,6 +1527,7 @@ impl Vm {
 
     /// The work units of a bulk item whose table is `out` or `other`
     /// (a set, a dict or neither): one, or two past [`WIDE`] entries.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bulk_unit(&self, out: Value, other: Value) -> u64 {
         let len = |v: Value| {
             if Self::is_set(v) {
@@ -1535,6 +1543,7 @@ impl Vm {
     /// a `DISCARD` first rebuilds a table more than a quarter dummies, as
     /// CPython's `set_difference_update_internal` ends (once it is
     /// rebuilt, its source is still read, and the phase ends here again).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bulk_phase_done(&mut self, b: &mut Bulk, a: u64, out: Value) -> Result<(), Raised> {
         if a == act::DISCARD
             && let Some(minused) = self.set_dummies_minused(out)
@@ -1632,6 +1641,7 @@ impl Vm {
     /// read as a `view`), or an action done whole (`MOVE`), or a value
     /// already decided.
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bulk_begin(
         &mut self,
         b: &mut Bulk,
@@ -1693,6 +1703,7 @@ impl Vm {
     /// Picks how an `ADD` phase from set `src` fills `out`, once `out` has
     /// its size: slot for slot into an empty table of the same size
     /// without dummies, clean inserts into another empty table.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bulk_mode(&self, b: &mut Bulk, out: Value, src: Value) {
         if b.nk != Value::UNDEFINED || !Self::is_set(src) || b.i != 0 {
             return;
@@ -1717,6 +1728,7 @@ impl Vm {
     /// are. The work done; `bad_step` if the new tables are the old ones
     /// or have no room (a forged image's).
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bulk_rebuild(&mut self, b: &mut Bulk, out: Value, left: u64) -> Result<u64, Raised> {
         let (Some(nk), Some(nv)) = (b.nk.as_obj(), b.nv.as_obj()) else {
             b.nk = Value::UNDEFINED;
@@ -1877,6 +1889,7 @@ impl Vm {
                 .all(|&w| Value::from_bits(w).is_some_and(|v| self.iter_pos(v, pos, n, depth + 1)))
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bulk_src_reg(b: &Bulk) -> Value {
         let p = b.prog.checked_shr(16 * (b.pc & 7) as u32).unwrap_or(0);
         b.r.get(((p >> 7) & 7) as usize)
@@ -1919,6 +1932,7 @@ impl Vm {
     /// A slice of a slot-for-slot copy of set `src` into `out` (same size,
     /// `out` empty): at most `left` slots. The work done (a unit per 8).
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bulk_slots(&mut self, b: &mut Bulk, out: Value, src: Value, left: u64) -> u64 {
         let (Some((r, k, h, size)), Some((o, ok, oh, _))) =
             (self.set_parts(out), self.set_parts(src))
@@ -1969,6 +1983,7 @@ impl Vm {
     /// of a dict entry, the hash a set or dict stores; `None` past the end.
     /// A dict gives `(key, value)` tuples with `items`.
     #[allow(clippy::type_complexity, reason = "one item")]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn bulk_item(
         &mut self,
         src: Value,
@@ -2026,6 +2041,7 @@ impl Vm {
     }
 
     /// Is `x` (hash `h`) in `other`, a set or a dict's keys?
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bulk_has(&mut self, other: Value, x: Value, h: u64) -> Result<bool, Raised> {
         if Self::is_set(other) {
             return Ok(self.set_find_r(other, x, h)?.is_some());
@@ -2035,6 +2051,7 @@ impl Vm {
 
     /// Adds `x` (hash `h`) to set `out`; when the table is then too full,
     /// its rebuild starts.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bulk_add(
         &mut self,
         b: &mut Bulk,
@@ -2067,6 +2084,7 @@ impl Vm {
     /// Starts growing `out`'s table to `n` slots (a set) or for `n`
     /// entries (a dict): now if the step has room, else at the start of
     /// the next (`nk` is `NONE` and `j` is `n` until then).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bulk_grow(&mut self, b: &mut Bulk, out: Value, n: usize) -> Result<(), Raised> {
         if !b.room {
             (b.nk, b.j) = (Value::NONE, n as u64);

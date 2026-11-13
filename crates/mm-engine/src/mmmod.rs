@@ -213,6 +213,7 @@ pub(crate) fn mm_gc_collect(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> 
 /// `_mm.gc_wait()`: whether the collection `gc_collect` asked for is still
 /// running (the next safepoint then runs its next step).
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn mm_gc_wait(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::from_bool(vm.gc_waiting()))
 }

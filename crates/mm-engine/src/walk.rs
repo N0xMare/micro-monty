@@ -882,6 +882,7 @@ impl Vm {
     }
 
     /// One step of a `OrdSeq` frame (see [`Vm::walk_step`]).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn ord_seq_step(&self, fr: &mut Frame, input: Option<Out>, left: &mut u32) -> Step {
         use Step::{Done, Push};
         let Frame::OrdSeq {
@@ -972,6 +973,7 @@ impl Vm {
     }
 
     /// One step of a `Seq` frame (see [`Vm::walk_step`]).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn seq_step(&self, fr: &mut Frame, input: Option<Out>, left: &mut u32) -> Step {
         use Step::{Done, Push};
         let Frame::Seq {
@@ -1030,6 +1032,7 @@ impl Vm {
     }
     /// Advances frame `fr`, given the result of the child it last started.
     #[allow(clippy::too_many_lines, reason = "one arm per frame kind")]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn walk_step(&self, fr: &mut Frame, input: Option<Out>, left: &mut u32) -> Step {
         use Step::{Done, Push};
         let yes = Ok(Res::Bool(true));

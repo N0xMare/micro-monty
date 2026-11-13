@@ -1505,6 +1505,7 @@ impl Vm {
     /// str, or a width of 7 digits or more. With no spec, the str itself,
     /// as in CPython: no copy.
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn format_long(&mut self, v: Value, spec: &FormatSpec<'_>) -> Option<Result<Value, Raised>> {
         let text = match *spec {
             FormatSpec::Value(x) => self.str_bytes(x),
@@ -1614,6 +1615,7 @@ impl Vm {
     /// step at a time ([`Vm::format_num`]): an int past [`POW2_LONG`] bits,
     /// or a width of [`crate::strmeth::FILL_BYTES`] or more.
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn long_number_format(&self, v: Value, spec: &str) -> bool {
         let number = matches!(self.type_of(v), T::int | T::bool | T::float | T::complex);
         let wide = Spec::parse(spec).is_some_and(|s| {

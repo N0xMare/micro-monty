@@ -586,6 +586,7 @@ fn move_text(
 impl Vm {
     /// One step of a long `json.dumps` ([`pl_json_encode`]): the text,
     /// `_MISSING`, a list of keys for `_json_steps` to sort, or `state`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn json_dump_step(&mut self, state: Value) -> Result<crate::nstep::Step, Raised> {
         use crate::nstep::Step as S;
         let Some(([levels, mut text, indent, ks, is, mut next], mut raw)) =
@@ -1212,6 +1213,7 @@ fn sorted_level(vm: &mut Vm, id: Value, keys: Value) -> Result<Level, Raised> {
 }
 
 /// A long str to write a slice a time, then `then` as a key's value.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn long_str(v: Value, then: Value) -> Level {
     Level::Str { v, next: 0, then }
 }
@@ -1571,6 +1573,7 @@ impl Dec {
 }
 
 /// The capacity and entries of dict `c`'s table when it is big.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn big_table(vm: &Vm, c: Value) -> Option<(usize, usize)> {
     let dv = vm.dv(c.as_obj()?)?;
     let cap = vm.heap.raw_words(dv.index?).ok()?.len() / 2;
@@ -1702,6 +1705,7 @@ fn grow_step(
 
 impl Vm {
     /// One step of a long `json.loads` ([`pl_json_scan`]).
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn json_scan_step(&mut self, state: Value) -> Result<crate::nstep::Step, Raised> {
         use crate::nstep::Step;
         let Some(([sv, ctxs, mut aux, ne, ni], raw)) =
@@ -2326,6 +2330,7 @@ fn token_done(
 /// A step of the long token in `wd` (reading at most `room` input bytes):
 /// the token's value and end once read, `None` while more remain, or a
 /// failure.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn long_step(
     vm: &mut Vm,
     sv: Value,
@@ -2422,6 +2427,7 @@ fn alloc_block(vm: &mut Vm, n: u64) -> Result<mm_core::ByteRef, Raised> {
 /// in the string whose quote is at `q`, as [`string`] does, adding its
 /// decoded bytes and chars to `n` and, with `out`, the decoded text:
 /// `true` after the closing quote.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn str_run(
     b: &[u8],
     r: &mut usize,
@@ -2472,6 +2478,7 @@ fn str_run(
 /// significant digits (more cannot change the rounding), an integer past
 /// `sys.get_int_max_str_digits()` fails as `int()` does, and a raw
 /// number's text is written into a block ([`LONG_TEXT`]).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn long_number(
     vm: &mut Vm,
     sv: Value,

@@ -57,6 +57,7 @@ pub struct Native {
 /// Whether builtin method `n` takes a str subclass instance itself, not
 /// the str it extends: `partition` and `rpartition` give the receiver
 /// back when the separator is not found, as CPython's do.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn keeps_instance(n: &Native) -> bool {
     match n.owner {
         Some(T::str) => matches!(n.name(), "partition" | "rpartition"),
@@ -131,6 +132,7 @@ impl Native {
     }
     /// The bundled module it belongs to (not a builtin name), if any.
     #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn module(&self) -> Option<&'static str> {
         let i = usize::from(self.module).checked_sub(1)?;
         MODULES.get(i).map(|s| s.get())
@@ -138,6 +140,7 @@ impl Native {
     /// Names of the positional parameters that may be passed by keyword
     /// (`""` for positional-only ones).
     #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn params(&self) -> Names {
         Names {
             start: self.args,
@@ -146,6 +149,7 @@ impl Native {
     }
     /// Keyword-only parameters; `"**"` accepts any keyword into a dict.
     #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn kwonly(&self) -> Names {
         Names {
             start: self.args.wrapping_add(u16::from(self.nparams)),
@@ -1778,6 +1782,7 @@ const COUNT: usize = DEFS.len();
 const STR_CAP: usize = str_cap();
 const LIST_CAP: usize = list_cap();
 
+#[cfg_attr(mm_shipped, optimize(size))]
 const fn str_cap() -> usize {
     let mut n = 0;
     let mut i = 0;
@@ -1802,6 +1807,7 @@ const fn str_cap() -> usize {
     n
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 const fn list_cap() -> usize {
     let mut n = 0;
     let mut i = 0;
@@ -1831,6 +1837,7 @@ struct Packed {
 )]
 const PACKED: Packed = pack();
 
+#[cfg_attr(mm_shipped, optimize(size))]
 const fn prefix<E: Copy, const N: usize, const M: usize>(a: &[E; M]) -> [E; N] {
     let mut out = [a[0]; N];
     let mut i = 0;
@@ -1842,6 +1849,7 @@ const fn prefix<E: Copy, const N: usize, const M: usize>(a: &[E; M]) -> [E; N] {
 }
 
 /// The order of [`NATIVES`]: `a` (a method) before `b`?
+#[cfg_attr(mm_shipped, optimize(size))]
 const fn method_before(a: &Def, b: &Def) -> bool {
     let (Some(ta), Some(tb)) = (a.owner, b.owner) else {
         return false;
@@ -1853,6 +1861,7 @@ const fn method_before(a: &Def, b: &Def) -> bool {
 }
 
 /// Shorter names first, then bytewise, as [`find_method`] searches.
+#[cfg_attr(mm_shipped, optimize(size))]
 const fn name_before(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return a.len() < b.len();
@@ -1871,6 +1880,7 @@ const fn name_before(a: &[u8], b: &[u8]) -> bool {
     clippy::cast_possible_truncation,
     reason = "the blob, the lists and the table are checked to fit below"
 )]
+#[cfg_attr(mm_shipped, optimize(size))]
 const fn add_str(p: &mut Packed, s: &str) -> Sref {
     let b = s.as_bytes();
     let mut k = 0;
@@ -1909,6 +1919,7 @@ const fn add_str(p: &mut Packed, s: &str) -> Sref {
     clippy::cast_possible_truncation,
     reason = "the blob, the lists and the table are checked to fit below"
 )]
+#[cfg_attr(mm_shipped, optimize(size))]
 const fn add_list(p: &mut Packed, a: &[&str], b: &[&str]) -> u16 {
     let mut refs = [Sref { off: 0, len: 0 }; 16];
     let n = a.len() + b.len();
@@ -1941,6 +1952,7 @@ const fn add_list(p: &mut Packed, a: &[&str], b: &[&str]) -> u16 {
 
 /// 1 + the index of module `m` in [`MODULES`].
 #[allow(clippy::cast_possible_truncation, reason = "checked to fit")]
+#[cfg_attr(mm_shipped, optimize(size))]
 const fn add_module(p: &mut Packed, m: &str) -> u8 {
     let r = add_str(p, m);
     let mut i = 0;
@@ -1961,7 +1973,9 @@ const fn add_module(p: &mut Packed, m: &str) -> u8 {
     reason = "the blob, the lists and the table are checked to fit below"
 )]
 #[allow(clippy::large_stack_arrays, reason = "evaluated at compile time only")]
+#[cfg_attr(mm_shipped, optimize(size))]
 const fn pack() -> Packed {
+    #[cfg_attr(mm_shipped, optimize(size))]
     const fn stub(_: &mut Vm, _: CallArgs) -> Result<Value, Raised> {
         Err(Raised)
     }
@@ -2061,6 +2075,7 @@ const fn pack() -> Packed {
 
 /// Is builtin method `n` a class method (bound to the type, also when
 /// looked up on an instance)?
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn is_classmethod(n: &Native) -> bool {
     matches!(
         (n.owner, n.name()),
@@ -2128,6 +2143,7 @@ pub(crate) fn method_index(owner: T, name: &[u8]) -> Option<u32> {
 }
 
 /// The methods of builtin type `owner`.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn methods_of(owner: T) -> &'static [Native] {
     let t = owner as usize;
     match (OWNER_START.get(t), OWNER_START.get(t + 1)) {
@@ -2139,6 +2155,7 @@ pub(crate) fn methods_of(owner: T) -> &'static [Native] {
 /// `t.__dict__` for builtin type `t`: a new dict of its method-table
 /// entries. CPython's is a read-only mappingproxy that also holds the
 /// slot wrappers and data descriptors the table does not.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn type_dict(vm: &mut Vm, owner: T) -> Result<Value, Raised> {
     let d = vm.new_dict()?;
     // bytearray's own run after the bytes methods it shares (`method_index`).
@@ -2165,6 +2182,7 @@ pub(crate) fn type_dict(vm: &mut Vm, owner: T) -> Result<Value, Raised> {
 /// for "Did you mean" hints: its method table's public names, and the data
 /// attributes the table does not hold.
 #[must_use]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub fn method_names(owner: T) -> Vec<&'static str> {
     let (table, data): (T, &[&str]) = match owner {
         T::str | T::list | T::dict | T::tuple | T::bytes | T::set | T::frozenset => (owner, &[]),
@@ -2286,12 +2304,14 @@ impl Vm {
             .unwrap_or(Value::UNDEFINED)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn args_vec(&self, a: &CallArgs) -> Vec<Value> {
         (0..a.n).map(|i| self.arg_o(a, i)).collect()
     }
 
     /// An index argument clamped to the `i64` range, like CPython's
     /// `PyNumber_AsSsize_t(o, NULL)`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn ssize_arg(&mut self, v: Value) -> Result<i64, Raised> {
         let v = if self.uflags(v) & crate::class::f::INDEX == 0 {
             self.unbx(v)
@@ -2306,6 +2326,7 @@ impl Vm {
     }
 
     /// An int argument, or `TypeError`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn int_arg(&mut self, v: Value, _what: &str) -> Result<i64, Raised> {
         match self.int_of_o(v) {
             Some(i) => Ok(i),
@@ -2540,6 +2561,7 @@ impl Vm {
     /// a tuple and then each keyword-only value (`_MISSING` if absent).
     /// Builtins without a twin run again on materialized iterables
     /// (`_mcall`).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn hand_to_twin(&mut self, idx: u32, n: &Native, a: CallArgs) -> Result<Value, Raised> {
         let name = match n.owner {
             Some(o) => format!("_{}_{}", o.name(), n.name()),
@@ -2611,6 +2633,7 @@ impl Vm {
     }
 
     /// Global `name` of bundled Python module `module`, once it is loaded.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn std_global(&mut self, module: &str, name: &str) -> Result<Option<Value>, Raised> {
         let g = self
             .stdlib
@@ -2628,6 +2651,7 @@ impl Vm {
     }
 
     /// A native call's keyword-only values as a dict (absent ones left out).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn native_kwargs(&mut self, n: &Native, a: &CallArgs) -> Result<Value, Raised> {
         let kw = self.new_dict()?;
         for (j, kname) in n.kwonly().iter().enumerate() {
@@ -2743,6 +2767,7 @@ impl Vm {
     }
 
     /// `self` of a method `set` and `frozenset` share.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn check_anyset(&mut self, a: &CallArgs, name: &str) -> Result<Value, Raised> {
         let s = self.arg_o(a, 0);
         if self.type_of(s) == T::frozenset {
@@ -2770,12 +2795,14 @@ impl Vm {
 
 /// A module function whose body is its module's Python `_<name>_py`, or a
 /// builtin whose body is its prelude twin.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn to_module_twin(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     Err(vm.need_py())
 }
 
 /// The argument clinic's " (pos N)" after a missing argument `i` (0-based,
 /// after any receiver) of a builtin taking keywords.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn clinic_pos(n: &Native, i: u32) -> String {
     if n.name() == "enumerate" {
         String::new()
@@ -2786,6 +2813,7 @@ fn clinic_pos(n: &Native, i: u32) -> String {
 
 /// The name a missing-argument message gives: class methods, which the
 /// clinic names bare, as `from_bytes()`, others by [`qualname`].
+#[cfg_attr(mm_shipped, optimize(size))]
 fn clinic_name(n: &Native) -> String {
     if is_classmethod(n) {
         n.name().into()
@@ -2878,6 +2906,7 @@ fn bi_print(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn stream_write(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let me = vm.check_self(&a, T::TextIOWrapper, "write")?;
     let s = vm.arg_o(&a, 1);
@@ -2898,12 +2927,14 @@ fn stream_write(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_int(i64::try_from(vm.str_len(s)).unwrap_or(i64::MAX))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn stream_flush(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.check_self(&a, T::TextIOWrapper, "flush")?;
     Ok(Value::NONE)
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_gather(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let items = vm.args_vec(&a);
     let keep = vm.kwarg(&a, 0);
@@ -2914,6 +2945,7 @@ fn aio_gather(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// `_aio_run(main, root)`: `asyncio.run(main)` runs `root`, the prelude's
 /// coroutine that awaits `main` and then shuts the loop down.
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_run(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (c, root) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if !c.is_obj_kind(ty::CORO as u8) || !root.is_obj_kind(ty::CORO as u8) {
@@ -2934,6 +2966,7 @@ fn aio_run(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_create_task(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let c = vm.arg_o(&a, 0);
     // `asyncio.sleep()` is a coroutine on CPython.
@@ -2960,12 +2993,14 @@ fn aio_create_task(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `_mm.ctx_get()`: the running `contextvars` context, a dict.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn mm_ctx_get(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     vm.context_dict()
 }
 
 /// `_mm.ctx_swap(d)`: makes dict `d` (or `None`, empty) the running
 /// context; returns the one it replaces.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn mm_ctx_swap(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let d = vm.arg_o(&a, 0);
     if d != Value::NONE && !d.is_obj_kind(ty::DICT as u8) {
@@ -2975,6 +3010,7 @@ fn mm_ctx_swap(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `_mm.ctx_copy()`: a copy of the running context, `None` when empty.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn mm_ctx_copy(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     vm.context_copy()
 }
@@ -2982,6 +3018,7 @@ fn mm_ctx_copy(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
 /// `_mm.aio_unretrieved()`: the failed tasks and futures whose exception
 /// nobody retrieved, which stop being tracked.
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_unretrieved(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     let all = vm.take_unretrieved();
     vm.new_list(&all)
@@ -2991,6 +3028,7 @@ fn aio_unretrieved(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
 /// task raised during this `asyncio.run`, as the loop let it out (no
 /// context: CPython's leaves the loop, not a handler).
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_escape(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     let e = core::mem::replace(&mut vm.escape, Value::NONE);
     if e == Value::NONE {
@@ -3003,6 +3041,7 @@ fn aio_escape(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
 
 /// `_mm.aio_task_ctx(task, d)`: the task (not started) runs in dict `d`.
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_task_ctx(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (t, d) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if !t.is_obj_kind(ty::TASK as u8) || !d.is_obj_kind(ty::DICT as u8) {
@@ -3013,6 +3052,7 @@ fn aio_task_ctx(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_spawn_internal(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let c = vm.arg_o(&a, 0);
     if !c.is_obj_kind(ty::CORO as u8) {
@@ -3022,11 +3062,13 @@ fn aio_spawn_internal(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_get_name(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.task_name(vm.arg_o(&a, 0))
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_set_name(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (t, v) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if Vm::is_str(v) {
@@ -3037,6 +3079,7 @@ fn aio_set_name(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_name_set(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (t, v) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if !t.is_obj_kind(ty::TASK as u8) || !Vm::is_str(v) {
@@ -3048,6 +3091,7 @@ fn aio_name_set(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_get_coro(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let c = vm.aw_extra(vm.arg_o(&a, 0));
     Ok(if c.is_obj_kind(ty::CORO as u8) {
@@ -3058,11 +3102,13 @@ fn aio_get_coro(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_get_loop(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     vm.prelude_request("_aio_the_loop", alloc::vec![], Cont::None)
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_add_cb(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (f, cb) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     vm.add_done_callback(f, cb)?;
@@ -3070,6 +3116,7 @@ fn aio_add_cb(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_remove_cb(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (f, cb) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     let n = vm.remove_done_callback(f, cb)?;
@@ -3078,6 +3125,7 @@ fn aio_remove_cb(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `future.set_result(result)` of a loop future.
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_set_result(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (f, v) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if !vm.is_loop_future(f) {
@@ -3093,6 +3141,7 @@ fn aio_set_result(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_set_exception(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (f, e) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     vm.prelude_request("_aio_set_exception", alloc::vec![f, e], Cont::None)
@@ -3100,6 +3149,7 @@ fn aio_set_exception(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `_aio_set_exc(future, exc)` with `exc` an exception instance.
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_set_exc(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (f, e) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if !vm.is_loop_future(f) {
@@ -3119,6 +3169,7 @@ fn aio_set_exc(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_soon(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.call_soon(vm.arg_o(&a, 0))?;
     Ok(Value::NONE)
@@ -3126,17 +3177,20 @@ fn aio_soon(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_time(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::float(vm.loop_time()))
 }
 
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_running(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::from_bool(vm.loop_running()))
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_all_tasks(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     let tasks = vm.all_tasks(0);
     vm.new_list(&tasks)
@@ -3144,15 +3198,18 @@ fn aio_all_tasks(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
 
 /// `Task`/`Future` methods: `done()`.
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_done(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::from_bool(vm.aw_state(vm.arg_o(&a, 0)) != 0))
 }
 
 /// Is awaitable `f` cancelled?
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_is_cancelled(vm: &Vm, f: Value) -> bool {
     vm.aw_state(f) == crate::aio::aw::CANCELLED
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_result(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let f = vm.arg_o(&a, 0);
     match vm.aw_state(f) {
@@ -3170,6 +3227,7 @@ fn aio_result(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_exception(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let f = vm.arg_o(&a, 0);
     match vm.aw_state(f) {
@@ -3187,6 +3245,7 @@ fn aio_exception(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_cancelled(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::from_bool(aio_is_cancelled(vm, vm.arg_o(&a, 0))))
 }
@@ -3194,6 +3253,7 @@ fn aio_cancelled(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// `cancel(msg=None)`, as CPython's (docs/spec.md §8.5): a pending future
 /// settles cancelled; a task passes the cancel to what it awaits, or
 /// raises `CancelledError` at its next step; a gather cancels its children.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_cancel(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let f = vm.arg_o(&a, 0);
     let msg = match vm.arg_o(&a, 1) {
@@ -3204,18 +3264,21 @@ fn aio_cancel(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_cancelling(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let n = vm.cancelling(vm.arg_o(&a, 0));
     vm.new_int(i64::try_from(n).unwrap_or(i64::MAX))
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_uncancel(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let n = vm.uncancel(vm.arg_o(&a, 0));
     vm.new_int(i64::try_from(n).unwrap_or(i64::MAX))
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_first(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let items = vm.arg_o(&a, 0);
     let items = vm.list_items(items);
@@ -3223,17 +3286,20 @@ fn aio_first(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_deadline(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.deadline(vm.arg_o(&a, 0))
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn aio_future(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     vm.loop_future()
 }
 
 /// `_aio_set(future, value)`: `future.set_result(value)`.
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn aio_set(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (f, v) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if !vm.is_loop_future(f) {
@@ -3246,17 +3312,20 @@ pub(crate) fn aio_set(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_current_task(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     vm.current_task()
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_tasks(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     let tasks = vm.other_tasks();
     vm.new_list(&tasks)
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_stop(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let n = vm.int_arg(vm.arg_o(&a, 0), "")?;
     vm.stop_future(u32::try_from(n).unwrap_or(1))
@@ -3265,12 +3334,14 @@ fn aio_stop(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// `_aio_main_end(ok, value)`: `asyncio.run`'s coroutine returned
 /// `value` (`ok`) or raised it.
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_main_end(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let ok = vm.arg_o(&a, 0) == Value::TRUE;
     vm.main_ended(ok, vm.arg_o(&a, 1))
 }
 
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn aio_sleep(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (d, r) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     // A host function registered as `asyncio.sleep` replaces the virtual
@@ -3288,6 +3359,7 @@ fn aio_sleep(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.sleep(d, r)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_len(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     if let Some(r) = vm.dunder_call(v, Dn::Len, &[], Cont::Len)? {
@@ -3297,6 +3369,7 @@ fn bi_len(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_int(i64::try_from(n).unwrap_or(i64::MAX))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_repr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     if let Some(r) = vm.dunder_call(v, Dn::Repr, &[], Cont::Check(check::REPR))? {
@@ -3309,6 +3382,7 @@ fn bi_repr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_str(&s)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_ascii(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     if vm.uflags(v) & crate::class::f::REPR != 0 {
@@ -3327,6 +3401,7 @@ fn bi_ascii(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// iterative and visits at most `dict::WALK` items, charged as fuel;
 /// `None` means the prelude must finish it in bytecode: the walk ran out,
 /// or an item defines `check` (`__instancecheck__`/`__subclasscheck__`).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn any_class(
     vm: &mut Vm,
     cls: Value,
@@ -3358,6 +3433,7 @@ fn any_class(
     r
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_isinstance(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (v, c) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if let Some(r) = vm.meta_check(v, c, Dn::Instancecheck)? {
@@ -3381,6 +3457,7 @@ fn bi_isinstance(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 impl Vm {
     /// Is `c` a class with a metaclass, or any instance (a `typing.Union`),
     /// whose type defines `name` (`__instancecheck__`/`__subclasscheck__`)?
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn has_check(&mut self, c: Value, name: Dn) -> bool {
         (self.meta_of(c).is_some() || (!Vm::is_class(c) && self.user_class(c).is_some()))
             && self.user_method(c, name).is_some()
@@ -3389,6 +3466,7 @@ impl Vm {
     /// `isinstance`/`issubclass` against a class whose metaclass defines
     /// `name` (`__instancecheck__`/`__subclasscheck__`): its call, or the
     /// prelude's for a tuple holding such a class.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn meta_check(&mut self, v: Value, c: Value, name: Dn) -> Result<Option<Value>, Raised> {
         if c.is_obj_kind(ty::TUPLE as u8) {
             for x in self.tuple_items(c) {
@@ -3413,6 +3491,7 @@ impl Vm {
 }
 
 /// `type.__new__(mcls, name, bases, ns, **kwargs)`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn type_dunder_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let kw = match vm.kwarg(&a, 0) {
         Value::UNDEFINED => Value::NONE,
@@ -3436,12 +3515,14 @@ fn type_dunder_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `type.__init__(cls, ...)`: nothing to do.
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn type_dunder_init(_vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::NONE)
 }
 
 /// `type.__call__(cls, *args, **kwargs)`: a metaclass's
 /// `super().__call__()`, in the prelude.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn type_dunder_call(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let args = vm.args_vec(&a);
     let rest = vm.alloc_tuple(args.get(1..).unwrap_or(&[]))?;
@@ -3458,6 +3539,7 @@ fn type_dunder_call(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `_build_class(name, bases, ns, kwargs, cell)`: a class statement's class
 /// from bases `_build_bases` resolved.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_build_class(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let [name, bases, ns, kw, cell] = [0, 1, 2, 3, 4].map(|i| vm.arg_o(&a, i));
     vm.build_resolved(name, bases, ns, kw, cell, Value::NONE)
@@ -3465,6 +3547,7 @@ fn pl_build_class(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `_cell_set(cell, v)`: a metaclass-built class fills `__class__`.
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_cell_set(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let cell = vm.arg_o(&a, 0);
     if cell.is_obj_kind(ty::CELL as u8)
@@ -3475,6 +3558,7 @@ fn pl_cell_set(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_abs(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     if let Some(r) = vm.dunder_call(v, Dn::Abs, &[], Cont::None)? {
@@ -3498,6 +3582,7 @@ fn bi_abs(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Err(vm.err(T::TypeError, &msg))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn min_max(vm: &mut Vm, a: CallArgs, want: Ordering, name: &str) -> Result<Value, Raised> {
     let key = vm.kwarg(&a, 0);
     if key != Value::UNDEFINED && key != Value::NONE {
@@ -3543,10 +3628,12 @@ fn min_max(vm: &mut Vm, a: CallArgs, want: Ordering, name: &str) -> Result<Value
     Ok(best)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_min(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     min_max(vm, a, Ordering::Less, "min")
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_max(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     min_max(vm, a, Ordering::Greater, "max")
 }
@@ -3581,6 +3668,7 @@ mod stage {
 /// endless range parks. An item, or a `next`, that needs Python code
 /// hands the rest to the prelude with the result so far, so the iterator
 /// is left where CPython leaves it when an item fails (docs/spec.md §5.1).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn fold_start(
     vm: &mut Vm,
     kind: u64,
@@ -3600,6 +3688,7 @@ fn fold_start(
 }
 
 /// One step of a fold ([`fold_start`]).
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn fold_step(vm: &mut Vm, state: Value) -> Result<nstep::Step, Raised> {
     let Some(([it, acc, extra], [_, kind, stg, w0, w1, w2, w3])) =
         vm.nstate_get::<3, 7>(nstep::op::FOLD, state)
@@ -3620,6 +3709,7 @@ pub(crate) fn fold_step(vm: &mut Vm, state: Value) -> Result<nstep::Step, Raised
 
 /// The first `sum` stage from `from` on whose type total `acc` has, its
 /// total set in `raw[2..]`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn sum_enter(vm: &Vm, acc: Value, from: u64, raw: &mut [u64; 6]) -> u64 {
     raw[2..].fill(0);
     let int = acc != Value::TRUE && acc != Value::FALSE;
@@ -3647,6 +3737,7 @@ fn sum_enter(vm: &Vm, acc: Value, from: u64, raw: &mut [u64; 6]) -> u64 {
 
 /// Neumaier's step, CPython's `cs_add`: `x` added to the float total in
 /// `w[0]` with its compensation in `w[1]`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn cs_add(w: &mut [u64], x: f64) {
     let (hi, mut lo) = (f64::from_bits(w[0]), f64::from_bits(w[1]));
     let t = hi + x;
@@ -3660,6 +3751,7 @@ fn cs_add(w: &mut [u64], x: f64) {
 }
 
 /// A compensated total's value, CPython's `cs_to_double`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn cs_end(w: &[u64]) -> f64 {
     let (hi, lo) = (f64::from_bits(w[0]), f64::from_bits(w[1]));
     if lo != 0.0 && lo.is_finite() {
@@ -3670,6 +3762,7 @@ fn cs_end(w: &[u64]) -> f64 {
 }
 
 /// A `sum` total as a value.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn sum_value(vm: &mut Vm, acc: Value, raw: &[u64; 6]) -> Result<Value, Raised> {
     let w = &raw[2..];
     match raw[1] {
@@ -3682,6 +3775,7 @@ fn sum_value(vm: &mut Vm, acc: Value, raw: &[u64; 6]) -> Result<Value, Raised> {
 
 /// A `sum` total as `_sum_rest` takes it: the value and the
 /// compensation, still apart.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn sum_total(vm: &mut Vm, acc: Value, raw: &[u64; 6]) -> Result<(Value, Value), Raised> {
     let w = &raw[2..];
     Ok(match raw[1] {
@@ -3701,6 +3795,7 @@ fn sum_total(vm: &mut Vm, acc: Value, raw: &[u64; 6]) -> Result<(Value, Value), 
 /// A step of a fold: `st` its result so far and `default`, `raw` its
 /// kind and `sum`'s stage and totals ([`stage`]). The value, or `None`
 /// with more to go.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn fold_run(
     vm: &mut Vm,
     it: Value,
@@ -3871,6 +3966,7 @@ fn fold_run(
     }))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_sum(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let start = vm.arg_o(&a, 1);
     let acc = if start == Value::UNDEFINED {
@@ -3936,6 +4032,7 @@ mod kind {
     pub const FLOATS: i64 = 3;
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn sort_kind(keys: &(impl Iterator<Item = Value> + Clone)) -> i64 {
     let all = |p: fn(Value) -> bool| keys.clone().all(p);
     if all(Value::is_int) {
@@ -4047,6 +4144,7 @@ pub(crate) fn sort_values(
 
 /// Whether sorting `n` items may take more than one slice of visits: such
 /// a sort runs as [`Vm::sort_by_keys`] slices.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn sort_is_long(n: usize) -> bool {
     let n = n as u64;
     n.saturating_mul(u64::from(64 - n.leading_zeros())) > SORT_SLICE
@@ -4067,6 +4165,7 @@ impl Vm {
     /// long; `xs` itself for a sort without `key=`): a bottom-up merge
     /// sort whose arrays and position live in a state list, so it can stop
     /// after any comparison. Runs the first slice.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn sort_by_keys(
         &mut self,
         xs: Value,
@@ -4407,6 +4506,7 @@ impl Vm {
     }
 
     #[cold]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bad_sort(&mut self) -> Raised {
         self.err(T::SystemError, "micro-monty: bad sort state")
     }
@@ -4462,6 +4562,7 @@ enum Merge {
 /// counts visits past the one each comparison costs. Generic so that each
 /// key kind gets its own direct comparison loop.
 #[allow(clippy::too_many_arguments, reason = "one merge step's state")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn merge_slice<P>(
     heap: &mm_core::Heap,
     s: &[u64],
@@ -4567,10 +4668,12 @@ struct Skips {
 }
 
 impl Skips {
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn worth(&self) -> bool {
         self.tried < 8 || self.paid * 4 >= self.tried
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn hit(&mut self, in_order: bool) -> bool {
         self.tried += 1;
         self.paid += u32::from(in_order);
@@ -4636,6 +4739,7 @@ fn merge_sort(
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_sorted(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let key = vm.kwarg(&a, 0);
     let reverse = vm.kwarg(&a, 1);
@@ -4669,10 +4773,12 @@ fn bi_sorted(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_list(&items)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_any(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     any_all(vm, a, true)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_all(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     any_all(vm, a, false)
 }
@@ -4684,6 +4790,7 @@ fn bi_all(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// [`crate::dict::WALK`]th item (they can be endless), continues in
 /// prelude bytecode (`_any_rest`/`_all_rest`) from the same item and
 /// iterator, so it parks (docs/spec.md §5).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn any_all(vm: &mut Vm, a: CallArgs, stop: bool) -> Result<Value, Raised> {
     let src = vm.arg_o(&a, 0);
     let it = vm.get_iter(src)?;
@@ -4715,6 +4822,7 @@ fn any_all(vm: &mut Vm, a: CallArgs, stop: bool) -> Result<Value, Raised> {
     Ok(Value::from_bool(found == stop))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_hash(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     if vm.uflags(v) & crate::class::f::HASH != 0
@@ -4727,6 +4835,7 @@ fn bi_hash(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_int(h)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_id(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     match v.as_obj() {
@@ -4736,6 +4845,7 @@ fn bi_id(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_iter(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if a.n > 1 {
         let (f, sentinel) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
@@ -4751,6 +4861,7 @@ fn bi_iter(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.op_get_iter(vm.arg_o(&a, 0))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_next(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let it = vm.arg_o(&a, 0);
     let d = vm.arg_o(&a, 1);
@@ -4788,6 +4899,7 @@ fn bi_next(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_reversed(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     if let Some(r) = vm.dunder_call(v, Dn::Reversed, &[], Cont::None)? {
@@ -4807,11 +4919,13 @@ fn bi_reversed(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `list.__reversed__` and `dict.__reversed__`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_reversed(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     reversed_of(vm, vm.unbx(vm.arg_o(&a, 0)))
 }
 
 /// The reverse iterator of builtin value `v`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn reversed_of(vm: &mut Vm, v: Value) -> Result<Value, Raised> {
     match vm.type_of(v) {
         T::list | T::tuple => {
@@ -4845,6 +4959,7 @@ fn reversed_of(vm: &mut Vm, v: Value) -> Result<Value, Raised> {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_round(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     let nd = vm.arg_o(&a, 1);
@@ -4993,6 +5108,7 @@ fn bi_round(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_divmod(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (x, y) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     let num = |v: Value| Vm::is_intlike(v) || v.is_float();
@@ -5022,6 +5138,7 @@ fn bi_divmod(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.alloc_tuple(&[q, r])
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_pow(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (x, y, m) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1), vm.arg_o(&a, 2));
     if m == Value::UNDEFINED || m == Value::NONE {
@@ -5077,6 +5194,7 @@ fn bi_pow(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Err(vm.err(T::TypeError, &msg))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_chr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     // Any int out of range, however large, is a ValueError.
@@ -5095,6 +5213,7 @@ fn bi_chr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_ord(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let mut v = vm.arg_o(&a, 0);
     // A str or bytes subclass: its value.
@@ -5216,6 +5335,7 @@ impl Vm {
     }
 
     /// The bytes of `v`'s magnitude (little-endian) and its sign.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn magnitude(&self, v: Value) -> (alloc::borrow::Cow<'_, [u8]>, bool) {
         if let Some(r) = v.as_obj().filter(|_| Vm::is_heap_int(v)) {
             let d = self.slot_o(r, 0).as_byte_ref();
@@ -5376,6 +5496,7 @@ impl Vm {
 
     /// The finished digit text in `block`, padded when its `conf` has an
     /// alignment.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn pow2_done(&mut self, block: mm_core::ByteRef, w: &[u64; 6]) -> Result<Value, Raised> {
         let total = self.heap.bytes(block).map_or(0, <[u8]>::len);
         let res = self.heap.str_from_block(block, total as u64);
@@ -5398,19 +5519,23 @@ impl Vm {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_bin(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     radix(vm, &a, 1)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_hex(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     radix(vm, &a, 4)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_oct(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     radix(vm, &a, 3)
 }
 
 /// `callable(v)`.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn is_callable(vm: &Vm, v: Value) -> bool {
     matches!(
         vm.type_of(v),
@@ -5419,11 +5544,13 @@ pub(crate) fn is_callable(vm: &Vm, v: Value) -> bool {
 }
 
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_callable(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     Ok(Value::from_bool(is_callable(vm, v)))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_format(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let spec = vm.arg_o(&a, 1);
     let v = vm.arg_o(&a, 0);
@@ -5448,6 +5575,7 @@ fn bi_format(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.format_str(v, FormatSpec::Value(spec_v))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_getattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (o, n, d) = (vm.arg_o(&a, 0), vm.unbx(vm.arg_o(&a, 1)), vm.arg_o(&a, 2));
     if !Vm::is_str(n) {
@@ -5469,6 +5597,7 @@ fn bi_getattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_setattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (o, n, v) = (vm.arg_o(&a, 0), vm.unbx(vm.arg_o(&a, 1)), vm.arg_o(&a, 2));
     if !Vm::is_str(n) {
@@ -5485,6 +5614,7 @@ fn bi_setattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     })
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_delattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (o, n) = (vm.arg_o(&a, 0), vm.unbx(vm.arg_o(&a, 1)));
     if !Vm::is_str(n) {
@@ -5501,6 +5631,7 @@ fn bi_delattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     })
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_issubclass(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (c, t) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if let Some(r) = vm.meta_check(c, t, Dn::Subclasscheck)? {
@@ -5521,6 +5652,7 @@ fn bi_issubclass(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_property(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let mut parts = [Value::NONE; 4];
     for (i, p) in parts.iter_mut().enumerate() {
@@ -5541,10 +5673,12 @@ fn bi_property(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::from_ref(r, ty::PROPERTY as u8))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_staticmethod(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.wrap_descr(ty::STATICMETHOD, vm.arg_o(&a, 0))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_classmethod(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.wrap_descr(ty::CLASSMETHOD, vm.arg_o(&a, 0))
 }
@@ -5562,6 +5696,7 @@ fn bi_super(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_super(vm.arg_o(&a, 0), vm.arg_o(&a, 1))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn prop_copy(vm: &mut Vm, a: &CallArgs, i: u32) -> Result<Value, Raised> {
     let p = vm.arg_o(a, 0);
     let mut parts = [Value::NONE; 4];
@@ -5579,6 +5714,7 @@ fn prop_copy(vm: &mut Vm, a: &CallArgs, i: u32) -> Result<Value, Raised> {
 /// `__get__(obj, type=None)` of functions, classmethods, staticmethods and
 /// properties: what attribute lookup binds (`None` for `obj` is the class
 /// access, which returns a function or property itself).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn descr_get(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (d, obj, cls) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1), vm.arg_o(&a, 2));
     if obj == Value::NONE && (cls == Value::NONE || cls == Value::UNDEFINED) {
@@ -5599,20 +5735,24 @@ fn descr_get(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.bind_attr(d, obj, cls)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn prop_getter(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     prop_copy(vm, &a, 0)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn prop_setter(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     prop_copy(vm, &a, 1)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn prop_deleter(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     prop_copy(vm, &a, 2)
 }
 
 // ----------------------------------------------------------- object
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn object_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let me = vm.arg_o(&a, 0);
     let kw = vm.kwarg(&a, 0);
@@ -5642,15 +5782,18 @@ fn object_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 // ------------------------------------------------- slot wrappers
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_getitem(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.getitem(vm.arg_o(&a, 0), vm.arg_o(&a, 1))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_setitem(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.setitem(vm.arg_o(&a, 0), vm.arg_o(&a, 1), vm.arg_o(&a, 2))?;
     Ok(stored(vm))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_delitem(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.delitem(vm.arg_o(&a, 0), vm.arg_o(&a, 1))?;
     Ok(stored(vm))
@@ -5658,6 +5801,7 @@ fn slot_delitem(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// The value of a store or deletion: `None`, or the request marker when
 /// it goes on in steps (`Vm::setitem` on a long list).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn stored(vm: &Vm) -> Value {
     if vm.request.is_some() {
         Value::UNDEFINED
@@ -5666,20 +5810,24 @@ fn stored(vm: &Vm) -> Value {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_len(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let n = vm.len_of(vm.arg_o(&a, 0))?;
     vm.new_int(i64::try_from(n).unwrap_or(i64::MAX))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_contains(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let r = vm.contains(vm.arg_o(&a, 0), vm.arg_o(&a, 1))?;
     Ok(Value::from_bool(r))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_iter(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.get_iter(vm.arg_o(&a, 0))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_repr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = vm.repr(vm.arg_o(&a, 0))?;
     vm.new_str(&s)
@@ -5687,10 +5835,12 @@ fn slot_repr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `str.__str__`: the text itself, a `str` even for a subclass instance.
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn str_str(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(vm.unbx(vm.arg_o(&a, 0)))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_hash(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let h = vm.hash(vm.arg_o(&a, 0))?;
     vm.new_int(h)
@@ -5698,6 +5848,7 @@ fn slot_hash(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// A rich comparison slot: `NotImplemented` unless both operands are of
 /// the receiver's builtin type.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_cmp(vm: &mut Vm, a: CallArgs, opcode: u8) -> Result<Value, Raised> {
     let (x, y) = (vm.arg_o(&a, 0), vm.unbx(vm.arg_o(&a, 1)));
     let (tx, ty_) = (vm.type_of(x), vm.type_of(y));
@@ -5716,30 +5867,37 @@ fn slot_cmp(vm: &mut Vm, a: CallArgs, opcode: u8) -> Result<Value, Raised> {
     vm.compare(opcode, x, y)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_eq(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     slot_cmp(vm, a, mm_compile::bytecode::op::TEST_EQ)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_ne(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     slot_cmp(vm, a, mm_compile::bytecode::op::TEST_NE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_lt(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     slot_cmp(vm, a, mm_compile::bytecode::op::TEST_LT)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_le(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     slot_cmp(vm, a, mm_compile::bytecode::op::TEST_LE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_gt(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     slot_cmp(vm, a, mm_compile::bytecode::op::TEST_GT)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slot_ge(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     slot_cmp(vm, a, mm_compile::bytecode::op::TEST_GE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn list_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let l = vm.check_self(&a, T::list, "__init__")?;
     let src = vm.arg_o(&a, 1);
@@ -5759,6 +5917,7 @@ fn list_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = vm.check_self(&a, T::set, "__init__")?;
     let src = vm.arg_o(&a, 1);
@@ -5779,6 +5938,7 @@ fn set_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// `T.__new__(cls, *args, **kwargs)` for a builtin type `T` that classes
 /// may extend: an instance of `cls` extending `T(*args, **kwargs)` (an
 /// empty value for the mutable types, which `__init__` fills).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bx_type_new(vm: &mut Vm, a: CallArgs, t: T) -> Result<Value, Raised> {
     let cls = vm.arg_o(&a, 0);
     let tobj = vm.type_obj(t);
@@ -5829,46 +5989,56 @@ fn bx_type_new(vm: &mut Vm, a: CallArgs, t: T) -> Result<Value, Raised> {
     Ok(Value::UNDEFINED)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn tuple_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     bx_type_new(vm, a, T::tuple)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn list_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     bx_type_new(vm, a, T::list)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn dict_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     bx_type_new(vm, a, T::dict)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     bx_type_new(vm, a, T::set)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn int_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     bx_type_new(vm, a, T::int)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn str_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     bx_type_new(vm, a, T::str)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn float_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     bx_type_new(vm, a, T::float)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bytes_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     bx_type_new(vm, a, T::bytes)
 }
 
 /// `_bx_base(cls)`: the builtin type class `cls` extends.
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_bx_base(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let t = vm.class_base_t(vm.arg_o(&a, 0));
     Ok(vm.type_obj(t))
 }
 
 /// `_bx_init(cls)`: the `__init__` Python code defines for `cls`, or `None`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_bx_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let c = vm.arg_o(&a, 0);
     let k = vm.dn(Dn::Init)?;
@@ -5876,10 +6046,12 @@ fn pl_bx_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `_bx_make(cls, value)`: an instance of `cls` extending `value`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_bx_make(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_bx(vm.arg_o(&a, 0), vm.arg_o(&a, 1))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn object_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let c = vm.arg_o(&a, 0);
     if Vm::is_class(c) {
@@ -5920,6 +6092,7 @@ fn object_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Err(vm.err(T::TypeError, &msg))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn object_repr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     let s = if v.is_obj_kind(ty::EXC as u8) {
@@ -5963,6 +6136,7 @@ fn object_repr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_str(&s)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn object_str(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     if let Some(r) = vm.dunder_call(v, Dn::Repr, &[], Cont::Check(check::REPR))? {
@@ -5972,6 +6146,7 @@ fn object_str(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     bi_repr(vm, a)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn object_format(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (v, spec) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     // A str subclass spec is read as its text.
@@ -6024,6 +6199,7 @@ fn object_format(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn object_eq(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(if vm.arg_o(&a, 0) == vm.arg_o(&a, 1) {
         Value::TRUE
@@ -6032,6 +6208,7 @@ fn object_eq(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     })
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn object_ne(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (x, y) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if let Some(m) = vm.user_method(x, Dn::Eq) {
@@ -6055,12 +6232,14 @@ fn object_ne(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     })
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn object_hash(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     let bits = v.to_bits();
     vm.new_int(((bits >> 4) ^ (bits << 20)).cast_signed() >> 2)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn object_setattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (o, n, v) = (vm.arg_o(&a, 0), vm.unbx(vm.arg_o(&a, 1)), vm.arg_o(&a, 2));
     if !Vm::is_str(n) {
@@ -6081,11 +6260,13 @@ fn object_setattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     })
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn object_getattribute(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (o, n) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     vm.getattr(o, n)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn object_delattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (o, n) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if vm.user_class(o).is_some() {
@@ -6103,12 +6284,14 @@ fn object_delattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn type_mro(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let c = vm.arg_o(&a, 0);
     let m = vm.mro_of(c);
     vm.new_list(&m)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_vars(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let o = vm.arg_o(&a, 0);
     let k = vm.intern("__dict__")?;
@@ -6125,6 +6308,7 @@ fn bi_vars(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// are prelude code too). Without an argument it sorts the module globals
 /// or the scope a compiled `dir()` passes as `<scope>`: a class namespace,
 /// or the variable names of its caller's registers.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_dir(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if a.n > 0 {
         return Err(vm.need_py());
@@ -6159,6 +6343,7 @@ fn bi_dir(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.prelude_request("_dir_sort", alloc::vec![names], Cont::None)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn object_init_subclass(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let kw = vm.kwarg(&a, 0);
     if kw != Value::UNDEFINED && kw != Value::NONE && vm.dict_len(kw) > 0 {
@@ -6194,6 +6379,7 @@ fn exc_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn exc_str_m(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let e = vm.arg_o(&a, 0);
     if let Some(s) = vm.syntax_str(e)? {
@@ -6245,12 +6431,14 @@ fn exc_str_m(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_str(&s)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn exc_with_traceback(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let e = vm.arg_o(&a, 0);
     vm.set_traceback(e, vm.arg_o(&a, 1))?;
     Ok(e)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn exc_add_note(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (e, n) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if !Vm::is_str(n) {
@@ -6271,11 +6459,13 @@ fn exc_add_note(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 // ------------------------------------------------------- generators
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn gen_send(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let g = vm.arg_o(&a, 0);
     vm.call_request(g, alloc::vec![vm.arg_o(&a, 1)], Cont::GenSend)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn gen_next(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let g = vm.arg_o(&a, 0);
     if Vm::is_native_iter(g) {
@@ -6294,6 +6484,7 @@ fn gen_next(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `range_iterator.__length_hint__()`: the items left.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn range_hint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let it = vm.check_self(&a, T::range_iterator, "__length_hint__")?;
     let left = it.as_obj().map_or(0, |r| vm.raw_o(r, 3));
@@ -6301,6 +6492,7 @@ fn range_hint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn self_iter(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(vm.arg_o(&a, 0))
 }
@@ -6317,6 +6509,7 @@ fn gen_throw(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// The exception `throw(type[, value[, tb]])` (and `athrow`) raise.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn thrown(vm: &mut Vm, a: &CallArgs) -> Result<Value, Raised> {
     let (t, v) = (vm.arg_o(a, 1), vm.arg_o(a, 2));
     Ok(
@@ -6344,6 +6537,7 @@ fn thrown(vm: &mut Vm, a: &CallArgs) -> Result<Value, Raised> {
 /// or an `__await__()` iterator it awaits yields; it is then suspended and
 /// `send()` returns the yielded value. An unsettled asyncio awaitable in
 /// it suspends the calling task, as awaiting it would.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn coro_send(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let c = vm.arg_o(&a, 0);
     vm.coro_unstarted(c)?;
@@ -6366,6 +6560,7 @@ fn coro_send(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `coroutine.throw(exc)`: a coroutine not yet started closes, and the
 /// exception propagates.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn coro_throw(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let c = vm.arg_o(&a, 0);
     vm.coro_unstarted(c)?;
@@ -6380,6 +6575,7 @@ fn coro_throw(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Err(Raised)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn coro_close(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let c = vm.arg_o(&a, 0);
     if vm.coro_state(c) == crate::aio::coro::RUNNING {
@@ -6396,33 +6592,40 @@ fn coro_close(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `coroutine.__await__()`: an iterator that drives the coroutine.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn coro_await(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.prelude_request("_coro_wrapper", alloc::vec![vm.arg_o(&a, 0)], Cont::None)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn agen_anext(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_agen_op(vm.arg_o(&a, 0), ag::SEND, Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn agen_asend(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_agen_op(vm.arg_o(&a, 0), ag::SEND, vm.arg_o(&a, 1))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn agen_athrow(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let e = thrown(vm, &a)?;
     vm.new_agen_op(vm.arg_o(&a, 0), ag::THROW, e)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn agen_aclose(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_agen_op(vm.arg_o(&a, 0), ag::CLOSE, Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_aiter(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.aiter_of(vm.arg_o(&a, 0), false)
 }
 
 /// `anext(it[, default])`; with a default, the prelude's coroutine awaits
 /// `it.__anext__()` and catches `StopAsyncIteration`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_anext(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (it, d) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if !vm.is_async_iterator(it) {
@@ -6444,6 +6647,7 @@ fn bi_anext(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn gen_close(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let g = vm.arg_o(&a, 0);
     if vm.gen_state(g) != crate::generator::g::SUSPENDED {
@@ -6464,6 +6668,7 @@ fn gen_close(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 // ---------------------------------------------------------- prelude
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_hash_arg(vm: &mut Vm, v: Value) -> Result<u64, Raised> {
     vm.int_of_o(v)
         .map(i64::cast_unsigned)
@@ -6472,6 +6677,7 @@ fn pl_hash_arg(vm: &mut Vm, v: Value) -> Result<u64, Raised> {
 
 /// `sys.setrecursionlimit(n)`: CPython's checks; the host's configured
 /// limit stays the ceiling (docs/spec.md §11).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn sys_setrecursionlimit(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let n = vm.int_arg(vm.arg_o(&a, 0), "")?;
     if n < 1 {
@@ -6493,18 +6699,21 @@ fn sys_setrecursionlimit(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn sys_getrecursionlimit(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     vm.new_int(i64::from(vm.recursion_limit))
 }
 
 /// `sys.exception()`: the exception being handled, or `None`.
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn sys_exception(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     Ok(vm.handled)
 }
 
 /// `sys.exc_info()`: `(type, value, traceback)` of the exception being
 /// handled, or three `None`s.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn sys_exc_info(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     let e = vm.handled;
     if e == Value::NONE {
@@ -6514,6 +6723,7 @@ fn sys_exc_info(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     vm.alloc_tuple(&[t, e, tb])
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn tb_extract(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.tb_extract(vm.arg_o(&a, 0), vm.arg_o(&a, 1))
 }
@@ -6521,6 +6731,7 @@ fn tb_extract(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// `_hint(exc, with_tb)`: the "Did you mean" (or micro-monty note) CPython's
 /// `TracebackException` appends to `str(exc)`, or `None`.
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn tb_hint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let e = vm.arg_o(&a, 0);
     if !e.is_obj_kind(ty::EXC as u8) {
@@ -6532,6 +6743,7 @@ fn tb_hint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// The dict `d` is, or the one a `dict_keys`/`dict_items` view reads (the
 /// view twins probe through the view).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn view_dict(vm: &Vm, d: Value) -> Value {
     match vm.type_of(d) {
         T::dict_keys | T::dict_items => vm.vslot_o(d, 0),
@@ -6539,18 +6751,21 @@ fn view_dict(vm: &Vm, d: Value) -> Value {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_dict_probe(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let h = pl_hash_arg(vm, vm.arg_o(&a, 2))?;
     let d = view_dict(vm, vm.arg_o(&a, 0));
     vm.dict_probe_py(d, vm.arg_o(&a, 1), h, vm.arg_o(&a, 3))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_dict_insert(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let h = pl_hash_arg(vm, vm.arg_o(&a, 2))?;
     vm.dict_insert_new(vm.arg_o(&a, 0), vm.arg_o(&a, 1), h, vm.arg_o(&a, 3))?;
     Ok(Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_dict_value_at(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let e = u32::try_from(vm.int_of_o(vm.arg_o(&a, 1)).unwrap_or(-1)).unwrap_or(u32::MAX);
     let v = vm.dict_value_at(view_dict(vm, vm.arg_o(&a, 0)), e);
@@ -6562,6 +6777,7 @@ fn pl_dict_value_at(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `_dict_at(d, e)`: entry `e`'s `(key, value)`, False if deleted, None
 /// past the last one (a walk that sees later insertions, as `PyDict_Next`).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_dict_at(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let e = u32::try_from(vm.int_of_o(vm.arg_o(&a, 1)).unwrap_or(-1)).unwrap_or(u32::MAX);
     match vm.dict_entry_at(view_dict(vm, vm.arg_o(&a, 0)), e) {
@@ -6572,6 +6788,7 @@ fn pl_dict_at(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_dict_set_at(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let e = u32::try_from(vm.int_of_o(vm.arg_o(&a, 1)).unwrap_or(-1)).unwrap_or(u32::MAX);
     vm.dict_set_at(vm.arg_o(&a, 0), e, vm.arg_o(&a, 2));
@@ -6579,12 +6796,14 @@ fn pl_dict_set_at(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_dict_del_at(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let e = u32::try_from(vm.int_of_o(vm.arg_o(&a, 1)).unwrap_or(-1)).unwrap_or(u32::MAX);
     vm.dict_del_at(vm.arg_o(&a, 0), e);
     Ok(Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_set_probe(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let h = pl_hash_arg(vm, vm.arg_o(&a, 2))?;
     let depth = pl_depth(vm, vm.arg_o(&a, 3));
@@ -6594,6 +6813,7 @@ fn pl_set_probe(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// `_more(src, i, items, None)`: item `i` on of a bulk operation's source
 /// (`Vm::bulk_item`) as `(position, item, dict value, stored hash or
 /// None)`, or `None` past the end.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_bulk_at(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let i = u64::try_from(vm.int_of_o(vm.arg_o(&a, 1)).unwrap_or(0)).unwrap_or(0);
     let items = vm.truthy(vm.arg_o(&a, 2));
@@ -6609,6 +6829,7 @@ fn pl_bulk_at(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// A prelude twin's nesting argument `d` (a small int it counts up).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_depth(vm: &Vm, v: Value) -> u32 {
     u32::try_from(vm.int_of_o(v).unwrap_or(0)).unwrap_or(u32::MAX)
 }
@@ -6621,6 +6842,7 @@ fn pl_depth(vm: &Vm, v: Value) -> u32 {
 /// there is more, the sorted list, or `False` if the keys need Python to
 /// compare. `_more(a, b, i, d)`: a slice of `_ssub` ([`pl_set_scan`]);
 /// `_more(src, i, items, None)`: an item of `_bulk` ([`pl_bulk_at`]).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_more(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if a.n == 4 {
         return if vm.arg_o(&a, 3) == Value::NONE {
@@ -6652,6 +6874,7 @@ fn pl_more(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// budget, [`crate::dict::walk_budget`]), else the shorter length. The
 /// prelude's sequence comparisons loop over it, so long sequences compare
 /// in native slices with a safepoint between them.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_seq_scan(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (x, y) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     let mut i = usize::try_from(vm.int_of_o(vm.arg_o(&a, 2)).unwrap_or(0)).unwrap_or(0);
@@ -6687,6 +6910,7 @@ fn pl_seq_scan(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// index from `e` of `a` that one native walk cannot match in `b` (see
 /// [`Vm::dict_match_from`]), else past the last entry; `_seq_scan` for
 /// dicts.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_dict_scan(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let e = u32::try_from(vm.int_of_o(vm.arg_o(&a, 2)).unwrap_or(0)).unwrap_or(u32::MAX);
     let depth = pl_depth(vm, vm.arg_o(&a, 3));
@@ -6703,6 +6927,7 @@ fn pl_dict_scan(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// element, hash)` for one only Python code can find, or the slot to go
 /// on from once the walk's budget is spent, so `_ssub` takes a slice per
 /// loop step.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_set_scan(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (s, o) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     let mut i = usize::try_from(vm.int_of_o(vm.arg_o(&a, 2)).unwrap_or(0)).unwrap_or(0);
@@ -6741,6 +6966,7 @@ fn pl_set_scan(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// (a user `__eq__`, or the budget ran out); `RecursionError` past the
 /// depth limit. The twins compare items with it instead of `==`, so the
 /// nesting carries across levels they run in bytecode.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_walk_eq(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let depth = pl_depth(vm, vm.arg_o(&a, 2));
     let budget = crate::dict::walk_budget(depth);
@@ -6763,6 +6989,7 @@ fn pl_walk_eq(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// `None` if the budget runs out (the visits charged) or Python code must
 /// run.
 /// `RecursionError` past the depth limit, as natively.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_walk_repr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (x, outer) = (vm.arg_o(&a, 0), vm.arg_o(&a, 2));
     let depth = pl_depth(vm, vm.arg_o(&a, 1)) as usize;
@@ -6789,6 +7016,7 @@ fn pl_walk_repr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// containing the other: every operator is false); `None` if the walk ran
 /// out of budget; `NotImplemented` if Python code must decide (a user
 /// method, or an unorderable pair, whose operator raises).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_walk_ord(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     use core::cmp::Ordering as O;
     let depth = pl_depth(vm, vm.arg_o(&a, 2));
@@ -6813,6 +7041,7 @@ fn pl_walk_ord(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::int(c).unwrap_or(Value::NONE))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_set_insert(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let h = pl_hash_arg(vm, vm.arg_o(&a, 2))?;
     vm.set_add_new(vm.arg_o(&a, 0), vm.arg_o(&a, 1), h)?;
@@ -6824,6 +7053,7 @@ fn pl_set_insert(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// the last; `None` past the end. The prelude's `_set_hashed` reads a set
 /// with them a slice per call, so it never rehashes its elements (CPython
 /// reuses the stored hashes) and never builds all their pairs in a step.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_set_hashed(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let mut i = usize::try_from(vm.int_of_o(vm.arg_o(&a, 1)).unwrap_or(0)).unwrap_or(0);
     let s = vm.arg_o(&a, 0);
@@ -6850,6 +7080,7 @@ fn pl_set_hashed(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// `(src,)` presizes it for a merge of `src` ([`Vm::set_presize`]), and
 /// `None` makes `s` a frozenset and gives it back. One native for the
 /// five, as each prelude native is bound at startup.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_set_table(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (s, x) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if s == x {
@@ -6871,6 +7102,7 @@ fn pl_set_table(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_set_exc_str(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (e, s) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if let Some(r) = e.as_obj().filter(|_| e.is_obj_kind(ty::EXC as u8)) {
@@ -6887,6 +7119,7 @@ fn pl_set_exc_str(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// natively, at most [`nstep::STEP_WORK`] units of them: the hash, or
 /// `(j, acc)` when item `j` is to be hashed next in Python (its hash
 /// needs Python code, or the slice is spent).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_hash_tuple(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     use crate::dict::{XX_SEED, xx_finish, xx_lane};
     let t = vm.arg_o(&a, 0);
@@ -6942,6 +7175,7 @@ fn pl_hash_tuple(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.alloc_tuple(&[i, acc])
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_list_replace(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let items = vm.list_items(vm.arg_o(&a, 1));
     vm.list_set_items(vm.arg_o(&a, 0), &items)?;
@@ -6949,6 +7183,7 @@ fn pl_list_replace(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_lazy(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     // With a second argument, also any builtin iterator (`_mcall`).
     let v = vm.arg_o(&a, 0);
@@ -6961,6 +7196,7 @@ fn pl_lazy(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::from_bool(lazy))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_native_name(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let f = vm.arg_o(&a, 0);
     match f.as_native().and_then(native) {
@@ -6969,12 +7205,14 @@ fn pl_native_name(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_type_name(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     let n = String::from(vm.type_name(v));
     vm.new_str(&n)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pl_cmp_error(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (x, y, sym) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1), vm.arg_o(&a, 2));
     let msg = format!(
@@ -6991,6 +7229,7 @@ fn pl_cmp_error(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// call request, never a nested run). A non-empty `fromlist` goes to the
 /// prelude's `_import_fromlist`, which imports its submodules through
 /// `__import__` again.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_import(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let name = vm.unbx(vm.arg_o(&a, 0));
     if !Vm::is_str(name) {
@@ -7033,6 +7272,7 @@ fn bi_import(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     )
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_hasattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (o, n) = (vm.arg_o(&a, 0), vm.unbx(vm.arg_o(&a, 1)));
     if !Vm::is_str(n) {
@@ -7127,6 +7367,7 @@ fn bi_int(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     ))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_float(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let mut v = vm.arg_o(&a, 0);
     if v == Value::UNDEFINED {
@@ -7218,6 +7459,7 @@ fn bi_str(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_bool(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     if v != Value::UNDEFINED
@@ -7230,6 +7472,7 @@ fn bi_bool(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// A copy of long list or tuple `v` as a list or a tuple, a slice per
 /// step; `None` for anything else.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn seq_copy_long(vm: &mut Vm, v: Value, tuple: bool) -> Result<Option<Value>, Raised> {
     if !(v.is_obj_kind(ty::LIST as u8) || v.is_obj_kind(ty::TUPLE as u8)) {
         return Ok(None);
@@ -7244,6 +7487,7 @@ fn seq_copy_long(vm: &mut Vm, v: Value, tuple: bool) -> Result<Option<Value>, Ra
     vm.seq_new(tuple, &[v], &segs, n).map(Some)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_list(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     if v == Value::UNDEFINED {
@@ -7259,6 +7503,7 @@ fn bi_list(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_list(&items)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_tuple(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     if v == Value::UNDEFINED {
@@ -7281,6 +7526,7 @@ fn bi_tuple(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// source `src` (register `reg`): a dict's entries as they are, any other
 /// iterable's pairs, read as a list. A user mapping's `keys()` decides
 /// in the prelude twin.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn dict_fill_phase(vm: &mut Vm, src: Value, reg: u64) -> Result<(Value, u64), Raised> {
     use crate::set::{act, phase};
     let src = match vm.backing(src) {
@@ -7303,6 +7549,7 @@ pub(crate) fn dict_fill_phase(vm: &mut Vm, src: Value, reg: u64) -> Result<(Valu
 }
 
 /// `dict(src, **kw)` into `d` (value `res`), in steps.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn dict_build(vm: &mut Vm, a: &CallArgs, d: Value, res: u64) -> Result<Value, Raised> {
     let mut regs = [d, Value::NONE, Value::NONE];
     let mut prog = 0;
@@ -7321,12 +7568,14 @@ fn dict_build(vm: &mut Vm, a: &CallArgs, d: Value, res: u64) -> Result<Value, Ra
     vm.bulk(&regs, prog, res, true)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_dict(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let d = vm.new_dict()?;
     dict_build(vm, &a, d, 0)
 }
 
 /// `set(src)` (a frozenset with `frozen`), in steps.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_build(vm: &mut Vm, src: Value, frozen: bool) -> Result<Value, Raised> {
     use crate::set::{act, phase};
     let s = vm.new_set()?;
@@ -7340,10 +7589,12 @@ fn set_build(vm: &mut Vm, src: Value, frozen: bool) -> Result<Value, Raised> {
     vm.bulk(&[s, src], phase(act::ADD | items, 0, 1, 0), 0, true)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_set(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     set_build(vm, vm.arg_o(&a, 0), false)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_frozenset(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let src = vm.arg_o(&a, 0);
     if vm.type_of(src) == T::frozenset {
@@ -7352,6 +7603,7 @@ fn bi_frozenset(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     set_build(vm, src, true)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_range(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let mut nums = [0i64; 3];
     for i in 0..a.n {
@@ -7368,6 +7620,7 @@ fn bi_range(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_range(start, stop, step)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_type(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let kw = vm.kwarg(&a, 0);
     let kw = if kw == Value::UNDEFINED || vm.dict_len(kw) == 0 {
@@ -7405,6 +7658,7 @@ fn bi_type(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_enumerate(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     // The start before the iterable, as CPython's `PyNumber_Index`: an int
     // subclass counts as its int, whatever its `__index__`; another type
@@ -7435,6 +7689,7 @@ fn bi_enumerate(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::from_ref(r, ty::ENUMERATE as u8))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_zip(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let strict = vm.kwarg(&a, 0);
     if strict != Value::UNDEFINED && vm.truthy(strict) {
@@ -7456,6 +7711,7 @@ fn bi_zip(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::from_ref(r, ty::ZIP as u8))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_slice(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let get = |vm: &Vm, i| {
         let v = vm.arg_o(&a, i);
@@ -7477,6 +7733,7 @@ fn bi_slice(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::from_ref(r, ty::SLICE as u8))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn bi_object(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     let o = vm.type_obj(T::object);
     vm.new_instance(o, 0)
@@ -7506,6 +7763,7 @@ fn list_append(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// step (8M items copied to a fresh buffer took 35 ms in one [M]).
 #[cold]
 #[inline(never)]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn list_grow_steps(vm: &mut Vm, l: Value, len: usize, k: usize, x: Value) -> Result<Value, Raised> {
     use crate::ops::Seg;
     let one = vm.alloc_tuple(&[x])?;
@@ -7520,6 +7778,7 @@ fn list_grow_steps(vm: &mut Vm, l: Value, len: usize, k: usize, x: Value) -> Res
     vm.seq_build(l, Value::NONE, buf, &[l, one], &segs, len + 1, 0, 1)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn list_extend(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let l = vm.check_self(&a, T::list, "extend")?;
     let src = vm.arg_o(&a, 1);
@@ -7537,6 +7796,7 @@ fn list_extend(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn list_pop(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let l = vm.check_self(&a, T::list, "pop")?;
     let idx = vm.arg_o(&a, 1);
@@ -7565,6 +7825,7 @@ fn list_pop(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.list_del_at(l, k, v)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn list_insert(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     use crate::ops::SEQ_LONG;
     let l = vm.check_self(&a, T::list, "insert")?;
@@ -7593,11 +7854,13 @@ fn list_insert(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn list_remove(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let l = vm.check_self(&a, T::list, "remove")?;
     vm.seq_scan(l, vm.arg_o(&a, 1), 2, 0, usize::MAX)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn seq_index(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = vm.arg_o(&a, 0);
     let n = vm.seq_words(s).len();
@@ -7621,15 +7884,18 @@ fn seq_index(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.seq_scan(s, vm.arg_o(&a, 1), 1, start, stop)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn seq_count(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.seq_scan(vm.arg_o(&a, 0), vm.arg_o(&a, 1), 0, 0, usize::MAX)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn range_index(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let r = vm.check_self(&a, T::range, "index")?;
     range_search(vm, r, vm.arg_o(&a, 1), 1)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn range_count(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let r = vm.check_self(&a, T::range, "count")?;
     range_search(vm, r, vm.arg_o(&a, 1), 0)
@@ -7670,6 +7936,7 @@ fn range_search(vm: &mut Vm, r: Value, x: Value, kind: i64) -> Result<Value, Rai
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn list_sort(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let l = vm.check_self(&a, T::list, "sort")?;
     let key = vm.kwarg(&a, 0);
@@ -7697,6 +7964,7 @@ fn list_sort(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn list_reverse(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let l = vm.check_self(&a, T::list, "reverse")?;
     let n = vm.list_len(l);
@@ -7710,6 +7978,7 @@ fn list_reverse(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn list_copy(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let l = vm.check_self(&a, T::list, "copy")?;
     if let Some(v) = seq_copy_long(vm, l, false)? {
@@ -7719,6 +7988,7 @@ fn list_copy(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_list(&items)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn list_clear(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let l = vm.check_self(&a, T::list, "clear")?;
     vm.list_set_items(l, &[])?;
@@ -7740,6 +8010,7 @@ fn dict_get(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn dict_pop(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let d = vm.check_self(&a, T::dict, "pop")?;
     let k = vm.arg_o(&a, 1);
@@ -7759,6 +8030,7 @@ fn dict_pop(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// set as its dict (`dictviews_to_set` presizes for an exact dict only).
 pub(crate) const VIEW_SUB: u64 = 4;
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn view(vm: &mut Vm, a: &CallArgs, kind: u64, name: &str) -> Result<Value, Raised> {
     // `keys` gets a subclass's instance as itself (`keeps_instance`).
     let s = vm.arg_o(a, 0);
@@ -7774,18 +8046,22 @@ fn view(vm: &mut Vm, a: &CallArgs, kind: u64, name: &str) -> Result<Value, Raise
     Ok(Value::from_ref(r, ty::VIEW as u8))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn dict_keys(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     view(vm, &a, 0, "keys")
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn dict_values(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     view(vm, &a, 1, "values")
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn dict_items(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     view(vm, &a, 2, "items")
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn dict_setdefault(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let d = vm.check_self(&a, T::dict, "setdefault")?;
     let k = vm.arg_o(&a, 1);
@@ -7810,11 +8086,13 @@ fn dict_setdefault(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     })
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn dict_update(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let d = vm.check_self(&a, T::dict, "update")?;
     dict_build(vm, &a, d, crate::set::res::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn dict_copy(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     use crate::set::{act, phase};
     let d = vm.check_self(&a, T::dict, "copy")?;
@@ -7822,12 +8100,14 @@ fn dict_copy(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.bulk(&[out, d], phase(act::DICT, 0, 1, 0), 0, true)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn dict_clear(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let d = vm.check_self(&a, T::dict, "clear")?;
     vm.dict_clear(d)?;
     Ok(Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn dict_popitem(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let d = vm.check_self(&a, T::dict, "popitem")?;
     let Some((k, v)) = vm.dict_pop_last(d) else {
@@ -7844,6 +8124,7 @@ fn set_add(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(stored(vm))
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_remove(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = vm.check_self(&a, T::set, "remove")?;
     let k = vm.arg_o(&a, 1);
@@ -7854,12 +8135,14 @@ fn set_remove(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_discard(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = vm.check_self(&a, T::set, "discard")?;
     vm.set_discard(s, vm.arg_o(&a, 1))?;
     Ok(Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_pop(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = vm.check_self(&a, T::set, "pop")?;
     vm.set_pop(s)
@@ -7869,6 +8152,7 @@ fn set_pop(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// the operator does it, a dict by its keys, anything else read as a list
 /// (CPython's `set_intersection`, `set_difference`, ...); in steps with
 /// `top`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_with(
     vm: &mut Vm,
     op: mm_compile::ast::BinOp,
@@ -7910,6 +8194,7 @@ fn set_with(
 /// stops reading once the answer is known: read in place (a dict's keys
 /// or items view through its dict), or else the prelude twin iterates `o`
 /// lazily, as CPython does, so a generator is read no further.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn early_src(vm: &mut Vm, o: Value) -> Result<(Value, u64), Raised> {
     let in_place = matches!(
         o.obj_kind().map(u16::from),
@@ -7923,6 +8208,7 @@ fn early_src(vm: &mut Vm, o: Value) -> Result<(Value, u64), Raised> {
 
 /// Every `others` of an intersection read in place, or the whole call
 /// goes to the prelude twin before any of them is read.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn early_srcs(vm: &mut Vm, a: &CallArgs) -> Result<(), Raised> {
     for i in 2..a.n {
         early_src(vm, vm.arg_o(a, i))?;
@@ -7932,6 +8218,7 @@ fn early_srcs(vm: &mut Vm, a: &CallArgs) -> Result<(), Raised> {
 
 /// A set method over `*others`: the first in steps when it is the only
 /// one, the others (rare) each at once.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_many(
     vm: &mut Vm,
     a: &CallArgs,
@@ -7973,18 +8260,22 @@ fn set_many(
     Ok(s)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_union(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     set_many(vm, &a, mm_compile::ast::BinOp::BitOr, "union")
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_intersection(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     set_many(vm, &a, mm_compile::ast::BinOp::BitAnd, "intersection")
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_difference(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     set_many(vm, &a, mm_compile::ast::BinOp::Sub, "difference")
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_symmetric_difference(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = vm.check_anyset(&a, "symmetric_difference")?;
     set_with(vm, mm_compile::ast::BinOp::BitXor, s, vm.arg_o(&a, 1), true)
@@ -7992,6 +8283,7 @@ fn set_symmetric_difference(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `s.<op>_update(o)` in place (CPython's `set_ior` and friends; any
 /// iterable `o` through [`set_with`] for `&` and `^`).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_inplace(
     vm: &mut Vm,
     op: mm_compile::ast::BinOp,
@@ -8037,6 +8329,7 @@ fn set_inplace(
     vm.bulk(regs, prog, res::NONE, top)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_update_many(
     vm: &mut Vm,
     a: &CallArgs,
@@ -8056,6 +8349,7 @@ fn set_update_many(
     Ok(Value::NONE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_symmetric_difference_update(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     set_update_many(
         vm,
@@ -8065,6 +8359,7 @@ fn set_symmetric_difference_update(vm: &mut Vm, a: CallArgs) -> Result<Value, Ra
     )
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_intersection_update(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     set_update_many(
         vm,
@@ -8074,10 +8369,12 @@ fn set_intersection_update(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     )
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_difference_update(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     set_update_many(vm, &a, mm_compile::ast::BinOp::Sub, "difference_update")
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_isdisjoint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     use crate::set::{act, phase, res};
     let s = vm.check_anyset(&a, "isdisjoint")?;
@@ -8106,6 +8403,7 @@ fn set_isdisjoint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `dict_keys.isdisjoint` / `dict_items.isdisjoint`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn view_isdisjoint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (mut v, mut o) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if v == o {
@@ -8134,6 +8432,7 @@ fn view_isdisjoint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::TRUE)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn dict_fromkeys(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     use crate::set::{act, phase};
     // A subclass builds an instance of itself (the prelude twin); the
@@ -8157,6 +8456,7 @@ fn set_update(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `a <= b` (`sub`) or `a >= b` for set `a`, `b` any iterable (made a
 /// set first, as CPython does), in steps.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_subset(vm: &mut Vm, a: Value, b: Value, sub: bool) -> Result<Value, Raised> {
     use crate::set::{act, phase, res};
     let (x, y) = if sub { (a, b) } else { (b, a) };
@@ -8183,16 +8483,19 @@ fn set_subset(vm: &mut Vm, a: Value, b: Value, sub: bool) -> Result<Value, Raise
     )
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_issubset(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = vm.check_anyset(&a, "issubset")?;
     set_subset(vm, s, vm.arg_o(&a, 1), true)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_issuperset(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = vm.check_anyset(&a, "issuperset")?;
     set_subset(vm, s, vm.arg_o(&a, 1), false)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_copy(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     use crate::set::{act, phase};
     let s = vm.check_anyset(&a, "copy")?;
@@ -8203,6 +8506,7 @@ fn set_copy(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.bulk(&[out, s], phase(act::ADD, 0, 1, 0), 0, true)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn set_clear(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = vm.check_self(&a, T::set, "clear")?;
     vm.set_clear(s)?;

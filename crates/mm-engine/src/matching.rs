@@ -18,6 +18,7 @@ pub(crate) const TPFLAGS_MAPPING: i64 = 1 << 6;
 impl Vm {
     /// One `MATCH` step: `x` is the accumulator, `a`/`b` the registers it
     /// names, `n` the immediate.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn match_step(
         &mut self,
         k: u8,

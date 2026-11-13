@@ -48,12 +48,14 @@ const RECORDS: usize = PARTS - 1;
 
 /// The packed prelude's hash, for the build fingerprint: the same with
 /// and without `host-bundle`.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn fingerprint() -> u64 {
     PRELUDE_HASH
 }
 
 /// The parts of chunk `chunk`, unpacked within `budget`; with
 /// `host-bundle`, its packed bytes come from `cache`'s bundle.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn unpack_parts(
     chunk: usize,
     cache: Option<&dyn ModuleCache>,
@@ -107,12 +109,14 @@ fn unpack_parts(
 }
 
 /// The parts of `c`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn parts_of(c: &PreludeChunk) -> [&[u8]; PARTS] {
     core::array::from_fn(|k| c.parts[k].as_slice())
 }
 
 /// The program sections and the rest of the record of the unit whose
 /// record is at `at`, `len` long, in `parts`' records.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn locate<'a>(
     parts: &[&'a [u8]; PARTS],
     at: usize,
@@ -142,6 +146,7 @@ fn locate<'a>(
 /// Every function and class unit's program (for tests); `None` if the
 /// build's encoding is corrupt.
 #[must_use]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub fn prelude_programs() -> Option<Vec<Program>> {
     let mut out = Vec::new();
     for c in 0..CHUNK_END.len() {
@@ -160,12 +165,14 @@ pub fn prelude_programs() -> Option<Vec<Program>> {
 }
 
 /// The name of unit `i`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn name_of(i: usize) -> &'static str {
     let start = if i == 0 { 0 } else { UNITS[i - 1][0] as usize };
     NAMES.get(start..UNITS[i][0] as usize).unwrap_or("")
 }
 
 /// The unit named `name`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn unit(name: &str) -> Option<&'static [u16; 5]> {
     let (mut lo, mut hi) = (0, UNITS.len());
     while lo < hi {
@@ -181,6 +188,7 @@ fn unit(name: &str) -> Option<&'static [u16; 5]> {
 
 /// Whether the prelude has a unit named `name`.
 #[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn has_unit(name: &str) -> bool {
     unit(name).is_some()
 }
@@ -190,6 +198,7 @@ pub(crate) fn has_unit(name: &str) -> bool {
 struct Rd<'a>(&'a [u8]);
 
 impl<'a> Rd<'a> {
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn byte(&mut self) -> Option<u8> {
         let (&b, rest) = self.0.split_first()?;
         self.0 = rest;
@@ -203,6 +212,7 @@ impl<'a> Rd<'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn uleb(&mut self) -> Option<u64> {
         let mut v = 0u64;
         for shift in (0..64).step_by(7) {
@@ -314,6 +324,7 @@ impl Vm {
     /// them and in the same order, but unpacking each chunk once: the
     /// records of the units still to build are copied out chunk by chunk,
     /// within the same bounded workspace, then built in `names`' order.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn prelude_get_all(&mut self, names: &[&str]) -> Result<Vec<Option<Value>>, Raised> {
         let mut keys = Vec::with_capacity(names.len());
         let mut todo = Vec::new();
@@ -395,6 +406,7 @@ impl Vm {
 
     /// Chunk `chunk`, unpacked within the same bounded workspace as a
     /// bundled module's decode.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn unpack_chunk(&mut self, chunk: u16) -> Result<Arc<PreludeChunk>, Raised> {
         self.unpack_chunk_with(chunk, 0)
     }
@@ -402,6 +414,7 @@ impl Vm {
     /// [`Self::unpack_chunk`], with `extra` more bytes of workspace held
     /// beside it. A chunk from the engine's cache is charged the workspace
     /// its unpacking took, so the session behaves the same either way.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn unpack_chunk_with(&mut self, chunk: u16, extra: u64) -> Result<Arc<PreludeChunk>, Raised> {
         let allowance = self.heap.available_bytes().saturating_add(self.std_scratch);
         let Some(mut remaining) = allowance.checked_sub(extra) else {
@@ -431,6 +444,7 @@ impl Vm {
         Ok(c)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn decode_error(&mut self, e: DecodeError) -> Raised {
         match e {
             DecodeError::TooLarge => self.err(T::MemoryError, ""),
@@ -440,6 +454,7 @@ impl Vm {
 
     /// The value of the unit record `r` of kind `kind`; `None` if the record
     /// is malformed.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn build_unit(
         &mut self,
         name: Value,
@@ -488,6 +503,7 @@ impl Vm {
     }
 
     /// A function of code `first` + its record's index, with its defaults.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn build_unit_func(&mut self, first: u32, r: &mut Rd<'_>) -> Result<Option<Value>, Raised> {
         let Some(ci) = r.len().and_then(|i| u32::try_from(i).ok()) else {
             return Ok(None);
@@ -527,6 +543,7 @@ impl Vm {
     /// The class its body would have built: `new_class` over the same
     /// namespace (`__module__`, `__qualname__`, then the body's entries),
     /// then the attributes the prelude sets on it.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn build_unit_class(
         &mut self,
         name: Value,
@@ -599,6 +616,7 @@ impl Vm {
 
     /// Sets the counted `(name, literal)` attributes of record `r` on `o`;
     /// `false` if the record is malformed.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn set_attrs(&mut self, o: Value, r: &mut Rd<'_>) -> Result<bool, Raised> {
         let Some(n) = r.len() else { return Ok(false) };
         for _ in 0..n {
@@ -614,6 +632,7 @@ impl Vm {
 
     /// A literal: a scalar, or a tuple (tag 6), dict (7) or list (8) of
     /// scalars.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn read_literal(&mut self, r: &mut Rd<'_>) -> Result<Option<Value>, Raised> {
         let tag = r.0.first().copied();
         if !matches!(tag, Some(6..=8)) {
@@ -644,6 +663,7 @@ impl Vm {
 
     /// A scalar: tag 0 `None`, 1 `False`, 2 `True`, 3 int (zigzag), 4 float,
     /// 5 str, 9 a prelude or builtin name's value, 10 a builtin type.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn read_scalar(&mut self, r: &mut Rd<'_>) -> Result<Option<Value>, Raised> {
         Ok(Some(match r.byte() {
             Some(0) => Value::NONE,

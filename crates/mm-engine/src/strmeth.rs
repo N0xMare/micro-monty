@@ -107,6 +107,7 @@ pub(crate) fn slice_steps(vm: &mut Vm, s: Value, st: usize, en: usize) -> Result
 /// `a + b` for two non-empty strs whose result is [`FILL_BYTES`] or
 /// longer, a slice per step (`Vm::str_concat`).
 #[inline(never)]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn concat_steps(vm: &mut Vm, a: Value, b: Value) -> Result<Value, Raised> {
     let (la, lb) = (text(vm, a).len(), text(vm, b).len());
     fill_parts(vm, &[(a, 0, la), (b, 0, lb)])
@@ -826,6 +827,7 @@ pub(crate) fn replace(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// A case map, `translate` or `expandtabs` of a long receiver, a step at
 /// a time (`None` for a short one, or not a str).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn big_map(vm: &mut Vm, a: &CallArgs, kind: i64, arg: Value) -> Option<Result<Value, Raised>> {
     let s = vm.arg_o(a, 0);
     let n = vm.str_bytes(s).len();
@@ -967,6 +969,7 @@ pub(crate) fn found_char(
 /// time, keeps the needle's factorization between steps, where the
 /// window search reads the whole needle again in each (a 16M-char needle
 /// was 73 ms a step [M]). `None` for a shorter needle.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn long_find(
     vm: &mut Vm,
     s: Value,
@@ -993,6 +996,7 @@ fn long_find(
 /// `split` (`rsplit` when `right`, `replace` by `new`) of `s` at `sep`,
 /// at most `max` times, when `sep` is [`BIG`] bytes or more and fits in
 /// `s`: the prelude twin, whose searches are [`long_find`]s.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn split_long(
     vm: &mut Vm,
     s: Value,
@@ -1131,6 +1135,7 @@ pub(crate) fn count(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// Predicate `kind` over a long receiver, a step at a time (`None` for a
 /// short one, or not a str).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn big_scan(vm: &mut Vm, a: &CallArgs, kind: i64) -> Option<Result<Value, Raised>> {
     let s = vm.arg_o(a, 0);
     let n = vm.str_bytes(s).len();
@@ -2170,6 +2175,7 @@ pub(crate) fn format(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// Whether `str.format` field `v` with format spec `spec` can make a
 /// long piece: `v` a long str or bytes-like, or a number in `spec` (a
 /// width or precision) of `BIG` or more.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn long_piece(vm: &Vm, v: Value, spec: &str) -> bool {
     if (Vm::is_str(v) || Vm::is_bytes_like(v)) && text(vm, v).len() as u64 >= BIG {
         return true;
@@ -2185,6 +2191,7 @@ fn long_piece(vm: &Vm, v: Value, spec: &str) -> bool {
 /// CPython returns it), else the prelude twin, which finds the literal
 /// runs natively and joins a step at a time (docs/spec.md §5).
 #[cold]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn format_long(vm: &mut Vm, s: Value) -> Result<Value, Raised> {
     let h = vm.str_bytes(s);
     let n = h.len();
@@ -2370,6 +2377,7 @@ fn walk(vm: &mut Vm, op: u8, v: [Value; 4], w: [u64; 7]) -> Result<Value, Raised
 
 impl Vm {
     /// One step of a chunked str operation (`nstep.rs`).
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn str_step(&mut self, op: u8, state: Value) -> Result<Step, Raised> {
         let (Some((v, w)), Some(r)) = (self.nstate_get::<4, 8>(op, state), state.as_obj()) else {
             return Err(self.bad_step());
@@ -2729,6 +2737,7 @@ fn part(vm: &Vm, k: &Walk, j: usize) -> Option<(Value, usize, usize)> {
 
 /// A fill or a join: `w` is `[part, bytes of it done, out, chars]`, and
 /// for a join `[.., phase, ..]` ([`join_size`]).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn fill_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
     if k.op == op::STR_JOIN && !join_size(vm, k)? {
         return Ok(None);
@@ -2801,6 +2810,7 @@ fn fill_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
 
 /// `sep.join(items)` (a list or tuple of exact strs) a step at a time:
 /// sized, then built.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn join_big(vm: &mut Vm, sep: Value, items: Value) -> Result<Value, Raised> {
     walk(
         vm,
@@ -2855,6 +2865,7 @@ fn join_size(vm: &mut Vm, k: &mut Walk) -> Result<bool, Raised> {
 /// for an empty spec, else its pieces (fill, the text cut at the
 /// precision, fill) a step at a time; `None`
 /// for a short result or a spec the native path checks (and refuses).
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn format_big(vm: &mut Vm, s: Value, spec: &str) -> Option<Result<Value, Raised>> {
     if !Vm::is_str(s) {
         return None;
@@ -2929,6 +2940,7 @@ pub(crate) fn repeat(
 
 /// `w`: `[phase (0 counting, 1 building), at, out, matches (counted, then
 /// left), most, all matches, chars]`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn replace_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
     let [s, old, new, _] = k.v;
     let (len, pl, rl) = (text(vm, s).len(), text(vm, old).len(), text(vm, new).len());
@@ -3001,6 +3013,7 @@ fn replace_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
 }
 
 /// `str.replace` with `count` at most, a step at a time when it is long.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn replace_big(
     vm: &mut Vm,
     s: Value,
@@ -3036,6 +3049,7 @@ pub(crate) mod sm {
 /// is value slot 3. A piece of [`FILL`] units or more is copied a window
 /// per step into its block, value slot 2: from `w[0]` (its end, from the
 /// right), then the search goes on from `w[1]` (`u64::MAX`: the end).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn split_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
     let [s, sep, _, list] = k.v;
     let len = text(vm, s).len();
@@ -3265,6 +3279,7 @@ fn split_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
 
 /// A window of the long piece being copied into block `k.v[2]` (`w[6]`:
 /// the bytes copied, and the chars past bit 32); the piece once whole.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn piece_run(vm: &mut Vm, k: &mut Walk, s: Value, rev: bool) -> Result<Option<Value>, Raised> {
     let out = k.v[2];
     let (src, _, _, ascii) = info(vm, s)?;
@@ -3288,6 +3303,7 @@ fn piece_run(vm: &mut Vm, k: &mut Walk, s: Value, rev: bool) -> Result<Option<Va
 }
 
 /// A split of `s` a step at a time, in `mode`; `sep` for a separator.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn split_big(vm: &mut Vm, s: Value, sep: Value, max: usize, mode: u64) -> Result<Value, Raised> {
     let list = vm.new_list(&[])?;
     let at = if mode >= sm::RSEP {
@@ -3503,6 +3519,7 @@ fn final_sigma(
 /// kinds that lower, state bit 1 is whether the last char that is not
 /// case-ignorable was cased, and `part` the pending `σ`'s offset plus
 /// one (Final_Sigma is decided by the next such char).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn map_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
     if k.kind() == mk::SLICE {
         return slice_run(vm, k);
@@ -3695,6 +3712,7 @@ fn repr_text(text: &str, quote: Option<u8>, ascii: bool, ba: bool, st: &mut u64,
 
 /// `repr(s)` (`ascii(s)` with `ascii`) of a long str or bytes-like, a
 /// step at a time; `None` for anything else.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn repr_big(vm: &mut Vm, s: Value, ascii: bool) -> Option<Result<Value, Raised>> {
     let kind = if Vm::is_bytes_like(s) {
         mk::BYTES_REPR
@@ -3707,11 +3725,13 @@ pub(crate) fn repr_big(vm: &mut Vm, s: Value, ascii: bool) -> Option<Result<Valu
 }
 
 /// Whether `s` is a str or bytes-like whose repr goes a step at a time.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn big_repr(vm: &Vm, s: Value) -> bool {
     (Vm::is_str(s) || Vm::is_bytes_like(s)) && big_text(vm, s, CHAR_UNIT / 2)
 }
 
 /// Map kind `kind` of `s` with argument `arg`, a step at a time.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn map_big(vm: &mut Vm, s: Value, kind: i64, arg: Value) -> Result<Value, Raised> {
     let n = text(vm, s).len();
     let kv = Value::int(kind).unwrap_or(Value::NONE);
@@ -3733,12 +3753,14 @@ fn map_big(vm: &mut Vm, s: Value, kind: i64, arg: Value) -> Result<Value, Raised
 
 /// Whether per-char work over `s` (`per` bytes a fuel unit) is big
 /// enough to go a step at a time.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn big_text(vm: &Vm, s: Value, per: usize) -> bool {
     (text(vm, s).len() / per) as u64 >= BIG
 }
 
 /// An extended slice: `w` is `[phase, at, out, chars, picks left, bytes,
 /// picked any]`; value slot 1 is `(step, first pick's offset, picks)`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn slice_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
     let s = k.v[0];
     let arg = vm.seq_words(k.v[1]);
@@ -3873,6 +3895,7 @@ pub(crate) fn ext_slice(
 
 /// `w`: `[at, end, count, state, any cased]`; the kind is value slot 2,
 /// a substring slot 1.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn scan_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
     let [s, sub, _, _] = k.v;
     let kind = k.kind();
@@ -3985,6 +4008,7 @@ fn scan_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
 
 /// A step of a long `strip`: `w` is `[start, end, ends to go]`; each end
 /// loses its chars a window at a time, then the rest is one slice copy.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn strip_run(vm: &mut Vm, k: &mut Walk, room: usize) -> Result<Option<Value>, Raised> {
     let [s, chars, _, _] = k.v;
     let set: Option<Vec<char>> = Vm::is_str(chars).then(|| vm.str_ref_o(chars).chars().collect());
@@ -4040,6 +4064,7 @@ fn scan_find(
 
 /// Scan kind `kind` of `s` over bytes `from..to` (`sub` for a count), a
 /// step at a time.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn scan_big(
     vm: &mut Vm,
     s: Value,

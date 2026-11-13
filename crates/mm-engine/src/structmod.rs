@@ -36,6 +36,7 @@ struct Format {
 }
 
 /// Size and alignment of `c` (`None` for a bad char).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn code_size(c: u8, native: bool) -> Option<(usize, usize)> {
     let s = match c {
         b'x' | b'c' | b'b' | b'B' | b'?' | b's' | b'p' => 1,
@@ -137,6 +138,7 @@ fn parse(fmt: &[u8], heap: &Heap) -> Result<Format, &'static str> {
 
 /// A parsed format, or `Ok(Err(message))` for `struct.error`; `Err`
 /// raised for a wrong type.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn format_of(vm: &mut Vm, v: Value) -> Result<Result<Format, Value>, Raised> {
     let text = Vm::is_str(v);
     if !text && !Vm::is_bytes(v) {
@@ -165,6 +167,7 @@ fn format_of(vm: &mut Vm, v: Value) -> Result<Result<Format, Value>, Raised> {
 }
 
 /// `_calcsize(fmt)`.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn calcsize(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     match format_of(vm, vm.arg_o(&a, 0))? {
         Ok(f) => vm.new_int(i64::try_from(f.size).unwrap_or(i64::MAX)),
@@ -173,6 +176,7 @@ pub(crate) fn calcsize(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `_calclen(fmt)`: the number of values the format packs.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn calclen(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     match format_of(vm, vm.arg_o(&a, 0))? {
         Ok(f) => vm.new_int(i64::try_from(f.len).unwrap_or(i64::MAX)),
@@ -181,6 +185,7 @@ pub(crate) fn calclen(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// IEEE half precision, as `PyFloat_Pack2`; `None` on overflow.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pack_half(x: f64) -> Option<u16> {
     let sign = u16::from(x.is_sign_negative()) << 15;
     if x.is_nan() {
@@ -228,6 +233,7 @@ fn pack_half(x: f64) -> Option<u16> {
 }
 
 /// `PyFloat_Unpack2`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn unpack_half(h: u16) -> f64 {
     let neg = h & 0x8000 != 0;
     let e = i64::from((h >> 10) & 0x1F);
@@ -248,6 +254,7 @@ fn unpack_half(h: u16) -> f64 {
 }
 
 /// `(float)x`'s bits, with NaN sign and payload kept on every target.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn f32_bits(x: f64) -> u32 {
     if x.is_nan() {
         let b = x.to_bits();
@@ -256,6 +263,7 @@ fn f32_bits(x: f64) -> u32 {
     (x as f32).to_bits()
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn f32_value(b: u32) -> f64 {
     let x = f32::from_bits(b);
     if x.is_nan() {
@@ -276,6 +284,7 @@ enum Packed {
 }
 
 /// The float in a float slot, if `v` is a builtin real number.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn real_of(vm: &Vm, v: Value) -> Option<f64> {
     if let Some(f) = v.as_float() {
         return Some(f);
@@ -284,6 +293,7 @@ fn real_of(vm: &Vm, v: Value) -> Option<f64> {
 }
 
 #[allow(clippy::too_many_lines, reason = "one arm per format code")]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn pack_one(vm: &mut Vm, it: &Item, little: bool, v: Value, out: &mut [u8]) -> Packed {
     let user = vm.user_class(v).is_some();
     let put = |out: &mut [u8], le: &[u8]| {
@@ -381,6 +391,7 @@ fn pack_one(vm: &mut Vm, it: &Item, little: bool, v: Value, out: &mut [u8]) -> P
 
 /// `_pack(fmt, args)`: the packed `bytes`, a `struct.error` message, or
 /// `(i, kind)` to convert `args[i]` first.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn pack(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let f = match format_of(vm, vm.arg_o(&a, 0))? {
         Ok(f) => f,

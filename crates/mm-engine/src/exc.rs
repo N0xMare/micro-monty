@@ -721,10 +721,12 @@ impl Vm {
 
     /// Records the "Did you mean" hint of an `AttributeError` on `obj.name`
     /// (pending until rendered).
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn set_attr_hint(&mut self, obj: Value, name: Value) {
         self.set_hint_pending(PENDING_ATTR, name, obj, Value::NONE, Value::NONE);
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn attr_hint_text(&mut self, obj: Value, name: Value) -> Option<String> {
         let wrong = String::from(self.str_ref_o(name));
         // User instances and classes: `dir()` is the instance's attributes
@@ -796,6 +798,7 @@ impl Vm {
 
     /// A `NameError`'s hint: the suggestion from the raising frame's
     /// `(globals, locals)`, when given, then the stdlib module note.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn name_hint_text(&mut self, name: &str, frame: Option<(Value, Value)>) -> Option<String> {
         let mut hint = String::new();
         let mut s = None;
@@ -841,6 +844,7 @@ impl Vm {
     }
 
     /// `(type name, str(exc))`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn exception_parts(&mut self, exc: Value) -> (String, String) {
         let c = self.vslot_o(exc, exc_slot::TYPE);
         let name = self.class_report_name(c);
@@ -857,6 +861,7 @@ impl Vm {
         (name, msg)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn final_line(&mut self, exc: Value) -> String {
         let with_tb = !self.tb_entries(exc).is_empty();
         let mut line = if self.exc_type(exc).is_subclass(T::SyntaxError) {
@@ -896,6 +901,7 @@ impl Vm {
     /// A `SyntaxError`'s last lines as CPython's traceback prints them
     /// (`_format_syntax_error`): `File "f", line N`, the text and its
     /// carets, then `T: msg` (without the final newline).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn syntax_lines(&mut self, exc: Value, t: &str) -> String {
         let mut out = String::new();
         let [file, line, offset, text, end_line, end_offset] = [
@@ -991,6 +997,7 @@ impl Vm {
     }
 
     /// `exc`'s traceback entries `(code, pc)`, innermost first.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn tb_entries(&self, exc: Value) -> Vec<(u32, u32)> {
         let tb = self.vslot_o(exc, exc_slot::TRACEBACK);
         if !tb.is_obj_kind(ty::LIST as u8) {
@@ -1009,6 +1016,7 @@ impl Vm {
     }
 
     /// A traceback object for entry `k` of `exc`'s traceback list.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn new_traceback(&mut self, exc: Value, k: usize) -> Result<Value, Raised> {
         let r = {
             let res = self.heap.alloc_init(ty::TRACEBACK, 0, &[exc], &[k as u64]);
@@ -1027,6 +1035,7 @@ impl Vm {
     }
 
     /// The exception and entry index of traceback object `tb`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn traceback_parts(&self, tb: Value) -> Option<(Value, usize)> {
         let r = tb
             .as_obj()
@@ -1039,6 +1048,7 @@ impl Vm {
 
     /// `exc.__traceback__ = v`: `None` empties the traceback; a traceback
     /// object makes it the entries from that one inward.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn set_traceback(&mut self, exc: Value, v: Value) -> Result<(), Raised> {
         let Some(r) = exc.as_obj() else { return Ok(()) };
         if v == Value::NONE {
@@ -1062,6 +1072,7 @@ impl Vm {
     }
 
     /// A traceback object's attributes.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn traceback_attr(
         &mut self,
         tb: Value,
@@ -1086,6 +1097,7 @@ impl Vm {
     /// text)` for each frame from `tb` inward that has source (bundled
     /// frames never show), `text` its formatted entry; `limit` as
     /// `traceback.extract_tb`'s.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn tb_extract(&mut self, tb: Value, limit: Value) -> Result<Value, Raised> {
         let mut frames = Vec::new();
         if let Some((exc, k)) = self.traceback_parts(tb) {
@@ -1135,6 +1147,7 @@ impl Vm {
     /// The full CPython 3.14 report of an uncaught exception, chained
     /// causes and contexts included, exception groups drawn as
     /// `TracebackException.format` draws them.
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn render_exception(&mut self, exc: Value) -> String {
         let mut out = String::new();
         let mut need_close = false;
@@ -1144,6 +1157,7 @@ impl Vm {
 
     /// The sub-exceptions of an `ExceptionGroup` (the prelude class keeps
     /// them in `_mm_excs`), `None` for other exceptions.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn group_items(&self, e: Value) -> Option<Vec<Value>> {
         let k = self.find_interned("_mm_excs")?;
         let t = self.inst_get(e, k)?;
@@ -1153,6 +1167,7 @@ impl Vm {
     /// `exc`'s chain at exception-group depth `depth`. The recursion into
     /// sub-exceptions stops at CPython's `max_group_depth` (10), so it is
     /// bounded.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn render_into(&mut self, exc: Value, depth: usize, need_close: &mut bool, out: &mut String) {
         const MAX_WIDTH: usize = 15;
         const MAX_DEPTH: usize = 10;
@@ -1270,6 +1285,7 @@ impl Vm {
         }
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn format_tb(&mut self, exc: Value) -> String {
         let mut entries = self.tb_entries(exc);
         if entries.is_empty() {
@@ -1320,6 +1336,7 @@ impl Vm {
         out
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn frame_key(&self, ci: u32, pc: u32) -> (String, u32, String) {
         let Some(c) = self.codes.get(ci as usize) else {
             return (String::new(), 0, String::new());
@@ -1332,6 +1349,7 @@ impl Vm {
     /// One frame of a traceback: header, source lines and carets.
     /// The byte ranges of the lines of code `ci`'s source, split once per
     /// traceback and source (once per frame was O(frames × source)).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn line_ranges<'c>(&self, ci: u32, cache: &'c mut LineCache) -> &'c [(usize, usize)] {
         let Some(src) = self.codes.get(ci as usize).map(|c| c.source) else {
             return &[];
@@ -1359,6 +1377,7 @@ impl Vm {
     }
 
     /// 1-based line `line` of code `ci`'s source.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn source_line(&self, ci: u32, line: u32, cache: &mut LineCache) -> Option<&str> {
         let &(a, b) = self
             .line_ranges(ci, cache)
@@ -1367,6 +1386,7 @@ impl Vm {
     }
 
     #[allow(clippy::too_many_lines, reason = "a port of format_frame_summary")]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn format_frame(&self, ci: u32, pc: u32, lines: &mut LineCache) -> String {
         let Some(c) = self.codes.get(ci as usize) else {
             return String::new();
