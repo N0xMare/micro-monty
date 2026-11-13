@@ -45,6 +45,7 @@ pub struct Options {
 }
 
 /// Compiles a module.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub fn compile(module: &Module, opts: Options) -> Result<Program, CompileError> {
     let st = symtable::build(module)?;
     let mut c = Compiler {
@@ -93,6 +94,7 @@ pub fn compile(module: &Module, opts: Options) -> Result<Program, CompileError> 
 /// CPython 3.14's PEP 765 warnings: `return` in a `finally` block, and
 /// `break`/`continue` that would leave one. Walks in source order; nesting
 /// is bounded by [`MAX_NESTING`] (deeper statements were rejected anyway).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn finally_warnings(
     body: &[Stmt],
     in_fin: bool,
@@ -250,6 +252,7 @@ struct Unit<'a> {
 
 impl Unit<'_> {
     /// The register of local `name` of `scope`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn reg(&self, scope: ScopeId, name: &str) -> Option<u8> {
         let regs = match self.regs.first() {
             Some((s, regs)) if *s == scope => regs,
@@ -258,6 +261,7 @@ impl Unit<'_> {
         u8::try_from(*regs.get(name)?).ok()
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn set_reg(&mut self, scope: ScopeId, name: &str, r: u8) {
         let i = self.regs.iter().rposition(|(s, _)| *s == scope);
         let i = i.unwrap_or_else(|| {
@@ -305,6 +309,7 @@ const NO_LOC: Loc = Loc {
 
 type R<T> = Result<T, CompileError>;
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn too_many(what: &str) -> CompileError {
     CompileError::unsupported(what, Pos::default())
 }
@@ -312,11 +317,13 @@ fn too_many(what: &str) -> CompileError {
 impl<'a> Compiler<'a> {
     // ----------------------------------------------------------- units
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn u(&mut self) -> &mut Unit<'a> {
         let n = self.units.len() - 1;
         &mut self.units[n]
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn ur(&self) -> &Unit<'a> {
         &self.units[self.units.len() - 1]
     }
@@ -451,10 +458,12 @@ impl<'a> Compiler<'a> {
 
     // ------------------------------------------------------- emission
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn pc(&self) -> u32 {
         u32::try_from(self.ur().code.bytecode.len()).unwrap_or(u32::MAX)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn at(&mut self, e: &Expr) {
         self.u().cur = Loc {
             pos: e.pos,
@@ -463,11 +472,13 @@ impl<'a> Compiler<'a> {
         };
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn at_pos(&mut self, pos: Pos) {
         self.u().cur = Loc { pos, ..NO_LOC };
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn emit(&mut self, opcode: u8) {
         // `SEND` and its `YIELD_FROM` stay adjacent (the VM finds one from
         // the other).
@@ -526,6 +537,7 @@ impl<'a> Compiler<'a> {
         };
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn emit_one(&mut self, opcode: u8) {
         let pc = self.pc();
         let u = self.u();
@@ -549,6 +561,7 @@ impl<'a> Compiler<'a> {
 
     /// Writes the next operand of the instruction being emitted; returns
     /// its word and bit shift.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn put(&mut self, v: u32) -> (usize, u8) {
         let u = self.u();
         let f = u.lay.fields[u.nops];
@@ -558,15 +571,18 @@ impl<'a> Compiler<'a> {
         (at, f.shift)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn byte(&mut self, b: u8) {
         self.put(u32::from(b));
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn word(&mut self, w: u16) {
         self.put(u32::from(w));
     }
 
     /// A jump operand to label `l`, patched in `end_unit`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn target(&mut self, l: Label) {
         let (at, shift) = self.put(0);
         let u = self.u();
@@ -579,12 +595,14 @@ impl<'a> Compiler<'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn emit_r(&mut self, opcode: u8, r: u8) {
         self.emit(opcode);
         self.byte(r);
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn emit_rr(&mut self, opcode: u8, a: u8, b: u8) {
         self.emit(opcode);
         self.byte(a);
@@ -592,12 +610,14 @@ impl<'a> Compiler<'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn emit_u(&mut self, opcode: u8, k: u16) {
         self.emit(opcode);
         self.word(k);
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn emit_ru(&mut self, opcode: u8, r: u8, k: u16) {
         self.emit(opcode);
         self.byte(r);
@@ -605,6 +625,7 @@ impl<'a> Compiler<'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn emit_uu(&mut self, opcode: u8, a: u16, b: u16) {
         self.emit(opcode);
         self.word(a);
@@ -612,6 +633,7 @@ impl<'a> Compiler<'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn emit_rb(&mut self, opcode: u8, r: u8, b: u8) {
         self.emit(opcode);
         self.byte(r);
@@ -619,6 +641,7 @@ impl<'a> Compiler<'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn emit_rbu(&mut self, opcode: u8, r: u8, b: u8, k: u16) {
         self.emit(opcode);
         self.byte(r);
@@ -627,6 +650,7 @@ impl<'a> Compiler<'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn label(&mut self) -> Label {
         let u = self.u();
         u.labels.push(None);
@@ -634,6 +658,7 @@ impl<'a> Compiler<'a> {
         Label(u.labels.len() - 1)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bind(&mut self, l: Label) {
         let pc = self.pc();
         let u = self.u();
@@ -643,18 +668,21 @@ impl<'a> Compiler<'a> {
 
     /// Binds a loop head: its back edge is a safepoint, so the count
     /// restarts (see [`CHECK_EVERY`]).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bind_top(&mut self, l: Label) {
         self.bind(l);
         self.u().run = 0;
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn jump(&mut self, opcode: u8, l: Label) {
         self.emit(opcode);
         self.target(l);
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn jump_r(&mut self, opcode: u8, r: u8, l: Label) {
         self.emit(opcode);
         self.byte(r);
@@ -662,6 +690,7 @@ impl<'a> Compiler<'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn ic(&mut self) -> R<u16> {
         let u = self.u();
         let k = u16::try_from(u.code.n_ics).map_err(|_| too_many("functions this large"))?;
@@ -670,6 +699,7 @@ impl<'a> Compiler<'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn konst(&mut self, k: Konst) -> R<u16> {
         let u = self.u();
         match &k {
@@ -703,6 +733,7 @@ impl<'a> Compiler<'a> {
     /// Index of name `n` (mangled if private, as every name the bytecode
     /// names: globals, class namespace names, attributes and imports).
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn name(&mut self, n: &str) -> R<u16> {
         let n = &*symtable::mangle(&self.st.scopes[self.ur().scope].private, n);
         let u = self.u();
@@ -719,6 +750,7 @@ impl<'a> Compiler<'a> {
     // ------------------------------------------------------ registers
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn temp(&mut self) -> R<u8> {
         let u = self.u();
         let r = u8::try_from(u.next_reg)
@@ -730,6 +762,7 @@ impl<'a> Compiler<'a> {
         Ok(r)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn temps(&mut self, n: usize) -> R<u8> {
         let base = self.temp()?;
         for _ in 1..n {
@@ -738,10 +771,12 @@ impl<'a> Compiler<'a> {
         Ok(base)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn mark(&self) -> u32 {
         self.ur().next_reg
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn release(&mut self, m: u32) {
         self.u().next_reg = m;
     }
@@ -750,6 +785,7 @@ impl<'a> Compiler<'a> {
 
     /// Closes the current exception-table segment; a new one starts here
     /// with the current innermost handler.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn set_handlers(&mut self) {
         let pc = self.pc();
         let u = self.u();
@@ -762,11 +798,13 @@ impl<'a> Compiler<'a> {
         u.seg_start = pc;
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn push_handler(&mut self, l: Label) {
         self.set_handlers();
         self.u().handlers.push(l);
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn pop_handler(&mut self) {
         self.set_handlers();
         self.u().handlers.pop();
@@ -774,6 +812,7 @@ impl<'a> Compiler<'a> {
 
     // ------------------------------------------------------- names
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn resolve(&self, name: &str) -> Access {
         let u = self.ur();
         let name = &*symtable::mangle(&self.st.scopes[u.scope].private, name);
@@ -809,10 +848,12 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn is_bound(&self, r: u8) -> bool {
         self.ur().bound.contains(&r)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn load_name(&mut self, name: &str) -> R<()> {
         match self.resolve(name) {
             Access::Local(r) => {
@@ -836,6 +877,7 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn store_name(&mut self, name: &str) -> R<()> {
         match self.resolve(name) {
             Access::Local(r) => {
@@ -861,6 +903,7 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn delete_name(&mut self, name: &str) -> R<()> {
         match self.resolve(name) {
             Access::Local(r) => self.emit_r(op::DEL_LOCAL, r),
@@ -879,6 +922,7 @@ impl<'a> Compiler<'a> {
 
     // ---------------------------------------------------- statements
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn enter(&mut self, pos: Pos) -> R<()> {
         self.depth += 1;
         if self.depth > MAX_NESTING {
@@ -887,6 +931,7 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn block(&mut self, body: &'a [Stmt]) -> R<()> {
         self.u().block_depth += 1;
         for s in body {
@@ -896,6 +941,7 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn stmt(&mut self, s: &'a Stmt) -> R<()> {
         self.enter(s.pos)?;
         let m = self.mark();
@@ -905,6 +951,7 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn stmt_inner(&mut self, s: &'a Stmt) -> R<()> {
         match &s.kind {
             StmtKind::Expr(e) => self.expr(e),
@@ -1242,6 +1289,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// Marks loop-target registers as bound for the loop body.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn bind_targets(&mut self, target: &Expr) {
         match &target.kind {
             ExprKind::Name(n) => {
@@ -1264,6 +1312,7 @@ impl<'a> Compiler<'a> {
 
     /// Emits the exit actions of every fblock above index `keep`, innermost
     /// first: inlined `finally` bodies and handler exits.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn unwind(&mut self, keep: usize, pos: Pos) -> R<()> {
         let n = self.ur().fblocks.len();
         for i in (keep..n).rev() {
@@ -1318,6 +1367,7 @@ impl<'a> Compiler<'a> {
 
     /// `break`, `continue` and `return` may not leave an `except*` handler
     /// (the fblocks above `keep`).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn star_exit(&self, keep: usize, pos: Pos) -> R<()> {
         if self.ur().fblocks[keep..]
             .iter()
@@ -1331,6 +1381,7 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn try_stmt(
         &mut self,
         body: &'a [Stmt],
@@ -1388,6 +1439,7 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn try_except(
         &mut self,
         body: &'a [Stmt],
@@ -1492,6 +1544,7 @@ impl<'a> Compiler<'a> {
     /// the rest (`EXC_STAR` 0, the prelude's `_star_match`) and runs with
     /// it as the handled exception, collecting what it raises; at the end
     /// `EXC_STAR` 1 (`_star_prep`) gives what to re-raise, as is.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn try_star(&mut self, body: &'a [Stmt], handlers: &'a [Handler], orelse: &'a [Stmt]) -> R<()> {
         let h = self.label();
         let end = self.label();
@@ -1598,6 +1651,7 @@ impl<'a> Compiler<'a> {
     /// calls it with the exception and re-raises unless it returns true.
     /// `async with` awaits what `__aenter__` and `__aexit__` return, and
     /// tests the awaited result of the exceptional `__aexit__` here.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn with_stmt(
         &mut self,
         items: &'a [WithItem],
@@ -1683,6 +1737,7 @@ impl<'a> Compiler<'a> {
     /// A `class` statement: decorators, the name, bases, keywords and a
     /// namespace dict; the body runs as a function over the namespace; then
     /// `BUILD_CLASS`, the decorators and the binding.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn class_def(&mut self, c: &'a ClassDef) -> R<()> {
         let Some(scope) = self.st.scope_of(symtable::class_key(c)) else {
             return Err(too_many("this class (no scope)"));
@@ -1816,6 +1871,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// The code of a class body; returns its index.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn class_body(&mut self, c: &'a ClassDef, scope: ScopeId) -> R<usize> {
         let idx = self.codes.len();
         self.codes.push(None);
@@ -1854,6 +1910,7 @@ impl<'a> Compiler<'a> {
         Ok(idx)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn aug_assign(&mut self, pos: Pos, target: &'a Expr, bop: BinOp, value: &'a Expr) -> R<()> {
         match &target.kind {
             ExprKind::Name(n) => {
@@ -1908,6 +1965,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// Stores the accumulator into `target`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn store(&mut self, target: &'a Expr) -> R<()> {
         match &target.kind {
             ExprKind::Name(n) => self.store_name(n),
@@ -1996,6 +2054,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn delete(&mut self, target: &'a Expr) -> R<()> {
         match &target.kind {
             ExprKind::Name(n) => {
@@ -2033,6 +2092,7 @@ impl<'a> Compiler<'a> {
 
     // --------------------------------------------------- functions
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn qualname(&self, name: &str) -> String {
         let u = self.ur();
         if u.code.is_module {
@@ -2045,6 +2105,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// Builds defaults and closure, then `MAKE_FUNCTION`; result in acc.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn make_function(&mut self, f: &'a FuncDef, name: &str) -> R<()> {
         let Some(scope) = self.st.scope_of(symtable::func_key(f)) else {
             return Err(too_many("this function (no scope)"));
@@ -2117,6 +2178,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// The closure tuple for a child with these free variables, in a temp.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn closure(&mut self, freenames: &[Arc<str>]) -> R<u8> {
         let mm = self.mark();
         let n = freenames.len();
@@ -2146,6 +2208,7 @@ impl<'a> Compiler<'a> {
         Ok(r)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn function_body(&mut self, f: &'a FuncDef, scope: ScopeId, name: &str) -> R<usize> {
         let idx = self.codes.len();
         self.codes.push(None);
@@ -2186,6 +2249,7 @@ impl<'a> Compiler<'a> {
     /// A register holding `e`: a bound local's own register, or a temp.
     /// `clobber` is evaluated after the operand is read; if it could rebind
     /// the local (a walrus), the local is copied first.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn operand(&mut self, e: &'a Expr, clobber: Option<&Expr>) -> R<u8> {
         if let ExprKind::Name(n) = &e.kind
             && let Access::Local(r) = self.resolve(n)
@@ -2202,6 +2266,7 @@ impl<'a> Compiler<'a> {
 
     /// Evaluates each expression into consecutive temps and builds a
     /// sequence with `opcode`; the result goes to a fresh temp.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn build_seq(&mut self, items: &[&'a Expr], opcode: u8) -> R<u8> {
         let m = self.mark();
         let n = items.len();
@@ -2218,6 +2283,7 @@ impl<'a> Compiler<'a> {
         Ok(r)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn expr(&mut self, e: &'a Expr) -> R<()> {
         self.enter(e.pos)?;
         let m = self.mark();
@@ -2235,6 +2301,7 @@ impl<'a> Compiler<'a> {
     /// step as usual, then each step above it on the value before, in a
     /// loop. However long, it is one level of nesting and recurses only
     /// into the other operands.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn chain(&mut self, e: &'a Expr) -> R<()> {
         let mut steps = vec![e];
         let mut cur = e;
@@ -2256,6 +2323,7 @@ impl<'a> Compiler<'a> {
 
     /// Step `e` of a chain with its first operand's value in the
     /// accumulator.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn chain_step(&mut self, e: &'a Expr) -> R<()> {
         match &e.kind {
             ExprKind::BinOp(_, bop, b) => {
@@ -2284,6 +2352,7 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn binop(&mut self, bop: BinOp, ra: u8) {
         match bop {
             BinOp::Add => self.emit_r(op::ADD, ra),
@@ -2294,6 +2363,7 @@ impl<'a> Compiler<'a> {
     }
 
     #[allow(clippy::too_many_lines, reason = "one arm per expression kind")]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn expr_inner(&mut self, e: &'a Expr) -> R<()> {
         match &e.kind {
             ExprKind::Const(c) => {
@@ -2439,6 +2509,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn constant(&mut self, c: &Const) -> R<()> {
         match c {
             Const::None => self.emit(op::LDA_NONE),
@@ -2467,6 +2538,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// Evaluates a subscript index (or slice) into the accumulator.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn subscript_index(&mut self, idx: &'a Expr) -> R<()> {
         if let ExprKind::Slice(lo, hi, step) = &idx.kind {
             let m = self.mark();
@@ -2502,6 +2574,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn compare(&mut self, e: &'a Expr, first: &'a Expr, rest: &'a [(CmpOp, Expr)]) -> R<()> {
         let end = self.label();
         let mut left = self.operand(first, rest.first().map(|(_, x)| x))?;
@@ -2526,6 +2599,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// Jumps to `target` when `test` is `when`; falls through otherwise.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn cond_jump(&mut self, test: &'a Expr, when: bool, target: Label) -> R<()> {
         match &test.kind {
             ExprKind::Unary(UnaryOp::Not, inner) => self.cond_jump(inner, !when, target),
@@ -2567,6 +2641,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn display(&mut self, e: &'a Expr, items: &'a [Expr], build: u8) -> R<()> {
         let has_star = items.iter().any(|x| matches!(x.kind, ExprKind::Starred(_)));
         // Large displays are built incrementally so they need few registers.
@@ -2614,6 +2689,7 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn dict_display(&mut self, e: &'a Expr, items: &'a [(Option<Expr>, Expr)]) -> R<()> {
         let has_spread = items.iter().any(|(k, _)| k.is_none());
         if !has_spread && items.len() <= LARGE_DISPLAY / 2 {
@@ -2662,6 +2738,7 @@ impl<'a> Compiler<'a> {
 
     /// Zero-argument `super()` inside a function with the `__class__` cell
     /// becomes `super(__class__, <first argument>)`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn zero_arg_super(&mut self, e: &'a Expr, func: &'a Expr) -> R<bool> {
         let u = self.ur();
         if u.is_class || u.code.is_module || u.code.params.total() == 0 {
@@ -2693,6 +2770,7 @@ impl<'a> Compiler<'a> {
     /// per register (the builtin reads which are bound from its caller's
     /// registers), or the class namespace. At module level `dir()` lists
     /// the globals. An inlined comprehension's own variables are left out.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn zero_arg_dir(&mut self, e: &'a Expr, func: &'a Expr) -> R<bool> {
         if self.ur().code.is_module || !matches!(self.resolve("dir"), Access::Global | Access::Name)
         {
@@ -2721,6 +2799,7 @@ impl<'a> Compiler<'a> {
         Ok(true)
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn call(&mut self, e: &'a Expr, func: &'a Expr, args: &'a [Expr], kws: &'a [Keyword]) -> R<()> {
         if args.is_empty()
             && kws.is_empty()
@@ -2742,6 +2821,7 @@ impl<'a> Compiler<'a> {
 
     /// Call `e` with its callee, or a method call's object, in the
     /// accumulator.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn call_tail(
         &mut self,
         e: &'a Expr,
@@ -2801,6 +2881,7 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn call_args(&mut self, base: u8, args: &'a [Expr], kws: &'a [Keyword]) -> R<()> {
         let values = args.iter().chain(kws.iter().map(|k| &k.value));
         for (k, a) in values.enumerate() {
@@ -2812,6 +2893,7 @@ impl<'a> Compiler<'a> {
 
     /// A call with `*args`, `**kwargs` or past 200 arguments, its callee
     /// in the accumulator.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn call_ex(&mut self, e: &'a Expr, args: &'a [Expr], kws: &'a [Keyword]) -> R<()> {
         let base = self.temps(3)?;
         self.emit_r(op::STAR, base);
@@ -2871,6 +2953,7 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn fstring(&mut self, e: &'a Expr, parts: &'a [FPart]) -> R<()> {
         if let [FPart::Lit(s)] = parts {
             self.at(e);
@@ -2903,6 +2986,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// The parts of an f-string, each in a register, then joined.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn fstring_parts(&mut self, e: &'a Expr, parts: &'a [FPart]) -> R<()> {
         let m = self.mark();
         let n = parts.len();
@@ -2959,6 +3043,7 @@ impl<'a> Compiler<'a> {
 
     // ------------------------------------------------ comprehensions
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn comprehension(
         &mut self,
         e: &'a Expr,
@@ -2999,6 +3084,7 @@ impl<'a> Compiler<'a> {
 
     /// Enters comprehension scope `scope` (registers for its variables), runs
     /// the loops and adds each element to `result`, then leaves the scope.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn comp_loops(
         &mut self,
         scope: ScopeId,
@@ -3073,6 +3159,7 @@ impl<'a> Compiler<'a> {
     /// One `[async] for ... in ... if ...` clause of a comprehension, `k`
     /// in order (the first one's iterator is ready in `it0`): the loop
     /// head, the target and the filters.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn comp_head(&mut self, k: usize, g: &'a Comprehension, it0: u8, pos: Pos) -> R<CompLoop<'a>> {
         let it = if k == 0 {
             it0
@@ -3114,6 +3201,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// The loop ends of [`Self::comp_head`]'s clauses, innermost first.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn comp_tails(&mut self, tops: Vec<CompLoop<'a>>) {
         for (top, end, g, handler) in tops.into_iter().rev() {
             self.at(&g.iter);
@@ -3129,6 +3217,7 @@ impl<'a> Compiler<'a> {
     /// An `async for` step at loop head `top` over the async iterator in
     /// `it`: `acc = await it.__anext__()`, under a handler (returned) that
     /// ends the loop on `StopAsyncIteration`.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn anext_step(&mut self, it: u8, top: Label, pos: Pos) -> Label {
         let h = self.label();
         self.bind_top(top);
@@ -3142,6 +3231,7 @@ impl<'a> Compiler<'a> {
 
     /// `async for`, `async with` and async comprehensions need an async
     /// function (or module code, as top-level `await` in cells).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn async_ok(&self, msg: &str, pos: Pos) -> R<()> {
         let u = self.ur();
         if u.code.is_module || u.code.is_coroutine {
@@ -3151,6 +3241,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn genexp(&mut self, e: &'a Expr, elt: &'a Expr, gens: &'a [Comprehension]) -> R<()> {
         let Some(scope) = self.st.scope_of(symtable::expr_key(e)) else {
             return Err(too_many("this generator expression (no scope)"));
@@ -3229,6 +3320,7 @@ enum CompKind<'a> {
     Dict(&'a Expr, &'a Expr),
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn cmp_opcode(c: CmpOp) -> u8 {
     match c {
         CmpOp::Eq => op::TEST_EQ,
@@ -3250,6 +3342,7 @@ const FSTRING_GROUP: usize = 64;
 
 /// Whether a call passes `*args`, `**kwargs` or more than 200 arguments
 /// (built as a tuple and a dict, `call_ex`).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn star_call(args: &[Expr], kws: &[Keyword]) -> bool {
     args.iter().any(|a| matches!(a.kind, ExprKind::Starred(_)))
         || kws.iter().any(|k| k.name.is_none())
@@ -3258,6 +3351,7 @@ fn star_call(args: &[Expr], kws: &[Keyword]) -> bool {
 
 /// The object of a method call `obj.m(...)` (`LOAD_METHOD`), if `func` and
 /// the arguments make one.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn method_object<'e>(func: &'e Expr, args: &[Expr], kws: &[Keyword]) -> Option<&'e Expr> {
     match &func.kind {
         ExprKind::Attribute(obj, _) if !star_call(args, kws) => Some(obj),
@@ -3267,6 +3361,7 @@ fn method_object<'e>(func: &'e Expr, args: &[Expr], kws: &[Keyword]) -> Option<&
 
 /// The operand a chain step evaluates first: `a` of `a + b`, `a.x` and
 /// `a[i]`, a call's callee or a method call's object.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn chain_operand(e: &Expr) -> Option<&Expr> {
     match &e.kind {
         ExprKind::BinOp(a, _, _) | ExprKind::Attribute(a, _) | ExprKind::Subscript(a, _) => Some(a),
@@ -3275,6 +3370,7 @@ fn chain_operand(e: &Expr) -> Option<&Expr> {
     }
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn has_walrus(e: &Expr) -> bool {
     let mut stack: Vec<&Expr> = vec![e];
     while let Some(x) = stack.pop() {
@@ -3348,6 +3444,7 @@ fn has_walrus(e: &Expr) -> bool {
 
 /// `range(...)` with one to three plain positional arguments, as the iterable
 /// of a `for` statement: its callee and arguments.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn range_call(e: &Expr) -> Option<(&Expr, &[Expr])> {
     match &e.kind {
         ExprKind::Call(f, args, kws)

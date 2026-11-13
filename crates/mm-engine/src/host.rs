@@ -47,6 +47,7 @@ pub struct HostArgs {
 
 impl Default for HostArgs {
     /// Strict, 16 MiB, [`MAX_HOST_DEPTH`].
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn default() -> Self {
         HostArgs {
             max_bytes: 16 << 20,
@@ -137,6 +138,7 @@ pub enum HostValue {
 impl HostValue {
     /// Owned buffers after cloning, whose capacities equal their lengths.
     /// Check depth before the derived Clone can recurse on the Rust stack.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn clone_bytes(&self, depth: u32, max_depth: &mut u32) -> Option<u64> {
         if matches!(
             self,
@@ -251,6 +253,7 @@ const KINDS: [(HostErrorKind, T); 18] = [
 impl HostErrorKind {
     /// The kind for a Python class name (`"ValueError"`), if listed.
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn from_name(name: &str) -> Option<HostErrorKind> {
         KINDS
             .iter()
@@ -260,10 +263,12 @@ impl HostErrorKind {
 
     /// The Python class name.
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn name(self) -> &'static str {
         Self::class(self).name()
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn class(self) -> T {
         KINDS
             .iter()
@@ -295,6 +300,7 @@ pub struct HostError {
 impl HostError {
     /// `kind(message)`, with no payload or host class.
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn new(kind: HostErrorKind, message: impl Into<String>) -> HostError {
         HostError {
             kind,
@@ -329,6 +335,7 @@ impl CallStatus {
         CallStatus::Abandoned,
     ];
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn code(self) -> u8 {
         match self {
             CallStatus::Pending => 0,
@@ -338,6 +345,7 @@ impl CallStatus {
         }
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn from_code(c: u8) -> Option<CallStatus> {
         Self::ALL.get(c as usize).copied()
     }
@@ -394,6 +402,7 @@ impl HostProgram {
     /// A hash of module `name`'s definition (`spec`, `recipe`) as a
     /// snapshot stores it.
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn definition_hash(name: &str, spec: &HostValue, recipe: &[String]) -> u64 {
         let mut bytes = Vec::new();
         crate::snapshot::put_host(&mut bytes, spec);
@@ -401,6 +410,7 @@ impl HostProgram {
     }
     /// The bytes it keeps alive.
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn bytes(&self) -> u64 {
         self.program
             .codes
@@ -413,6 +423,7 @@ impl HostProgram {
 
 /// [`HostProgram::definition_hash`] of a spec already encoded (`spec`, as
 /// a snapshot stores it).
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn definition_hash_of(name: &str, spec: &[u8], recipe: &[String]) -> u64 {
     // XXH64's four lanes hash a long spec several times faster than
     // `hash_bytes`' one chain.
@@ -452,6 +463,7 @@ impl Vm {
     /// # Errors
     ///
     /// A pending `MemoryError` if the id table cannot grow.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn host_id(&mut self, call_name: &str) -> Result<u32, Raised> {
         if let Some(id) = self.find_host_id(call_name) {
             return Ok(id);
@@ -475,6 +487,7 @@ impl Vm {
 
     /// The id host function `call_name` has, if it has one.
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn find_host_id(&self, call_name: &str) -> Option<u32> {
         let i = self.host_ids.iter().position(|n| **n == *call_name)?;
         u32::try_from(i).ok()
@@ -482,6 +495,7 @@ impl Vm {
 
     /// The call name of host function id `id`.
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn host_id_name(&self, id: u32) -> Option<&str> {
         self.host_ids.get(id as usize).map(String::as_str)
     }
@@ -492,6 +506,7 @@ impl Vm {
     /// under `name.attr`) and constants, replacing any earlier definition
     /// whole. `spec` is kept for the embedder. Survives `reset`; an
     /// imported copy is rebuilt.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn define_host_module(
         &mut self,
         name: &str,
@@ -616,6 +631,7 @@ impl Vm {
     /// The host function `call_name` reports, as `name`: what the embedder
     /// defined under `call_name` with a signature or as a class
     /// ([`Vm::run_host_defs`]), else a plain host function.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn new_hostfn(&mut self, name: &str, call_name: &str) -> Result<Value, Raised> {
         match self.host_def(call_name) {
             Some(v) => Ok(v),
@@ -625,12 +641,14 @@ impl Vm {
 
     /// The value defined for `key` in the prelude's `_host_defs`.
     #[inline(never)]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn host_def(&self, key: &str) -> Option<Value> {
         let defs = self.dict_get_str(self.prelude_globals, self.find_interned("_host_defs")?)?;
         self.dict_get_str(defs, self.find_interned(key)?)
     }
 
     /// A host function that is not looked up in `_host_defs`.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn raw_hostfn(&mut self, name: &str, call_name: &str) -> Result<Value, Raised> {
         let id = self.host_id(call_name)?;
         let n = self.intern(name)?;
@@ -647,6 +665,7 @@ impl Vm {
     /// The host call for `callee(args...)`: converts the arguments or raises.
     /// After a lenient conversion stops, the remaining arguments are `None`
     /// placeholders, so the host still sees how many there were.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn host_call(
         &mut self,
         callee: Value,
@@ -697,6 +716,7 @@ impl Vm {
         })
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn host_arg(
         &mut self,
         v: Value,
@@ -710,6 +730,7 @@ impl Vm {
     }
 
     /// Sets how host-call arguments and completion values convert.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn set_host_args(&mut self, args: HostArgs) {
         self.host_args = HostArgs {
             max_depth: args.max_depth.min(MAX_HOST_DEPTH_CEILING),
@@ -721,6 +742,7 @@ impl Vm {
     /// `RecursionError` or `ValueError` (the byte budget); a lenient one
     /// puts an [`Unconverted`] in place, and containers stop at the first
     /// one that is not [`Unconverted::Opaque`].
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn host_value(
         &mut self,
         v: Value,
@@ -760,6 +782,7 @@ impl Vm {
 
     /// Starts converting `x` at nesting `depth`: its value, or the
     /// container to fill.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn host_open(
         &mut self,
         x: Value,
@@ -836,6 +859,7 @@ impl Vm {
 
     /// The next item of `o` to convert, or `None` once `o` is complete
     /// (all items, or a stop marker in a lenient conversion).
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn host_next(
         &mut self,
         o: &mut Open,
@@ -888,6 +912,7 @@ impl Vm {
 
     #[cold]
     #[inline(never)]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn host_too_deep(&mut self, conv: &mut Conversion) -> Result<HostValue, Raised> {
         conv.stop(Unconverted::TooDeep, || {
             self.err(
@@ -899,6 +924,7 @@ impl Vm {
 
     /// [`Vm::host_value`] of a value that is not a container, or `None`.
     #[inline(never)]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn host_leaf(
         &mut self,
         v: Value,
@@ -943,6 +969,7 @@ impl Vm {
 
     /// A value with no host form: `TypeError`, or (lenient) its capped repr.
     #[inline(never)]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn host_opaque(
         &mut self,
         v: Value,
@@ -970,6 +997,7 @@ impl Vm {
 
     #[cold]
     #[inline(never)]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn host_key_not_str(
         &mut self,
         k: Value,
@@ -988,6 +1016,7 @@ impl Vm {
     }
 
     /// `make(self)` after charging `cost` for `v`, or the stop marker.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn charged(
         &mut self,
         v: Value,
@@ -1007,6 +1036,7 @@ impl Vm {
     /// bytes of Rust heap against the session's memory budget. Past the
     /// byte budget a strict conversion raises `ValueError`, past the
     /// memory budget `MemoryError`; a lenient one returns the stop marker.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn charge(
         &mut self,
         v: Value,
@@ -1043,6 +1073,7 @@ impl Vm {
     /// Reserves `bytes` more of Rust heap for a conversion, in steps that
     /// at least double, so a big tree reserves a logarithmic number of
     /// times; `false` past the session's memory budget.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn hold(&mut self, conv: &mut Conversion, bytes: usize) -> bool {
         let Some(held) = conv.held.checked_add(bytes) else {
             return false;
@@ -1068,6 +1099,7 @@ impl Vm {
 
     /// `v` as a host value if it converts strictly within the byte budget
     /// and the session's memory (the completion value of a cell).
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn value_to_host(&mut self, v: Value) -> Option<HostValue> {
         let saved = self.exc;
         let mut conv = Conversion::new(HostArgs {
@@ -1080,10 +1112,12 @@ impl Vm {
     }
 
     /// A Python value for `h`, or a pending exception.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn py_value(&mut self, h: &HostValue) -> Result<Value, Raised> {
         self.py_value_depth(h, 0)
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn py_value_depth(&mut self, h: &HostValue, depth: u32) -> Result<Value, Raised> {
         if depth > MAX_HOST_DEPTH {
             return Err(self.err(
@@ -1168,6 +1202,7 @@ impl Vm {
     /// A named tuple's class, backing tuple and `_fields`, checked without
     /// copying: an instance of a `tuple` subclass whose `_fields` is a tuple
     /// of `str`, one per item.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn record_parts(&self, v: Value) -> Option<(Value, Value, Value)> {
         let c = self.user_class(v)?;
         let back = self.backing(v).filter(|b| b.is_obj_kind(ty::TUPLE as u8))?;
@@ -1191,6 +1226,7 @@ impl Vm {
     /// checked. Last, the registered name of a host class
     /// (`__host_class__`).
     #[allow(clippy::type_complexity, reason = "one private caller")]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn record_copy(
         &self,
         c: Value,
@@ -1213,6 +1249,7 @@ impl Vm {
 
     /// The host class `name` (`HostModule::classes` in the facade), if `fields`
     /// are its fields in order.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn host_class(&mut self, name: &str, fields: &[(String, HostValue)]) -> Result<Value, Raised> {
         let declared = self
             .host_def(name)
@@ -1240,6 +1277,7 @@ impl Vm {
 
     /// The named tuple class for a host `Record` called `name` with these
     /// fields: a `_HostRecord` subclass, one per name and field list.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn record_class(
         &mut self,
         name: &str,
@@ -1305,6 +1343,7 @@ impl Vm {
     /// # Errors
     ///
     /// A pending exception: the code's or a `MemoryError`.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn run_host_defs(
         &mut self,
         module: &str,
@@ -1374,6 +1413,7 @@ impl Vm {
     /// Every host module: its name, constants and the embedder's spec.
     #[must_use]
     #[allow(clippy::type_complexity, reason = "plain parts for the facade")]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn host_module_specs(&self) -> Vec<(String, Vec<(String, HostValue)>, HostValue)> {
         self.host_modules
             .iter()
@@ -1383,6 +1423,7 @@ impl Vm {
 
     /// The exception host call `call`'s error raises (pending on failure);
     /// records the call as raised.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn host_exception(&mut self, e: &HostError, call: u64) -> Result<Value, Raised> {
         let function = self.settle_call(call, CallStatus::Raised);
         let m = self.new_str(&e.message)?;
@@ -1425,6 +1466,7 @@ impl Vm {
 
     /// Call name `call` without its host module (`fs.Entry.read` →
     /// `Entry.read`): the function's `__qualname__`.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn host_bare_name(&self, call: &str) -> String {
         let module = self
             .host_modules
@@ -1443,6 +1485,7 @@ impl Vm {
 
     /// The host exception class registered as `name`, if there is one.
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn host_exception_class(&self, name: &str) -> Option<Value> {
         self.host_def(name)
             .filter(|&c| Vm::is_class(c) && self.class_base_t(c).is_exception())
@@ -1451,6 +1494,7 @@ impl Vm {
     // ------------------------------------------------------ call log
 
     /// Records host call `id` of function `function` as pending.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn log_call(&mut self, id: u64, function: u32) -> Result<(), Raised> {
         if self.call_log.len() == self.call_log.capacity() {
             let extra = self.call_log.len().max(4);
@@ -1464,6 +1508,7 @@ impl Vm {
     }
 
     /// Records how host call `id` was answered; returns its function id.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn settle_call(&mut self, id: u64, status: CallStatus) -> Option<u32> {
         // Ids increase, so the log is sorted.
         let i = self.call_log.binary_search_by_key(&id, |e| e.0).ok()?;
@@ -1478,17 +1523,20 @@ impl Vm {
     /// `(call id, function id, status)`. Started anew by
     /// [`Vm::clear_call_log`].
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn call_log(&self) -> Vec<(u64, u32, CallStatus)> {
         self.call_log.clone()
     }
 
     /// Forgets the logged host calls (before a new cell starts).
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn clear_call_log(&mut self) {
         self.call_log = Vec::new();
         let _ = self.reserve_execution(0);
     }
 
     /// Marks every unanswered host call abandoned (the cell ended).
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn abandon_calls(&mut self) {
         for e in &mut self.call_log {
             if e.2 == CallStatus::Pending {
@@ -1535,6 +1583,7 @@ enum Opened {
 
 impl Open {
     /// Takes the converted value of the item [`Vm::host_next`] gave.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn accept(&mut self, h: HostValue) {
         match self {
             Open::Seq { out, .. } => out.push(h),
@@ -1545,6 +1594,7 @@ impl Open {
     }
 
     /// Bytes charged for the copies and stack place, released when done.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn copies(&self) -> usize {
         match self {
             Open::Seq { copies, .. } | Open::Dict { copies, .. } | Open::Record { copies, .. } => {
@@ -1553,6 +1603,7 @@ impl Open {
         }
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn finish(self) -> HostValue {
         match self {
             Open::Seq {
@@ -1582,6 +1633,7 @@ struct Conversion {
 }
 
 impl Conversion {
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn new(args: HostArgs) -> Self {
         Conversion {
             args,
@@ -1593,12 +1645,14 @@ impl Conversion {
     }
 
     /// Room left, in bytes, plus one (to tell "full" from "over").
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn room(&self) -> usize {
         self.budget.saturating_add(1)
     }
 
     /// Stops for `reason`: a lenient conversion returns the marker, a
     /// strict one raises `raise()`.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn stop(
         &mut self,
         reason: Unconverted,
@@ -1613,6 +1667,7 @@ impl Conversion {
 }
 
 /// The length of `i` in decimal.
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 fn decimal_len(i: i64) -> usize {
     let mut n = usize::from(i < 0) + 1;
     let mut x = i.unsigned_abs();
@@ -1626,6 +1681,7 @@ fn decimal_len(i: i64) -> usize {
 impl Vm {
     /// The host module and attribute of call name `call` (the module whose
     /// name is its longest prefix, else the builtins `""`).
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn host_owner(&self, call: &str) -> Option<(Arc<HostModule>, String)> {
         let m = self
             .host_modules
@@ -1649,6 +1705,7 @@ impl Vm {
     /// attribute `attr` (`""`: the module itself) of host module `m`. The
     /// entries are the last item of the definition's `spec`: a dict from
     /// attribute to `[stub, doc]`.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn help_part(m: &HostModule, attr: &str, i: usize) -> Option<String> {
         let HostValue::List(spec) = &m.spec else {
             return None;
@@ -1666,6 +1723,7 @@ impl Vm {
     }
 
     /// `__doc__` (`i == 1`) or the stub (`i == 0`) of host function `f`.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn hostfn_help(&self, f: Value, i: usize) -> Option<String> {
         let call = self.str_ref(self.vslot(f, hostfn_slot::CALL_NAME));
         let (m, attr) = self.host_owner(call)?;
@@ -1673,6 +1731,7 @@ impl Vm {
     }
 
     /// `__module__` of host function `f`: its host module, or `builtins`.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn hostfn_module(&self, f: Value) -> String {
         let call = self.str_ref(self.vslot(f, hostfn_slot::CALL_NAME));
         match self.host_owner(call) {
@@ -1684,6 +1743,7 @@ impl Vm {
 
 /// `_mm.host_help(obj)`: the stub of a host function, class, exception or
 /// module, or `None` for anything else (`help()` prints it).
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn mm_host_help(vm: &mut Vm, a: crate::vm::CallArgs) -> Result<Value, Raised> {
     let obj = vm.arg(&a, 0);
     let text = if obj.is_obj_kind(ty::HOSTFN as u8) {
@@ -1720,6 +1780,7 @@ pub(crate) fn mm_host_help(vm: &mut Vm, a: crate::vm::CallArgs) -> Result<Value,
 /// Why `namedtuple(name, fields)` would refuse these names (CPython's
 /// messages, without `rename`): each an identifier and not a keyword, a
 /// field not starting with `_` and not repeated.
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 fn record_names_error(name: &str, fields: &[&str]) -> Option<String> {
     let keyword = |s: &str| {
         matches!(

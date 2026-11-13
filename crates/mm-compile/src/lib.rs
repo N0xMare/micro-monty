@@ -15,6 +15,7 @@
 //! See `docs/spec.md` §4 and §8.1.
 
 #![no_std]
+#![cfg_attr(mm_shipped, feature(optimize_attribute))]
 #![allow(clippy::doc_markdown, reason = "the docs name CPython in prose")]
 #![allow(
     clippy::missing_errors_doc,

@@ -53,6 +53,7 @@ pub struct Expr {
 impl Expr {
     /// An expression without anchors.
     #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn new(kind: ExprKind, pos: Pos) -> Expr {
         Expr {
             kind,
@@ -69,6 +70,7 @@ impl Expr {
     /// `x.f(1).g[0]`) nests as deeply as it is long, so every walk follows
     /// it in a loop and counts it as one level of nesting.
     #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn chain_left(&self) -> Option<&Expr> {
         match &self.kind {
             ExprKind::BinOp(a, _, _)
@@ -83,6 +85,7 @@ impl Expr {
 /// Chains (`a + b + ...`, `x.f().g()...`, `a if c else b if ...`) and
 /// unary prefixes are dropped in a loop, not by recursion.
 impl Drop for Expr {
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn drop(&mut self) {
         let mut next = self.kind.take_chain();
         while let Some(mut e) = next {
@@ -94,6 +97,7 @@ impl Drop for Expr {
 impl ExprKind {
     /// Empties a chain node, dropping its other parts, and returns the
     /// operand that continues the chain.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn take_chain(&mut self) -> Option<Box<Expr>> {
         if !matches!(
             self,
@@ -194,6 +198,7 @@ impl BinOp {
 
     /// The operator's source text.
     #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn symbol(self) -> &'static str {
         match self {
             BinOp::Add => "+",
@@ -433,6 +438,7 @@ pub struct Stmt {
 
 /// An `elif` chain is dropped in a loop, not by recursion.
 impl Drop for Stmt {
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn drop(&mut self) {
         if let StmtKind::If(_, _, orelse) = &mut self.kind
             && let [

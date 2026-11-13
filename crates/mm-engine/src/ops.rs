@@ -50,6 +50,7 @@ const DEAD: u64 = u64::MAX;
 pub(crate) const COLLECT_CHUNK: usize = 1 << 16;
 
 /// The Python type of an iterator of kind `k`.
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn iter_type(k: u64) -> T {
     match k {
         it::LIST => T::list_iterator,
@@ -67,6 +68,7 @@ pub(crate) fn iter_type(k: u64) -> T {
 }
 
 /// The fractional part of `x` (`x - trunc(x)`); NaN for non-finite `x`.
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn fract(x: f64) -> f64 {
     if !x.is_finite() {
         return f64::NAN;
@@ -84,6 +86,7 @@ pub(crate) fn fract(x: f64) -> f64 {
 }
 
 /// `floor(x)` for finite `x`.
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn floor(x: f64) -> f64 {
     if !x.is_finite() || x.abs() >= 4_503_599_627_370_496.0 {
         return x;
@@ -100,6 +103,7 @@ pub(crate) fn floor(x: f64) -> f64 {
 /// Correctly rounded square root (bit-by-bit on the mantissa).
 // Out of line: LLVM inlines it into each of its callers otherwise.
 #[inline(never)]
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn sqrt(x: f64) -> f64 {
     if x.is_nan() || x < 0.0 {
         return f64::NAN;
@@ -138,6 +142,7 @@ pub(crate) fn sqrt(x: f64) -> f64 {
 }
 
 /// Floor square root of `n` and the remainder.
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 fn isqrt(n: u128) -> (u128, u128) {
     let mut op = n;
     let mut res = 0u128;
@@ -160,6 +165,7 @@ fn isqrt(n: u128) -> (u128, u128) {
 /// Sorts `v` so that no element is `less` than the one before it
 /// (heapsort: `O(n log n)`, and far smaller than the standard library's
 /// sorts, which matters for the size budget). Not stable.
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn heap_sort_by<X>(v: &mut [X], less: impl Fn(&X, &X) -> bool) {
     let sift = |v: &mut [X], mut root: usize, end: usize| loop {
         let mut child = 2 * root + 1;
@@ -187,6 +193,7 @@ pub(crate) fn heap_sort_by<X>(v: &mut [X], less: impl Fn(&X, &X) -> bool) {
 
 /// `x ** y` for floats: exact squaring for integral exponents, `sqrt` for
 /// halves, and `exp(y ln x)` otherwise.
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn powf(x: f64, y: f64) -> f64 {
     if y == 0.5 && x >= 0.0 && x.is_finite() {
         // `+ 0.0`: C's `pow(-0.0, 0.5)` is `+0.0`, `sqrt(-0.0)` is not.
@@ -197,6 +204,7 @@ pub(crate) fn powf(x: f64, y: f64) -> f64 {
 
 /// C99 `pow` for a zero or non-finite operand (both not NaN, `y != 0`,
 /// `x != 1`).
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn powf_special(x: f64, y: f64) -> f64 {
     let yint = crate::libm::rint(y) == y;
     let odd = yint && y.abs() < 9.007_199_254_740_992e15 && float_divmod(y, 2.0).1 != 0.0;
@@ -230,6 +238,7 @@ impl Vm {
 
     /// `bool(v)`.
     #[inline]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn truthy(&self, v: Value) -> bool {
         if v == Value::TRUE {
             return true;
@@ -243,6 +252,7 @@ impl Vm {
         self.truthy_slow(v)
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn truthy_slow(&self, v: Value) -> bool {
         if let Some(f) = v.as_float() {
             return f != 0.0;
@@ -268,6 +278,7 @@ impl Vm {
     /// its dict, read a key at a time as an iterator is (no presize), an
     /// items view its dict read as `(key, value)` pairs, a set subclass's
     /// instance its set.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn view_src(&mut self, v: Value) -> Result<(Value, u64), Raised> {
         match self.type_of(v) {
             T::dict_keys => Ok((self.vslot(v, 0), crate::set::act::VIEW)),
@@ -280,6 +291,7 @@ impl Vm {
     }
 
     /// Whether dict view `v` was made through a dict subclass's instance.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn view_sub(&self, v: Value) -> bool {
         v.is_obj_kind(ty::VIEW as u8)
             && v.as_obj()
@@ -288,6 +300,7 @@ impl Vm {
 
     /// The items a set operation reads from `v`: a set's, a dict's or a
     /// view's, a list's or a tuple's; 0 for anything else.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn setop_len(&self, v: Value) -> usize {
         match self.type_of(v) {
             T::set | T::frozenset => self.set_len(v),
@@ -301,6 +314,7 @@ impl Vm {
 
     /// `len(v)`. A `u64`: a range can be longer than a wasm32 `usize`
     /// (`sys.maxsize` is 64-bit on every target).
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn len_of(&mut self, v: Value) -> Result<u64, Raised> {
         let n = match self.type_of(v) {
             T::str => self.str_len(v),
@@ -340,6 +354,7 @@ impl Vm {
     /// slice per step, its value then a request (for the dispatch loop and
     /// `binop_top`, `strmeth::FILL_BYTES`; `usize::MAX` for all at once).
     #[inline(never)]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn str_concat(&mut self, a: Value, b: Value, long: usize) -> Result<Value, Raised> {
         let (Some(ra), Some(rb)) = (a.as_obj(), b.as_obj()) else {
             return Ok(a);
@@ -357,6 +372,7 @@ impl Vm {
 
     /// `a <op> b`, or the in-place form (lists extend in place), all at
     /// once: for callers that cannot hand the rest to steps.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn binop(
         &mut self,
         op: BinOp,
@@ -369,6 +385,7 @@ impl Vm {
 
     /// `a <op> b` as an operator instruction runs it: long container work
     /// goes on in steps, its value a request (docs/spec.md §5).
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn binop_top(
         &mut self,
         op: BinOp,
@@ -612,6 +629,7 @@ impl Vm {
     /// `a <op> b` (`&`, `|`, `-`, `^`) with a set-like dict view: a plain
     /// set, as CPython's `dictviews_*` make it. `exact`: a `set` operand is
     /// one (`PySet_CheckExact`), not a subclass's value.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn view_setop(
         &mut self,
         op: BinOp,
@@ -708,6 +726,7 @@ impl Vm {
     /// of builtin-type subclasses extend (`+=` on a list subclass keeps
     /// the instance).
     #[cold]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn binop_bx(
         &mut self,
         op: BinOp,
@@ -814,6 +833,7 @@ impl Vm {
         })
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn repeat(&mut self, seq: Value, k: i64, inplace: bool, top: bool) -> Result<Value, Raised> {
         let t = self.type_of(seq);
         // CPython's `unicode_repeat` and `bytes_repeat`: a result longer
@@ -902,6 +922,7 @@ impl Vm {
     }
 
     /// Integer arithmetic (bools included).
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn int_op(&mut self, op: BinOp, x: i64, y: i64) -> Result<Value, Raised> {
         let (x128, y128) = (i128::from(x), i128::from(y));
         match op {
@@ -999,6 +1020,7 @@ impl Vm {
         }
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn float_op(&mut self, op: BinOp, x: f64, y: f64, a: Value, b: Value) -> Result<Value, Raised> {
         let r = match op {
             BinOp::Add => x + y,
@@ -1050,6 +1072,7 @@ impl Vm {
     }
 
     /// Unary `-`, `+`, `~`.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn unary(&mut self, op: u8, v: Value) -> Result<Value, Raised> {
         use mm_compile::bytecode::op as o;
         if let Some(i) = self.int_of(v) {
@@ -1124,6 +1147,7 @@ impl Vm {
     }
 
     /// The exception for an undecided order.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn order_error(&mut self, e: OrdErr, sym: &str) -> Raised {
         match e {
             OrdErr::Py => self.need_py(),
@@ -1143,6 +1167,7 @@ impl Vm {
     }
 
     /// A comparison opcode applied to `a`, `b`.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn compare(&mut self, opcode: u8, a: Value, b: Value) -> Result<Value, Raised> {
         use mm_compile::bytecode::op as o;
         let r = match opcode {
@@ -1217,6 +1242,7 @@ impl Vm {
     /// The builtin value `v` extends, if that type has its own
     /// `__contains__` and `__iter__` (which a subclass that overrides only
     /// `__getitem__` keeps).
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn container_backing(&self, v: Value) -> Option<Value> {
         self.backing(v).filter(|&b| {
             matches!(
@@ -1227,6 +1253,7 @@ impl Vm {
     }
 
     /// `item in container`.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn contains(&mut self, container: Value, item: Value) -> Result<bool, Raised> {
         match self.type_of(container) {
             T::str => {
@@ -1384,6 +1411,7 @@ impl Vm {
     /// units it stops: `Ok(None)` with `i` where to go on. An item whose
     /// `==` needs Python code hands the rest to `_seq_has` (the value is
     /// then `UNDEFINED` with that request).
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn seq_in_scan(
         &mut self,
         s: Value,
@@ -1443,6 +1471,7 @@ impl Vm {
     /// a time ([`Vm::dv_in_scan`]), then more in `_steps`; out of line, as
     /// the `in` operator is on the dispatch loop's path.
     #[inline(never)]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn dv_in(&mut self, v: Value, x: Value, neg: bool) -> Result<Value, Raised> {
         let mut i = 0;
         if let Some(r) = self.dv_in_scan(v, x, &mut i, neg)? {
@@ -1461,6 +1490,7 @@ impl Vm {
     /// item whose `==` needs Python code hands the whole test to
     /// `_op_contains`: the entries before it compared without Python
     /// code, so comparing them again shows nothing.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn dv_in_scan(
         &mut self,
         v: Value,
@@ -1532,6 +1562,7 @@ impl Vm {
     /// (`nstep::op::SEQ_BUILD`), so this is for callers that can hand
     /// their value to a request.
     #[allow(clippy::too_many_arguments, reason = "the build's parts")]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn seq_build(
         &mut self,
         target: Value,
@@ -1675,6 +1706,7 @@ impl Vm {
     /// computed a slice per step, as a copy of a list goes: one buffer and
     /// no list of the items first (`None` for a short range, or one whose
     /// items are not all small ints, which `collect` gathers).
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn range_seq(&mut self, r: Value, tuple: bool) -> Result<Option<Value>, Raised> {
         if !r.is_obj_kind(ty::RANGE as u8) {
             return Ok(None);
@@ -1698,6 +1730,7 @@ impl Vm {
 
     /// `seq` (a list or tuple, `kind`) repeated `k` times, or the items
     /// of `segs`, `total` long, as a new list or tuple, in steps.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn seq_new(
         &mut self,
         tuple: bool,
@@ -1800,6 +1833,7 @@ impl Vm {
 
     /// Appends up to `COLLECT_CHUNK` items of iterator `it` to list `l` as
     /// `it` yields them, one fuel unit each: true if `it` may have more.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn list_more(&mut self, l: Value, it: Value) -> Result<bool, Raised> {
         let mut n = 0;
         let more = loop {
@@ -1828,6 +1862,7 @@ impl Vm {
     /// item that needs Python code, the prelude twin goes on with the
     /// iterator. Any other iterable's items, which cannot see the list,
     /// at once.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn list_extend_from(&mut self, l: Value, src: Value) -> Result<(), Raised> {
         if Self::one_shot(src) {
             // A list or tuple iterator's items left are its length hint:
@@ -1860,6 +1895,7 @@ impl Vm {
     /// `LIST_EXTEND`'s items of `src`, or none when a long list or tuple
     /// extends list `l` a slice per step ([`Vm::list_extend_long`]).
     #[inline(never)]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn extend_items(&mut self, l: Value, src: Value) -> Result<NativeValues, Raised> {
         match self.list_extend_long(l, src) {
             Some(r) => r.map(|_| NativeValues::default()),
@@ -1869,6 +1905,7 @@ impl Vm {
 
     /// `LIST_TO_TUPLE`: a long list's items into the tuple in steps.
     #[inline(never)]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn list_to_tuple(&mut self, l: Value) -> Result<Value, Raised> {
         let n = self.list_len(l);
         if n >= SEQ_LONG {
@@ -1880,6 +1917,7 @@ impl Vm {
 
     /// List `l` gets a new buffer of the items of `segs`, `total` long, in
     /// steps; the value is `out`.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn list_rebuild(
         &mut self,
         l: Value,
@@ -1895,6 +1933,7 @@ impl Vm {
 
     /// `count` (`kind` 0), `index` (1) or `remove` (2) of `x` in list or
     /// tuple `s`, items `i..stop`, in steps.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn seq_scan(
         &mut self,
         s: Value,
@@ -2094,6 +2133,7 @@ impl Vm {
     /// Deletes item `k` of list `l`; the value is `out`. The tail moves
     /// down a slot in place, as CPython's `memmove` (a unit per 8 items):
     /// 8M items at the object cap take about 10 ms [M].
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn list_del_at(&mut self, l: Value, k: usize, out: Value) -> Result<Value, Raised> {
         let Some((buf, n)) = self.list_parts(l) else {
             return Ok(out);

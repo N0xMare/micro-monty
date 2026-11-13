@@ -108,6 +108,7 @@ pub struct Scope {
 /// `private` (its name without leading underscores) is `_private__x`;
 /// dunder names, dotted names and names outside a class are kept.
 #[must_use]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub fn mangle<'a>(private: &str, name: &'a str) -> Cow<'a, str> {
     if private.is_empty() || !name.starts_with("__") || name.ends_with("__") || name.contains('.') {
         return Cow::Borrowed(name);
@@ -116,6 +117,7 @@ pub fn mangle<'a>(private: &str, name: &'a str) -> Cow<'a, str> {
 }
 
 impl Scope {
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn new(kind: ScopeKind, name: String, parent: Option<ScopeId>) -> Scope {
         Scope {
             kind,
@@ -136,6 +138,7 @@ impl Scope {
         }
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn slot(&mut self, name: &str) -> usize {
         let name = &*mangle(&self.private, name);
         if let Some(&i) = self.index.get(name) {
@@ -151,23 +154,27 @@ impl Scope {
 
     /// The binding of `name`, if the scope mentions it.
     #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn binding(&self, name: &str) -> Option<Binding> {
         self.position(name).map(|i| self.bindings[i])
     }
 
     /// Index of `name` in `names`.
     #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn position(&self, name: &str) -> Option<usize> {
         self.index.get(&*mangle(&self.private, name)).copied()
     }
 
     /// Is `name` deleted anywhere in this scope?
     #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn is_deleted(&self, name: &str) -> bool {
         self.position(name)
             .is_some_and(|i| self.flags.get(i).is_some_and(|f| f.deleted))
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn binds_locally(&self, name: &str) -> bool {
         matches!(self.binding(name), Some(Binding::Local | Binding::Cell))
     }
@@ -183,18 +190,21 @@ pub struct SymTable {
 
 /// Key of the scope created by a `def`/`lambda`.
 #[must_use]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub fn func_key(f: &FuncDef) -> usize {
     core::ptr::from_ref(f) as usize
 }
 
 /// Key of the scope created by a `class` statement.
 #[must_use]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub fn class_key(c: &ClassDef) -> usize {
     core::ptr::from_ref(c) as usize
 }
 
 /// Key of the scope created by a comprehension or generator expression.
 #[must_use]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub fn expr_key(e: &Expr) -> usize {
     core::ptr::from_ref(e) as usize
 }
@@ -202,18 +212,21 @@ pub fn expr_key(e: &Expr) -> usize {
 impl SymTable {
     /// The scope created by the node with this key.
     #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn scope_of(&self, key: usize) -> Option<ScopeId> {
         self.by_node.get(&key).copied()
     }
 
     /// The first scope named `name` (for tests and tools).
     #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn find(&self, name: &str) -> Option<&Scope> {
         self.scopes.iter().find(|s| s.name == name)
     }
 }
 
 /// Builds and analyses the symbol table of `module`.
+#[cfg_attr(mm_shipped, optimize(size))]
 pub fn build(module: &Module) -> Result<SymTable, CompileError> {
     let mut b = Builder {
         scopes: alloc::vec![Scope::new(ScopeKind::Module, "<module>".to_string(), None)],
@@ -237,15 +250,18 @@ struct Builder {
     cur: ScopeId,
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn err(msg: String, pos: Pos) -> CompileError {
     CompileError::syntax(msg, pos)
 }
 
 impl Builder {
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn scope(&mut self) -> &mut Scope {
         &mut self.scopes[self.cur]
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn def_name(&mut self, name: &str, pos: Pos) -> Result<(), CompileError> {
         let s = self.scope();
         let i = s.slot(name);
@@ -257,6 +273,7 @@ impl Builder {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn def_import(&mut self, name: &str, pos: Pos) -> Result<(), CompileError> {
         let s = self.scope();
         let i = s.slot(name);
@@ -268,6 +285,7 @@ impl Builder {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn use_name(&mut self, name: &str) {
         let s = self.scope();
         let i = s.slot(name);
@@ -275,6 +293,7 @@ impl Builder {
     }
 
     /// A walrus target binds in the nearest enclosing non-comprehension scope.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn walrus_target(&mut self, name: &str, pos: Pos) -> Result<(), CompileError> {
         let mut id = self.cur;
         while self.scopes[id].kind == ScopeKind::Comprehension {
@@ -302,6 +321,7 @@ impl Builder {
         r
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn push(&mut self, kind: ScopeKind, name: &str, key: usize) -> ScopeId {
         let id = self.scopes.len();
         let mut s = Scope::new(kind, name.to_string(), Some(self.cur));
@@ -319,6 +339,7 @@ impl Builder {
         id
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn body(&mut self, b: &[Stmt]) -> Result<(), CompileError> {
         for s in b {
             self.stmt(s)?;
@@ -326,6 +347,7 @@ impl Builder {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn stmt(&mut self, s: &Stmt) -> Result<(), CompileError> {
         match &s.kind {
             StmtKind::Expr(e) => self.expr(e)?,
@@ -529,6 +551,7 @@ impl Builder {
     }
 
     /// The names a pattern binds and the expressions it evaluates.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn pattern(&mut self, p: &Pattern) -> Result<(), CompileError> {
         match &p.kind {
             PatternKind::Value(e) => self.expr(e)?,
@@ -582,6 +605,7 @@ impl Builder {
     /// Records an `await` or `async for` in the current scope: the
     /// generator expression it runs in (through inlined comprehensions)
     /// becomes an async generator.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn async_here(&mut self) {
         let mut id = self.cur;
         while self.scopes[id].kind == ScopeKind::Comprehension
@@ -596,6 +620,7 @@ impl Builder {
     }
 
     /// Records a `yield` in the current scope.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn yield_here(&mut self, pos: Pos) -> Result<(), CompileError> {
         let s = &self.scopes[self.cur];
         match s.kind {
@@ -620,6 +645,7 @@ impl Builder {
         }
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn declare(&mut self, n: &str, global: bool, pos: Pos) -> Result<(), CompileError> {
         let kind = if global { "global" } else { "nonlocal" };
         let s = self.scope();
@@ -654,6 +680,7 @@ impl Builder {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn params(&mut self, p: &Params, pos: Pos) -> Result<(), CompileError> {
         let mut names: Vec<&str> = Vec::new();
         for a in p.posonly.iter().chain(&p.args) {
@@ -684,6 +711,7 @@ impl Builder {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn func(&mut self, f: &FuncDef) -> Result<(), CompileError> {
         for a in f.params.posonly.iter().chain(&f.params.args) {
             if let Some(d) = &a.default {
@@ -703,6 +731,7 @@ impl Builder {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn comp(
         &mut self,
         e: &Expr,
@@ -745,6 +774,7 @@ impl Builder {
     }
 
     /// A comprehension's iterable, where a walrus is a SyntaxError.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn comp_iter(&mut self, e: &Expr) -> Result<(), CompileError> {
         self.scope().comp_iter += 1;
         let r = self.expr(e);
@@ -752,6 +782,7 @@ impl Builder {
         r
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn target(&mut self, t: &Expr) -> Result<(), CompileError> {
         match &t.kind {
             ExprKind::Name(n) => self.def_name(n, t.pos),
@@ -771,6 +802,7 @@ impl Builder {
         }
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn del_target(&mut self, t: &Expr) -> Result<(), CompileError> {
         match &t.kind {
             ExprKind::Name(n) => {
@@ -790,6 +822,7 @@ impl Builder {
         }
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn fparts(&mut self, parts: &[FPart]) -> Result<(), CompileError> {
         for p in parts {
             if let FPart::Field { expr, spec, .. } = p {
@@ -802,6 +835,7 @@ impl Builder {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn expr(&mut self, e: &Expr) -> Result<(), CompileError> {
         // A left-nested chain (`a + b + c`, `x.f(1).g`): its innermost
         // operand, then each step's other operands, in a loop.
@@ -926,6 +960,7 @@ impl Builder {
 
 impl Builder {
     /// The operands of chain step `e` after its first ([`Expr::chain_left`]).
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn chain_rest(&mut self, e: &Expr) -> Result<(), CompileError> {
         match &e.kind {
             ExprKind::BinOp(_, _, b) | ExprKind::Subscript(_, b) => self.expr(b),
@@ -954,6 +989,7 @@ struct Need {
 /// Resolves every name of scope `id`. `visible` lists the names bound by
 /// enclosing function scopes (innermost last). Returns the names `id` needs
 /// from outside.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn analyze(t: &mut SymTable, id: ScopeId, visible: &[String]) -> Result<Vec<Need>, CompileError> {
     let kind = t.scopes[id].kind;
     let mut needs: Vec<Need> = Vec::new();

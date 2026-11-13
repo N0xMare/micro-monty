@@ -23,6 +23,7 @@ enum Reference {
 impl CodeObj {
     /// Admission upper bound: clone buffers, materialized constants/names,
     /// Arc allocation, new code/cache entries and restore verifier workspace.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn load_bytes(code: &Code) -> u64 {
         code.buffer_bytes()
             + code.verify_scratch_bytes() as u64
@@ -35,6 +36,7 @@ impl CodeObj {
 impl Vm {
     /// Exact-sized tables that never grow after construction, plus the park
     /// flag's shared allocation (including its counters and alignment).
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn fixed_bytes(modules: usize) -> u64 {
         (crate::types::NTYPES * (size_of::<Value>() + size_of::<u32>())
             + modules * (size_of::<Option<(u32, u32, u32)>>() + size_of::<Value>())
@@ -43,6 +45,7 @@ impl Vm {
 
     /// The walk of `codes` that `code_bytes` adds: `from` (`code_sums`)
     /// extended over the codes appended since.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn code_sums(&self, from: (usize, u64, u64)) -> (usize, u64, u64) {
         let (mut n, mut sum, mut verify) = from;
         if n > self.codes.len() {
@@ -60,6 +63,7 @@ impl Vm {
         (n, sum, verify)
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn code_bytes(&self) -> u64 {
         let (_, sum, verify) = self.code_sums(self.code_sums);
         (self.codes.capacity() * size_of::<Arc<CodeObj>>()
@@ -101,6 +105,7 @@ impl Vm {
     /// Checks that `parked_bytes` is in step with the task table. It walks
     /// every task, so it runs only where that is O(1) amortized: when the
     /// table doubles, when tasks are dropped, and when a snapshot is taken.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn check_parked_bytes(&self) {
         debug_assert_eq!(
             self.parked_bytes,
@@ -113,6 +118,7 @@ impl Vm {
         );
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn execution_bytes(&self) -> u64 {
         (self.stack.capacity() * size_of::<Value>() + self.specials.capacity() * size_of::<Frame>())
             as u64
@@ -133,6 +139,7 @@ impl Vm {
     // One shared copy: inlined, it would add hundreds of bytes to each of
     // the many growth paths that call it.
     #[inline(never)]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn reserve_execution(&mut self, additional: u64) -> Result<(), Raised> {
         let res = self.heap.set_external_bytes(
             self.code_charge
@@ -144,6 +151,7 @@ impl Vm {
 
     /// Reserve before loading; reconcile unused clone/table capacity afterward.
     /// Cache this cold scan so stack growth never walks every loaded code.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn reserve_code(&mut self, additional: u64) -> Result<(), Raised> {
         let bytes = self.code_bytes().saturating_add(additional);
         self.code_sums = self.code_sums(self.code_sums);
@@ -167,6 +175,7 @@ impl Vm {
     /// and, once enough has accumulated, unreachable loaded programs.
     /// Previously returned code indices may change; call this before loading
     /// the next program, never before resuming.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn prepare_cell(&mut self) {
         self.cancel();
         self.exc = Value::NONE;
@@ -192,6 +201,7 @@ impl Vm {
     }
 
     #[cold]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn reclaim_code(&mut self) {
         if !self.tasks.is_empty() || self.saved.is_some() || self.request.is_some() {
             return;
@@ -392,6 +402,7 @@ impl Vm {
     /// Visits code and shape references in one heap scan without copying
     /// addresses. The visitor may rewrite slots and metadata, not allocate
     /// or collect. Keep the visitor inline in this cold, data-proportional loop.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn visit_references(&mut self, mut visit: impl FnMut(&mut Vm, Ref, u32, Reference)) {
         self.heap.finish_sweep();
         let mut cursor = ObjectCursor::default();
@@ -415,6 +426,7 @@ impl Vm {
 
     /// Add transition ancestors to the marked instance shapes, then number
     /// survivors. Only between cells: no inline cache retains an old id.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn map_shapes(&mut self) -> bool {
         // Transitions always point to newer shapes, including after compaction.
         for i in (0..self.shapes.len()).rev() {
@@ -437,6 +449,7 @@ impl Vm {
     }
 
     /// Instances have been remapped. Compact their shape table in place.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn compact_shapes(&mut self) {
         // Rewrite transitions before retaining shapes, while old indices
         // still address the complete mapping.
@@ -464,6 +477,7 @@ impl Vm {
 /// codes uniquely. Outlined: `Arc::get_mut`'s uniqueness check is several
 /// instructions, and reclamation calls it from five places.
 #[inline(never)]
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 fn unique(code: &mut Arc<CodeObj>) -> Option<&mut CodeObj> {
     Arc::get_mut(code)
 }

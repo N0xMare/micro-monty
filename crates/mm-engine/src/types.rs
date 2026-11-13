@@ -125,11 +125,13 @@ macro_rules! types {
         impl T {
             /// The type's `__name__`.
             #[must_use]
+            #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
             pub fn name(self) -> &'static str {
                 match self { $(T::$id => $name,)* }
             }
             /// The type's `__module__`.
             #[must_use]
+            #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
             pub fn module(self) -> &'static str {
                 match self {
                     T::TextIOWrapper => "_io",
@@ -142,6 +144,7 @@ macro_rules! types {
             }
             /// The base type (`object` for roots).
             #[must_use]
+            #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
             pub fn base(self) -> T {
                 match self { $(T::$id => T::$base,)* }
             }
@@ -269,18 +272,21 @@ types! {
 impl T {
     /// The type with index `i`.
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn from_index(i: usize) -> Option<T> {
         ALL.get(i).copied()
     }
 
     /// Is this a `BaseException` subclass?
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn is_exception(self) -> bool {
         self as u8 >= T::BaseException as u8
     }
 
     /// Is `self` a subclass of `other` (or the same)?
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn is_subclass(self, other: T) -> bool {
         let mut t = self;
         loop {
@@ -296,6 +302,7 @@ impl T {
 
     /// Is the type exposed as a builtin name?
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn is_builtin_name(self) -> bool {
         matches!(
             self,

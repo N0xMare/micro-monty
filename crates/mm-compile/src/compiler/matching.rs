@@ -41,10 +41,12 @@ struct PatCtx {
     allow_irrefutable: bool,
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn syntax(msg: String, pos: Pos) -> CompileError {
     CompileError::syntax(msg, pos)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn is_wildcard(p: &Pattern) -> bool {
     matches!(
         p.kind,
@@ -53,6 +55,7 @@ fn is_wildcard(p: &Pattern) -> bool {
 }
 
 /// Every name `p` captures (unique, first-appearance order).
+#[cfg_attr(mm_shipped, optimize(size))]
 fn capture_names(p: &Pattern, out: &mut Vec<String>) {
     let mut work = alloc::vec![p];
     while let Some(p) = work.pop() {
@@ -92,6 +95,7 @@ fn capture_names(p: &Pattern, out: &mut Vec<String>) {
 }
 
 impl<'a> Compiler<'a> {
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(super) fn match_stmt(&mut self, subject: &'a Expr, cases: &'a [MatchCase]) -> R<()> {
         self.u().block_depth += 1;
         self.expr(subject)?;
@@ -140,6 +144,7 @@ impl<'a> Compiler<'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn match_op(&mut self, kind: u8, r: u8, u: u16, pos: Pos) {
         self.at_pos(pos);
         self.emit(op::MATCH);
@@ -149,12 +154,14 @@ impl<'a> Compiler<'a> {
     }
 
     /// Jumps to `fail` unless the accumulator is true.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn fail_unless(&mut self, fail: Label) {
         self.jump(op::JUMP_IF_FALSE, fail);
     }
 
     /// Fails unless `len(R[subj])` is `n` (or at least `n`).
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn len_check(&mut self, subj: u8, n: usize, at_least: bool, fail: Label, pos: Pos) -> R<()> {
         let len = self.temp()?;
         self.emit_r(op::LDAR, subj);
@@ -170,6 +177,7 @@ impl<'a> Compiler<'a> {
 
     /// Stores the accumulator in a new temporary and fails if it is `None`.
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn none_check(&mut self, fail: Label) -> R<u8> {
         let vals = self.temp()?;
         self.emit_r(op::STAR, vals);
@@ -181,6 +189,7 @@ impl<'a> Compiler<'a> {
 
     /// Unpacks the tuple in `vals` and matches each item.
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn sub_items(
         &mut self,
         vals: u8,
@@ -203,6 +212,7 @@ impl<'a> Compiler<'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn capture(&mut self, name: &str, value: u8, pos: Pos, pc: &mut PatCtx) -> R<()> {
         if pc.stores.iter().any(|n| n == name) {
             return Err(syntax(
@@ -223,6 +233,7 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn subpattern(&mut self, p: &'a Pattern, subj: u8, fail: Label, pc: &mut PatCtx) -> R<()> {
         let allow = pc.allow_irrefutable;
         pc.allow_irrefutable = true;
@@ -233,6 +244,7 @@ impl<'a> Compiler<'a> {
 
     /// Matches `p` against the value in register `subj`; jumps to `fail`
     /// when it does not match.
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn pattern(&mut self, p: &'a Pattern, subj: u8, fail: Label, pc: &mut PatCtx) -> R<()> {
         self.enter(p.pos)?;
         match &p.kind {
@@ -298,6 +310,7 @@ impl<'a> Compiler<'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn or_pattern(
         &mut self,
         p: &'a Pattern,
@@ -349,6 +362,7 @@ impl<'a> Compiler<'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn seq_pattern(
         &mut self,
         p: &'a Pattern,
@@ -435,6 +449,7 @@ impl<'a> Compiler<'a> {
 
     #[allow(clippy::too_many_arguments, reason = "the pattern's parts")]
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn map_pattern(
         &mut self,
         p: &'a Pattern,
@@ -508,6 +523,7 @@ impl<'a> Compiler<'a> {
 
     #[allow(clippy::too_many_arguments, reason = "the pattern's parts")]
     #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn class_pattern(
         &mut self,
         p: &'a Pattern,
@@ -548,6 +564,7 @@ impl<'a> Compiler<'a> {
 
 /// Is `e` a valid value-pattern or mapping-key expression: a literal
 /// (complex sums included) or a dotted name?
+#[cfg_attr(mm_shipped, optimize(size))]
 fn value_ok(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Const(_) | ExprKind::Attribute(..) => true,
@@ -568,10 +585,12 @@ enum KeyVal {
     None,
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn num(re: f64, im: f64, int: Option<i64>, big: Option<String>, repr: String) -> KeyVal {
     KeyVal::Num(re, im, int, big, repr)
 }
 
+#[cfg_attr(mm_shipped, optimize(size))]
 fn key_value(e: &Expr) -> Option<KeyVal> {
     #[allow(
         clippy::cast_precision_loss,
@@ -634,6 +653,7 @@ impl KeyVal {
         clippy::cast_possible_truncation,
         reason = "Python's =="
     )]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn same(&self, other: &KeyVal) -> bool {
         match (self, other) {
             (KeyVal::Num(r1, i1, n1, b1, _), KeyVal::Num(r2, i2, n2, b2, _)) => {
@@ -653,6 +673,7 @@ impl KeyVal {
         }
     }
 
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn repr(&self) -> String {
         match self {
             KeyVal::Num(.., r) => r.clone(),
@@ -663,6 +684,7 @@ impl KeyVal {
 }
 
 /// Python's `repr(float)`: shortest round-trip digits.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn float_repr(f: f64) -> String {
     if !f.is_finite() {
         return String::from(if f.is_nan() {
@@ -688,6 +710,7 @@ fn float_repr(f: f64) -> String {
 }
 
 /// Python's `repr(complex)`.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn complex_repr(re: f64, im: f64) -> String {
     let part = |f: f64| {
         let s = float_repr(f);
@@ -702,6 +725,7 @@ fn complex_repr(re: f64, im: f64) -> String {
 }
 
 /// `repr` of a str (`bytes` false) or bytes literal key.
+#[cfg_attr(mm_shipped, optimize(size))]
 fn text_repr(bytes: bool, b: &[u8]) -> String {
     let q = if b.contains(&b'\'') && !b.contains(&b'"') {
         '"'

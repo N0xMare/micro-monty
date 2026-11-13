@@ -183,6 +183,7 @@ impl HintGroup {
         HintGroup::OsHooks,
     ];
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn entry(
         self,
     ) -> &'static (
@@ -197,22 +198,26 @@ impl HintGroup {
 
     /// The group's key (what `_mm.hint` takes).
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn key(self) -> &'static str {
         self.entry().1
     }
 
     /// The modules the group covers (empty for the computed groups).
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn modules(self) -> &'static [&'static str] {
         self.entry().2
     }
 
     /// The default sentence, with its `{module}`/`{names}` placeholders.
     #[must_use]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn default_text(self) -> &'static str {
         self.entry().3
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn from_key(key: &str) -> Option<HintGroup> {
         GROUPS.iter().find(|g| g.1 == key).map(|g| g.0)
     }
@@ -221,12 +226,14 @@ impl HintGroup {
 impl Vm {
     /// Sets every bundled module name, enabled in this build or not, so
     /// that importing a disabled one says so ([`HintGroup::NotEnabled`]).
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn set_known_modules(&mut self, names: &'static [&'static str]) {
         self.known_modules = names;
     }
 
     /// Replaces group `group`'s sentence (`Some("")` blanks it, `None`
     /// restores the default). `{module}` in it stands for the module.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn set_hint(&mut self, group: HintGroup, text: Option<&str>) -> Result<(), Raised> {
         let d = self.hint_dict()?;
         let k = self.intern(group.key())?;
@@ -240,6 +247,7 @@ impl Vm {
     }
 
     /// The prelude's override table, made on first use.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn hint_dict(&mut self) -> Result<Value, Raised> {
         let k = self.intern("_hints")?;
         let pg = self.prelude_globals;
@@ -252,6 +260,7 @@ impl Vm {
     }
 
     /// Group `group`'s sentence for `module`, or empty when blanked.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn hint_text(&mut self, group: HintGroup, module: &str) -> String {
         let over = self
             .find_interned("_hints")
@@ -273,6 +282,7 @@ impl Vm {
 /// prelude's (`Semaphore, as_completed, ... and wait_for`); empty in a
 /// build without `asyncio`.
 #[must_use]
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub fn asyncio_names() -> String {
     #[allow(unused_mut, reason = "the prelude's names only with `asyncio`")]
     let mut names: Vec<&str> = crate::builtins::NATIVES
@@ -297,6 +307,7 @@ pub fn asyncio_names() -> String {
 impl Vm {
     /// Appends `group`'s sentence (if not blanked) to the pending
     /// exception's report.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn add_hint(&mut self, group: HintGroup, module: &str) {
         let text = self.hint_text(group, module);
         if !text.is_empty() {
@@ -305,6 +316,7 @@ impl Vm {
     }
 
     /// The hint of `No module named 'name'`, if one applies.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn import_hint(&mut self, name: &str) {
         let top = name.split('.').next().unwrap_or(name);
         // The engine's own `asyncio` and `json`, off in this build, are
@@ -326,6 +338,7 @@ impl Vm {
 
     /// The \"Did you mean\" of a missing module attribute, as CPython 3.14
     /// gives it, else the asyncio hint for a missing `asyncio` name.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn module_attr_hint(&mut self, m: Value, name: Value, import: bool) {
         let wrong = String::from(self.str_ref_o(name));
         // asyncio's streams, sockets, subprocesses and threads stay out of
@@ -366,6 +379,7 @@ impl Vm {
 
     /// The pending hint of a missing module attribute, when rendered: the
     /// nearest name, else asyncio's sentence for `asyncio`.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn module_attr_hint_text(&mut self, m: Value, name: Value) -> Option<String> {
         let wrong = String::from(self.str_ref_o(name));
         let d = self.vslot_o(m, crate::modules::module_slot::DICT);
@@ -389,6 +403,7 @@ impl Vm {
 }
 
 /// `_mm.hint(group)`: group `group`'s sentence, or `''` when blanked.
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn mm_hint(vm: &mut Vm, a: crate::vm::CallArgs) -> Result<Value, Raised> {
     let k = vm.arg_o(&a, 0);
     let group = Vm::is_str(k)
