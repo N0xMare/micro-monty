@@ -18,6 +18,23 @@ const KARATSUBA: usize = 40;
 /// CPython's numeric hash modulus, 2^61 - 1.
 const MODULUS: u64 = (1 << 61) - 1;
 
+/// CPython's hash of an int from its sign and little-endian magnitude
+/// bytes, read in place: `sign * (|v| mod (2^61 - 1))`, with -1 as -2.
+pub fn hash_le(neg: bool, mag: &[u8]) -> i64 {
+    // Most significant limb first, `x` kept below the modulus: as
+    // `2^61 = 1` modulo the Mersenne prime, `x * 2^32` is its low 29 bits
+    // shifted up plus its high bits.
+    let (limbs, top) = mag.as_chunks::<4>();
+    let mut x = top.iter().rev().fold(0u64, |a, &b| (a << 8) | u64::from(b));
+    for l in limbs.iter().rev() {
+        let s = (((x << 32) & MODULUS) | u64::from(u32::from_le_bytes(*l))) + (x >> 29);
+        x = if s >= MODULUS { s - MODULUS } else { s };
+    }
+    let h = x.cast_signed();
+    let h = if neg { -h } else { h };
+    if h == -1 { -2 } else { h }
+}
+
 /// An integer of any size. `mag` has no high zero limbs; zero is an empty
 /// `mag` with `neg == false`.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -911,17 +928,6 @@ impl Big {
             }
         }
         Some(Big::from_mag(false, mag))
-    }
-
-    /// CPython's hash: `sign * (|self| mod (2^61 - 1))`, with -1 as -2.
-    pub fn hash(&self) -> i64 {
-        let mut x: u128 = 0;
-        for &limb in self.mag.iter().rev() {
-            x = ((x << 32) | u128::from(limb)) % u128::from(MODULUS);
-        }
-        let h = x as i64;
-        let h = if self.neg { -h } else { h };
-        if h == -1 { -2 } else { h }
     }
 
     /// Two's-complement bytes, little-endian, exactly `len` long; `None` if

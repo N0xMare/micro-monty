@@ -3895,6 +3895,11 @@ fn bi_sum(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// deadline or park request is honoured between slices (docs/spec.md §5).
 pub(crate) const SORT_SLICE: u64 = 1 << 17;
 
+/// The visits a sort spends comparing str and other keys in one go (a
+/// short sort, or a long sort's runs in one step) before the rest is left
+/// to the prelude's `_sort_keys`, a comparison per safepoint ([`sort_lt`]).
+const SORT_CAP: u32 = 1 << 20;
+
 /// Items one native step of a long sort copies into its output at most.
 const TAIL_SLICE: usize = 1 << 17;
 
@@ -3932,7 +3937,11 @@ fn sort_kind(keys: &(impl Iterator<Item = Value> + Clone)) -> i64 {
 }
 
 /// `x < y` for two keys of sort kind `kind`, counting its walk visits (a
-/// str comparison one, and one per 64 bytes compared).
+/// str comparison one, and one per 64 bytes compared). Str and other keys
+/// spend them from `left`, the budget of the whole sort or run: past it
+/// the keys need Python ([`crate::ops::OrdErr::Py`]), so items that
+/// compare long, such as big ints or long texts, cannot hold one step
+/// (docs/spec.md §5).
 #[inline]
 fn sort_lt(
     vm: &Vm,
@@ -3940,6 +3949,7 @@ fn sort_lt(
     x: Value,
     y: Value,
     visits: &mut u64,
+    left: &mut u32,
 ) -> Result<bool, crate::ops::OrdErr> {
     match kind {
         kind::INTS => {
@@ -3948,7 +3958,12 @@ fn sort_lt(
         }
         kind::STRS => {
             let (p, q) = (vm.str_bytes(x), vm.str_bytes(y));
-            *visits += 1 + (p.len().min(q.len()) / 64) as u64;
+            let n = 1 + p.len().min(q.len()) / 64;
+            let Some(rest) = u32::try_from(n).ok().and_then(|n| left.checked_sub(n)) else {
+                return Err(crate::ops::OrdErr::Py);
+            };
+            *left = rest;
+            *visits += n as u64;
             Ok(p < q)
         }
         kind::FLOATS => {
@@ -3957,11 +3972,11 @@ fn sort_lt(
             Ok(x.as_float() < y.as_float())
         }
         _ => {
-            let mut left = crate::dict::WALK;
-            let r = vm.order_pure(x, y, 0, &mut left);
-            // (Long texts past the walk's budget, `text_over`, are taken
-            // once per sort step by the caller.)
-            *visits += u64::from(crate::dict::WALK - left);
+            let before = *left;
+            let r = vm.order_pure(x, y, 0, left);
+            // (Long texts past the budget, `text_over`, are taken once
+            // per sort step by the caller; the next comparison has none.)
+            *visits += u64::from(before - *left);
             r.map(|o| o == Some(Ordering::Less))
         }
     }
@@ -3979,10 +3994,17 @@ fn sort_key(keys: Option<&[u64]>, v: Value) -> Value {
 
 /// Sorts builtin-typed values with `<`, stably; `TypeError` if unorderable.
 /// One native step: callers sort at most [`SORT_SLICE`] visits' worth this
-/// way, or need no safepoint (json's `sort_keys`).
-pub(crate) fn sort_values(vm: &mut Vm, items: &mut [Value], reverse: bool) -> Result<(), Raised> {
+/// way, a `capped` one at most [`SORT_CAP`] visits comparing them (past
+/// it, [`Vm::need_py`]), or need no safepoint (json's `sort_keys`).
+pub(crate) fn sort_values(
+    vm: &mut Vm,
+    items: &mut [Value],
+    reverse: bool,
+    capped: bool,
+) -> Result<(), Raised> {
     let mut failure: Option<crate::ops::OrdErr> = None;
     let mut visits = 0;
+    let mut left = if capped { SORT_CAP } else { u32::MAX };
     {
         let res = NativeValues::copy(&mut vm.heap, items);
         let mut buf = vm.hx_o(res)?;
@@ -3993,7 +4015,7 @@ pub(crate) fn sort_values(vm: &mut Vm, items: &mut [Value], reverse: bool) -> Re
             if failure.is_some() {
                 return false;
             }
-            match sort_lt(vmr, kind, *x, *y, &mut visits) {
+            match sort_lt(vmr, kind, *x, *y, &mut visits, &mut left) {
                 Ok(b) => b,
                 Err(e) => {
                     failure = Some(e);
@@ -4122,6 +4144,7 @@ impl Vm {
         let mut visits = 0u64;
         let mut at = [i, l, r, k];
         if pass == 0 {
+            let mut left = SORT_CAP;
             // Runs of `1 << SORT_RUN_BITS` items sorted in place first,
             // each in one go: the merge passes over the arrays in the heap
             // start from there.
@@ -4167,7 +4190,8 @@ impl Vm {
                         if failure.is_some() {
                             return false;
                         }
-                        match sort_lt(vm, kind, sort_key(kw, *x), sort_key(kw, *y), &mut visits) {
+                        let (x, y) = (sort_key(kw, *x), sort_key(kw, *y));
+                        match sort_lt(vm, kind, x, y, &mut visits, &mut left) {
                             Ok(b) => b,
                             Err(e) => {
                                 failure = Some(e);
@@ -4625,7 +4649,7 @@ fn bi_sorted(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         let xs = vm.new_list(&items)?;
         return vm.sort_start(xs, key, reverse, Value::NONE);
     }
-    sort_values(vm, &mut items, reverse)?;
+    sort_values(vm, &mut items, reverse, true)?;
     vm.new_list(&items)
 }
 
@@ -7633,7 +7657,7 @@ fn list_sort(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         return vm.sort_start(xs, key, rev, l);
     }
     let mut items = vm.collect(l)?;
-    sort_values(vm, &mut items, rev)?;
+    sort_values(vm, &mut items, rev, true)?;
     // Sorting cannot change the length; reuse the list's admitted backing store.
     if let Some(buf) = vm.list_buf(l) {
         let res = vm.heap.set_values(buf, 0, &items);

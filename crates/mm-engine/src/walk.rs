@@ -66,8 +66,8 @@ pub(crate) fn pass_same(xa: &[u64], xb: &[u64], i: u32, left: &mut u32) -> Resul
 }
 
 impl Vm {
-    /// Spends the extra walk visits for comparing `n` bytes of two strs or
-    /// two bytes-likes: one per 64, so long texts spend fuel and budget as
+    /// Spends the extra walk visits for comparing `n` bytes of two strs,
+    /// two bytes-likes or two big ints: one per 64, so long texts spend fuel and budget as
     /// byte work does (docs/spec.md §5). The comparison is decided even when
     /// that is more than the budget left; the excess is charged with the
     /// walk's visits (`walked_of`).
@@ -546,8 +546,9 @@ impl Vm {
                 return leaf(x == y);
             }
             if (Vm::is_heap_int(a) || Vm::is_heap_int(b))
-                && let Some(o) = self.num_cmp(a, b)
+                && let Some((o, n)) = self.num_cmp(a, b)
             {
+                self.spend_text(left, n);
                 return leaf(o == Some(Ordering::Equal));
             }
             if let Some(x) = self.num_f64(a)
@@ -724,8 +725,9 @@ impl Vm {
             return ord(Some(x.cmp(&y)));
         }
         if (Vm::is_heap_int(a) || Vm::is_heap_int(b))
-            && let Some(o) = self.num_cmp(a, b)
+            && let Some((o, n)) = self.num_cmp(a, b)
         {
+            self.spend_text(left, n);
             return ord(o);
         }
         if let (Some(x), Some(y)) = (self.num_f64(a), self.num_f64(b)) {

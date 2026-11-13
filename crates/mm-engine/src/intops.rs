@@ -198,6 +198,49 @@ impl Vm {
         (neg, bytes)
     }
 
+    /// A heap int's sign and magnitude bytes, little-endian, with no high
+    /// zero bytes (zero is not negative).
+    pub(crate) fn heap_int_mag(&self, v: Value) -> (bool, &[u8]) {
+        let (neg, bytes) = self.heap_int_parts(v);
+        let n = bytes.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+        (neg && n > 0, &bytes[..n])
+    }
+
+    /// Exact three-way comparison of two ints of any size or bools, the
+    /// heap ones read in place, with the bytes it compares: each side's
+    /// magnitude when they are as long, none otherwise. `None` unless both
+    /// are ints.
+    pub(crate) fn int_cmp(&self, a: Value, b: Value) -> Option<(Ordering, usize)> {
+        if a == b && Vm::is_heap_int(a) {
+            return Some((Ordering::Equal, 0));
+        }
+        let (mut p, mut q) = ([0u8; 8], [0u8; 8]);
+        let (na, x) = self.int_mag(a, &mut p)?;
+        let (nb, y) = self.int_mag(b, &mut q)?;
+        Some(match (na, nb) {
+            (false, true) => (Ordering::Greater, 0),
+            (true, false) => (Ordering::Less, 0),
+            (false, false) => mag_cmp_le(x, y),
+            (true, true) => mag_cmp_le(y, x),
+        })
+    }
+
+    /// [`Vm::heap_int_mag`] for any int or bool, a small one's bytes in
+    /// `buf`.
+    fn int_mag<'a>(&'a self, v: Value, buf: &'a mut [u8; 8]) -> Option<(bool, &'a [u8])> {
+        if Vm::is_heap_int(v) {
+            return Some(self.heap_int_mag(v));
+        }
+        let i = match v {
+            Value::TRUE => 1,
+            Value::FALSE => 0,
+            _ => v.as_int()?,
+        };
+        *buf = i.unsigned_abs().to_le_bytes();
+        let n = 8 - (i.unsigned_abs().leading_zeros() / 8) as usize;
+        Some((i < 0, &buf[..n]))
+    }
+
     /// A heap int's value as `i64`, if it fits.
     #[inline(never)]
     pub(crate) fn heap_int_i64(&self, v: Value) -> Option<i64> {
@@ -1020,16 +1063,35 @@ impl Vm {
     /// Exact three-way comparison of two numbers (ints of any size,
     /// bools, floats); `None` if either is not a number, `Some(None)` if
     /// unordered (NaN).
+    /// With the bytes compared, as [`Vm::int_cmp`] counts them.
     #[allow(clippy::option_option, reason = "not a number vs unordered")]
-    pub(crate) fn num_cmp(&self, a: Value, b: Value) -> Option<Option<Ordering>> {
+    pub(crate) fn num_cmp(&self, a: Value, b: Value) -> Option<(Option<Ordering>, usize)> {
         let fa = a.as_float();
         let fb = b.as_float();
         match (fa, fb) {
-            (Some(x), Some(y)) => Some(x.partial_cmp(&y)),
-            (None, None) => Some(Some(self.big_of(a)?.cmp(&self.big_of(b)?))),
-            (Some(x), None) => Some(big_cmp_float(&self.big_of(b)?, x).map(Ordering::reverse)),
-            (None, Some(y)) => Some(big_cmp_float(&self.big_of(a)?, y)),
+            (Some(x), Some(y)) => Some((x.partial_cmp(&y), 0)),
+            (None, None) => self.int_cmp(a, b).map(|(o, n)| (Some(o), n)),
+            (Some(x), None) => Some((self.int_cmp_float(b, x)?.map(Ordering::reverse), 0)),
+            (None, Some(y)) => Some((self.int_cmp_float(a, y)?, 0)),
         }
+    }
+
+    /// Exact comparison of int `a` with float `f`; an int past every
+    /// finite float is decided by its sign without a copy.
+    #[allow(clippy::option_option, reason = "not an int vs unordered")]
+    fn int_cmp_float(&self, a: Value, f: f64) -> Option<Option<Ordering>> {
+        if f.is_finite() && Vm::is_heap_int(a) {
+            // |a| >= 2^1024 > every finite float.
+            let (neg, mag) = self.heap_int_mag(a);
+            if mag.len() > 128 {
+                return Some(Some(if neg {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                }));
+            }
+        }
+        Some(big_cmp_float(&self.big_of(a)?, f))
     }
 
     /// An index-sized integer for `v` (an int of any size): `Err` with
@@ -1037,6 +1099,34 @@ impl Vm {
     pub(crate) fn index_overflow(&mut self, t: T) -> Raised {
         self.err(t, "cannot fit 'int' into an index-sized integer")
     }
+}
+
+/// Order of two magnitudes as little-endian bytes without high zero
+/// bytes, from the most significant end, with the bytes compared (none
+/// when the lengths decide).
+fn mag_cmp_le(x: &[u8], y: &[u8]) -> (Ordering, usize) {
+    if x.len() != y.len() {
+        return (x.len().cmp(&y.len()), 0);
+    }
+    if x == y {
+        return (Ordering::Equal, x.len());
+    }
+    let ((xr, xw), (yr, yw)) = (x.as_rchunks::<8>(), y.as_rchunks::<8>());
+    let o = xw
+        .iter()
+        .zip(yw)
+        .rev()
+        .find(|(p, q)| p != q)
+        .map(|(p, q)| u64::from_le_bytes(*p).cmp(&u64::from_le_bytes(*q)))
+        .or_else(|| {
+            xr.iter()
+                .zip(yr)
+                .rev()
+                .find(|(p, q)| p != q)
+                .map(|(p, q)| p.cmp(q))
+        })
+        .unwrap_or(Ordering::Equal);
+    (o, x.len())
 }
 
 /// Exact comparison of an int with a float.

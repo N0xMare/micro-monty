@@ -684,9 +684,15 @@ impl Vm {
         if let Some(i) = self.int_of(v) {
             return Ok(hash_int(i));
         }
-        if let Some(b) = self.big_of(v) {
-            self.burn(b.mag.len() as u64 / 8);
-            return Ok(b.hash());
+        if Vm::is_heap_int(v) {
+            // Read in place, a unit per 32 bytes; in a tuple, also that
+            // many visits of the walk's budget.
+            let (neg, mag) = self.heap_int_mag(v);
+            let units = mag.len().div_ceil(4) as u64 / 8;
+            *left = left.saturating_sub(u32::try_from(units).unwrap_or(u32::MAX));
+            let h = crate::bigint::hash_le(neg, mag);
+            self.burn(units);
+            return Ok(h);
         }
         if let Some((re, im)) = self.complex_of(v) {
             return Ok(crate::complex::hash(re, im));
@@ -760,6 +766,10 @@ impl Vm {
             }
             let mut acc = XX_SEED;
             for i in 0..n {
+                if *left == 0 {
+                    // Big ints spent the budget.
+                    return Err(self.need_py());
+                }
                 let x = self.vslot(v, u32::try_from(i).unwrap_or(0));
                 acc = xx_lane(acc, self.hash_depth(x, depth + 1, left)?);
             }

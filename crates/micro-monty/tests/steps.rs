@@ -2187,6 +2187,89 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "d = {}\nfor x in xs: d[x] = None",
         1,
     ),
+    // Big ints and long texts: a compare or hash counted one visit
+    // whatever the operands' size, and copied each big int (`big_of`). On
+    // 9a80bbea [M]: 4,000 references to one 2^20-bit int took 882-889 ms
+    // in one step for `min`, `count`, `in` and `sorted`, 1,124 ms for the
+    // tuple's hash; 17 ints of 2^26 bits 207-313 ms for `max`, `index`,
+    // `sorted` and the tuple's hash; 200 references to one 8 MB str 71 ms
+    // for `sorted`, a long sort's runs of 8 KiB ints 200 ms. Now ints
+    // compare and hash in place, a unit and visit per 64 bytes compared
+    // (32 hashed), a tuple's hash hands off once they spend its walk, and
+    // a sort past `SORT_CAP` visits in one go leaves the rest to
+    // `_sort_keys`: at most 11 ms [M].
+    (
+        Row::Bounded,
+        "c = (1 << (2**20 - 1)) | 0x1234567\nzs = [c] * 4000",
+        "m = min(zs)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "c = (1 << (2**20 - 1)) | 0x1234567\nzs = [c] * 4000",
+        "n = zs.count(c + 0)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "c = (1 << (2**20 - 1)) | 0x1234567\nzs = [c] * 4000",
+        "b = (c + 1) in zs",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "c = (1 << (2**20 - 1)) | 0x1234567\nzs = [c] * 4000",
+        "ys = sorted(zs)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "c = (1 << (2**20 - 1)) | 0x1234567\nzs = [c] * 4000",
+        "h = hash(tuple(zs))",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "c = (1 << (2**26 - 1)) | 5\nd = c + 2\nws = [c + 0 for _ in range(16)] + [d]",
+        "m = max(ws)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "c = (1 << (2**26 - 1)) | 5\nd = c + 2\nws = [c + 0 for _ in range(16)] + [d]",
+        "i = ws.index(d)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "c = (1 << (2**26 - 1)) | 5\nd = c + 2\nws = [c + 0 for _ in range(16)] + [d]",
+        "ys = sorted(ws)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "c = (1 << (2**26 - 1)) | 5\nd = c + 2\nws = [c + 0 for _ in range(16)] + [d]",
+        "h = hash(tuple(ws))",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "c = (1 << (2**26 - 1)) | 5\nd = c + 2\nws = [c + 0 for _ in range(16)] + [d]",
+        "h = hash(frozenset(ws))",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "t = 'x' * (1 << 23)\nts = [t] * 200",
+        "ys = sorted(ts)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "c = 1 << (2**16 - 1)\nys = [c + 0 for _ in range(12_000)]",
+        "zs = sorted(ys)",
+        1,
+    ),
 ];
 
 /// How many more times a bounded row over the limit runs. This host has

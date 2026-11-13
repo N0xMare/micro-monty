@@ -1,6 +1,6 @@
 # Native-to-Python hand-off sites (`need_py()` calls): file, enclosing
 # function, count. Written by `cargo xtask handoffs`; checked in
-# `cargo xtask check`. 97 sites in 72 functions in 14 files.
+# `cargo xtask check`. 98 sites in 72 functions in 14 files.
 crates/mm-engine/src/builtins.rs	any_all	1
 crates/mm-engine/src/builtins.rs	bi_ascii	1
 crates/mm-engine/src/builtins.rs	bi_dir	1
@@ -31,7 +31,7 @@ crates/mm-engine/src/complex.rs	complex_arg	1
 crates/mm-engine/src/dict.rs	dict_pair	1
 crates/mm-engine/src/dict.rs	eq_values	1
 crates/mm-engine/src/dict.rs	hard	1
-crates/mm-engine/src/dict.rs	hash_depth	2
+crates/mm-engine/src/dict.rs	hash_depth	3
 crates/mm-engine/src/interp.rs	dispatch_rare	1
 crates/mm-engine/src/intops.rs	float_fromhex	1
 crates/mm-engine/src/intops.rs	int_from_bytes	1

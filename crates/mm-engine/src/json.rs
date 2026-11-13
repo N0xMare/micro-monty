@@ -1173,7 +1173,7 @@ fn value(vm: &mut Vm, enc: &Enc, v: Value, out: &mut Out, work: &mut u64) -> Res
             }
             return Ok(Step::Open(level));
         }
-        crate::builtins::sort_values(vm, &mut keys, false)?;
+        crate::builtins::sort_values(vm, &mut keys, false, false)?;
         let l = vm.new_list(&keys)?;
         return Ok(Step::Open(sorted_level(vm, v, l)?));
     } else if let Some(b) = vm.backing(v) {
