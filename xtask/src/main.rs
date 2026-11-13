@@ -106,6 +106,8 @@ tasks:
       --timeout <s>          seconds per mm process (default 20)
       --cross-target         own cases only, each snapshot restored on the other
                              target (native <-> wasm32-wasip1 under wasmtime)
+  shipped-mm                 build `mm` natively as shipped (the binary the
+                             bench Ir rule measures) and print its path
   wasm                       build the facade as shipped (wasm-opt -Oz) for
                              wasm32-wasip1 and wasm32-unknown-unknown, report
                              hello.wasm sizes, run a snapshot round trip under
@@ -160,6 +162,7 @@ fn main() -> ExitCode {
         Some("conformance") => conformance::run(&rest),
         Some("durability") => durability::run(&rest),
         Some("bench") => bench::run(&rest),
+        Some("shipped-mm") if rest.is_empty() => shipped_mm(),
         Some("wasm") => wasm::run(&rest),
         Some("wasm-host") if rest.is_empty() => wasm::host(),
         Some("wasm-wall") => wasm_wall::run(&rest),
@@ -257,6 +260,20 @@ fn check(args: &[String]) -> Result<(), String> {
         "--test",
         "steps",
     ];
+    // The step-time oracle times shipped codegen: `--cfg mm_shipped` turns
+    // on the `#[optimize(size)]` the shipped builds carry (docs/spec.md
+    // §6), in its own target directory so the flag does not rebuild
+    // `target/release`. Its panics keep their messages (unwinding, std as
+    // installed): they report the failing rows.
+    let steps_dir = root.join("target/check/steps");
+    let steps_cargo = |args: &[&str]| {
+        let mut command = command(cargo, args, Some(&steps_dir));
+        command
+            .env("RUSTC_BOOTSTRAP", "1")
+            .env("RUSTFLAGS", "--cfg mm_shipped")
+            .env_remove("CARGO_ENCODED_RUSTFLAGS");
+        command
+    };
     let clippy = |package: &[&str]| {
         let mut args = vec!["clippy"];
         args.extend_from_slice(package);
@@ -388,9 +405,10 @@ fn check(args: &[String]) -> Result<(), String> {
             "cpython,micro-monty",
         ])),
         // The own cases against CPython on `mm` built natively as shipped
-        // (`shipped_build`): the one native gate on shipped codegen
-        // (`-Cpanic=immediate-abort`, `#[optimize(size)]` under
-        // `mm_shipped`); every other native gate runs plain-stable builds.
+        // (`shipped_build`: `-Cpanic=immediate-abort`, `#[optimize(size)]`
+        // under `mm_shipped`); the step-time oracle runs on `mm_shipped`
+        // codegen too (`steps_cargo`), every other native gate on
+        // plain-stable builds.
         Stage::new("shipped-mm").after(&["mm"]).run({
             let mut build = shipped_build(&host);
             build.args(["--package", "mm-cli", "--bin", "mm"]);
@@ -438,7 +456,7 @@ fn check(args: &[String]) -> Result<(), String> {
         ])),
         Stage::new("steps-build")
             .after(&["mm"])
-            .run(release_cargo(&[&steps[..], &["--no-run"]].concat())),
+            .run(steps_cargo(&[&steps[..], &["--no-run"]].concat())),
     ];
     // wasmtime's guest instructions against origin/main, ±0.5% (its own
     // worktree and target directories under target/wasm-ir/).
@@ -464,7 +482,7 @@ fn check(args: &[String]) -> Result<(), String> {
     stages.push(
         Stage::new("steps-fuel")
             .after(&["steps-build"])
-            .run(release_cargo(
+            .run(steps_cargo(
                 &[&steps[..], &["--", "slice_charges"]].concat(),
             )),
     );
@@ -472,7 +490,7 @@ fn check(args: &[String]) -> Result<(), String> {
         Stage::new("steps")
             .after(&["steps-build"])
             .alone()
-            .run(release_cargo(
+            .run(steps_cargo(
                 &[
                     &steps[..],
                     &["--", "--skip", "slice_charges", "--test-threads=1"],
@@ -670,6 +688,26 @@ fn shipped_guest() -> Result<PathBuf, String> {
         ));
     }
     wasm::optimize(&workspace_root().join(format!("target/{target}/release/mm_wasm_guest.wasm")))
+}
+
+/// Builds `mm` natively as shipped, `target/<host>/release/mm`: the binary
+/// `bench/callgrind.py` measures by default.
+fn shipped_mm() -> Result<(), String> {
+    let host = host_target()?;
+    let status = shipped_build(&host)
+        .args(["--package", "mm-cli", "--bin", "mm"])
+        .status()
+        .map_err(|error| format!("cannot run cargo: {error}"))?;
+    if !status.success() {
+        return Err(format!("shipped release build of mm for {host} failed"));
+    }
+    println!(
+        "{}",
+        workspace_root()
+            .join(format!("target/{host}/release/mm"))
+            .display()
+    );
+    Ok(())
 }
 
 /// `cargo build --release` for `target` the way shipped binaries are built

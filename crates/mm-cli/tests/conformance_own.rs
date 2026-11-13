@@ -10,7 +10,8 @@
 //! `mm` binary instead of this package's: `cargo xtask check` runs the
 //! cases on `mm` built as shipped (docs/spec.md §6), whose codegen
 //! (`-Cpanic=immediate-abort`, `#[optimize(size)]` under `mm_shipped`)
-//! no other native gate runs.
+//! no other native gate runs whole (the step-time oracle has
+//! `mm_shipped`, not `-Cpanic=immediate-abort`).
 
 #![allow(clippy::expect_used, clippy::panic, reason = "test harness")]
 #![allow(clippy::doc_markdown, reason = "the docs name CPython in prose")]

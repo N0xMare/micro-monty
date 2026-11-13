@@ -5,7 +5,9 @@
 
 Each engine is a command prefix that takes a program path, for example
 `cpython=python3.14` or `mm=target/release/mm run`. Defaults: CPython 3.14
-(`$PYTHON`, else `python3.14`) and `target/release/mm run`. Every program
+(`$PYTHON`, else `python3.14`) and the shipped native `mm`,
+`target/<host>/release/mm run` (`cargo xtask shipped-mm` builds it): shipped
+codegen, `#[optimize(size)]` included, is what the Ir rule measures. Every program
 runs twice per engine under `valgrind --tool=callgrind --trace-children=yes`;
 its output must match `expected.txt` both times:
 
@@ -57,6 +59,17 @@ def expected():
     return out
 
 
+def shipped_mm():
+    """The shipped native `mm`, `target/<host>/release/mm`; exits if absent."""
+    host = next(line.split()[1] for line in subprocess.run(
+        ["rustc", "-vV"], capture_output=True, text=True, check=True).stdout.splitlines()
+        if line.startswith("host: "))
+    mm = os.path.join(os.path.dirname(BENCH), "target", host, "release", "mm")
+    if not os.path.isfile(mm):
+        sys.exit(f"{mm} is missing: build it with `cargo xtask shipped-mm`")
+    return mm
+
+
 def run(engine, cmd, program, outdir, gated):
     path = os.path.join(BENCH, FILES.get(program, program) + ".py")
     prefix = os.path.join(outdir, f"{engine}.{program}" + (".gated" if gated else ""))
@@ -82,7 +95,7 @@ def main():
     a = ap.parse_args()
     engines = [e.split("=", 1) for e in a.engine] or [
         ["cpython", os.environ.get("PYTHON", "python3.14")],
-        ["mm", os.path.join(os.path.dirname(BENCH), "target/release/mm") + " run"],
+        ["mm", shlex.quote(shipped_mm()) + " run"],
     ]
     programs = a.programs.split(",")
     want = expected()
