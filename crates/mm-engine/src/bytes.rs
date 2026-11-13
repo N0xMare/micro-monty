@@ -2066,6 +2066,9 @@ pub(crate) mod job {
     /// A bytearray's bytes copied into a larger block, then the operation
     /// that grew it (`crate::bytearray::fin`).
     pub const GROW: u8 = 26;
+    /// Output bytes `W_O..W_A` set to byte `W_A + 1`: `int.to_bytes`'s
+    /// sign padding.
+    pub const PAD: u8 = 27;
 }
 
 /// Input position, end and start (where each pass starts).
@@ -2598,6 +2601,7 @@ impl Vm {
             job::FAILED => Err(self.err(T::MemoryError, "")),
             job::INTS => self.job_ints(j, start),
             job::GROW => self.ba_grow_step(j, start),
+            job::PAD => self.job_pad(j, start),
             _ => Err(self.bad_step()),
         }
     }
@@ -3402,6 +3406,37 @@ impl Vm {
             let n = (total - o).min(o - r).min(room);
             let res = self.heap.copy_bytes(out, r, out, o, n);
             self.hx_o(res)?;
+            self.burn(n.div_ceil(64) as u64);
+            o += n;
+        }
+        self.job_wrap(j, out, 0).map(Some)
+    }
+
+    /// A [`job::PAD`] job: the output's bytes `W_O..W_A` set to byte
+    /// `W_A + 1`, as many a step as its room.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    fn job_pad(&mut self, j: &mut Job, start: u64) -> Result<Option<Value>, Raised> {
+        let Some(out) = j.v[2].as_byte_ref() else {
+            return Err(self.bad_step());
+        };
+        let (end, c) = (j.at(W_A), j.w[W_A + 1] as u8);
+        let mut o = j.at(W_O);
+        while o < end {
+            let room = self.job_room(start);
+            if room == 0 {
+                j.w[W_O] = o as u64;
+                return Ok(None);
+            }
+            let n = (end - o).min(room);
+            let Some(d) = self
+                .heap
+                .bytes_mut(out)
+                .ok()
+                .and_then(|d| d.get_mut(o..o + n))
+            else {
+                return Err(self.bad_step());
+            };
+            d.fill(c);
             self.burn(n.div_ceil(64) as u64);
             o += n;
         }

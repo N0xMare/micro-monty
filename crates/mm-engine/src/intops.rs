@@ -343,11 +343,16 @@ impl Vm {
     /// [`mm_core::Heap::should_collect`], instead of a full collection
     /// after every large string, bytes or int (a loop of 100 KB
     /// concatenations beside 1M live lists took 20 ms per iteration [M]).
+    /// The guest waits for it as for `gc.collect`'s (`Vm::collect_in_steps`):
+    /// over 32 MiB live it marks a step per safepoint, so it ends before
+    /// guest code allocates again, but in bounded steps. In full, in one
+    /// step, it took 40-52 ms beside 1M live dicts (`json.dumps`'s text
+    /// moves) [M].
     pub(crate) fn collect_for_result(&mut self, bytes: usize) {
         if bytes >= 1 << 16
             && self.heap.stats().allocated_since_gc >= self.heap.available_bytes() / 2
         {
-            self.request_gc();
+            self.collect_in_steps(false);
         }
     }
 
@@ -1803,7 +1808,6 @@ pub(crate) fn int_to_bytes(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if bits > room.max(0) && !(neg && pow2 && bits == room + 1) {
         return Err(vm.err(T::OverflowError, "int too big to convert"));
     }
-    // A 64 MiB result is built in about 31 ms, native release [M].
     let at = if little { 0 } else { len - n };
     vm.burn_result(len, true);
     let block = {
@@ -1827,6 +1831,30 @@ pub(crate) fn int_to_bytes(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         if !little {
             o.reverse();
         }
+    }
+    // A long sign padding (a negative int in many bytes) is filled a step
+    // at a time: in one go, 64 MiB of fresh pages took 41-58 ms [M].
+    let pad = len - n;
+    if neg && pad >= 1 << 20 {
+        let mag = if little {
+            d.get_mut(..n)
+        } else {
+            d.get_mut(pad..)
+        };
+        finish_bytes(mag.unwrap_or_default(), n, true, little);
+        let (from, to) = if little { (n, len) } else { (0, pad) };
+        let mut j = crate::bytes::Job::new(
+            crate::bytes::job::PAD,
+            Value::NONE,
+            0,
+            0,
+            crate::bytes::R_BYTES,
+        );
+        j.v[2] = Value::from_byte_ref(block);
+        j.w[crate::bytes::W_O] = from as u64;
+        j.w[crate::bytes::W_A] = to as u64;
+        j.w[crate::bytes::W_A + 1] = 0xFF;
+        return vm.job_run(j);
     }
     finish_bytes(d, n, neg, little);
     if neg {

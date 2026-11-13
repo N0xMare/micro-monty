@@ -741,12 +741,15 @@ are the rules above. Where the code falls short, the clause says so under
    step (§9.2). Full collections over a large heap stay outside this bound
    (0.40 ms per MiB of live heap native, 1.3–1.6 times that on wasm [M]):
    one a native or the engine requests (`Vm::request_gc`: after a
-   `MemoryError` is raised, after a large result once allocation reaches
-   half the room left, after a byte job fails for memory), a snapshot's and
-   code reclamation's. A mark with too little room left and one that gives
-   up on scattered writes are held, a slice per check with no guest code
-   between (§9.2). A fresh 64 MiB block costs one step of about 30–40 ms
-   natively, most of it page faults and the `UNDEFINED` fill in
+   `MemoryError` is raised, after a byte job fails for memory), a
+   snapshot's and code reclamation's. The one a large result requests
+   once allocation reaches half the room left (`Vm::collect_for_result`)
+   runs as `gc.collect`'s does: a step per safepoint, the guest waiting
+   until it ends (`Vm::collect_in_steps`). A
+   mark with too little room left and one that gives up on scattered
+   writes are held, a slice per check with no guest code between (§9.2).
+   A fresh 64 MiB block costs one step of about 30–40 ms natively, most
+   of it page faults and the `UNDEFINED` fill in
    `Heap::alloc_object`, where a caller does not take it unfilled. Neither
    V8 nor the shipped guest under wasmtime is measured per site.
 3. **Fuel pays for the work, and a slice is overdrawn by at most one

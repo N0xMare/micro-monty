@@ -1088,7 +1088,10 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "try:\n    f = float.fromhex(s)\nexcept OverflowError:\n    pass",
         1,
     ),
-    // `int.to_bytes` in one go at the 64 MiB object cap.
+    // `int.to_bytes` at the 64 MiB object cap: a negative int's sign
+    // padding is filled a step at a time (`bytes::job::PAD`). In one go,
+    // 64 MiB of fresh pages took 41-48 ms on a quiet core; 3.6-6.6 ms a
+    // step now [M].
     (
         Row::Bounded,
         "x = -5",
@@ -1492,7 +1495,9 @@ const SITES: &[(Row, &str, &str, usize)] = &[
     // the worst gap is a slice of `dumps` itself, 6-8 ms run alone (6-11 ms
     // with collections off) and 16 ms in the oracle [M]. It was 61-64 ms
     // on 8cd850c, before a park went ahead of a collection step and a
-    // forced finish stopped giving up (spec §9.2).
+    // forced finish stopped giving up (spec §9.2). Then 40-58 ms: the
+    // collection the text's moves request (`Vm::collect_for_result`) ran
+    // in full, in one step; it marks incrementally now, 7-12 ms [M].
     (
         Row::Bounded,
         "import json\nxs = [{'a': i, 'b': [i, 'x'], 'c': None} for i in range(1_000_000)]",
