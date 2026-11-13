@@ -1083,6 +1083,7 @@
 462_wasm32_counts.py	wasm-parks	digest	accounting: the final state follows the target (step 4); parks move collections (step 2)
 462_wasm32_counts.py	wasm-snapshot	digest	accounting across targets and the snapshot's collection (steps 4, 5)
 463_bounded_native_steps.py	cross	digest	accounting across targets and the snapshot's collection (steps 4, 5)
+463_bounded_native_steps.py	parks	digest	collection points: a park moves where a collection starts (step 2)
 463_bounded_native_steps.py	restore	digest	snapshot collection: the snapshot collects in full and drops caches (steps 2, 5)
 463_bounded_native_steps.py	snapshot	digest	snapshot collection: the snapshot collects in full and drops caches (steps 2, 5)
 463_bounded_native_steps.py	wasm-snapshot	digest	accounting across targets and the snapshot's collection (steps 4, 5)

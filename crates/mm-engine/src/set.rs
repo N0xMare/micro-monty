@@ -458,9 +458,10 @@ impl Vm {
         }
     }
 
-    /// Adds `key` (hash `h`, known absent) without comparing.
+    /// Adds `key` (hash `h`, known absent) without comparing, for a
+    /// caller that can hand a request on (the prelude's `_set_insert`).
     pub(crate) fn set_add_new(&mut self, s: Value, key: Value, hash: u64) -> Result<(), Raised> {
-        self.set_add_core(s, key, hash, true, false)
+        self.set_add_core(s, key, hash, true, true)
     }
 
     /// `s.clear()`: a new empty table, as CPython's `set_clear_internal`
@@ -540,7 +541,12 @@ impl Vm {
         let Some((idx, minused)) = self.set_put(s, key, hash, absent)? else {
             return Ok(());
         };
+        // A key known `absent` comes from the prelude twins (`_set_insert`):
+        // it may hash in Python, which the steps that grow a table cannot
+        // call (`bulk_grow_top`), so its table grows here; only a rebuild
+        // past a step goes on in steps (`set_resize`).
         if top
+            && !absent
             && self.set_len(s) > GROW_STEPS
             && self.grow_in_steps(Self::set_grow_size(minused, self.set_len(s)) * 16)
         {
@@ -548,7 +554,7 @@ impl Vm {
             self.set_unput(s, idx);
             return self.bulk_grow_top(s, key, Value::NONE, res::NONE);
         }
-        if let Err(error) = self.set_resize(s, minused) {
+        if let Err(error) = self.set_resize(s, minused, top) {
             // Resize allocates both replacement tables before publishing
             // either. Roll back this insertion on failure: catching repeated
             // MemoryErrors must not fill every slot and make probing hang.
@@ -577,6 +583,10 @@ impl Vm {
         let mut i = hash as usize & mask;
         let mut perturb = hash;
         let mut freeslot = None;
+        // One walk for the whole insertion, as `Vm::probe`'s: colliding
+        // keys each compare for a unit past the first, and past `WALK`
+        // visits Python compares the rest.
+        let mut left = WALK;
         let slot = loop {
             let probes = if i + LINEAR_PROBES <= mask {
                 LINEAR_PROBES
@@ -593,16 +603,21 @@ impl Vm {
                     break;
                 }
                 if !absent && ek != Value::UNDEFINED && eh == hash {
-                    if ek == key {
-                        return Ok(None);
-                    }
-                    let mut left = WALK;
-                    let r = self.eq_hard(ek, key, 1, &mut left);
-                    self.walked(left);
+                    let r = if ek == key {
+                        Ok(true)
+                    } else {
+                        self.eq_hard(ek, key, 1, &mut left)
+                    };
                     match r {
-                        Ok(true) => return Ok(None),
+                        Ok(true) => {
+                            self.walked(left);
+                            return Ok(None);
+                        }
                         Ok(false) => {}
-                        Err(e) => return Err(self.set_hard(e)),
+                        Err(e) => {
+                            self.walked(left);
+                            return Err(self.set_hard(e));
+                        }
                     }
                 }
                 // The last dummy probed, as CPython's `set_add_entry`
@@ -612,6 +627,9 @@ impl Vm {
                 }
             }
             if let Some(f) = found {
+                if left != WALK {
+                    self.walked(left);
+                }
                 break f;
             }
             perturb >>= PERTURB_SHIFT;
@@ -677,7 +695,12 @@ impl Vm {
         }
     }
 
-    fn set_resize(&mut self, s: Value, minused: usize) -> Result<(), Raised> {
+    /// Rebuilds set `s`'s table for `minused`, charging the probes past
+    /// each key's first run of slots. With `top` (the caller can hand a
+    /// request on), a rebuild whose probes pass a step's work goes on in
+    /// steps (`nstep::op::BULK`): keys with equal hashes each probe past
+    /// all those placed before them.
+    fn set_resize(&mut self, s: Value, minused: usize, top: bool) -> Result<(), Raised> {
         let size = Self::set_grow_size(minused, self.set_len(s));
         let (kv, hv) = self.set_table(size)?;
         let Some((r, ok, oh, osize)) = self.set_parts(s) else {
@@ -686,8 +709,24 @@ impl Vm {
         let (Some(k), Some(h)) = (kv.as_obj(), hv.as_obj()) else {
             return Ok(());
         };
+        let budget = if top {
+            (osize as u64).saturating_add(crate::nstep::STEP_WORK)
+        } else {
+            u64::MAX
+        };
         // Old slots in order, read in place (no copy of the table).
-        self.set_rehash(ok, oh, k, h, 0, osize);
+        let Some((at, probes)) = self.set_rehash(ok, oh, (k, h), 0, osize, budget) else {
+            return Err(self.err(T::SystemError, "invalid set table"));
+        };
+        self.burn(probes);
+        if at < osize {
+            let src = self.alloc_tuple(&[])?;
+            let prog = phase(act::ADD, 0, 1, 0);
+            let tables = (kv, hv, at as u64, 0);
+            return self
+                .bulk_with(&[s, src], prog, res::NONE, tables)
+                .map(|_| ());
+        }
         let n = self.raw_o(r, USED);
         self.set_slot_o(r, 0, kv);
         self.set_slot_o(r, 1, hv);
@@ -697,33 +736,59 @@ impl Vm {
     }
 
     /// Inserts the live entries of old table slots `from..to` (keys `ok`,
-    /// hashes `oh`) into the clean table `k`, `h`, in slot order.
-    fn set_rehash(&mut self, ok: Ref, oh: Ref, k: Ref, h: Ref, from: usize, to: usize) {
+    /// hashes `oh`) into the clean table `k`, `h`, in slot order, until
+    /// the slots read and the probes past the keys' first runs of slots,
+    /// less one per key, reach `budget`: keys with equal hashes each
+    /// probe past all those placed before them, where well-spread keys
+    /// rarely probe past their first run. The slot it stopped at and
+    /// those probes, the work to charge
+    /// on top of the slots; `None` if a key found no free slot (a forged
+    /// image's table).
+    fn set_rehash(
+        &mut self,
+        ok: Ref,
+        oh: Ref,
+        (k, h): (Ref, Ref),
+        from: usize,
+        to: usize,
+        budget: u64,
+    ) -> Option<(usize, u64)> {
         let mask = self.obj_len(k) as usize - 1;
+        let (mut probes, mut keys) = (0u64, 0u64);
         for i in from..to {
-            let i = u32::try_from(i).unwrap_or(u32::MAX);
-            let key = self.slot_o(ok, i);
+            let at = u32::try_from(i).unwrap_or(u32::MAX);
+            let key = self.slot_o(ok, at);
             if key != Value::UNDEFINED {
-                let hash = self.raw_o(oh, i);
-                self.insert_clean(k, h, mask, key, hash);
+                let hash = self.raw_o(oh, at);
+                probes += self.insert_clean(k, h, mask, key, hash)?;
+                keys += 1;
+                // Slots read are bounded by `to`; only probes past one a
+                // key end a slice early.
+                if probes > keys && (i + 1 - from) as u64 + probes - keys >= budget {
+                    return Some((i + 1, probes - keys));
+                }
             }
         }
+        Some((to.max(from), probes.saturating_sub(keys)))
     }
 
-    fn insert_clean(&mut self, k: Ref, h: Ref, mask: usize, key: Value, hash: u64) {
+    /// Puts `key` in the first free slot of clean table `k`, `h`: the
+    /// probes past its first run of slots, or `None` if it found none.
+    fn insert_clean(&mut self, k: Ref, h: Ref, mask: usize, key: Value, hash: u64) -> Option<u64> {
         #[allow(clippy::cast_possible_truncation, reason = "masked")]
         let mut i = hash as usize & mask;
         let mut perturb = hash;
         // Once `perturb` is spent the probes visit every slot, so a table
         // with room has a free one within these; a full one (a forged
-        // image's) drops the key.
+        // image's) has none.
         let mut left = mask.saturating_add(64);
+        let mut jumps = 0;
         loop {
             if self.slot_o(k, u32::try_from(i).unwrap_or(0)) == Value::UNDEFINED {
                 break;
             }
             if left == 0 {
-                return;
+                return None;
             }
             left -= 1;
             let mut hit = None;
@@ -739,6 +804,7 @@ impl Vm {
                 i = x;
                 break;
             }
+            jumps += 1;
             perturb >>= PERTURB_SHIFT;
             #[allow(clippy::cast_possible_truncation, reason = "masked")]
             {
@@ -752,6 +818,7 @@ impl Vm {
         let idx = u32::try_from(i).unwrap_or(0);
         self.set_slot_o(k, idx, key);
         self.set_raw_o(h, idx, hash);
+        Some(jumps)
     }
 
     /// `s.discard(key)`; whether it was present.
@@ -1009,7 +1076,7 @@ impl Vm {
             }
             p >>= 16;
         }
-        let mut b = Bulk {
+        let b = Bulk {
             r,
             nk: Value::UNDEFINED,
             nv: Value::UNDEFINED,
@@ -1022,6 +1089,30 @@ impl Vm {
             room: true,
             step: top,
         };
+        self.bulk_go(b, top)
+    }
+
+    /// [`Vm::bulk`] with `top` from its next step, its first phase's `out`
+    /// part way through a rebuild into new tables `nk`, `nv` (`j` old
+    /// slots or entries moved, `n` entries for a dict), which goes on
+    /// first.
+    pub(crate) fn bulk_with(
+        &mut self,
+        regs: &[Value],
+        prog: u64,
+        res: u64,
+        (nk, nv, j, n): (Value, Value, u64, u64),
+    ) -> Result<Value, Raised> {
+        let mut r = [Value::NONE; 6];
+        for (o, &v) in r.iter_mut().zip(regs) {
+            *o = v;
+        }
+        let [a, c, d, e, f, g] = r;
+        let vals = [a, c, d, e, f, g, nk, nv];
+        self.chunk_rest(crate::nstep::op::BULK, &vals, &[prog, 0, 0, j, n, res])
+    }
+
+    fn bulk_go(&mut self, mut b: Bulk, top: bool) -> Result<Value, Raised> {
         match self.bulk_run(&mut b, top)? {
             Flow::Done(v) => Ok(v),
             Flow::Py if top => self.bulk_py(&b),
@@ -1229,7 +1320,7 @@ impl Vm {
             }
             if b.nk != Value::UNDEFINED {
                 // `out`'s table is rebuilt a slice per step; the items wait.
-                *units += self.bulk_rebuild(b, out, left.min(REBUILD_SLICE));
+                *units += self.bulk_rebuild(b, out, left.min(REBUILD_SLICE))?;
                 continue;
             }
             if b.pc & BEGUN == 0 {
@@ -1379,7 +1470,7 @@ impl Vm {
     /// `_set_difference_update`): [`Vm::set_dummies_minused`] at once.
     pub(crate) fn set_settle(&mut self, s: Value) -> Result<(), Raised> {
         match self.set_dummies_minused(s) {
-            Some(minused) => self.set_resize(s, minused),
+            Some(minused) => self.set_resize(s, minused, false),
             None => Ok(()),
         }
     }
@@ -1421,7 +1512,7 @@ impl Vm {
         };
         let n = self.merge_len(src);
         match self.merge_size(s, n).filter(|_| n != 0 && s != src) {
-            Some((_, minused)) => self.set_resize(s, minused),
+            Some((_, minused)) => self.set_resize(s, minused, false),
             None => Ok(()),
         }
     }
@@ -1509,24 +1600,34 @@ impl Vm {
         }
     }
 
-    /// A slice of the rebuild of `out`'s table: at most `left` old slots
-    /// (a set) or entries (a dict) moved; installs the new table once all
-    /// are. The work done.
+    /// A slice of the rebuild of `out`'s table: old slots (a set) or
+    /// entries (a dict) moved until they and the probes past each key's
+    /// first run of slots reach `left`; installs the new table once all
+    /// are. The work done; `bad_step` if the new tables are the old ones
+    /// or have no room (a forged image's).
     #[inline(never)]
-    fn bulk_rebuild(&mut self, b: &mut Bulk, out: Value, left: u64) -> u64 {
+    fn bulk_rebuild(&mut self, b: &mut Bulk, out: Value, left: u64) -> Result<u64, Raised> {
         let (Some(nk), Some(nv)) = (b.nk.as_obj(), b.nv.as_obj()) else {
             b.nk = Value::UNDEFINED;
-            return 1;
+            return Ok(1);
         };
-        let to = b.j.saturating_add(left.max(1));
-        let Some(r) = out.as_obj() else { return 1 };
+        let left = left.max(1);
+        let to = b.j.saturating_add(left);
+        let Some(r) = out.as_obj() else { return Ok(1) };
         if Self::is_set(out) {
             let Some((_, ok, oh, osize)) = self.set_parts(out) else {
-                return 1;
+                return Ok(1);
             };
             let to = usize::try_from(to).unwrap_or(usize::MAX).min(osize);
-            self.set_rehash(ok, oh, nk, nv, b.j as usize, to);
-            let done = to as u64 - b.j;
+            let moved = if nk == ok || nv == oh {
+                None
+            } else {
+                self.set_rehash(ok, oh, (nk, nv), b.j as usize, to, left)
+            };
+            let Some((to, probes)) = moved else {
+                return Err(self.bad_step());
+            };
+            let done = to as u64 - b.j + probes;
             b.j = to as u64;
             if to == osize {
                 let n = self.raw_o(r, USED);
@@ -1538,15 +1639,18 @@ impl Vm {
                 let src = Self::bulk_src_reg(b);
                 self.bulk_mode(b, out, src);
             }
-            return done.max(1);
+            return Ok(done.max(1));
         }
-        let (done, installed) =
-            self.dict_grow_slice(out, b.nk, b.nv, &mut b.j, &mut b.n, left.max(1));
+        let Some((done, installed)) =
+            self.dict_grow_slice(out, b.nk, b.nv, &mut b.j, &mut b.n, left)
+        else {
+            return Err(self.bad_step());
+        };
         if installed {
             b.nk = Value::UNDEFINED;
             b.nv = Value::UNDEFINED;
         }
-        done.max(1)
+        Ok(done.max(1))
     }
 
     /// A slice of dict `d`'s growth, for a chunked native that inserts
@@ -1563,9 +1667,11 @@ impl Vm {
     /// 2. Each step calls this with the tables and two raw words of the
     ///    state, `at` (old entries read) and `n` (entries moved), both 0
     ///    at first, and `left`, the step's work units still to spend: it
-    ///    moves up to `left` old entries and gives the units it did and
-    ///    whether it installed the new tables (then drop them from the
-    ///    state).
+    ///    moves old entries until they and the probes past each one's
+    ///    first slot reach `left`, and gives the units it did and whether
+    ///    it installed the new tables (then drop them from the state);
+    ///    `None` if the new tables are the old ones or have no room (a
+    ///    forged image's: raise [`Vm::bad_step`]).
     /// 3. Until then the old table stays installed and in use: nothing may
     ///    write to `d`, not even a value of an existing key, or a moved
     ///    entry is lost. Then insert the pending key as usual
@@ -1581,21 +1687,25 @@ impl Vm {
         at: &mut u64,
         n: &mut u64,
         left: u64,
-    ) -> (u64, bool) {
+    ) -> Option<(u64, bool)> {
         let (Some(r), Some(nk), Some(nv)) = (d.as_obj(), entries.as_obj(), index.as_obj()) else {
-            return (1, true);
+            return Some((1, true));
         };
+        let o = self.dv(r)?;
+        if nk == o.entries || o.index == Some(nv) {
+            return None;
+        }
         let used = self.dict_used(d) as u64;
         let to = usize::try_from(at.saturating_add(left).min(used)).unwrap_or(usize::MAX);
         let moved = u32::try_from(*n).unwrap_or(u32::MAX);
-        let (end, moved) = self.dict_move(r, nk, nv, *at as usize, to, moved);
-        let done = end as u64 - *at;
+        let (end, moved, probes) = self.dict_move(r, nk, nv, *at as usize, to, moved, left)?;
+        let done = end as u64 - *at + probes;
         (*at, *n) = (end as u64, u64::from(moved));
         if end as u64 >= used {
             self.dict_install(d, r, nk, nv, moved);
-            return (done, true);
+            return Some((done, true));
         }
-        (done, false)
+        Some((done, false))
     }
 
     /// The source register of `b`'s current phase.
@@ -1901,7 +2011,12 @@ impl Vm {
             // so past that the items go in as any others, the table growing.
             act::ADD if b.pc & CLEAN != 0 && self.set_room(out) => {
                 if let Some((r, k, hs, size)) = self.set_parts(out) {
-                    self.insert_clean(k, hs, size - 1, x, h.unwrap_or(0));
+                    let Some(probes) = self.insert_clean(k, hs, size - 1, x, h.unwrap_or(0)) else {
+                        return Err(self.bad_step());
+                    };
+                    // One probe past its first run is free, as in a rehash
+                    // ([`Vm::set_rehash`]).
+                    self.burn(probes.saturating_sub(1));
                     for i in [FILL, USED] {
                         let n = self.raw_o(r, i) + 1;
                         self.set_raw_o(r, i, n);

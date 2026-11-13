@@ -328,18 +328,20 @@ fn set_islot(words: &mut [u64], i: u32, v: u32) {
     }
 }
 
-/// The first empty or deleted slot on `h`'s probe sequence.
-fn free_in(words: &[u64], g: Geo, h: u64) -> u32 {
+/// The first empty or deleted slot on `h`'s probe sequence and the slots
+/// probed past its first; `None` if there is none (a forged image's full
+/// table).
+fn free_in(words: &[u64], g: Geo, h: u64) -> Option<(u32, u64)> {
     let mut i = g.start(h);
     let mut perturb = h;
-    for _ in 0..=g.steps() {
+    for n in 0..=g.steps() {
         let w = islot(words, i);
         if w == 0 || w == DELETED {
-            return i;
+            return Some((i, u64::from(n)));
         }
         i = g.next(i, &mut perturb);
     }
-    0
+    None
 }
 
 /// A dict's storage and counters, read with one validation.
@@ -1245,7 +1247,25 @@ impl Vm {
             {
                 return self.bulk_grow_top(d, k, v, top);
             }
-            self.dict_resize(d, r, dv.len as usize + 1, !linear_key(k))?;
+            // A rebuild past a step's work goes on in steps.
+            let budget = if top == NOT_TOP {
+                u64::MAX
+            } else {
+                u64::from(dv.used).saturating_add(crate::nstep::STEP_WORK)
+            };
+            if let Some((e, i, at, n)) =
+                self.dict_resize(d, r, dv.len as usize + 1, !linear_key(k), budget)?
+            {
+                let src = self.alloc_tuple(&[k])?;
+                let tables = (
+                    Value::from_ref(e, ty::BUF as u8),
+                    Value::from_ref(i, ty::RAW as u8),
+                    at,
+                    n,
+                );
+                let prog = crate::set::phase(crate::set::act::KEYS, 0, 1, 2);
+                return self.bulk_with(&[d, src, v], prog, top, tables).map(|_| ());
+            }
             match self.dv(r) {
                 Some(n) if self.has_room(&n, k) => dv = n,
                 _ => return Err(self.err(T::SystemError, "malformed dict")),
@@ -1287,7 +1307,7 @@ impl Vm {
         if e >= g.cap || words.len() / 2 == 0 {
             return false;
         }
-        let slot = slot.unwrap_or_else(|| free_in(words, g, h));
+        let slot = slot.unwrap_or_else(|| free_in(words, g, h).map_or(0, |(i, _)| i));
         set_islot(words, slot, g.word(h, e));
         if let Some(w) = words.get_mut((g.cap + e) as usize) {
             *w = h;
@@ -1480,9 +1500,20 @@ impl Vm {
     /// Makes room for at least `need` entries: a full inline table moves out
     /// to a linear one as it is; anything else (an `index`-needing key, a
     /// full linear or indexed table, `need` over `LINEAR_MAX`) is rebuilt
-    /// as an indexed table, compacting deletions.
-    fn dict_resize(&mut self, d: Value, r: Ref, need: usize, index: bool) -> Result<(), Raised> {
-        let Some(o) = self.dv(r) else { return Ok(()) };
+    /// as an indexed table, compacting deletions, the probes past each
+    /// entry's first slot charged. A rebuild whose entries and probes pass
+    /// `budget` stops there: its new tables, entries read and entries
+    /// moved, for the caller to go on with in steps.
+    #[allow(clippy::type_complexity, reason = "a rebuild's state")]
+    fn dict_resize(
+        &mut self,
+        d: Value,
+        r: Ref,
+        need: usize,
+        index: bool,
+        budget: u64,
+    ) -> Result<Option<(Ref, Ref, u64, u64)>, Raised> {
+        let Some(o) = self.dv(r) else { return Ok(None) };
         // No more entries than the old storage holds (a restored snapshot's
         // counts are not trusted).
         let held = self.heap.slot_words(o.entries).map_or(0, |w| w.len() / 2);
@@ -1511,21 +1542,35 @@ impl Vm {
             self.set_slot(r, 1, Value::NONE);
             let used = u32::try_from(used).unwrap_or(0);
             self.set_counts(r, live, used);
-            return Ok(());
+            return Ok(None);
         }
         // Anything else becomes a compacted indexed table.
         let (entries, index) = self.dict_tables(cap_for(need))?;
-        let (_, n) = self.dict_move(r, entries, index, 0, usize::MAX, 0);
+        let Some((at, n, probes)) = self.dict_move(r, entries, index, 0, usize::MAX, 0, budget)
+        else {
+            return Err(self.err(T::SystemError, "malformed dict"));
+        };
+        self.burn(probes);
+        if at < used {
+            let tables = (entries, index, at as u64, u64::from(n));
+            return Ok(Some(tables));
+        }
         self.dict_install(d, r, entries, index, n);
-        Ok(())
+        Ok(None)
     }
 
     /// Moves the live entries `at..to` of dict `r`'s table, in order, to
     /// the new indexed tables `entries` and `index` from entry `n` on,
     /// with their hashes (stored in an index, else computed: keys of a
-    /// table without one all hash natively); where it stopped and the
-    /// entries the new table then holds. A rebuild a slice per step reads
-    /// the old table, still installed, again each step.
+    /// table without one all hash natively), until the entries read and
+    /// the probes past the entries' first slots, less one per entry,
+    /// reach `budget` (entries with equal hashes each probe past all
+    /// those placed before them). Where it stopped, the entries the new
+    /// table then holds and those probes, the work to charge on top of
+    /// the entries; `None` if an entry found no free slot (a forged
+    /// image's index). A rebuild a slice per step reads the old table,
+    /// still installed, again each step.
+    #[allow(clippy::too_many_arguments, reason = "a rebuild's slice")]
     pub(crate) fn dict_move(
         &mut self,
         r: Ref,
@@ -1534,10 +1579,13 @@ impl Vm {
         mut at: usize,
         to: usize,
         mut n: u32,
-    ) -> (usize, u32) {
+        budget: u64,
+    ) -> Option<(usize, u32, u64)> {
         /// Entries moved per batch, through stack buffers (no heap copies).
         const BATCH: usize = 128;
-        let Some(o) = self.dv(r) else { return (to, n) };
+        let Some(o) = self.dv(r) else {
+            return Some((to, n, 0));
+        };
         // No more entries than the old storage holds (a restored snapshot's
         // counts are not trusted).
         let held = self.heap.slot_words(o.entries).map_or(0, |w| w.len() / 2);
@@ -1545,9 +1593,10 @@ impl Vm {
         let mut kvs = [Value::UNDEFINED; 2 * BATCH];
         let mut hs = [0u64; BATCH];
         let g = Geo::new(self.heap.raw_words(index).map_or(0, |w| w.len() / 2) as u32);
+        let (from, mut probes, mut keys) = (at, 0u64, 0u64);
         while at < used {
             // Gather the next batch of live entries with their hashes.
-            let mut k = 0;
+            let (mut k, start) = (0, at);
             {
                 let okv = self.heap.slot_words(o.entries).unwrap_or(&[]);
                 let ow = o
@@ -1571,19 +1620,37 @@ impl Vm {
                     at += 1;
                 }
             }
-            let _ = self.heap.set_values(entries, 2 * n, &kvs[..2 * k]);
+            let (mut placed, mut stop) = (k, false);
             if let Ok(words) = self.heap.raw_words_mut(index) {
-                for (e, &h) in (n..).zip(&hs[..k]) {
-                    let slot = free_in(words, g, h);
+                for (i, (e, &h)) in (n..).zip(&hs[..k]).enumerate() {
+                    let (slot, p) = free_in(words, g, h)?;
                     set_islot(words, slot, g.word(h, e));
                     if let Some(w) = words.get_mut((g.cap + e) as usize) {
                         *w = h;
                     }
+                    (probes, keys) = (probes + p, keys + 1);
+                    // Entries read are bounded by `to`; only probes past
+                    // one an entry end a slice early.
+                    if probes > keys && (at - from) as u64 + probes - keys >= budget {
+                        (placed, stop) = (i + 1, true);
+                        break;
+                    }
                 }
             }
-            n += u32::try_from(k).unwrap_or(0);
+            let _ = self.heap.set_values(entries, 2 * n, &kvs[..2 * placed]);
+            n += u32::try_from(placed).unwrap_or(0);
+            if stop {
+                // Just past the last entry placed.
+                let okv = self.heap.slot_words(o.entries).unwrap_or(&[]);
+                let live = |&j: &usize| {
+                    let key = okv.get(2 * j).and_then(|&b| Value::from_bits(b));
+                    key.is_some_and(|x| x != Value::UNDEFINED)
+                };
+                let last = (start..at).filter(live).nth(placed - 1).unwrap_or(at);
+                return Some((last + 1, n, probes - keys));
+            }
         }
-        (at.max(used), n)
+        Some((at.max(used), n, probes.saturating_sub(keys)))
     }
 
     /// Dict `r` takes the tables [`Vm::dict_move`] filled with `n`
@@ -1633,7 +1700,7 @@ impl Vm {
         if dv.used >= 1 << 12 || need >= 1 << 12 {
             return Ok(Some(cap_for(need)));
         }
-        self.dict_resize(d, r, need, true)?;
+        self.dict_resize(d, r, need, true, u64::MAX)?;
         Ok(None)
     }
 

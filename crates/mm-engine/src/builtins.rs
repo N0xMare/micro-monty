@@ -6741,7 +6741,7 @@ fn pl_walk_ord(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 fn pl_set_insert(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let h = pl_hash_arg(vm, vm.arg_o(&a, 2))?;
     vm.set_add_new(vm.arg_o(&a, 0), vm.arg_o(&a, 1), h)?;
-    Ok(Value::NONE)
+    Ok(stored(vm))
 }
 
 /// `_set_hashed(s)`: `[(key, stored hash), ...]`, so the prelude never

@@ -61,7 +61,7 @@ crates/mm-engine/src/ops.rs	unary	1
 crates/mm-engine/src/ops.rs	view_setop	1
 crates/mm-engine/src/re.rs	group_index	1
 crates/mm-engine/src/re.rs	match_expand	1
-crates/mm-engine/src/set.rs	bulk	1
+crates/mm-engine/src/set.rs	bulk_go	1
 crates/mm-engine/src/set.rs	set_hard	1
 crates/mm-engine/src/strmeth.rs	format	3
 crates/mm-engine/src/strmeth.rs	format_long	1

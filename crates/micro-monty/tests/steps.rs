@@ -2156,6 +2156,37 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "c = copy.deepcopy([b, b])",
         1,
     ),
+    // Keys with equal hashes (every `k * M` hashes to 0). A set insert
+    // compared each one for free (`set_put`): one 7.7 s step for `set(xs)`;
+    // and the table rebuilds re-probed all those placed before each key
+    // uncharged, in one step: 191 ms for the `add` loop's, 80 ms and 71 ms
+    // for the dict's, on d7c2b437 [M]. Now an insert
+    // has one walk, and a rebuild charges its probes and ends a slice on
+    // them: 29 ms, 5 ms, 27 ms and 2 ms [M].
+    (
+        Row::Bounded,
+        "M = (1 << 61) - 1\nxs = [k * M for k in range(1, 10_001)]",
+        "s = set(xs)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "M = (1 << 61) - 1\nxs = [k * M for k in range(1, 10_001)]",
+        "s = set()\nfor x in xs: s.add(x)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "M = (1 << 61) - 1\nxs = [k * M for k in range(1, 10_001)]",
+        "d = dict.fromkeys(xs)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "M = (1 << 61) - 1\nxs = [k * M for k in range(1, 10_001)]",
+        "d = {}\nfor x in xs: d[x] = None",
+        1,
+    ),
 ];
 
 /// How many more times a bounded row over the limit runs. This host has
