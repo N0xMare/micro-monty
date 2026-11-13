@@ -713,9 +713,12 @@ are the rules above. Where the code falls short, the clause says so under
    rows. The allocation floor is closed: a large list buffer, tuple or set key table
    comes unfilled from a fresh zeroed segment (`Heap::alloc_unfilled`), so
    its pages fault in as the steps write it; a set's keys are marked empty
-   a slice per step without the write barrier, then its hashes are written
-   in order a slice per step before the rebuild probes them at random
-   (about 3.5 ms a step [M]); a sort's second merge array comes in a step
+   a slice per step without the write barrier, and its hashes stay
+   unfilled and fault in at random as the first inserts probe them (24–26
+   ms for 32 MiB [M]; writing them first in steps of their own delayed the
+   rebuild, so the old 32 MiB table stayed live through a collection and
+   two rounds of 656k-item `a |= b` raised `MemoryError` at 256 MiB [M]);
+   a sort's second merge array comes in a step
    of its own; and a full list of 1M items or more grows a slice per step
    on `append` and `insert`. The 50 ms is on a reference machine (an Amp
    orb, 16 cores under gVisor); the oracle scales it by the machine it runs

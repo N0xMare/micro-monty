@@ -2604,3 +2604,23 @@ print(sorted(seen))
          ['MemoryError', 'OverflowError', 'SystemError', 'TypeError', 'ran']\n"
     );
 }
+
+/// Two rounds of big set operations near the default 256 MiB limit,
+/// where every round's sets are garbage by the next: Python 3.14 peaks
+/// at 279 MiB here. Writing a big set's new hashes in steps of their own
+/// before `a |= b` rebuilt into them delayed the rebuild: the collection
+/// that ended during it kept the old 32 MiB table live, and round 2
+/// raised `MemoryError` at `b = set(...)` for each of these sizes [M].
+#[test]
+fn two_rounds_of_big_set_operations_fit_the_default_limit() {
+    for n in [631_000_u64, 656_250, 750_000, 900_000] {
+        let src = format!(
+            "N = {n}\nt = 0\nfor r in range(2):\n    a = set(range(N))\n    b = set(range(N // 2, N + N // 2))\n    c = a & b\n    t += len(c)\n    d = dict(zip(range(N), range(N)))\n    t += len(d)\n    a |= b\n    t += len(a)\nprint(t)\n"
+        );
+        let (p, out) = run(&src);
+        assert!(matches!(p, Progress::Complete(_)), "N = {n}: {p:?}");
+        // Each round: |a & b| = N - N // 2, |d| = N, |a | b| = N + N // 2.
+        let want = 2 * ((n - n / 2) + n + (n + n / 2));
+        assert_eq!(out, format!("{want}\n"), "N = {n}");
+    }
+}
