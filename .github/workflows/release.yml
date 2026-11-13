@@ -15,6 +15,11 @@ name: Release
 #   wasm32-wasip1 and wasm32-unknown-unknown, built and checked by
 #   `cargo xtask wasm` (shipped build, `wasm-opt -Oz`, round trip under
 #   wasmtime).
+# - The shipped mm-wasm guests for wasm32-unknown-unknown, built by
+#   `cargo xtask size` (shipped build, `wasm-opt -Oz`, size budgets):
+#   `mm_wasm_guest` and the bundle guest `mm_wasm_guest_bundle`, which
+#   carries the prelude and stdlib bytecode as custom sections for the host
+#   to serve through `mm_host.bundle_read`.
 # - SHA256SUMS, and release notes listing each binary's snapshot build_id
 #   (`mm version`, `mm-cell-worker --version`, the wasip1 round trip).
 on:
@@ -109,6 +114,8 @@ jobs:
           rm -rf tools
       - name: cargo xtask wasm (shipped builds, wasm-opt -Oz, round trips)
         run: cargo xtask wasm | tee wasm.log
+      - name: cargo xtask size (shipped guests, wasm-opt -Oz, size budgets)
+        run: cargo xtask size | tee size.log
       - name: Collect modules and build ids
         run: |
           mkdir -p out
@@ -117,12 +124,18 @@ jobs:
               cp "target/$target/release/shipped/$example.wasm" "out/$example-$target.wasm"
             done
           done
+          cp target/wasm32-unknown-unknown/shipped/mm_wasm_guest.wasm \
+            out/mm_wasm_guest-wasm32-unknown-unknown.wasm
+          cp target/mm-wasm-bundle/wasm32-unknown-unknown/shipped/mm_wasm_guest_bundle.wasm \
+            out/mm_wasm_guest_bundle-wasm32-unknown-unknown.wasm
           id=$("$HOME/.local/bin/wasmtime" out/roundtrip-wasm32-wasip1.wasm | sed -n 's/^build_id //p')
           test -n "$id"
           {
             printf 'wasm32-wasip1 hello,roundtrip %s\n' "$id"
             # Same source and features as wasip1; build_id has no target input.
             printf 'wasm32-unknown-unknown hello,roundtrip %s\n' "$id"
+            # The guests build the facade with its default features too.
+            printf 'wasm32-unknown-unknown mm_wasm_guest,mm_wasm_guest_bundle %s\n' "$id"
           } > out/build-ids-wasm.txt
       - uses: actions/upload-artifact@v4
         with:
