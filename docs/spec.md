@@ -2525,9 +2525,11 @@ it trails CPython on generators, fmt and interp (about 2×).
 callgrind twice, on the shipped native `mm` (`target/<host>/release/mm`,
 built by `cargo xtask shipped-mm`; the script stops if it is missing). The
 *gated* count runs from glibc's `__libc_start_main` onward and leaves out glibc's `pthread_getattr_np`; the *whole-process*
-count includes everything. A change may move the gated count of each
-program by at most ±0.5%, and the whole-process count is reported beside
-it. The two parts left out depend on where the binary's segments land, not
+count includes everything. A change may raise the gated count of a
+program by at most 0.5% over the base, unless a commit says why with the
+table on a `Native-IR-Accepted:` line; a drop passes. `cargo xtask
+native-ir` checks it (in `check`, Linux), and the whole-process count is
+reported beside it. The two parts left out depend on where the binary's segments land, not
 on engine work: the dynamic loader's relocations, and `pthread_getattr_np`
 parsing `/proc/self/maps`, which Rust's runtime calls from inside `main` to
 find the main thread's stack. That is why counting from `main` alone is not
@@ -2608,7 +2610,8 @@ opens a draft release.
   checksum, warm-up included; a Python exception is a regression. The full
   `cargo xtask bench` times the engines it finds and writes
   `bench/results/`; run it alone on an idle machine. Native Ir follows the
-  ±0.5% gated-count rule (§12).
+  gated-count rule (§12): `cargo xtask native-ir` (in `check`, Linux) fails
+  when a program's gated count rises past 0.5% over the base's.
 - **wasm-ir** (in both tiers, Linux only, since it needs valgrind):
   `cargo xtask wasm-ir` builds the working tree (or `--head REV`), the base
   (`--base REV`, default `origin/main`) and an anchor, each in a worktree

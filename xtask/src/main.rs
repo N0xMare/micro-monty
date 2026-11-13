@@ -57,6 +57,7 @@ mod docs;
 mod durability;
 mod gc_stress;
 mod handoffs;
+mod native_ir;
 mod package;
 mod size;
 mod wasm;
@@ -145,6 +146,13 @@ tasks:
       --pool <file>...       judge the rounds of several runs together
                              (target/wasm-wall/rounds/*.tsv, same base and
                              head); builds and times nothing
+  native-ir [--base <rev>]   bench/*.py's gated callgrind Ir on the shipped
+                             native mm ($MM, else built) against the base's
+                             (default origin/main; built in a worktree under
+                             target/native-ir/, cached per commit): fails on
+                             a program rising past 0.5%, unless a commit since
+                             the base has a Native-IR-Accepted: line or
+                             MM_IR_ACCEPT=<reason> is set
   wasm-ir [options]          wasmtime guest instructions of bench/*.py against
                              a base revision and an anchor (the last v* tag or
                              accepted rise) under callgrind (in check): fails
@@ -193,6 +201,7 @@ fn main() -> ExitCode {
         Some("wasm-host") if rest.is_empty() => wasm::host(),
         Some("wasm-wall") => wasm_wall::run(&rest),
         Some("wasm-ir") => wasm_ir::run(&rest),
+        Some("native-ir") => native_ir::run(&rest),
         Some("gc-stress") => gc_stress::run(&rest),
         Some("package") if rest.is_empty() => package::run(),
         Some("docs") if rest.is_empty() => docs::run(),
@@ -526,8 +535,15 @@ fn check(args: &[String]) -> Result<(), String> {
     // worktree and target directories under target/wasm-ir/).
     if cfg!(target_os = "linux") {
         stages.push(Stage::new("wasm-ir").run(task(&["wasm-ir"])));
+        // The bench programs' gated Ir on the shipped native `mm` against
+        // the base's: a rise past 0.5% fails (AGENTS.md's Ir rule).
+        stages.push(Stage::new("native-ir").after(&["shipped-mm"]).run({
+            let mut ir = task(&["native-ir"]);
+            ir.env("MM", &shipped_mm);
+            ir
+        }));
     } else {
-        println!("check: wasm-ir skipped: valgrind runs on Linux only");
+        println!("check: wasm-ir and native-ir skipped: valgrind runs on Linux only");
     }
     if release_gate {
         stages.push(

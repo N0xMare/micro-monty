@@ -431,7 +431,7 @@ fn default_anchor(root: &Path, base: &str) -> Result<Option<(String, String)>, S
 }
 
 /// `tool --version`'s first line, for the cache key.
-fn version(tool: &Path) -> String {
+pub(crate) fn version(tool: &Path) -> String {
     Command::new(tool)
         .arg("--version")
         .output()
@@ -511,7 +511,7 @@ fn verdict(failures: &[String]) -> Result<(), String> {
 
 /// `job(0..n)` on at most one thread per CPU (a count does not depend on
 /// load); the results in order.
-fn parallel<T: Send>(n: usize, job: impl Fn(usize) -> T + Sync) -> Vec<T> {
+pub(crate) fn parallel<T: Send>(n: usize, job: impl Fn(usize) -> T + Sync) -> Vec<T> {
     let next = Mutex::new(0_usize);
     let done = Mutex::new(Vec::with_capacity(n));
     let workers = thread::available_parallelism()
