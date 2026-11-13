@@ -151,6 +151,8 @@ impl Vm {
             return Err(self.err(T::MemoryError, ""));
         };
         self.reserve_code(CodeObj::load_bytes(&code))?;
+        let name = self.intern(&code.name)?;
+        let qualname = self.intern(&code.qualname)?;
         if Arc::make_mut(&mut self.codes).try_reserve_exact(1).is_err()
             || self.ics.try_reserve_exact(code.n_ics as usize).is_err()
         {
@@ -166,6 +168,8 @@ impl Vm {
             code: code.into(),
             consts: Vec::new(),
             names: Vec::new(),
+            name,
+            qualname,
             ic_base,
             module_base: ci,
             source: u32::MAX,

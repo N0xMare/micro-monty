@@ -341,6 +341,10 @@ pub(crate) struct CodeObj {
     pub code: Arc<Code>,
     pub consts: Vec<Value>,
     pub names: Vec<Value>,
+    /// The code's name and qualified name, interned when it is loaded:
+    /// every function made from it takes them (`Vm::new_function`).
+    pub name: Value,
+    pub qualname: Value,
     pub ic_base: u32,
     pub module_base: u32,
     pub source: u32,
@@ -379,6 +383,9 @@ impl CodeObj {
             }),
             consts: Vec::new(),
             names: Vec::new(),
+            // Never made into a function.
+            name: Value::NONE,
+            qualname: Value::NONE,
             ic_base,
             module_base: ci,
             source: u32::MAX,
@@ -386,6 +393,25 @@ impl CodeObj {
             gslot: GSLOT_PRELUDE,
             reclaim_live: false,
             reclaim_index: 0,
+        }
+    }
+}
+
+/// The strings of one program being loaded, interned once each: decoding
+/// shares one `Arc` per distinct string, so a repeat is found by its
+/// address, without hashing its bytes or probing the intern table.
+struct Interned {
+    slots: Vec<(usize, Value)>,
+    mask: usize,
+}
+
+impl Interned {
+    /// Room for `n` strings at most.
+    fn new(n: usize) -> Interned {
+        let cap = n.saturating_mul(2).next_power_of_two().max(8);
+        Interned {
+            slots: alloc::vec![(0, Value::UNDEFINED); cap],
+            mask: cap - 1,
         }
     }
 }
@@ -1925,6 +1951,8 @@ impl Vm {
                 reclaim_index: 0,
             });
             let module_base = u32::try_from(self.codes.len()).unwrap_or(u32::MAX);
+            let mut seen =
+                Interned::new(prog.codes.iter().map(|c| c.names.len() + 2).sum::<usize>());
             for code in &prog.codes {
                 let mut consts = Vec::with_capacity(code.consts.len());
                 for k in &code.consts {
@@ -1958,8 +1986,10 @@ impl Vm {
                 }
                 let mut names = Vec::with_capacity(code.names.len());
                 for n in &code.names {
-                    names.push(self.intern(n)?);
+                    names.push(self.intern_shared(&mut seen, n)?);
                 }
+                let name = self.intern_shared(&mut seen, &code.name)?;
+                let qualname = self.intern_shared(&mut seen, &code.qualname)?;
                 let ic_base = u32::try_from(self.ics.len()).unwrap_or(u32::MAX);
                 self.ics
                     .extend(core::iter::repeat_n(Ic::Empty, code.n_ics as usize));
@@ -1967,6 +1997,8 @@ impl Vm {
                     code: code.clone(),
                     consts,
                     names,
+                    name,
+                    qualname,
                     ic_base,
                     module_base,
                     source: src,
@@ -2316,6 +2348,22 @@ impl Vm {
     }
 
     // ----------------------------------------------------- constructors
+
+    /// [`Vm::intern`] of a string of the program `seen` is loading.
+    fn intern_shared(&mut self, seen: &mut Interned, s: &Arc<str>) -> Result<Value, Raised> {
+        let key = Arc::as_ptr(s).cast::<u8>() as usize;
+        let mut i = ((key >> 4) ^ (key >> 13)) & seen.mask;
+        loop {
+            match seen.slots[i] {
+                (k, v) if k == key => return Ok(v),
+                (0, _) => break,
+                _ => i = (i + 1) & seen.mask,
+            }
+        }
+        let v = self.intern(s)?;
+        seen.slots[i] = (key, v);
+        Ok(v)
+    }
 
     /// An interned `str`.
     pub(crate) fn intern(&mut self, s: &str) -> Result<Value, Raised> {

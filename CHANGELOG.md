@@ -62,6 +62,16 @@ hashes are pre-release history, kept in the private archive
   A tools template's checked restore falls from 1.75M to 0.96M Ir
   (175.1 to 80.2 µs), a trusted instantiation to 0.43M Ir (39.5 µs) [M].
   The build id moves.
+- Imports intern less. A loaded code keeps its interned name and
+  qualified name, so making a function no longer interns them. A
+  program's load interns each distinct string once. The intern table
+  grows and probes without revalidating each slot. Per session [M]: the
+  five-module cell (`json`, `re`, `collections`, `asyncio`, `datetime`)
+  falls from 13.11M to 11.13M Ir, `import json` from 1.28M to 1.22M Ir,
+  and `startup` from 0.585M to 0.554M gated Ir. Images carry each
+  code's two names, so restores read 16 more bytes per code: a codemode
+  template's image is 3.1% larger and its trusted restore 4.8% slower in
+  Ir. The build id moves.
 
 ## 0.0.1 (2026-11-12)
 

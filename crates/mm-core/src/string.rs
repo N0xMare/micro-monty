@@ -750,13 +750,13 @@ impl Heap {
         let Some(table) = self.intern_table else {
             return Ok(None);
         };
-        let cap = self.table_cap(table)?;
-        let mask = cap - 1;
+        // The table's entries, read with one validation.
+        let entries = self.slot_words(table)?.get(1..).ok_or(Error::BadSlot)?;
+        let mask = entries.len().wrapping_sub(1);
         #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
-        let mut i = hash as u32 & mask;
-        for _ in 0..cap {
-            let v = self.get(table, 1 + i)?;
-            let Some(r) = v.as_obj() else {
+        let mut i = hash as usize & mask;
+        for _ in 0..entries.len() {
+            let Some(r) = entries.get(i).and_then(|&w| Value(w).as_obj()) else {
                 return Ok(None);
             };
             if self.get_raw(r, SLOT_HASH)? == hash && self.str_bytes(r)? == bytes {
@@ -767,8 +767,53 @@ impl Heap {
         Ok(None)
     }
 
+    /// The intern table's slots, writable: its count, then its entries.
+    /// Marks the table's segment dirty, as a value-slot write does.
+    fn intern_slots_mut(&mut self, table: Ref) -> Result<&mut [u64], Error> {
+        let (s, off) = self.words.block_mut(table.raw()).ok_or(Error::BadRef)?;
+        let h = Header::from_word(s.data.read(off).ok_or(Error::BadRef)?);
+        if h.type_id() != types::INTERN_TABLE {
+            return Err(Error::BadType);
+        }
+        s.dirty = crate::space::DIRTY_REFS;
+        s.data
+            .get_mut(off + 1..off + 1 + h.len() as usize)
+            .ok_or(Error::BadSlot)
+    }
+
+    /// Puts `entry` (an interned string's reference) in `slots` (an intern
+    /// table's, after its count) at its hash's first free place; the caller
+    /// has made room.
+    fn place_interned(slots: &mut [u64], entry: u64, hash: u64) -> Result<(), Error> {
+        let mask = slots.len().wrapping_sub(1);
+        #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
+        let mut i = hash as usize & mask;
+        for _ in 0..slots.len() {
+            let slot = slots.get_mut(i).ok_or(Error::BadSlot)?;
+            if Value(*slot).as_obj().is_none() {
+                *slot = entry;
+                return Ok(());
+            }
+            i = (i + 1) & mask;
+        }
+        Err(Error::OutOfMemory)
+    }
+
     /// Makes room for one more entry: creates the table or doubles it.
     fn reserve_intern(&mut self) -> Result<(), Error> {
+        if let Some(t) = self.intern_table {
+            // The usual case, room already: count and capacity in one read.
+            let w = self.slot_words(t)?;
+            let count = w
+                .first()
+                .and_then(|&c| Value(c).as_int())
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or(Error::BadSlot)?;
+            // Entries are the slots after the count.
+            if (count + 1) * 2 < w.len() {
+                return Ok(());
+            }
+        }
         self.grow_intern(self.interned_count() + 1)
     }
 
@@ -797,23 +842,35 @@ impl Heap {
             .ok_or(Error::OutOfMemory)?
             .max(old_cap * 2)
             .max(INTERN_MIN_CAP);
-        let table = self.alloc_object(types::INTERN_TABLE, 0, cap + 1, 0)?;
-        self.write_slot(
-            table,
-            0,
-            Value::int(0).map_or(0, Value::to_bits),
-            true,
-            false,
-        )?;
-        self.intern_table = Some(table);
+        // The old entries with their hashes, in table order (each string's
+        // hash is cached: interned strings are flagged `HASHED`).
+        let mut moved = Vec::new();
         if let Some(old) = old {
-            for i in 0..old_cap {
-                if let Some(r) = self.get(old, 1 + i)?.as_obj() {
-                    let hash = self.get_raw(r, SLOT_HASH)?;
-                    self.insert_interned(r, hash)?;
+            let entries = self.slot_words(old)?.get(1..).ok_or(Error::BadSlot)?;
+            moved
+                .try_reserve_exact(
+                    entries
+                        .iter()
+                        .filter(|&&w| Value(w).as_obj().is_some())
+                        .count(),
+                )
+                .map_err(|_| Error::OutOfMemory)?;
+            for &w in entries {
+                if let Some(r) = Value(w).as_obj() {
+                    moved.push((w, self.get_raw(r, SLOT_HASH)?));
                 }
             }
         }
+        let table = self.alloc_object(types::INTERN_TABLE, 0, cap + 1, 0)?;
+        let count = Value::int(i64::try_from(moved.len()).map_err(|_| Error::OutOfMemory)?)
+            .ok_or(Error::OutOfMemory)?;
+        let slots = self.intern_slots_mut(table)?;
+        let (head, entries) = slots.split_first_mut().ok_or(Error::BadSlot)?;
+        *head = count.0;
+        for (w, hash) in moved {
+            Self::place_interned(entries, w, hash)?;
+        }
+        self.intern_table = Some(table);
         Ok(())
     }
 
@@ -867,21 +924,10 @@ impl Heap {
     /// Adds `r` to the table; the caller has made room.
     fn insert_interned(&mut self, r: Ref, hash: u64) -> Result<(), Error> {
         let table = self.intern_table.ok_or(Error::BadRef)?;
-        let mask = self.table_cap(table)? - 1;
-        #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
-        let mut i = hash as u32 & mask;
-        for _ in 0..mask {
-            if self.get(table, 1 + i)?.as_obj().is_none() {
-                break;
-            }
-            i = (i + 1) & mask;
-        }
-        if self.get(table, 1 + i)?.as_obj().is_some() {
-            return Err(Error::OutOfMemory);
-        }
-        self.write_slot(table, 1 + i, Value::from_ref(r, 0).0, true, false)?;
-        let count = i64::from(self.interned_count()) + 1;
-        let count = Value::int(count).ok_or(Error::OutOfMemory)?;
-        self.write_slot(table, 0, count.0, true, false)
+        let slots = self.intern_slots_mut(table)?;
+        let (head, entries) = slots.split_first_mut().ok_or(Error::BadSlot)?;
+        let count = Value(*head).as_int().ok_or(Error::BadSlot)? + 1;
+        *head = Value::int(count).ok_or(Error::OutOfMemory)?.0;
+        Self::place_interned(entries, Value::from_ref(r, 0).0, hash)
     }
 }

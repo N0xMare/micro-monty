@@ -798,6 +798,8 @@ impl Vm {
             for c in self.codes.iter() {
                 t.values(&c.consts);
                 t.values(&c.names);
+                t.value(c.name);
+                t.value(c.qualname);
             }
             for shape in &self.shapes {
                 t.values(&shape.names);
@@ -2269,8 +2271,7 @@ impl Vm {
         let Some(code) = self.codes.get(cidx as usize).cloned() else {
             return Err(self.err(T::SystemError, "bad code index"));
         };
-        let name = self.intern(&code.code.name)?;
-        let qual = self.intern(&code.code.qualname)?;
+        let (name, qual) = (code.name, code.qualname);
         let g = self.globals_of(&code);
         let f = {
             let res = self.heap.alloc_init(

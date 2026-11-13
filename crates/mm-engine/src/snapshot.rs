@@ -647,6 +647,8 @@ impl Vm {
             put_u32(out, c.gslot);
             put_values(out, &c.consts);
             put_values(out, &c.names);
+            put_value(out, c.name);
+            put_value(out, c.qualname);
         }
         // The signature index (`_mm.signature`): a restore reuses the same
         // codes and counts toward `MAX_SYNTH` from where the session was.
@@ -1741,6 +1743,15 @@ impl Vm {
                 }
             }
             let [consts, names] = values;
+            // A function made from the code takes them as its names.
+            let mut both = [Value::NONE; 2];
+            for v in &mut both {
+                *v = need(r.value(), "code values")?;
+                if *v != Value::NONE && !v.is_obj_kind(ty::STR as u8) {
+                    return Err(SnapError::Corrupt("code values"));
+                }
+            }
+            let [name, qualname] = both;
             if module_base > ci || (source != u32::MAX && source as usize >= sources.len()) {
                 return Err(SnapError::Corrupt("code"));
             }
@@ -1797,6 +1808,8 @@ impl Vm {
                 code,
                 consts,
                 names,
+                name,
+                qualname,
                 ic_base,
                 module_base,
                 source,
