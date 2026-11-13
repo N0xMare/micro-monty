@@ -605,7 +605,7 @@ fn quartile(xs: &[f64], k: usize) -> f64 {
     }
 }
 
-fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
         .args(args)
         .current_dir(dir)

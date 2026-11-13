@@ -122,11 +122,15 @@ tasks:
                              (target/wasm-wall/rounds/*.tsv, same base and
                              head); builds and times nothing
   wasm-ir [options]          wasmtime guest instructions of bench/*.py against
-                             a base revision under callgrind (in check): fails
-                             on a program rising past 1.0% or the geomean past
-                             0.5%; MM_WASM_IR_ACCEPT=<reason> passes a rise
+                             a base revision and an anchor (the last v* tag or
+                             accepted rise) under callgrind (in check): fails
+                             on a program rising past 1.0%, the geomean past
+                             0.5% or startup past 50,000 instructions;
+                             MM_WASM_IR_ACCEPT=<reason> passes a rise
       --base <rev>           the revision to compare with (default origin/main)
       --head <rev>           a revision instead of the working tree
+      --anchor <rev>         the anchor (default: the last v* tag, or the
+                             last Wasm-IR-Accepted commit since it)
       --programs <a,b,..>    only these programs (default all)
   gc-stress                  collect at every safepoint (MM_GC_STRESS=1): own
                              cases must print what they print without, the
