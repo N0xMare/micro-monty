@@ -27,10 +27,13 @@
 //!   against a base revision (callgrind; deterministic).
 //! - `gc-stress`: own cases, the corpus and durability on the own cases
 //!   with `MM_GC_STRESS=1` (a collection at every safepoint).
+//! - `handoffs`: the native-to-Python hand-off sites (`need_py()` calls)
+//!   by file and function, written to (`--check`: compared with)
+//!   `xtask/handoff-sites.txt`.
 //! - `difffuzz`: the differential fuzzer against CPython
 //!   (`fuzz/difffuzz/difffuzz.py`).
 //! - `check`: every local gate (fmt, clippy, tests, docs, package,
-//!   parse-diff, size, embedding workload, the golden snapshot images, the
+//!   parse-diff, the hand-off site list, size, embedding workload, the golden snapshot images, the
 //!   memory-bound probes, the shipped own cases, wasm, conformance `--check`
 //!   on both engines and on mm for wasm32-wasip1, the real session replay,
 //!   durability (same-target, then native <-> wasm32-wasip1 on the own
@@ -50,6 +53,7 @@ mod difffuzz;
 mod docs;
 mod durability;
 mod gc_stress;
+mod handoffs;
 mod package;
 mod wasm;
 mod wasm_ir;
@@ -141,6 +145,8 @@ tasks:
                              cases must print what they print without, the
                              corpus keep its results, durability on the own
                              cases pass (not in check: about 85 minutes)
+  handoffs [--check]         write (--check: compare) xtask/handoff-sites.txt,
+                             the need_py() hand-off sites by file and function
   difffuzz [options]         generated programs on mm and CPython 3.14;
                              divergences, minimized, go to
                              fuzz/difffuzz/divergences/
@@ -174,6 +180,7 @@ fn main() -> ExitCode {
         Some("package") if rest.is_empty() => package::run(),
         Some("docs") if rest.is_empty() => docs::run(),
         Some("difffuzz") => difffuzz::run(&rest),
+        Some("handoffs") => handoffs::run(&rest),
         _ => Err(USAGE.to_owned()),
     };
     match result {
@@ -352,6 +359,7 @@ fn check(args: &[String]) -> Result<(), String> {
         Stage::new("docs").run(debug_task(&["docs"])),
         Stage::new("package").run(debug_task(&["package"])),
         Stage::new("parse-diff").run(debug_task(&["parse-diff"])),
+        Stage::new("handoffs").run(task(&["handoffs", "--check"])),
         // The memory bound (docs/spec.md §11): fuzz/memory_probes under the
         // counting allocator, Rust heap <= 2.5 x limit + 16 MiB.
         Stage::new("memory-probes").run(release_cargo(&[

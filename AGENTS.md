@@ -62,6 +62,7 @@ cargo test --workspace --locked
 cargo xtask docs                    # docs/sdk.md's examples run as doctests; published rustdoc has no warnings
 cargo xtask package                 # `cargo package` the published crates; a build from the packages keeps the build id
 cargo xtask parse-diff              # own parser vs the ruff oracle on the corpus
+cargo xtask handoffs --check        # xtask/handoff-sites.txt lists the need_py() hand-off sites (`cargo xtask handoffs` rewrites it)
 cargo xtask size                    # shipped hello.wasm (primary), native hello and mm_wasm_guest.wasm budgets
 cargo run --release --locked -p micro-monty --example embedding_bench   # embedding acceptance workload
 cargo test --release --locked -p micro-monty --test golden   # golden snapshot images restore and continue (MM_BLESS=1 re-blesses)
@@ -85,7 +86,7 @@ cargo deny --all-features --manifest-path fuzz/Cargo.toml check
 cargo deny --all-features --manifest-path crates/mm-wasm-host/Cargo.toml check
 ```
 
-`cargo xtask check` runs the first nineteen (`wasm-ir` on Linux only),
+`cargo xtask check` runs the first twenty (`wasm-ir` on Linux only),
 plus clippy on mm-engine with no module features and on the facade with none, `crates/micro-monty/tests/features.rs`
 on a facade without `asyncio` and `json` but with `ast`, and the step-time oracle
 (`crates/micro-monty/tests/steps.rs`, release, alone: no `Bounded` site's native
@@ -207,6 +208,11 @@ with `PYTHON`) is the conformance oracle.
   separate cargo invocation (ruff never enters the default build) and
   requires identical ASTs, or identical micro-monty errors, from both front
   ends on every corpus file, own case, bench program and the prelude.
+- `cargo xtask handoffs` writes `xtask/handoff-sites.txt`: each file,
+  enclosing function and count of the `need_py()` hand-offs to prelude
+  twins (spec §5, guarantee 5), without line numbers. `--check`, in
+  `check`, fails until the file is regenerated and committed after a
+  hand-off is added or removed. The cleanup lane counts down there.
 - The size ceilings are in `xtask/size-ceilings.txt`: each artifact's
   ceiling is the sum of its lines. Move one by appending a line (signed
   bytes and why, with the measurement and the decision), never by editing
