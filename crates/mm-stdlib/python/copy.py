@@ -226,6 +226,16 @@ def _reduce(x):
     reductor = getattr(cls, "__reduce__", None)
     if reductor is not None:
         return reductor(x)
+    # CPython's reductions of an exception (`BaseException.__reduce__`;
+    # an `OSError` keeps its filename in `args` here) and of a set
+    # (`set_reduce`): the class called with the arguments or the items,
+    # then the instance's attributes.
+    if isinstance(x, BaseException):
+        return (cls, x.args, getattr(x, '__dict__', None) or None)
+    if isinstance(x, set):
+        getstate = getattr(cls, "__getstate__", None)
+        state = getstate(x) if getstate is not None else getattr(x, '__dict__', None)
+        return (cls, (list(x),), state or None)
     # A builtin type (no class `__dict__` in micro-monty) has no default
     # reduction here; a user class may well live in `builtins` (code run
     # without a `__name__`).
@@ -239,8 +249,6 @@ def _reduce(x):
         backing = _backing(x)
         if backing is not x and isinstance(backing, (tuple, str, bytes, int, float)):
             args = (backing,)
-        elif isinstance(x, set):
-            args = (list(x),)
     getstate = getattr(cls, "__getstate__", None)
     if getstate is not None:
         state = getstate(x)

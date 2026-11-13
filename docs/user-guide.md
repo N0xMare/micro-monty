@@ -1466,9 +1466,7 @@ differs:
   accepted; a set display of constants whose hashes collide can iterate in
   another order; a dataclass's `__doc__` is `None`; `re`'s ignore-case
   matching misses a few case folds (`ﬅ`/`ﬆ`, the Kelvin sign in a class
-  range); `copy.copy` and `deepcopy` of an exception lose its `args` or
-  raise `TypeError` (`ValueError('a')`), and of a set subclass its items;
-  `OSError(2, 'x')` is not a `FileNotFoundError` \[M\].
+  range); `OSError(2, 'x')` is not a `FileNotFoundError` \[M\].
 
 ### Code size limits
 
