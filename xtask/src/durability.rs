@@ -24,6 +24,12 @@
 //! between the native `mm` and `mm` built for `wasm32-wasip1` under
 //! wasmtime, once starting native and once starting on wasm (docs/sdk.md,
 //! "Cross-target restore"). Both builds have the same build id.
+//!
+//! `--fuel` also compares the fuel each parked chain spent with the
+//! unparked run's (docs/spec.md §5, guarantee 4), prints every case's
+//! delta and fails on a case that differs unless `FUEL_ALLOWLIST` names
+//! it (one case and the reason per line). Not in `cargo xtask check` until
+//! the allowlist holds only the guarantee's documented exceptions.
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -60,6 +66,9 @@ const MM_TIMEOUT_SECS: u64 = 20;
 /// processes), and 774–879 s while the rest of the parallel `check` runs
 /// on 16 cores [M], so 15 minutes left too little room.
 const CASE_TIMEOUT: Duration = Duration::from_mins(30);
+/// The cases `--fuel` lets differ in fuel: `FILE<TAB>reason` per line;
+/// `#` starts a comment.
+const FUEL_ALLOWLIST: &str = "conformance/durability-fuel-allow.txt";
 
 struct Job {
     case: PathBuf,
@@ -81,6 +90,8 @@ struct Outcome {
     status: String,
     parks: u64,
     reason: String,
+    /// With `--fuel`: the parked chain's fuel less the unparked run's.
+    fuel_delta: i64,
 }
 
 #[allow(
@@ -93,11 +104,13 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut fine = FINE.to_owned();
     let mut timeout = MM_TIMEOUT_SECS;
     let mut cross = false;
+    let mut fuel = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--filter" => filter = Some(it.next().ok_or("--filter needs a substring")?.clone()),
             "--cross-target" => cross = true,
+            "--fuel" => fuel = true,
             "--every" => every = Some(it.next().ok_or("--every needs N or N:M")?.clone()),
             "--fine" => fine.clone_from(it.next().ok_or("--fine needs N:M")?),
             "--timeout" => {
@@ -110,6 +123,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         }
     }
     let root = workspace_root();
+    let allowed = if fuel {
+        read_allowlist(&root.join(FUEL_ALLOWLIST))?
+    } else {
+        BTreeMap::new()
+    };
     let mm = micro_monty_binary()?;
     let python = python();
     let oracle = root.join("conformance/oracle.py");
@@ -229,7 +247,15 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             scope.spawn(|| {
                 while let Some(job) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
                     let start = Instant::now();
-                    let o = run_job(&python, &oracle, &mm, alternate.as_ref(), job, timeout);
+                    let o = run_job(
+                        &python,
+                        &oracle,
+                        &mm,
+                        alternate.as_ref(),
+                        job,
+                        timeout,
+                        fuel,
+                    );
                     let took = start.elapsed().as_secs_f64();
                     if let Ok(mut all) = outcomes.lock() {
                         all.push((job_key(job), took, o));
@@ -250,9 +276,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         "durability"
     };
     let parks: u64 = outcomes.iter().map(|o| o.parks).sum();
+    // A fuel difference on an allowed case passes; its delta still prints.
+    let fuel_only = |o: &Outcome| o.status == "fuel" && allowed.contains_key(&o.file);
     let failed: Vec<&Outcome> = outcomes
         .iter()
-        .filter(|o| o.status != "pass" && o.status != "skip")
+        .filter(|o| o.status != "pass" && o.status != "skip" && !fuel_only(o))
         .collect();
     let skipped = outcomes.iter().filter(|o| o.status == "skip").count();
     println!(
@@ -262,6 +290,28 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         outcomes.len(),
         started.elapsed().as_secs_f64()
     );
+    if fuel {
+        let moved: Vec<&Outcome> = outcomes.iter().filter(|o| o.fuel_delta != 0).collect();
+        println!(
+            "{label}: fuel equal to the unparked run in {} of {} runs",
+            outcomes.len() - moved.len() - skipped,
+            outcomes.len() - skipped
+        );
+        for o in &moved {
+            let why = allowed.get(&o.file).map_or("NOT ALLOWED", String::as_str);
+            println!(
+                "  fuel {:+} {} (at {}): {}",
+                o.fuel_delta, o.file, o.spec, why
+            );
+        }
+        let used: std::collections::BTreeSet<&str> =
+            moved.iter().map(|o| o.file.as_str()).collect();
+        for (file, _) in allowed.iter().filter(|(f, _)| !used.contains(f.as_str())) {
+            if filter.is_none() && every.is_none() {
+                println!("  note: {file} is allowed in {FUEL_ALLOWLIST} but its fuel did not move");
+            }
+        }
+    }
     if failed.is_empty() {
         return Ok(());
     }
@@ -272,6 +322,29 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         );
     }
     Err(format!("{label}: {} runs failed", failed.len()))
+}
+
+/// `FUEL_ALLOWLIST`: reason by case file name.
+fn read_allowlist(path: &Path) -> Result<BTreeMap<String, String>, String> {
+    let text =
+        fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mut allowed = BTreeMap::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.trim_end();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((file, reason)) = line.split_once('\t').filter(|(_, r)| !r.trim().is_empty())
+        else {
+            return Err(format!(
+                "{}:{}: want `FILE<TAB>reason`",
+                path.display(),
+                n + 1
+            ));
+        };
+        allowed.insert(file.to_owned(), reason.trim().to_owned());
+    }
+    Ok(allowed)
 }
 
 /// A job's key in the times file: its case and parking policy.
@@ -318,6 +391,7 @@ fn run_job(
     alternate: Option<&Alternate>,
     job: &Job,
     timeout: u64,
+    fuel: bool,
 ) -> Outcome {
     let case_timeout = CASE_TIMEOUT.max(Duration::from_secs(timeout * 15));
     let file = job
@@ -335,6 +409,7 @@ fn run_job(
         status: status.to_owned(),
         parks: 0,
         reason,
+        fuel_delta: 0,
     };
     let mut command = Command::new(python);
     command
@@ -344,6 +419,9 @@ fn run_job(
         .arg(&job.spec)
         .arg("--mm")
         .arg(mm);
+    if fuel {
+        command.arg("--fuel");
+    }
     if let (Some(alt), Some(first)) = (alternate, job.first) {
         command
             .arg("--alternate")
@@ -393,6 +471,7 @@ fn run_job(
         status: v["status"].as_str().unwrap_or("error").to_owned(),
         parks: v["parks"].as_u64().unwrap_or(0),
         reason: v["reason"].as_str().unwrap_or("").to_owned(),
+        fuel_delta: v["fuel_delta"].as_i64().unwrap_or(0),
         file,
         spec,
     }

@@ -76,6 +76,7 @@ cargo xtask durability --cross-target   # own cases, each snapshot restored on t
 cargo xtask bench --quick --engines cpython,micro-monty   # checksums match
 cargo xtask wasm-ir                 # wasmtime guest instructions vs origin/main: +1.0% a program, +0.5% geomean (callgrind; Linux)
 python3.14 conformance/codemode/run.py --check   # codemode workload outcomes unchanged (not in `check`)
+cargo xtask durability --fuel       # also fuel totals parked vs unparked, against conformance/durability-fuel-allow.txt (not in `check`)
 cargo xtask wasm-host               # shipped mm-wasm guests vs crates/mm-wasm-host tests (not in `check`)
 cargo xtask wasm-wall               # wasm wall time vs origin/main on wasmtime and V8 (advisory; not in `check`)
 uv run --with pyelftools python3 xtask/size_map.py   # size map of the shipped builds (docs/research/size-map.md; not in `check`)
@@ -261,7 +262,12 @@ with `PYTHON`) is the conformance oracle.
   fuel units and at every host call, each park saved by one `mm` process
   (`mm exec --snapshot-every N --snapshot-dir D`) and continued by a new one
   (`mm resume --json D`); the report must equal an unparked run's.
-  `--every N[:M]` and `--filter <substring>` narrow it.
+  `--every N[:M]` and `--filter <substring>` narrow it. `--fuel` also
+  compares the fuel the chain spent (the last `mm` prints it) with the
+  unparked run's, prints every run whose total moved and fails on a case
+  `conformance/durability-fuel-allow.txt` does not name (one case and
+  reason per line). It stays out of `check` until that list holds only
+  the exceptions spec §5 guarantee 4 documents.
 - `cargo xtask durability --cross-target` runs the own cases the same way,
   but alternates the parked chain between the native `mm` and `mm` for
   `wasm32-wasip1` under wasmtime (built and precompiled first; wasmtime is

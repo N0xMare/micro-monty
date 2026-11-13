@@ -12,7 +12,7 @@ unmodified in `conformance/monty-scripts/`.
 Usage: python3.14 conformance/oracle.py CASE.py [CASE.py ...]
        python3.14 conformance/oracle.py --engine micro-monty [--mm MM | --wasm MODULE --wasmtime WASMTIME]
            [--timeout S] CASE.py [...]
-       python3.14 conformance/oracle.py --engine micro-monty --durability N[:M] [--mm MM] [--timeout S]
+       python3.14 conformance/oracle.py --engine micro-monty --durability N[:M] [--fuel] [--mm MM] [--timeout S]
            [--alternate MODULE --wasmtime WASMTIME [--alternate-first native|wasm]] CASE.py [...]
 
 The second form runs each case through micro-monty's `mm exec --json` (`--mm`,
@@ -36,8 +36,11 @@ which the output diverges. With `--alternate MODULE` (mm built for
 wasm32-wasip1, a `.wasm` or a wasmtime-precompiled `.cwasm`), the parked
 chain alternates between the native mm and MODULE under wasmtime, starting
 with `--alternate-first` (default native), so every snapshot is restored on
-the other target; the unparked reference run stays native. It prints
-  {"file", "status": "pass"|"fail"|"crash"|"timeout"|"skip", "parks", "reason"}
+the other target; the unparked reference run stays native. With `--fuel`, a chain whose report
+is identical but whose fuel total (every `mm` prints the fuel spent, counted
+exactly) differs from the unparked run's has the status "fuel" and its
+`fuel_delta` (parked minus unparked; docs/spec.md §5, guarantee 4). It prints
+  {"file", "status": "pass"|"fail"|"fuel"|"crash"|"timeout"|"skip", "parks", "reason"}
 
 Prints one JSON object per case on stdout:
   {"file", "status": "pass"|"fail"|"error"|"skip", "kind", "reason",
@@ -907,8 +910,9 @@ def wasm_command(wasmtime, module, scratch, args, zone=None):
     return command
 
 
-def run_durability_case(path, mm, every, max_parks, timeout, alternate=None):
-    """`alternate`: None, or (wasmtime, module, wasm_first) for a cross-target chain."""
+def run_durability_case(path, mm, every, max_parks, timeout, alternate=None, fuel=False):
+    """`alternate`: None, or (wasmtime, module, wasm_first) for a cross-target chain.
+    `fuel`: also compare the fuel the chain spent with the unparked run's."""
     name = os.path.basename(path)
     with open(path, encoding='utf-8', newline='') as f:
         content = f.read()
@@ -960,11 +964,19 @@ def run_durability_case(path, mm, every, max_parks, timeout, alternate=None):
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     if got == want:
+        if fuel and line.get('fuel') != plain.get('fuel'):
+            delta = (line.get('fuel') or 0) - (plain.get('fuel') or 0)
+            return {'file': name, 'status': 'fuel', 'parks': len(parks), 'every': every, 'fuel_delta': delta,
+                    'reason': f'fuel {plain.get("fuel")} unparked, {line.get("fuel")} parked ({delta:+})'}
         return {'file': name, 'status': 'pass', 'parks': len(parks), 'every': every, 'reason': ''}
     # The first park whose output so far is not a prefix of the unparked run's.
     diverged = next((p['park'] for p in parks if not (want['stdout'] or '').startswith(p['stdout'])), None)
     where = f'output diverges by park {diverged}' if diverged else f'final report differs (after park {len(parks)})'
-    return {'file': name, 'status': 'fail', 'parks': len(parks), 'reason': f'{where}: {first_difference(want, got)}'}
+    result = {'file': name, 'status': 'fail', 'parks': len(parks), 'reason': f'{where}: {first_difference(want, got)}'}
+    if fuel:
+        result['fuel_delta'] = (line.get('fuel') or 0) - (plain.get('fuel') or 0)
+        result['reason'] += f'; fuel {result["fuel_delta"]:+}'
+    return result
 
 
 def run_case(path, mm=None, timeout=MM_TIMEOUT):
@@ -1035,7 +1047,7 @@ USAGE = """\
 usage: python3.14 conformance/oracle.py CASE.py [CASE.py ...]
        python3.14 conformance/oracle.py --engine micro-monty [--mm MM | --wasm MODULE --wasmtime WASMTIME]
            [--timeout S] CASE.py [...]
-       python3.14 conformance/oracle.py --engine micro-monty --durability N[:M] [--mm MM] [--timeout S]
+       python3.14 conformance/oracle.py --engine micro-monty --durability N[:M] [--fuel] [--mm MM] [--timeout S]
            [--alternate MODULE --wasmtime WASMTIME [--alternate-first native|wasm]] CASE.py [...]"""
 
 
@@ -1045,7 +1057,11 @@ def main(argv):
     durability = None
     max_parks = None
     alternate, wasmtime, wasm_first, wasm = None, None, 0, False
+    fuel = False
     while args and args[0].startswith('--') and len(args) > 1:
+        if args[0] == '--fuel':
+            fuel, args = True, args[1:]
+            continue
         option, value, args = args[0], args[1], args[2:]
         if option == '--engine' and value in ('cpython', 'micro-monty'):
             engine = value
@@ -1071,6 +1087,7 @@ def main(argv):
         not paths
         or paths[0] in ('-h', '--help')
         or (durability is not None and engine != 'micro-monty')
+        or (fuel and durability is None)
         or (alternate is not None and not wasmtime)
         or (alternate is not None and (durability is None) != wasm)
     ):
@@ -1088,7 +1105,7 @@ def main(argv):
         if durability is not None:
             for path in paths:
                 cross = (wasmtime, alternate, wasm_first) if alternate else None
-                result = run_durability_case(path, mm, durability, max_parks, timeout, cross)
+                result = run_durability_case(path, mm, durability, max_parks, timeout, cross, fuel)
                 print(json.dumps(result), flush=True)
             return 0
         # Each case is its own mm process; nothing runs in this interpreter.

@@ -106,6 +106,9 @@ tasks:
       --timeout <s>          seconds per mm process (default 20)
       --cross-target         own cases only, each snapshot restored on the other
                              target (native <-> wasm32-wasip1 under wasmtime)
+      --fuel                 also compare each chain's fuel with the unparked
+                             run's; fail on a case not in
+                             conformance/durability-fuel-allow.txt (not in check)
   shipped-mm                 build `mm` natively as shipped (the binary the
                              bench Ir rule measures) and print its path
   wasm                       build the facade as shipped (wasm-opt -Oz) for

@@ -21,8 +21,10 @@
 //!   `DIR/state.json`, prints `{"park": K, "reason": ..., "stdout": ...}`
 //!   and exits. `mm resume --json DIR` restores both in a new process and
 //!   continues to the next park, or prints the same report `exec --json`
-//!   prints for an unparked run. `--report-fuel` adds the fuel an unparked
-//!   run used (`"fuel"`) to its report.
+//!   prints for an unparked run, with the fuel the whole chain spent
+//!   (`"fuel"`). `--report-fuel` adds the fuel an unparked run spent to its
+//!   report the same way, so the two compare (`oracle.py --durability
+//!   --fuel`).
 //! - `mm version` prints the engine version and the snapshot `build_id`
 //!   (hex): `mm resume` restores only snapshots written under the same id.
 //! - `MM_GC_STRESS=1` collects garbage at every safepoint of every session,
@@ -413,6 +415,11 @@ fn exec_json(
                 if fixtures {
                     install_fixtures(&engine, &mut session);
                 }
+                // The fuel spent, counted exactly, parked or not: the
+                // session's total (kept in the image) from `u64::MAX` down.
+                if durable.is_some() || report_fuel {
+                    session.set_fuel_total(Some(u64::MAX));
+                }
                 if let Some(d) = durable {
                     session = yielding(session);
                     session.set_fuel(Some(d.every));
@@ -436,7 +443,7 @@ fn exec_json(
                     session.start(&code)
                 };
                 if report_fuel {
-                    fuel_used = session.fuel().map(|left| u64::MAX - left);
+                    fuel_used = spent(&session);
                 }
                 report_parts(progress)
             }
@@ -444,6 +451,12 @@ fn exec_json(
     };
     print_report(&lock(&stdout), &result, &error, fuel_used);
     ExitCode::SUCCESS
+}
+
+/// The fuel the session's cells spent, exactly: what `exec_json` set as
+/// the total less what is left of it.
+fn spent(session: &Session) -> Option<u64> {
+    session.fuel_total().map(|left| u64::MAX - left)
 }
 
 /// The `result` and `error` of a report for how a run ended.
@@ -466,8 +479,9 @@ fn report_parts(progress: Progress) -> (serde_json::Value, serde_json::Value) {
     }
 }
 
-/// Prints the report; `fuel` (with `--report-fuel`) is the fuel the run
-/// used: the safepoints it ran, plus what natives charged.
+/// Prints the report; `fuel` (with `--report-fuel`, and at the end of a
+/// parked chain) is the fuel the run used: the safepoints it ran, plus
+/// what natives charged.
 fn print_report(
     stdout: &str,
     result: &serde_json::Value,
@@ -563,7 +577,7 @@ fn drive_durable(
         }
         other => {
             let (result, error) = report_parts(other);
-            print_report(&lock(stdout), &result, &error, None);
+            print_report(&lock(stdout), &result, &error, spent(&session));
             return ExitCode::SUCCESS;
         }
     };

@@ -1,0 +1,30 @@
+# Cases whose parked chain may spend other fuel than an unparked run
+# (`cargo xtask durability --fuel`): FILE<TAB>reason. The flag stays out
+# of `cargo xtask check` until every line is a documented exception of
+# docs/spec.md §5, guarantee 4. Each line says which it is.
+#
+# Documented: the char-position cache (spec §5 guarantee 4, §9.2 "Char
+# positions"). A snapshot's collection clears it (restored or not), and
+# a restore starts without it, so walks into a long non-ASCII str are
+# charged again.
+419_str_char_positions.py	documented: char-position cache cleared by the snapshot's collection and absent after a restore (+10,601 at 5:50, +716,239 at 1:1000; parks alone +1,299 at 1:1000, where slicing moves a collection)
+472_bounded_str_steps.py	documented: char-position cache cleared by the snapshot's collection (+35,715 at 5:50, +1,156,033 at 1:1000)
+486_str_search_in_steps.py	documented: char-position cache cleared by the snapshot's collection (+87,498)
+498_long_needles.py	documented: char-position cache cleared by the snapshot's collection (+8,281) and absent after a restore (+8,281 more)
+#
+# Not documented: `re` takes a step budget from the fuel left
+# (crates/mm-engine/src/re.rs `fuel_steps`), and each step charges
+# steps / 32 and a `_more` safepoint, so the total depends on the slice
+# size with no snapshot at all.
+118_operator_abc_string_textwrap.py	NOT documented: re step budget follows the fuel left (textwrap's wordsep_re split, +21 a call at 10-unit slices; +63)
+300_re_differential.py	NOT documented: re step budget follows the fuel left (+25 at 1:1000)
+456_numeric_edges_and_attribute_hints.py	NOT documented: re step budget follows the fuel left (re.match over 40,001 chars, +5)
+os_path__pure.py	NOT documented: re step budget follows the fuel left (os.path.expandvars, +6 at 5:50)
+#
+# Not documented: the snapshot's collection changes where later
+# collections run and what they free (identity-hashed keys, caches), the
+# DUR-2 family; MM_GC_STRESS moves 206, 421 and 422 unparked as well.
+206_abc_collections_abc.py	NOT documented: fuel follows collection points (+39 at 5:50; GC stress alone -31)
+403_collections_subclass_containers_and_sets.py	NOT documented: fuel follows collection points (+2 at 5:50, snapshot only)
+421_typing_alias_isinstance.py	NOT documented: fuel follows collection points (-4 at 5:50, +3 at 1:1000; GC stress alone +6)
+422_package_submodule_attributes.py	NOT documented: fuel follows collection points (-6; GC stress alone -6)
