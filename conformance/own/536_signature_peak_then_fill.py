@@ -2,6 +2,7 @@
 # and the shapes by doubling, then memory is filled: a session restored
 # after them must have the memory the session that went on has
 # (restore-vs-snapshot; vector capacities are charged, step 4).
+import gc
 from collections import namedtuple
 
 kinds = [namedtuple('N', [f'f{i}', 'shared']) for i in range(3000)]
@@ -40,4 +41,9 @@ for k, size in enumerate((1 << 20, 1 << 16, 1 << 10)):
     except MemoryError:
         pass
 keep = None
+# Nothing frees the blocks until a collection runs, and the fill leaves
+# almost no room: `print` does not run again after a collection (spec
+# §9.2), so under GC stress its few bytes did not fit (534). The
+# collection drops them first, as CPython's reference counts do.
+gc.collect()
 print(len(kinds), junk, zeros, counts[0] > 0)
