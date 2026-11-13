@@ -2725,6 +2725,53 @@ fn a_table_that_never_fits_raises_after_one_collection() {
     assert_eq!(error_of(&p).type_name, "MemoryError", "{p:?}");
 }
 
+/// A result of 64 KiB or more with half the memory left allocated since
+/// the last collection asks for a full one (`Vm::collect_for_result`).
+/// Near the limit that is little, so a loop of 70 KB results forced a
+/// collection each for about 1,100 units [M, reviewer]. With less than
+/// 1/64 of the limit allocated since the last collection, the step now
+/// pays as a retry after `MemoryError` does, at least 2^20 units.
+#[test]
+fn a_result_collection_near_the_limit_is_charged() {
+    let spent = |n: usize| {
+        let engine =
+            Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(64 << 20)));
+        let src = format!(
+            "import gc
+keep = [[i] for i in range(300_000)]
+pad = []
+try:
+    while True:
+        pad.append(bytes(1 << 20))
+except MemoryError:
+    pass
+try:
+    while True:
+        pad.append('y' * 70001)
+except MemoryError:
+    pass
+del pad[-3:]
+gc.collect()
+s = 'x' * 70000
+t = None
+for i in range({n}):
+    t = s + 'y'
+"
+        );
+        let code = engine.compile(&src, "test.py").expect("compiles");
+        let mut s = Session::new(&engine).expect("session");
+        s.set_fuel_total(Some(1 << 40));
+        let p = s.start(&code);
+        assert_eq!(p, Progress::Complete(None), "{n}");
+        (1 << 40) - s.fuel_total().expect("a total")
+    };
+    let (none, some) = (spent(0), spent(20));
+    assert!(
+        some - none >= 20 * ((1 << 20) - (1 << 12)),
+        "20 results: {some} against {none}"
+    );
+}
+
 /// A retry after `MemoryError` waits for a full collection, and charges
 /// the failing operation for it (`Vm::collect_for_retry`), so a guest that
 /// catches `MemoryError` in a loop cannot have collections run for free:

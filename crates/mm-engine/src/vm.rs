@@ -1572,6 +1572,13 @@ impl Vm {
         self.oom_defer_at > self.heap.stats().collections
     }
 
+    /// What an operation pays for a full collection it asks for out of
+    /// turn ([`Vm::collect_for_retry`], `Vm::collect_for_result`): a unit
+    /// per 64 bytes of the memory limit, at most [`RETRY_CHARGE`].
+    pub(crate) fn collection_charge(&self) -> u64 {
+        (self.heap.memory_limit() / 64).min(RETRY_CHARGE)
+    }
+
     /// Asks for the collection a retry after `MemoryError` waits for: a
     /// fresh one, a mark in progress dropped (`Heap::restart_collection`),
     /// held as `gc.collect`'s is. Garbage is made by dropping references,
@@ -1584,7 +1591,7 @@ impl Vm {
     /// and a guest that catches `MemoryError` in a loop pays for each
     /// collection in fuel.
     fn collect_for_retry(&mut self) {
-        self.burn((self.heap.memory_limit() / 64).min(RETRY_CHARGE));
+        self.burn(self.collection_charge());
         self.heap.restart_collection();
         self.collect_in_steps(false);
     }

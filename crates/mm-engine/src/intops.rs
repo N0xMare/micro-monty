@@ -348,10 +348,26 @@ impl Vm {
     /// guest code allocates again, but in bounded steps. In full, in one
     /// step, it took 40-52 ms beside 1M live dicts (`json.dumps`'s text
     /// moves) [M].
+    ///
+    /// Near the limit half the memory left is little, so a loop of results
+    /// just over 64 KiB asked for a full collection each, about 1,100
+    /// units apiece: beside 236 MiB live, 770 times less fuel per ms than
+    /// ordinary code [M, reviewer]. A request with less than 1/64 of the
+    /// limit allocated since the engine's own last collection (no ordinary
+    /// program in the corpus makes one) brings what the step charges for
+    /// its result up to [`Vm::collection_charge`], as a retry after
+    /// `MemoryError` pays: a constant of the session and the result's
+    /// size, not of the heap, so the charge does not depend on slicing or
+    /// snapshots. Topped up, not added, so the step charges no more than
+    /// a 64 MiB result's own 2^20 units (the steps oracle's overdraft
+    /// bound).
     pub(crate) fn collect_for_result(&mut self, bytes: usize) {
         if bytes >= 1 << 16
             && self.heap.stats().allocated_since_gc >= self.heap.available_bytes() / 2
         {
+            if self.heap.allocated_since_own_gc() < self.heap.memory_limit() / 64 {
+                self.burn(self.collection_charge().saturating_sub(bytes as u64 / 64));
+            }
             self.collect_in_steps(false);
         }
     }
