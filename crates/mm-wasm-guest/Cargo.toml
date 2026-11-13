@@ -32,6 +32,9 @@ mod-html-entities = ["micro-monty/mod-html-entities"]
 [dependencies]
 micro-monty.workspace = true
 mm-wasm-abi.workspace = true
+
+# Registered only on this target (src/lib.rs).
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 mm-wasm-alloc.workspace = true
 
 # The workspace lints, except that `unsafe_code` is `deny` instead of

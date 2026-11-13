@@ -344,8 +344,7 @@ fn run_all(runner: &Runner, cases: &[PathBuf], workers: usize) -> Result<Vec<Cas
 
 fn file_name(case: &Path) -> String {
     case.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default()
+        .map_or_default(|name| name.to_string_lossy().into_owned())
 }
 
 /// Runs `oracle.py <case>` (with `--engine micro-monty --mm <mm>` for mm) and
@@ -467,9 +466,7 @@ fn wait_with_timeout(
         }
     }
     let join = |reader: Option<thread::JoinHandle<String>>| {
-        reader
-            .map(|handle| handle.join().unwrap_or_default())
-            .unwrap_or_default()
+        reader.map_or_default(|handle| handle.join().unwrap_or_default())
     };
     Ok((join(stdout), join(stderr), timed_out))
 }
@@ -879,8 +876,7 @@ fn capitalise(word: &str) -> String {
     let mut chars = word.chars();
     chars
         .next()
-        .map(|first| first.to_uppercase().chain(chars).collect())
-        .unwrap_or_default()
+        .map_or_default(|first| first.to_uppercase().chain(chars).collect())
 }
 
 /// Escapes what Markdown would read as table cells, HTML, strikethrough or emphasis.

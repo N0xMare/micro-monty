@@ -2384,8 +2384,7 @@ impl Vm {
         let name = u8::try_from(r)
             .ok()
             .and_then(|r8| self.codes[st.ci as usize].code.reg_name(r8, pc))
-            .map(String::from)
-            .unwrap_or_default();
+            .map_or_default(String::from);
         let is_free = self.codes[st.ci as usize]
             .code
             .freevars

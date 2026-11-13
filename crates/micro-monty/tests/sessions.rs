@@ -388,7 +388,7 @@ fn a_native_out_of_memory_runs_again_after_collecting_garbage() {
     let mut run = |src: &str| {
         let code = engine.compile(src, "cell.py").expect("compiles");
         match session.start(&code) {
-            Progress::Complete(c) => c.map(|c| c.repr).unwrap_or_default(),
+            Progress::Complete(c) => c.map_or_default(|c| c.repr),
             Progress::Error(e) => e.type_name,
             other => panic!("{other:?}"),
         }

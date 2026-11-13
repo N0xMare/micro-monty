@@ -1458,8 +1458,7 @@ impl Vm {
         let names = self
             .shapes
             .get(s as usize)
-            .map(|x| x.names.clone())
-            .unwrap_or_default();
+            .map_or_default(|x| x.names.clone());
         for (i, n) in names.iter().enumerate() {
             let (inline, k) = self.attr_slot(o, i);
             let v = if inline {
@@ -1499,8 +1498,7 @@ impl Vm {
             Some(s) => self
                 .shapes
                 .get(usize::try_from(s).unwrap_or(usize::MAX))
-                .map(|x| x.names.clone())
-                .unwrap_or_default(),
+                .map_or_default(|x| x.names.clone()),
             None => self
                 .dict_items_vec(sh)
                 .into_iter()

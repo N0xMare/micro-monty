@@ -727,7 +727,7 @@ def source_group(path):
     if path.startswith("src/") or path.startswith("library/"):
         return "std/core/alloc", path
     if "/out/" in path:
-        m = re.search(r"/build/([a-z0-9_-]+?)-[0-9a-f]{16}/out/(.*)$", path)
+        m = re.search(r"/build/([a-z0-9_-]+?)[-/][0-9a-f]{16}/out/(.*)$", path)
         if m:
             return {"micro-monty": "facade"}.get(m.group(1), m.group(1)), "OUT_DIR/" + m.group(2)
     m = re.search(r"/library/(core|alloc|std|panic_abort|compiler-builtins|stdarch|portable-simd)/", path)

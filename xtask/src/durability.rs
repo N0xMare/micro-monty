@@ -397,8 +397,7 @@ fn run_job(
     let file = job
         .case
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .map_or_default(|n| n.to_string_lossy().into_owned());
     let spec = match job.first {
         Some(first) => format!("{}, {first} first", job.spec),
         None => job.spec.clone(),

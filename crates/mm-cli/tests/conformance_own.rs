@@ -246,9 +246,7 @@ fn own_cases_match_cpython() {
         {
             failures.push(format!(
                 "== {}\n-- mm (exit {:?})\n{}{}-- python (exit {:?})\n{}{}",
-                case.file_name()
-                    .map(|n| n.to_string_lossy())
-                    .unwrap_or_default(),
+                case.file_name().map_or_default(|n| n.to_string_lossy()),
                 mine.status,
                 mine.stdout,
                 mine.stderr,

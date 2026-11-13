@@ -910,14 +910,14 @@ impl Vm {
         let mut suffix = String::new();
         if line != Value::NONE {
             let f = if self.truthy(file) {
-                self.stringify(file).map(|s| s.text).unwrap_or_default()
+                self.stringify(file).map_or_default(|s| s.text)
             } else {
                 String::from("<string>")
             };
-            let l = self.stringify(line).map(|s| s.text).unwrap_or_default();
+            let l = self.stringify(line).map_or_default(|s| s.text);
             let _ = writeln!(out, "  File \"{f}\", line {l}");
         } else if file != Value::NONE {
-            let f = self.stringify(file).map(|s| s.text).unwrap_or_default();
+            let f = self.stringify(file).map_or_default(|s| s.text);
             suffix = format!(" ({f})");
         }
         let mut cut = false;
@@ -982,7 +982,7 @@ impl Vm {
         self.report_cut |= cut;
         let msg = self.syntax_attr(exc, "msg");
         let msg = if self.truthy(msg) {
-            self.stringify(msg).map(|s| s.text).unwrap_or_default()
+            self.stringify(msg).map_or_default(|s| s.text)
         } else {
             String::from("<no detail available>")
         };
@@ -1325,10 +1325,7 @@ impl Vm {
             return (String::new(), 0, String::new());
         };
         let line = c.code.position(pc).map_or(0, |p| p.pos.line);
-        let file = self
-            .source_of(ci)
-            .map(|s| s.name.clone())
-            .unwrap_or_default();
+        let file = self.source_of(ci).map_or_default(|s| s.name.clone());
         (file, line, String::from(&*c.code.name))
     }
 

@@ -3,7 +3,7 @@ name = "mm-wasm-host"
 description = "Reference wasmtime host for the mm-wasm guest (crates/mm-wasm-guest), with an API close to micro_monty::Session"
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.99.0"
+rust-version = "1.100.0"
 license = "MIT AND PSF-2.0 AND Unicode-3.0"
 publish = false
 

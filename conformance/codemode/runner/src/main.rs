@@ -120,8 +120,7 @@ fn setup(
 ) -> Result<Session, Value> {
     let tools: Vec<&str> = init["tools"]
         .as_array()
-        .map(|t| t.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
+        .map_or_default(|t| t.iter().filter_map(Value::as_str).collect());
     let clock = init["clock"].as_f64().unwrap_or(0.0);
     let mut session = match template {
         None => {

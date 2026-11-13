@@ -54,7 +54,7 @@ step "toolchain from rust-toolchain.toml"
 # rust-src: the size and wasm gates rebuild std. Listed in rust-toolchain.toml;
 # added explicitly for toolchains installed before it was listed.
 time rustup toolchain install --no-self-update
-rustup component add rust-src --toolchain 1.99.0
+rustup component add rust-src --toolchain 1.100.0
 
 step "cargo fetch"
 time cargo fetch --locked
@@ -76,13 +76,13 @@ fi
 
 step "fuzz toolchain"
 time rustup toolchain install nightly-2026-11-01 --profile minimal --no-self-update
-if ! cargo +1.99.0 fuzz --version 2>/dev/null | grep -Fxq 'cargo-fuzz 0.13.2'; then
-  time cargo +1.99.0 install cargo-fuzz --version 0.13.2 --locked
+if ! cargo +1.100.0 fuzz --version 2>/dev/null | grep -Fxq 'cargo-fuzz 0.13.2'; then
+  time cargo +1.100.0 install cargo-fuzz --version 0.13.2 --locked
 fi
 
 step "cargo-deny (supply-chain check, deny.toml; before release tags)"
-if ! cargo +1.99.0 deny --version 2>/dev/null | grep -Fxq 'cargo-deny 0.20.2'; then
-  time cargo +1.99.0 install cargo-deny --version 0.20.2 --locked
+if ! cargo +1.100.0 deny --version 2>/dev/null | grep -Fxq 'cargo-deny 0.20.2'; then
+  time cargo +1.100.0 install cargo-deny --version 0.20.2 --locked
 fi
 
 step "wasmtime (wasm snapshot round trips)"

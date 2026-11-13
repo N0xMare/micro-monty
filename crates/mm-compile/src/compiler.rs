@@ -1778,8 +1778,7 @@ impl<'a> Compiler<'a> {
         let idx = self.class_body(c, scope)?;
         let freenames = self.codes[idx]
             .as_ref()
-            .map(|c| c.freenames.clone())
-            .unwrap_or_default();
+            .map_or_default(|c| c.freenames.clone());
         let f = self.temps(3)?;
         // The closure tuple's temp is dead after MAKE_FUNCTION: release it
         // so the call window below stays the top of the temps.
@@ -2096,8 +2095,7 @@ impl<'a> Compiler<'a> {
         let code_idx = self.function_body(f, scope, name)?;
         let freenames = self.codes[code_idx]
             .as_ref()
-            .map(|c| c.freenames.clone())
-            .unwrap_or_default();
+            .map_or_default(|c| c.freenames.clone());
         if !freenames.is_empty() {
             let r = self.closure(&freenames)?;
             parts.push(r);

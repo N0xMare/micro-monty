@@ -344,8 +344,7 @@ fn measure(
         let cached = side
             .sha
             .as_deref()
-            .map(|s| load(&cache, s, &tools.key, &hashes))
-            .unwrap_or_default();
+            .map_or_default(|s| load(&cache, s, &tools.key, &hashes));
         let missing: Vec<(&str, &str)> = programs
             .iter()
             .copied()
@@ -436,7 +435,7 @@ fn version(tool: &Path) -> String {
     Command::new(tool)
         .arg("--version")
         .output()
-        .map(|o| {
+        .map_or_default(|o| {
             String::from_utf8_lossy(&o.stdout)
                 .lines()
                 .next()
@@ -444,7 +443,6 @@ fn version(tool: &Path) -> String {
                 .trim()
                 .to_owned()
         })
-        .unwrap_or_default()
 }
 
 /// The cached counts of commit `sha` under `key`; none when the key

@@ -598,8 +598,7 @@ fn write_units(
         let u = &units[n];
         let sections = programs
             .get(n.as_str())
-            .map(|p| p.encode_sections(&shared))
-            .unwrap_or_default();
+            .map_or_default(|p| p.encode_sections(&shared));
         let r = record(u, &sections);
         let bytes = sections.iter().map(Vec::len).sum::<usize>() + r.len();
         if size > 0 && size + bytes > CHUNK {

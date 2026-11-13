@@ -23,7 +23,7 @@ use crate::workspace_root;
 
 const TARGETS: [&str; 2] = ["wasm32-wasip1", "wasm32-unknown-unknown"];
 
-/// The features rustc 1.99 enables by default on both wasm targets
+/// The features rustc 1.100 enables by default on both wasm targets
 /// (`rustc --print cfg --target wasm32-unknown-unknown`, plus the two
 /// LLVM implies). The stripped module carries no `target_features`
 /// section, so wasm-opt is told; it must not use any other feature.
@@ -266,18 +266,16 @@ fn leb(out: &mut Vec<u8>, mut n: usize) {
 }
 
 /// `file` in the newest `out` directory of `package`'s build script under
-/// `build` (cargo's `target/<target>/release/build`).
+/// `build` (cargo's `target/<target>/release/build`), laid out as cargo
+/// 1.100 does: `build/<package>/<hash>/out`. Directories of the older
+/// `build/<package>-<hash>/out` layout, left by earlier toolchains, are
+/// stale and ignored.
 fn build_output(build: &Path, package: &str, file: &str) -> Result<Vec<u8>, String> {
+    let dir = build.join(package);
     let entries =
-        fs::read_dir(build).map_err(|error| format!("cannot read {}: {error}", build.display()))?;
+        fs::read_dir(&dir).map_err(|error| format!("cannot read {}: {error}", dir.display()))?;
     let newest = entries
         .filter_map(Result::ok)
-        .filter(|e| {
-            e.file_name()
-                .to_str()
-                .and_then(|n| n.strip_prefix(package))
-                .is_some_and(|rest| rest.starts_with('-'))
-        })
         .map(|e| e.path().join("out").join(file))
         .filter_map(|p| Some((fs::metadata(&p).ok()?.modified().ok()?, p)))
         .max();

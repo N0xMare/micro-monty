@@ -1,5 +1,5 @@
 [toolchain]
-channel = "1.99.0"
+channel = "1.100.0"
 profile = "minimal"
 # `rust-src`: shipped builds rebuild std (`cargo xtask size` and `wasm`, docs/spec.md §6).
 components = ["clippy", "rustfmt", "rust-src"]

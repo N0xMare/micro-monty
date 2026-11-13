@@ -22,7 +22,7 @@ exclude = ["fuzz", "crates/mm-wasm-host"]
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.99.0"
+rust-version = "1.100.0"
 license = "MIT AND PSF-2.0 AND Unicode-3.0"
 repository = "https://github.com/N0xMare/micro-monty"
 readme = "README.md"

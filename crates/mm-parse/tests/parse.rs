@@ -1281,7 +1281,7 @@ fn line_breaks_in_strings_read_as_newlines_as_in_cpython() {
             .map(|p| match p {
                 FPart::Lit(s) => format!("{s:?}"),
                 FPart::Field { spec, .. } => {
-                    format!("{{{}}}", spec.as_deref().map(show).unwrap_or_default())
+                    format!("{{{}}}", spec.as_deref().map_or_default(show))
                 }
             })
             .collect::<Vec<_>>()

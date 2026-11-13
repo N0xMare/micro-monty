@@ -216,7 +216,7 @@ fn finish(s: &mut Session, mut p: Progress, out: &Mutex<String>) -> String {
             }
             Progress::Parked { .. } => Resume::Continue,
             Progress::Complete(c) => {
-                let out = out.lock().map(|o| o.clone()).unwrap_or_default();
+                let out = out.lock().map_or_default(|o| o.clone());
                 let _ = writeln!(t, "output:\n{out}complete {:?}", c.map(|c| c.repr));
                 return t;
             }

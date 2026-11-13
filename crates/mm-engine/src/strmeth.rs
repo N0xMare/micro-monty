@@ -866,7 +866,7 @@ pub(crate) fn upper(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (room, _native) = case_room(vm, &s, false)?;
     let mut out = String::with_capacity(room);
     for c in s.chars() {
-        if case_from_17(c) {
+        if case_after_16(c) {
             out.push(c);
         } else {
             out.extend(c.to_uppercase());
@@ -881,7 +881,7 @@ pub(crate) fn lower(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
     let s = this(vm, &a, "lower")?;
     let (room, _native) = case_room(vm, &s, true)?;
-    if !s.is_ascii() && s.chars().any(case_from_17) {
+    if !s.is_ascii() && s.chars().any(case_after_16) {
         return vm.new_str(&recase(&s, room, &mut |_, _| Case::Lower));
     }
     vm.new_str(&s.to_lowercase())
@@ -1296,7 +1296,7 @@ pub(crate) fn casefold(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (room, _native) = case_room(vm, &s, false)?;
     let mut out = String::with_capacity(room);
     for c in s.chars() {
-        if case_from_17(c) {
+        if case_after_16(c) {
             out.push(c);
         } else if !ucd::fold(c, &mut out) {
             out.extend(c.to_lowercase());
@@ -1323,7 +1323,7 @@ fn recase(s: &str, room: usize, pick: &mut dyn FnMut(usize, char) -> Case) -> St
     for (i, c) in s.chars().enumerate() {
         let lowered = low.by_ref().take(c.to_lowercase().len());
         let case = pick(i, c);
-        match if case_from_17(c) { Case::Keep } else { case } {
+        match if case_after_16(c) { Case::Keep } else { case } {
             Case::Lower => out.extend(lowered),
             case => {
                 lowered.for_each(drop);
@@ -1343,21 +1343,42 @@ fn is_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
-/// Code points `core`'s case tables (Unicode 17 in Rust 1.99) case but
+/// Code points `core`'s case tables (Unicode 18 in Rust 1.100) case but
 /// Unicode 16, CPython 3.14's, leaves unassigned: no case and no case
 /// mapping here. `case_tables_are_unicode_16` checks the lists.
 fn uncased_in_16(c: char) -> bool {
     matches!(
         c,
-        '\u{a7ce}' | '\u{a7cf}' | '\u{a7d2}' | '\u{a7d4}' | '\u{a7f1}' | '\u{16ea0}'..='\u{16ed3}'
+        '\u{558}'
+            | '\u{58b}'..='\u{58c}'
+            | '\u{209d}'..='\u{209f}'
+            | '\u{a7ce}'..='\u{a7cf}'
+            | '\u{a7d2}'
+            | '\u{a7d4}'
+            | '\u{a7dd}'
+            | '\u{a7e2}'
+            | '\u{a7f1}'
+            | '\u{ab6c}'..='\u{ab6d}'
+            | '\u{107bb}'..='\u{107bf}'
+            | '\u{16ea0}'..='\u{16ed3}'
+            | '\u{1d6a6}'
+            | '\u{1df1f}'..='\u{1df24}'
+            | '\u{1df2b}'..='\u{1df7f}'
+            | '\u{1df90}'..='\u{1df96}'
+            | '\u{1dfcd}'..='\u{1dfff}'
     )
 }
 
-/// Code points whose case mappings `core` takes from Unicode 17: those
-/// above, and U+A7D3 and U+A7D5, whose uppercase is new in 17. They map
-/// to themselves here.
-fn case_from_17(c: char) -> bool {
-    uncased_in_16(c) || matches!(c, '\u{a7d3}' | '\u{a7d5}')
+/// Code points whose case mappings `core` takes from Unicode 17 or 18:
+/// those above; U+A7D3 and U+A7D5, whose uppercase is new in 17; and
+/// U+0277, U+027C, U+AB4B and U+AB4C, whose uppercase is new in 18. They
+/// map to themselves here.
+fn case_after_16(c: char) -> bool {
+    uncased_in_16(c)
+        || matches!(
+            c,
+            '\u{a7d3}' | '\u{a7d5}' | '\u{277}' | '\u{27c}' | '\u{ab4b}' | '\u{ab4c}'
+        )
 }
 
 /// CPython's `Py_UNICODE_ISLOWER` (Lowercase in Unicode 16): U+0295 is
@@ -3341,7 +3362,7 @@ fn map_char(
         mk::CAPITALIZE if pos == 0 => Case::Title,
         mk::LOWER | mk::CAPITALIZE => Case::Lower,
         mk::CASEFOLD => {
-            if case_from_17(c) {
+            if case_after_16(c) {
                 out.push(c);
             } else if !ucd::fold(c, out) {
                 out.extend(c.to_lowercase());
@@ -3377,7 +3398,7 @@ fn map_char(
         }
         _ => Case::Keep,
     };
-    match if case_from_17(c) { Case::Keep } else { case } {
+    match if case_after_16(c) { Case::Keep } else { case } {
         Case::Lower if c == 'Σ' => {
             out.push('σ');
             *sigma = true;
@@ -4029,13 +4050,13 @@ fn scan_big(
 
 #[cfg(all(test, feature = "unicodedata"))]
 mod tests {
-    use super::{case_from_17, is_lower, is_upper, uncased_in_16};
+    use super::{case_after_16, is_lower, is_upper, uncased_in_16};
     use crate::unicodedata::category_of;
 
     /// `core`'s case tables may be newer than Unicode 16 (CPython 3.14's):
     /// every code point they case is assigned in 16.0 unless
     /// `uncased_in_16` lists it, each listed one is unassigned there, a
-    /// code point maps to one of them only if `case_from_17` lists it, and
+    /// code point maps to one of them only if `case_after_16` lists it, and
     /// every Ll and Lu is lower and upper case here.
     #[test]
     fn case_tables_are_unicode_16() {
@@ -4053,11 +4074,11 @@ mod tests {
             }
             let to_new = c.to_lowercase().any(uncased_in_16) || c.to_uppercase().any(uncased_in_16);
             assert!(
-                !to_new || case_from_17(c),
-                "U+{at:04X} maps to a code point new in 17"
+                !to_new || case_after_16(c),
+                "U+{at:04X} maps to a code point new after 16"
             );
             assert!(
-                !case_from_17(c) || uncased_in_16(c) || to_new,
+                !case_after_16(c) || uncased_in_16(c) || to_new,
                 "U+{at:04X} need not be listed"
             );
             assert!(cat != "Ll" || is_lower(c), "U+{at:04X} is Ll");
