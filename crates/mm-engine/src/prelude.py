@@ -1901,6 +1901,14 @@ def _list_extend(a):
         pass
 
 
+def _TextIOWrapper_writelines(a):
+    # `sys.stdout.writelines` of an iterable the native does not take:
+    # each line written as it is pulled, as CPython's `IOBase.writelines`.
+    f = a[0]
+    for line in a[1]:
+        f.write(line)
+
+
 def _str_join(a):
     return a[0].join(_list((a[1],)))
 
@@ -5018,6 +5026,18 @@ _int_info = _StructSeq(
     (30, 4, 4300, 640))
 # Read by the engine's int/str conversions (0: no limit).
 _int_max_str_digits = 4300
+
+
+def exit(*args):
+    # `sys.exit`: CPython sets the status as the exception's value, so a
+    # tuple becomes its arguments.
+    if len(args) > 1:
+        raise TypeError(f'exit expected at most 1 argument, got {len(args)}')
+    if not args or args[0] is None:
+        raise SystemExit
+    if isinstance(args[0], tuple):
+        raise SystemExit(*args[0])
+    raise SystemExit(args[0])
 
 
 def get_int_max_str_digits():

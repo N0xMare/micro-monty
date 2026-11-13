@@ -920,8 +920,7 @@ def quote_plus(string, safe='', encoding=None, errors=None):
 # Expectation: A typical program is unlikely to create more than 5 of these.
 @functools.lru_cache
 def _byte_quoter_factory(safe):
-    quoter = _Quoter(safe)
-    return lambda b: quoter[b]
+    return _Quoter(safe).__getitem__
 
 def quote_from_bytes(bs, safe='/'):
     """Like quote(), but accepts a bytes object rather than a str, and does

@@ -422,6 +422,7 @@ impl Vm {
                 "int_info",
                 "get_int_max_str_digits",
                 "set_int_max_str_digits",
+                "exit",
             ];
             let units = [
                 "_version_info",
@@ -431,6 +432,7 @@ impl Vm {
                 "_int_info",
                 "get_int_max_str_digits",
                 "set_int_max_str_digits",
+                "exit",
             ];
             for (attr, v) in attrs.iter().zip(self.prelude_get_all(&units)?) {
                 if let Some(v) = v {

@@ -1369,8 +1369,8 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
 - **Codecs** other than UTF-8 (and `utf-8-sig`), UTF-16, UTF-32, ASCII and
   Latin-1 raise `LookupError`.
 - **Missing names:** the builtins `input`, `breakpoint`, `exit`, `quit`,
-  `copyright`, `credits` and `license`; `sys.exit` and `sys.stdin`; the
-  exceptions `BlockingIOError`, `BrokenPipeError`, `ChildProcessError`,
+  `copyright`, `credits` and `license`; `sys.stdin`; the exceptions
+  `BlockingIOError`, `BrokenPipeError`, `ChildProcessError`,
   `ConnectionError` and its subclasses, `InterruptedError`,
   `ProcessLookupError`, `PythonFinalizationError` and
   `UnicodeTranslateError`; the module `builtins`; `__builtins__`, `__spec__`
@@ -1433,8 +1433,6 @@ differs:
   bounds must fit in 64 bits: `range(2**63)` raises `OverflowError`.
 - **Objects.** One object holds at most 64 MiB whatever the memory limit.
   `namedtuple` and dataclasses take at most 126 fields.
-- **Iteration.** A `dict` subclass's `__missing__` is not called through
-  `d.__getitem__(k)`.
 - **`json.loads` with hooks** parses the whole document before calling any
   hook, and nesting deeper than CPython's recursion limit parses.
 - **`dir()`** of a builtin type lists its method table plus a fixed set of

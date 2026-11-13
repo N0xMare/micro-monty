@@ -54,15 +54,16 @@ pub struct Native {
     pub f: NativeFn,
 }
 
-/// Whether builtin method `n` takes a str subclass instance itself, not
-/// the str it extends: `partition` and `rpartition` give the receiver
+/// Whether builtin method `n` takes a subclass instance itself, not the
+/// value it extends: str's `partition` and `rpartition` give the receiver
 /// back when the separator is not found, as CPython's do.
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn keeps_instance(n: &Native) -> bool {
     match n.owner {
         Some(T::str) => matches!(n.name(), "partition" | "rpartition"),
-        // Its view records that it was made through a subclass.
-        Some(T::dict) => n.name() == "keys",
+        // Its view records that it was made through a subclass; a
+        // subclass's `__missing__` answers `dict.__getitem__`'s misses.
+        Some(T::dict) => matches!(n.name(), "keys" | "__getitem__"),
         _ => false,
     }
 }
@@ -988,6 +989,7 @@ const DEFS: &[Def] = &[
     // sys.stdout / sys.stderr
     n!("write", IO, 2, 2, NO, NO, stream_write),
     n!("flush", IO, 1, 1, NO, NO, stream_flush),
+    n!("writelines", IO, 2, 2, NO, NO, stream_writelines),
     // asyncio (host futures keep `done`, `result`, `exception`, `cancel`
     // and `cancelled` without it)
     #[cfg(feature = "asyncio")]
@@ -2911,10 +2913,7 @@ fn stream_write(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let me = vm.check_self(&a, T::TextIOWrapper, "write")?;
     let s = vm.arg_o(&a, 1);
     if !Vm::is_str(s) {
-        return Err(vm.err(
-            T::TypeError,
-            &format!("write() argument must be str, not {}", vm.type_name(s)),
-        ));
+        return Err(write_type_error(vm, s));
     }
     let stream = vm.stream_of(me).unwrap_or(Stream::Stdout);
     if let Some(out) = vm.output.as_mut() {
@@ -2925,6 +2924,50 @@ fn stream_write(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         out(stream, text);
     }
     vm.new_int(i64::try_from(vm.str_len(s)).unwrap_or(i64::MAX))
+}
+
+/// `write`'s TypeError for `x`, not a str (the argument clinic's: `None`
+/// by name).
+#[cfg_attr(mm_shipped, optimize(size))]
+fn write_type_error(vm: &mut Vm, x: Value) -> Raised {
+    let msg = format!(
+        "write() argument must be str, not {}",
+        if x == Value::NONE {
+            "None"
+        } else {
+            vm.type_name(x)
+        }
+    );
+    vm.err(T::TypeError, &msg)
+}
+
+/// `writelines(lines)`: a list or tuple of up to a step's work of items is
+/// written here, each as `write` takes it, up to the first that is not a
+/// str; any other iterable goes on in `_TextIOWrapper_writelines`.
+#[cfg_attr(mm_shipped, optimize(size))]
+fn stream_writelines(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let me = vm.check_self(&a, T::TextIOWrapper, "writelines")?;
+    let Some(items) = vm
+        .seq_items(vm.arg_o(&a, 1))
+        .filter(|xs| (xs.len() as u64) < nstep::STEP_WORK)
+    else {
+        return Err(vm.need_py());
+    };
+    vm.burn(items.len() as u64);
+    let stream = vm.stream_of(me).unwrap_or(Stream::Stdout);
+    for x in items {
+        if !Vm::is_str(x) {
+            return Err(write_type_error(vm, x));
+        }
+        if let Some(out) = vm.output.as_mut() {
+            let text = x
+                .as_obj()
+                .and_then(|r| vm.heap.as_str(r).ok())
+                .unwrap_or("");
+            out(stream, text);
+        }
+    }
+    Ok(Value::NONE)
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
