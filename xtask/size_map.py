@@ -28,8 +28,8 @@ Usage (from the repository root):
         [--markdown]
 
 `--removals` adds removal builds of `hello` (wasm and native: one stdlib
-feature off at a time, all of them, unicodedata on, the facade without
-`test-hooks`) in a git worktree under target/size-map, built and measured
+module off at a time with the modules that import it, all of them,
+unicodedata on, the facade without `test-hooks`) in a git worktree under target/size-map, built and measured
 as shipped (stripped). `--markdown` only re-renders size-map.md from the
 JSON files. Needs `twiggy` (`cargo install twiggy`; optional), `wasm-opt`
 (as `cargo xtask size`), binutils `nm` and `c++filt` (Rust v0 demangling),
@@ -1303,41 +1303,46 @@ REMOVALS = {
 }
 
 
+def stdlib_dependents(drop):
+    """`drop` and every mm-stdlib module feature that brings one of them in
+    (mm-stdlib/Cargo.toml), transitively."""
+    graph = {}
+    for line in (ROOT / "crates/mm-stdlib/Cargo.toml").read_text().splitlines():
+        m = re.match(r'^(mod-[\w-]+) = \[(.*)\]$', line)
+        if m:
+            graph[m.group(1)] = {d.strip().strip('"') for d in m.group(2).split(",") if d.strip()}
+    gone = set(drop)
+    while True:
+        more = {f for f, deps in graph.items() if f not in gone and deps & gone}
+        if not more:
+            return gone
+        gone |= more
+
+
 def removal_builds(out):
     wt = TARGET_DIR / "worktree"
     if not wt.exists():
         run(["git", "worktree", "add", "--detach", str(wt), "HEAD"], cwd=ROOT)
-    manifest = wt / "crates/mm-stdlib/Cargo.toml"
-    original = (ROOT / "crates/mm-stdlib/Cargo.toml").read_text()
     path_json = out / "removals.json"
     results = json.loads(path_json.read_text()) if path_json.exists() else {}
     td = TARGET_DIR / "removals"
+    facade = wt / "crates/micro-monty/Cargo.toml"
+    original = (ROOT / "crates/micro-monty/Cargo.toml").read_text()
     for label, (drop, add) in [("baseline", ([], []))] + list(REMOVALS.items()):
-        text = original
-        head, rest = text.split("default = [", 1)
+        # The module set is micro-monty's `default` feature. mm-stdlib's build
+        # script refuses a module whose imports are off, so a removal also
+        # drops every module that brings a dropped one in (`dropped`).
+        head, rest = original.split("default = [", 1)
         body, tail = rest.split("]", 1)
         feats = [f.strip().strip('"') for f in body.split(",") if f.strip().strip('"')]
-        kept = [f for f in feats if f not in drop and "*" not in drop]
+        gone = set(feats) if "*" in drop else stdlib_dependents(drop) & set(feats)
+        kept = [f for f in feats if f not in gone or f in add]
         feats = kept + [a for a in add if a not in kept]
-        # A dropped feature must not come back through another's dependency list.
         text = head + "default = [" + ", ".join(f'"{f}"' for f in feats) + "]" + tail
-        if drop:
-            def fix(line):
-                m = re.match(r'^(mod-[\w-]+) = \[(.*)\]$', line)
-                if not m:
-                    return line
-                deps = [d.strip().strip('"') for d in m.group(2).split(",") if d.strip()]
-                deps = [d for d in deps if (d not in drop and "*" not in drop) or d in add
-                        or (d.startswith("mm-engine/") and m.group(1) in add)]
-                return f'{m.group(1)} = [' + ", ".join(f'"{d}"' for d in deps) + "]"
-            text = "\n".join(fix(l) for l in text.splitlines()) + "\n"
-        manifest.write_text(text)
-        facade = wt / "crates/micro-monty/Cargo.toml"
-        facade_text = (ROOT / "crates/micro-monty/Cargo.toml").read_text()
         if label == "facade without test-hooks":
-            facade.write_text(facade_text.replace('features = ["test-hooks"] }', "}"))
-        else:
-            facade.write_text(facade_text)
+            text = text.replace('features = ["test-hooks"] }', "}")
+        facade.write_text(text)
+        results.setdefault(label, {})["dropped"] = sorted(f for f in gone if f not in add)
         for target in (UU, NATIVE):
             if target in results.get(label, {}):
                 continue
@@ -1356,8 +1361,7 @@ def removal_builds(out):
             results.setdefault(label, {})[target] = size
             path_json.write_text(json.dumps(results, indent=1))
             print(f"removal {label} {target}: {size}", file=sys.stderr)
-    manifest.write_text(original)
-    (wt / "crates/micro-monty/Cargo.toml").write_text((ROOT / "crates/micro-monty/Cargo.toml").read_text())
+    facade.write_text(original)
 
 
 # --------------------------------------------------------------------------
@@ -1542,8 +1546,10 @@ def markdown(report, removals):
         base = removals.get("baseline", {})
         rows = []
         for label, v in removals.items():
-            rows.append([label] + [(f"{n(v[t])} ({v[t] - base.get(t, v[t]):+,})" if isinstance(v[t], int) else v[t]) if t in v else "" for t in (UU, NATIVE)])
-        md.append(table(["build", "hello.wasm uu", "native hello"], rows))
+            dropped = v.get("dropped", [])
+            rows.append([label] + [(f"{n(v[t])} ({v[t] - base.get(t, v[t]):+,})" if isinstance(v[t], int) else v[t]) if t in v else "" for t in (UU, NATIVE)]
+                        + [", ".join(d.removeprefix("mod-") for d in dropped) if 0 < len(dropped) < 30 else (f"{len(dropped)} modules" if dropped else "")])
+        md.append(table(["build", "hello.wasm uu", "native hello", "modules dropped"], rows).replace("|---|---:|---:|---:|", "|---|---:|---:|---|"))
     return "\n".join(md)
 
 
