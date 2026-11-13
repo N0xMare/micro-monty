@@ -1,5 +1,11 @@
 # micro-monty in plak's process: a prototype on real sessions
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 What would it take for plak to run micro-monty in its own process instead of a
 child worker, and what does it change on real agent sessions? This note
 covers a working prototype on a local plak branch: the seam it uses, the

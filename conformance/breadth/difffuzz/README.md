@@ -68,7 +68,7 @@ below). The CPython timeouts are (d) and are counted separately.
   messages (`int()`, `float()`, `KeyError`), and `len`/`ord`/iteration over
   `repr(...)` text, which accounts for the few non-obvious signatures (seeds
   16054, 17327, 34419, 36628, 37598, 12236).
-- Not a documented exclusion: `docs/HANDOFF.md:1740` lists "nonprintable
+- Not a documented exclusion: `docs/HANDOFF.md:1740` (now `docs/history/handoff-0.0.1.md:4066`) listed "nonprintable
   Unicode in `int(chr(6892))` error text" as remaining conformance work.
 - The earlier lost run's "about 20 divergences in repr escaping of
   non-ASCII text" **reproduces**: it is this group. At 44k programs it

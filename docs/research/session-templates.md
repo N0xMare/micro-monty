@@ -1,5 +1,11 @@
 # Session templates
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 Question (owner, 2026-11-06): can a host make imports nearly free per cell
 with session templates and no engine change? A template is a snapshot
 taken after the common imports and restored for each new session, instead

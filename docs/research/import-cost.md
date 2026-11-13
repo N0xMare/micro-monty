@@ -1,5 +1,11 @@
 # Import cost: where an import goes, and the module-body pass
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 Question (owner, 2026-11-07): importing the common modules is micro-monty's
 largest fixed engine cost. One cell importing `json, re, collections,
 asyncio, datetime` took 4.3 ms on mm against about 0.3 ms on Monty, whose
@@ -51,7 +57,7 @@ Labels: [M] measured here, [S] sourced, [E] estimated. x86-64 orb (Xeon
      Ir) and helps any class with one long-lived instance;
   5. assigning a class attribute recomputes the class's dunder flags only
      for the dunders they depend on, by binary search (since replaced by a
-     lookup of each key's cached hash: HANDOFF "Dunder flags by hash");
+     lookup of each key's cached hash: docs/history/handoff-0.0.1.md "Dunder flags by hash");
   6. `zoneinfo` inlines `calendar.isleap` and `calendar.monthrange` instead
      of importing `calendar` (zoneinfo 66.9M → 33.3M).
 - **Size**: +4,227 B `hello.wasm`, +5,376 native, +4,270 guest on 1c03cff

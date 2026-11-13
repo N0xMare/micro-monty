@@ -1,5 +1,11 @@
 # micro-monty on V8 and Cloudflare Workers
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 How does micro-monty perform as a code-mode runtime in V8, on Cloudflare
 Workers and Durable Objects, next to pi's codemode on quickjs-wasi? And what
 does its binary size (the shipped guest is 2.23 MB against quickjs-wasi's

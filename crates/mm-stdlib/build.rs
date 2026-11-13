@@ -188,7 +188,7 @@ fn compile_module(path: &Path) -> Result<Program, String> {
 }
 
 /// The strings three or more of `programs` use, stored once, most used
-/// first (docs/HANDOFF.md "Bundled data").
+/// first (docs/history/handoff-0.0.1.md, "Size pass 2: bundled data").
 fn shared_strings(programs: &[Program]) -> Vec<String> {
     let mut users: BTreeMap<String, usize> = BTreeMap::new();
     for p in programs {

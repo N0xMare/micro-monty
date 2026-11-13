@@ -1,5 +1,11 @@
 # Built-in import images: a prototype for json, re and collections
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 Question (owner, 2026-11-07): after the import-cost pass
 (docs/research/import-cost.md), the five-module import cell (`json, re,
 collections, asyncio, datetime`) still costs 18.6M Ir per session with the

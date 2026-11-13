@@ -15,6 +15,12 @@ Labels on every number:
 - **[S]** sourced from code or docs (linked)
 - **[E]** estimate or target, not measured
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](history/README.md) maps them); the numbers they qualify are
+unchanged.
+
 ## 0. Summary
 
 micro-monty is a from-scratch embeddable Python-subset engine in Rust, built on
@@ -148,7 +154,7 @@ size and speed, not "features Monty lacks".
    proof: py-ptc first, then the SDK.
 5. **Speed:** at or near QuickJS-ng on calls, closures and loops; beat Monty on
    every benchmark row (§12).
-6. **Size:** a small stripped binary under a CI-enforced budget (§6).
+6. **Size:** a small stripped binary under a budget `cargo xtask check` enforces (§6).
 7. **Portability:** the engine crates are `no_std` + `alloc`.
 
 ### Non-goals
@@ -990,7 +996,7 @@ symbolization (gimli, addr2line, miniz, demangle) and `.eh_frame`. A panic in
 a shipped binary aborts without a message. Since 2026-11-09 (owner decision
 69) shipped builds also pass `--cfg mm_shipped`, which turns on
 `#[optimize(size)]` for part of the cold breadth through
-`cfg_attr(mm_shipped, …)` (the file list is in `docs/HANDOFF.md`, "Engine
+`cfg_attr(mm_shipped, …)` (the file list is in `docs/history/handoff-0.0.1.md`, "Engine
 size review"). `cargo xtask check` runs the own cases on a natively built
 shipped `mm` so that shipped codegen has a native gate. Tests, clippy and
 every other build stay on plain stable; `cargo xtask wasm` builds its examples as shipped
@@ -1004,9 +1010,9 @@ bytes on `hello.wasm` [M] and costs 8–13% wall time on the dispatch-heavy
 bench programs (fib, loop, closure; str +5%, dict and json within noise) when
 `mm` built for wasip1 runs under wasmtime 50 [M]. Every `wasm-opt` level
 measured slower than none; `-O3` is within a few percent of `-Oz` and 14 KB
-larger [M] (`docs/HANDOFF.md`). PGO (native `mm` −8% to −22% instructions
+larger [M] (`docs/history/handoff-0.0.1.md`). PGO (native `mm` −8% to −22% instructions
 on the bench programs, `hello` +28% bytes) and BOLT on top of it (no gain)
-were measured and not adopted; the numbers are in `docs/HANDOFF.md`.
+were measured and not adopted; the numbers are in `docs/history/handoff-0.0.1.md`.
 
 | Budget | Artifact | In `xtask/size-ceilings.txt` |
 |---|---|---|
@@ -1045,7 +1051,7 @@ engine's opt-level 3) and the tree's drop glue; its Python is 5,908 bytes
 of packed bytecode [M]. It then left the default set (owner decision,
 2026-11-07; `mod-ast` opt-in): −43,874 / −46,304 / −46,254 on 168b7ac
 [M], less than it added because `warnings` and the parser's tree mode stay.
-Details in `docs/HANDOFF.md` ("Capability gaps").
+Details in `docs/history/handoff-0.0.1.md` ("Capability gaps").
 
 **Size pass (2026-11-05, owner decision 41).** Each lever in order on
 874409b [M] (`hello.wasm` / native `hello` / guest), bench callgrind Ir
@@ -1074,7 +1080,7 @@ sets in `NativeIds`/a `Vec` instead of `BTreeSet`s −5,271 / −5,440 /
 one shared Huffman header for the bundled modules −3,231 / −2,208 /
 −3,219; merges instead of slice sorts in `environment`/`host_modules`
 0 / 0 / −7,604. Details, rejected levers and the stdlib bytecode
-analysis are in `docs/HANDOFF.md` ("Size pass").
+analysis are in `docs/history/handoff-0.0.1.md` ("Size pass").
 
 **Size pass 2: bundled data (2026-11-07, owner decision 46).** On b01fd7d
 [M] (`hello.wasm` / native `hello` / guest), bench callgrind Ir within
@@ -1097,7 +1103,7 @@ session keeps the nine decoders it built for its first decode. The packed
 stdlib went from 386,198 to 277,758 bytes [M]. `#[optimize(size)]` on the
 cold breadth waited for Rust 1.101; since owner decision 69 part of it is
 applied on shipped builds (above), and the rest waits for 1.101
-(`docs/HANDOFF.md`, "Engine size review").
+(`docs/history/handoff-0.0.1.md`, "Engine size review").
 
 **dlmalloc `validate_size` (solved in the size pass by
 `crates/mm-wasm-alloc`, owner decision 41; history below).** On
@@ -1139,7 +1145,7 @@ agent code most often imports (§4: `contextlib`, `traceback`, `logging`,
 `urllib.parse`, `pprint`, `shlex`, `difflib`, `struct`, `html`) took
 `hello.wasm` from 1,741,354 to 1,818,715 and native `hello` from 1,830,312
 to 1,909,416 [M]; by the same rule both ceilings were raised to 1,823,000
-and 1,914,000. Per-module sizes are in `docs/HANDOFF.md`. The engine
+and 1,914,000. Per-module sizes are in `docs/history/handoff-0.0.1.md`. The engine
 gaps then followed, by the same rule, with per-feature sizes in the same
 place: `async for`/`async with`/async generators took `hello.wasm` to
 1,829,764 and native `hello` to 1,921,416 on their isolated branch [S].
@@ -3041,9 +3047,10 @@ a constant of about 337K Ir, 0.10% of the smallest (owner decision
   park is written by one `mm` process and continued by a new one. At the MVP
   [M]: 808 runs, 20,466 parks, all identical to an unparked run, 34 s on
   4 workers.
-- **Size CI:** `cargo xtask size` against the budget; report sections and a
-  per-crate bloat diff on PRs.
-- **Bench CI:** the §12 programs, flag regressions above 5%. On wasm,
+- **Size gate** (`cargo xtask size`, in `cargo xtask check`, run locally):
+  the shipped builds against the budget; `xtask/size_map.py` reports
+  sections and crates.
+- **Bench gate** (local): the §12 programs, flag regressions above 5%. On wasm,
   `cargo xtask wasm-ir` (in `check`) counts their wasmtime guest
   instructions under callgrind, precompiled for x86-64's baseline ISA,
   against a base revision, and fails on a program moving past ±0.5% either
@@ -3059,7 +3066,7 @@ a constant of about 337K Ir, 0.10% of the smallest (owner decision
 
 | # | Milestone | Weeks | Acceptance |
 |---|---|---|---|
-| M0 | Scaffold | done | Workspace, lints, CI (fmt, clippy, tests, size), orb setup, corpus, worker handshake |
+| M0 | Scaffold | done | Workspace, lints, CI (fmt, clippy, tests, size; local `cargo xtask check` since 2026-11-12), orb setup, corpus, worker handshake |
 | S1 | Dispatch spike | done | {stack, accumulator-register} × {`match`, fn table} on fib, loop, closure, attribute, method, dict/list kernels; results in `docs/spikes/dispatch.md`; done: accumulator + `match` (§8.1) |
 | M0b | Harness | done | Conformance runner scoring CPython 3.14.7 on the corpus; bench programs and runner |
 | M1 | mm-core | done | Value, segmented arena, GC with side bitmap, write barrier, interning; property tests and fuzzing for alloc and GC; 1M small allocations < 50 ms |
@@ -3164,7 +3171,7 @@ Do not fork Monty: it moves fast (21 commits, +15.8k lines in the 4 days after
 | Monty closes the language gap | micro-monty's case is pause-anywhere, safety, size and speed; M3 proves the code-mode payoff early |
 | Engine bugs in an untrusted sandbox | Zero `unsafe`, bounds-checked arena, fuzzing, snapshot reader bounds checks |
 | Bounds checks cost speed | Measure at M2; an `unsafe` exception only with benchmark evidence and a spec change |
-| Size creep | §5 rules, CI budget, per-PR deltas |
+| Size creep | §5 rules, the size gate in `cargo xtask check`, per-change deltas |
 | ruff is 1.3 MB | Own parser at M6 |
 | A harness's SDK keeps its async contract and needs type checking | Sync host calls remove the main need; if a harness keeps `async def` wrappers, run a checker host-side in a separate process, or add a compiler lint for unawaited host calls |
 | Python-written stdlib is slow somewhere it matters | Benchmarks per module; move hot modules or functions to Rust (§12) |

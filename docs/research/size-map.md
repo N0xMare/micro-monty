@@ -1,5 +1,11 @@
 # Size map of the shipped builds
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 Measured 2026-11-07 on `a72abfe`. Rust 1.99.0, binaryen 133, twiggy 0.8.0.
 Labels: [M] measured, [E] estimated. Every number can be reproduced with
 `xtask/size_map.py` (see "Method").

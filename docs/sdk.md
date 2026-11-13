@@ -9,7 +9,12 @@ another thread, or from a snapshot in another process or on another target.
 This guide is the `micro-monty` crate's documentation, and its examples
 are its doctests. The design and its measurements are in the
 [spec](https://github.com/N0xMare/micro-monty/blob/main/docs/spec.md);
-numbers here are labelled \[M\] measured, \[S\] sourced or \[E\] estimated.
+numbers here are labelled \[M\] measured, \[S\] sourced or \[E\] estimated. Commits named
+with a measurement, such as `eb78933`, are from the pre-release history
+before the public root commit `2bcbb8c`, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](https://github.com/N0xMare/micro-monty/blob/main/docs/history/README.md)
+maps them).
 
 ```toml
 [dependencies]

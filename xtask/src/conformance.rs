@@ -603,8 +603,8 @@ fn summary_markdown(results: &[CaseResult], version: &str) -> String {
         out,
         "[M] `cargo xtask conformance` on CPython {version}, over the {} cases of \
          `conformance/monty/` (Monty `66fff6bf`). Per-case results are in \
-         `cpython-3.14.jsonl`; CI reruns the corpus with `--check` and fails if \
-         they change. Regenerate both files with `cargo xtask conformance`.\n",
+         `cpython-3.14.jsonl`; `cargo xtask check` reruns the corpus with `--check` \
+         and fails if they change. Regenerate both files with `cargo xtask conformance`.\n",
         results.len()
     );
     out.push_str(

@@ -1,5 +1,11 @@
 # micro-monty against MicroPython and PocketPy
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 How does micro-monty compare with the two other small embeddable Python
 engines, as an engine for sandboxed, model-written code-mode cells? This
 study measures MicroPython 1.29.0 and PocketPy 2.2.0 (both the latest release
@@ -530,7 +536,7 @@ GC-tracked allocations (`DEFAULT_GC_INTERVAL`), which the 200 gaps over
   garbage. The 16.5 ms while the live set grows is a full collection below
   the 32 MiB threshold (the spec allows about 30 ms there [S]). Cyclic
   garbage gives more and longer slices (66 gaps over 10 ms at 2M live) than
-  acyclic (none). These gaps are longer than the 1.3–2.5 ms HANDOFF reports
+  acyclic (none). These gaps are longer than the 1.3–2.5 ms the handoff log reports
   for its garbage loops; that figure is the gap from a park request to the
   park, a different measurement, so the two do not compare directly [E].
 - **MicroPython** pauses 19–20 ms with nothing live, 51 ms at 1M and

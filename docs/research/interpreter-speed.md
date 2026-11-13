@@ -1,5 +1,11 @@
 # Interpreter speed: where mm loses to CPython, and what each fix costs
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 The question was which interpreter changes would make micro-monty several
 times faster on the programs where it trails CPython 3.14.7, and what each
 change costs in size, risk, snapshot format, durability and rules. This note
@@ -332,7 +338,7 @@ layout, open. For codemode, `shlex` cells fell from 122 to 87 ms and
 `datetime` (an aware comparison was 17× CPython in Ir, about 225× with
 mixed offsets). Row 12 then took `dt-overlaps` to 2.7–8.3 ms (CPython
 0.5–0.9 ms) and all 148 `dt-*` cells from 1.39 to 0.75 s of engine time
-[M]; what remains there is imports and Python formatting (HANDOFF "Aware
+[M]; what remains there is imports and Python formatting (docs/history/handoff-0.0.1.md "Aware
 datetime").
 
 ## Reproduce

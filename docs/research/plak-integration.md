@@ -1,5 +1,11 @@
 # Running plak's Python cell tests against `mm-cell-worker`
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 Internal: a record of local integration testing against the external agent
 harness behind `mm-cell-worker`'s cell protocol, not part of micro-monty's
 public surface.

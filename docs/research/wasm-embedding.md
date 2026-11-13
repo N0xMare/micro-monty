@@ -1,5 +1,11 @@
 # A supported wasm embedding for micro-monty: `mm-wasm`
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 **Frozen with micro-monty 0.0.1** (owner decisions; docs/HANDOFF.md scope
 decisions 24, 51 and 68). A host checks `ABI_VERSION` (1) and the required
 export list (`mm_wasm_abi::export::REQUIRED`) before it runs anything, and

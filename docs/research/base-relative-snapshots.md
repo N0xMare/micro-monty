@@ -1,5 +1,11 @@
 # Base-relative snapshots
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 Question (owner, 2026-11-05): can snapshots be stored relative to the
 build's deterministic startup image (prelude, types and stdlib state as
 `Session::new` leaves them), with the difference computed when the snapshot
@@ -227,7 +233,7 @@ gate test that compares base images across native and wasm.
 **What the host stores.** One base per build id and feature set: 40.7–40.8
 KB [M]. A host can also regenerate it with `Session::new` + `snapshot`, as
 long as determinism holds. That costs one session creation; all of `mm run
-bench/startup.py` is about 7.1M instructions [S HANDOFF]. A trained dictionary adds 64–112 KiB
+bench/startup.py` is about 7.1M instructions [S, docs/history/handoff-0.0.1.md]. A trained dictionary adds 64–112 KiB
 per build [M]. Every stored image must record the base or dictionary id;
 zstd frames with a raw prefix carry no dictionary id.
 

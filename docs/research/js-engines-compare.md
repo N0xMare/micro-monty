@@ -1,5 +1,11 @@
 # micro-monty against the codemode JavaScript engines
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 How does micro-monty compare with the JavaScript engines that do the same
 code-mode job? The comparison covers pi's codemode on quickjs-wasi, plak's JS
 host on rquickjs, djs (native and wasm), dquickts, and the `qjs` CLIs. Before

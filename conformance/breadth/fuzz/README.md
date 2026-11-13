@@ -172,7 +172,7 @@ target/x86_64-unknown-linux-gnu/release/<target> ../conformance/breadth/fuzz/art
 
 - F1: comparison depth now carries across the levels the prelude runs in
   bytecode, and a walk started at nesting `d` gets `max(2^14 >> d, 1)`
-  visits (docs/spec.md §5, docs/HANDOFF.md "libFuzzer F1 and F3"). Release
+  visits (docs/spec.md §5, docs/history/handoff-0.0.1.md "libFuzzer F1 and F3"). Release
   `mm`, unlimited fuel, CPython 3.14.7 in brackets: the F1 input 145.9 s
   and 665M fuel → 0.15 s and 0.99M [4.0 s]; `b < a` with 16 frozenset
   levels 62.7 s and 333M → 0.07 s and 0.41M [0.06 s]. The F2 shape is
@@ -717,15 +717,15 @@ wasm_abi 2,442 (fork mode keeps superseded inputs; merge before reuse).
 
 - A file whose lines end in a lone `\r` reports SyntaxError line numbers
   that differ from CPython's (`crates/mm-parse/src/lines.rs`). No crash.
-  **Fixed** (2026-11-08, HANDOFF "Pre-0.1 follow-ups"): a lone `\r` ends
+  **Fixed** (2026-11-08, docs/history/handoff-0.0.1.md "Pre-0.1 follow-ups"): a lone `\r` ends
   a line in every position and source-line lookup, as in CPython.
 - On an Engine whose cache holds an image's host-code key, restore takes
   the cached program without regenerating it from the image's definition,
   so an image with an edited definition and an unchanged key restores
   with the cached code; only an uncached Engine refuses it. Not a crash
   or safety issue; the definition the image reports can differ from the
-  code that runs. **Fixed** (2026-11-08, HANDOFF "Pre-0.1 follow-ups"):
-  the cache keeps a hash of each program's definition, and a restore
+  code that runs. **Fixed** (2026-11-08, docs/history/handoff-0.0.1.md "Pre-0.1
+  follow-ups"): the cache keeps a hash of each program's definition, and a restore
   whose definition hashes differently builds the code from it as an
   uncached Engine does; mode bit 5 asserts both engines' verdicts agree.
 

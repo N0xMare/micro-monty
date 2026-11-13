@@ -1,5 +1,11 @@
 # A `codemode-core` stdlib profile: cost against use
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 Measured 2026-11-08 on `e96ca7c`. Rust 1.99.0, binaryen 133, x86-64 orb.
 Labels: [M] measured, [E] estimated. Raw numbers, commands and scripts:
 `bench/evidence/results/2026-11-08-stdlib-profile/` and

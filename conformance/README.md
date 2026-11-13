@@ -25,7 +25,7 @@
 ```bash
 cargo xtask conformance                    # run everything, print, write results/
 cargo xtask conformance --filter dict__    # a subset; prints failures in full, writes nothing
-cargo xtask conformance --check            # fail if results differ from results/ (CI)
+cargo xtask conformance --check            # fail if results differ from results/ (`cargo xtask check`)
 cargo xtask conformance --engine micro-monty           # mm: writes micro-monty.*
 cargo xtask conformance --engine micro-monty --check   # mm: fail on any change
 ```

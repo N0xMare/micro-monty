@@ -1,5 +1,11 @@
 # What codemode runtimes support, and what micro-monty should ship
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 Research for three decisions (docs/HANDOFF.md, "Scope decisions"): the
 stdlib's default tier, the messages a cell sees when it imports something
 unsupported, and improvements to the host-tool API. Nothing in the engine
@@ -671,7 +677,7 @@ equivalents are [E].
 | `eval`/`exec` | ✗ (`NameError ... does not support eval()`) | source text only | 0 pi scripts; smolagents forbids them |
 | `open()`, `os.environ`, clock, randomness | host hooks | host `OSAccess` | PAI configures them; plak refuses all OS calls |
 | regex: lookahead, named groups, `\p{}` | ✓ (no `\p`, as CPython) | ✓ (fancy-regex) | 0–1 pi scripts |
-| `str.translate`, `bytearray`, `memoryview` | ✗ (docs/HANDOFF.md) | `bytearray` ✗ | |
+| `str.translate`, `bytearray`, `memoryview` | ✗ (docs/history/handoff-0.0.1.md) | `bytearray` ✗ | |
 
 ## 4. Tool-calling conventions compared
 

@@ -52,7 +52,7 @@ park, GC or snapshot between two steps sees only ordinary heap values.
   (1,831,000 → 1,840,504) [M]. Headroom is 154 bytes on Wasm and 5,000 on
   native [M]. The full rollout is estimated at +12 to +20 KB [E]. Either the
   budget moves, or this waits for Rust 1.101's `#[optimize(size)]`
-  (−112/−153 KB Wasm per HANDOFF [S], expected around 2026-12-24 [E]).
+  (−112/−153 KB Wasm per the handoff log, docs/history/handoff-0.0.1.md [S], expected around 2026-12-24 [E]).
 
 ## Measurements
 

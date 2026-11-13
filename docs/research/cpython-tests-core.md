@@ -1,7 +1,13 @@
 # CPython 3.14 `Lib/test` on micro-monty: core modules (2026-11-07)
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 The core-module pass: more of CPython 3.14.7's own test suite run on mm
-the way the asyncio batches were (`docs/HANDOFF.md` "asyncio batch 3"),
+the way the asyncio batches were (`docs/history/handoff-0.0.1.md` "asyncio batch 3"),
 the failures sorted by first cause, and the real bugs that models
 plausibly hit fixed, each with an own case that matches python3.14.
 

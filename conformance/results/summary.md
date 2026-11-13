@@ -1,6 +1,6 @@
 # Conformance results: CPython 3.14
 
-[M] `cargo xtask conformance` on CPython 3.14.7, over the 726 cases of `conformance/monty/` (Monty `66fff6bf`). Per-case results are in `cpython-3.14.jsonl`; CI reruns the corpus with `--check` and fails if they change. Regenerate both files with `cargo xtask conformance`.
+[M] `cargo xtask conformance` on CPython 3.14.7, over the 726 cases of `conformance/monty/` (Monty `66fff6bf`). Per-case results are in `cpython-3.14.jsonl`; `cargo xtask check` reruns the corpus with `--check` and fails if they change. Regenerate both files with `cargo xtask conformance`.
 
 Tags come from each case's file name and `# /// monty` header: `excluded` (`refcount__*`), `monty-specific` (`xfail` includes `cpython`), `host` (`call-external` or `mount-fs`, run on CPython through the datatest's emulated fixtures) and `cpython` (the rest). Monty's own CI also runs these cases on CPython 3.14.
 

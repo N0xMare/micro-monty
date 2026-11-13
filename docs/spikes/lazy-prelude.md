@@ -50,7 +50,7 @@ bundled modules.
 
 | Part | Instructions | Note |
 |---|---|---|
-| Whole process | 6,698,505 | matches HANDOFF's 6.7M |
+| Whole process | 6,698,505 | matches the handoff log's 6.7M |
 | Prelude unpack (`pack::unpack_bounded`) | 1,926,888 | 26,075 packed → 53,150 bytes; 36.3 instr/byte |
 | Prelude decode (`Program::decode_bounded`) | 1,139,802 | 219 code objects, 650-string pool (`shareds` 0.64M) |
 | `load_in` for the prelude | 1,185,379 | interning 1,047 names and 413 consts; 5,413 per code |
@@ -88,7 +88,7 @@ instructions, of which prelude unpack is 1,926,385 and decode 1,140,342
 | Committed arena | 2,162,688 | 2,162,688 | 0 |
 
 `code_bytes` charges each session for the shared `Arc<Code>` buffers it holds
-(HANDOFF, stage A), so sharing code across sessions saves real memory without
+(docs/history/handoff-0.0.1.md, stage A), so sharing code across sessions saves real memory without
 lowering the budget a session needs.
 
 The smallest memory limit at which `Session::new` plus a `x = 1` cell
@@ -99,7 +99,7 @@ complete (binary search on `Limits::memory`, 1 KiB resolution) [M]:
 | Today | 2,364,217 | 122,483 |
 | No prelude | 2,169,847 | 32,664 |
 
-HANDOFF records 2,448,103 for "the smallest working arena"; that figure came
+The handoff log (docs/history/handoff-0.0.1.md) records 2,448,103 for "the smallest working arena"; that figure came
 from a different harness, so compare within this table. Without the prelude,
 the floor is 2 × `SEG_COST` (2 × 1,081,344: a 1 MiB word segment and a 1 MiB
 byte segment, each with two bitmaps) plus 7 KB. **The prelude is 8% of the
@@ -191,7 +191,7 @@ Estimates [E] are derived from the measured per-part costs above.
 | C. **Lazy units, built in Rust on first lookup** (recommended) | 6.70M → about 0.85M with no units touched; about 1.25M at the median touching session; about 2.3M at p99 | −187 KB code, −72 KB heap; floor −8% | 122 KB → about 20–33 KB | +2 to +5 KB | Recommended |
 | D. Prelude objects in a shared read-only region | as C, plus an image to map | −72 KB per extra session | needs dirty tracking | image ≥ 90 KB | Rejected: users can mutate prelude objects (`map.x = 1`, `_REPR_ACTIVE`, class versions), so it needs copy-on-write at the barrier |
 | E. Eager prelude, excluded from snapshots and rebuilt on restore | 0 | 0 | 122 → 33 KB | 0 | Rejected: restore re-runs about 6M instructions, user objects referencing prelude objects need address-identical rebuilds, and mutated prelude objects must be detected |
-| F. Embedded heap image | most of 6M | 0 | 0 | +90–122 KB | Rejected in HANDOFF (stage B); the size budget rules it out |
+| F. Embedded heap image | most of 6M | 0 | 0 | +90–122 KB | Rejected in the handoff log (stage B); the size budget rules it out |
 | G. Store the prelude unpacked | −1.93M | 0 | 0 | +27 KB | Rejected on size; C gets most of the gain |
 | H. Small first arena segments (companion, `mm-core`) | small | floor 2.17 MB → about 0.1–0.25 MB | 0 | about +1 KB | Needed for memory multiples; independent of the prelude |
 

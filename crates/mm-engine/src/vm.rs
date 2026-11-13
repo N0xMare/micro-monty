@@ -1947,7 +1947,8 @@ impl Vm {
     // dict.rs, json.rs and the hot natives that keep the inline forms)
     // keeps the inline forms: any change to what dispatch inlines moves
     // its register allocation, and with it the hot loop's instruction
-    // count by several percent (docs/HANDOFF.md, "Engine size review").
+    // count by several percent (docs/history/handoff-0.0.1.md, "Engine size
+    // review").
 
     /// [`Vm::slot`], out of line.
     #[inline(never)]

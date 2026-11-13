@@ -27,7 +27,7 @@ Yes, with margin on instructions and narrowly on wall time.
 - The hot loop is 10,351 bytes of machine code, against 39,597 + 29,487 for
   mm's `dispatch` + `dispatch_rare` [M]. Edits outside the loop moved no
   kernel; edits inside it moved kernels by at most 0.35% in the final build
-  and 2.5% in the first [M]. mm moves ±15% (HANDOFF).
+  and 2.5% in the first [M]. mm moves ±15% (docs/history/handoff-0.0.1.md).
 
 On fib the spike runs 7% fewer instructions than qjs but takes 5–8% longer.
 The likely cause is the one shared indirect dispatch jump, against QuickJS's

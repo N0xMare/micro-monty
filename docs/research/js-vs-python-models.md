@@ -1,5 +1,11 @@
 # JavaScript on QuickJS or Python on micro-monty: which do models code better in?
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 The same two models ran the same eight review tasks through plak twice: once writing Python in
 py-ptc cells on `mm-cell-worker`, once writing JavaScript in js-ptc cells on plak's rquickjs host
 (`plakous-js-host`). Every cell's frames were recorded. It ran twice: sample 1 in an Amp orb
@@ -142,7 +148,7 @@ regex backslashes (1 cell).
   `python3`). Both Codex arms shelled out to `python3` in 2 cells. When the task needs computing,
   the models reach for Python whichever language the cell is in.
 - **Two mm gaps showed up, one known, one by design.** `__import__('math')` fails with `NameError`
-  (an open gap that HANDOFF already lists, from the synthetic census), and `globals()["TEXT"] =
+  (an open gap the handoff log already listed, from the synthetic census), and `globals()["TEXT"] =
   text` is refused because `globals()` is a read-only view (owner decision G2, spec §4). One cell
   of each; the model rewrote both.
 - **mm is slow on a brute-force loop.** One Grok py-ptc cell ran a 51-million-iteration search

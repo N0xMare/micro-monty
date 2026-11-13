@@ -34,7 +34,7 @@ The six added programs take 80–115 ms each on CPython 3.14 [M].
 ```bash
 cargo xtask bench                          # all engines, 10 reps, writes results/
 cargo xtask bench --engines cpython,qjs --reps 20
-cargo xtask bench --quick --engines cpython    # 1 run each, checksums only (CI)
+cargo xtask bench --quick --engines cpython    # 1 run each, checksums only (as `cargo xtask check` runs it)
 ```
 
 Every repetition is a separate process timed by wall clock from spawn to exit,

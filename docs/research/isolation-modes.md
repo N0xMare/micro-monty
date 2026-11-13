@@ -1,5 +1,11 @@
 # Isolation modes for hosting micro-monty in plak's runner
 
+Commit hashes of micro-monty cited here, other than the public history's
+(root `2bcbb8c`), are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`;
+[docs/history](../history/README.md) maps them); the numbers they qualify
+are unchanged.
+
 How should a host daemon (plak's runner) run micro-monty cells: linked into
 the daemon, inside wasmtime in the daemon, or in a child process as plak's
 rquickjs and Monty workers do today? This note measures all three with the same
