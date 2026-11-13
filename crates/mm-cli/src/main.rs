@@ -23,8 +23,17 @@
 //!   continues to the next park, or prints the same report `exec --json`
 //!   prints for an unparked run, with the fuel the whole chain spent
 //!   (`"fuel"`). `--report-fuel` adds the fuel an unparked run spent to its
-//!   report the same way, so the two compare (`oracle.py --durability
-//!   --fuel`).
+//!   report the same way, so the two compare (`oracle.py --durability`).
+//!   `--park-every N` runs the cell in this process instead, parked every
+//!   N fuel units and resumed (with `--host-fixtures`, the fixtures
+//!   answered as above), and reports its fuel; `--snapshot-continue` with
+//!   it also takes a snapshot at every stop and goes on with the same
+//!   session. `--digest` pins the wall clock and makes entropy a counter
+//!   (the parked chain saves it with the host's side), and adds the
+//!   final-state digest to the report (`"digest"`): the checksum of the
+//!   session's image at the end, taken with the fuel and its total
+//!   cleared, so the durability gate compares the state each way of
+//!   running a cell leaves (docs/spec.md §13).
 //! - `mm version` prints the engine version and the snapshot `build_id`
 //!   (hex): `mm resume` restores only snapshots written under the same id.
 //! - `MM_GC_STRESS=1` collects garbage at every safepoint of every session,
@@ -62,14 +71,18 @@ use std::{
     collections::BTreeMap,
     io::{BufWriter, Write},
     process::ExitCode,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    sync::{
+        Arc, Mutex, MutexGuard, PoisonError,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 const USAGE: &str = "usage: mm run FILE
        mm version
        mm exec --json [--recursion-limit N] [--host-fixtures] [--report-fuel]
-                      [--main-module] [--snapshot-every N --snapshot-dir DIR] FILE
+                      [--main-module] [--digest] [--snapshot-every N --snapshot-dir DIR]
+                      [--park-every N [--snapshot-continue]] FILE
        mm resume --json DIR";
 
 /// `MM_GC_STRESS=1`: collect at every safepoint (over 1 MiB live, after
@@ -87,37 +100,107 @@ fn yielding(mut s: Session) -> Session {
     s
 }
 
-fn settings() -> SessionSettings {
+/// The wall clock `--digest` pins (seconds since the Unix epoch).
+const PINNED_CLOCK: f64 = 1_794_000_000.0;
+
+/// `entropy`, with `--digest`: the counter the session's entropy reads,
+/// with the wall clock pinned, so the final state does not depend on
+/// either; a parked chain carries the counter on.
+fn settings(entropy: Option<&Arc<AtomicU64>>) -> SessionSettings {
     let mut s = SessionSettings::default();
     match std::env::var("MM_GC_STRESS").as_deref() {
         Ok("1") => s.gc_stress = true,
         Ok("inc") => s.gc_inc_stress = true,
         _ => {}
     }
+    if let Some(counter) = entropy {
+        let counter = Arc::clone(counter);
+        s.wall_clock = Some(Box::new(|| PINNED_CLOCK));
+        s.entropy = Some(Box::new(move |buf: &mut [u8]| {
+            for byte in buf {
+                let n = counter.fetch_add(1, Ordering::Relaxed);
+                *byte = n.wrapping_mul(0x9E37_79B9_7F4A_7C15).to_be_bytes()[0];
+            }
+        }));
+    }
     s
+}
+
+/// `exec`'s switches.
+#[derive(Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent command-line switches"
+)]
+struct Flags {
+    fixtures: bool,
+    report_fuel: bool,
+    main_module: bool,
+    digest: bool,
+    /// `--park-every N`.
+    park_every: Option<u64>,
+    snapshot_continue: bool,
+}
+
+impl Flags {
+    /// The switches in `refs`, which it removes; `park_every` is left
+    /// unset.
+    fn take(refs: &mut Vec<&str>) -> Flags {
+        let flags = Flags {
+            fixtures: refs.contains(&"--host-fixtures"),
+            report_fuel: refs.contains(&"--report-fuel"),
+            main_module: refs.contains(&"--main-module"),
+            digest: refs.contains(&"--digest"),
+            park_every: None,
+            snapshot_continue: refs.contains(&"--snapshot-continue"),
+        };
+        refs.retain(|a| {
+            !matches!(
+                *a,
+                "--host-fixtures"
+                    | "--report-fuel"
+                    | "--main-module"
+                    | "--digest"
+                    | "--snapshot-continue"
+            )
+        });
+        flags
+    }
+
+    fn any(&self) -> bool {
+        self.fixtures
+            || self.report_fuel
+            || self.main_module
+            || self.digest
+            || self.park_every.is_some()
+            || self.snapshot_continue
+    }
 }
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let fixtures = refs.contains(&"--host-fixtures");
-    let report_fuel = refs.contains(&"--report-fuel");
-    let main_module = refs.contains(&"--main-module");
-    refs.retain(|a| *a != "--host-fixtures" && *a != "--report-fuel" && *a != "--main-module");
-    // `--snapshot-every N --snapshot-dir DIR`, anywhere after `exec`.
+    let mut flags = Flags::take(&mut refs);
+    // `--snapshot-every N --snapshot-dir DIR` and `--park-every N`,
+    // anywhere after `exec`.
     let mut durable: (Option<u64>, Option<String>) = (None, None);
+    let positive = |option: &str, value: &str| match value.parse() {
+        Ok(n) if n > 0 => Some(n),
+        _ => {
+            eprintln!("mm: {option}: `{value}` is not a positive number");
+            None
+        }
+    };
     let mut k = 0;
     while k + 1 < refs.len() {
         match refs[k] {
-            "--snapshot-every" => match refs[k + 1].parse() {
-                Ok(n) if n > 0 => durable.0 = Some(n),
-                _ => {
-                    eprintln!(
-                        "mm: --snapshot-every: `{}` is not a positive number",
-                        refs[k + 1]
-                    );
-                    return ExitCode::from(2);
-                }
+            "--snapshot-every" => match positive(refs[k], refs[k + 1]) {
+                Some(n) => durable.0 = Some(n),
+                None => return ExitCode::from(2),
+            },
+            "--park-every" => match positive(refs[k], refs[k + 1]) {
+                Some(n) => flags.park_every = Some(n),
+                None => return ExitCode::from(2),
             },
             "--snapshot-dir" => durable.1 = Some(refs[k + 1].to_owned()),
             _ => {
@@ -138,10 +221,17 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if (flags.snapshot_continue && flags.park_every.is_none())
+        || (flags.park_every.is_some() && durable.is_some())
+    {
+        eprintln!(
+            "mm: --snapshot-continue needs --park-every, which runs in one process \
+             (not with --snapshot-every)\n{USAGE}"
+        );
+        return ExitCode::from(2);
+    }
     match refs.as_slice() {
-        ["version" | "--version"]
-            if !fixtures && !report_fuel && !main_module && durable.is_none() =>
-        {
+        ["version" | "--version"] if !flags.any() && durable.is_none() => {
             let id = micro_monty::build_id()
                 .iter()
                 .fold(String::new(), |mut id, b| {
@@ -151,22 +241,11 @@ fn main() -> ExitCode {
             println!("mm {}\nbuild_id {id}", micro_monty::VERSION);
             ExitCode::SUCCESS
         }
-        ["run", file] if !fixtures && !report_fuel && !main_module && durable.is_none() => {
-            run(file)
+        ["run", file] if !flags.any() && durable.is_none() => run(file),
+        ["resume", "--json", dir] if !flags.any() && durable.is_none() => resume_json(dir.as_ref()),
+        ["exec", "--json", file] => {
+            exec_json(file, EngineConfig::default(), &flags, durable.as_ref())
         }
-        ["resume", "--json", dir]
-            if !fixtures && !report_fuel && !main_module && durable.is_none() =>
-        {
-            resume_json(dir.as_ref())
-        }
-        ["exec", "--json", file] => exec_json(
-            file,
-            EngineConfig::default(),
-            fixtures,
-            durable.as_ref(),
-            report_fuel,
-            main_module,
-        ),
         ["exec", "--json", "--recursion-limit", depth, file] => {
             let Ok(recursion_depth) = depth.parse() else {
                 eprintln!("mm: --recursion-limit: `{depth}` is not a number\n{USAGE}");
@@ -176,10 +255,8 @@ fn main() -> ExitCode {
             exec_json(
                 file,
                 EngineConfig::new().with_limits(limits),
-                fixtures,
+                &flags,
                 durable.as_ref(),
-                report_fuel,
-                main_module,
             )
         }
         _ => {
@@ -274,7 +351,7 @@ fn run(file: &str) -> ExitCode {
     for w in code.warnings() {
         eprint!("{w}");
     }
-    let mut session = match Session::new_with(&engine, settings()) {
+    let mut session = match Session::new_with(&engine, settings(None)) {
         Ok(s) => s,
         Err(e) => {
             eprint!("{}", e.traceback);
@@ -372,10 +449,8 @@ fn run_in_steps(
 fn exec_json(
     file: &str,
     config: EngineConfig,
-    fixtures: bool,
+    flags: &Flags,
     durable: Option<&Durable>,
-    report_fuel: bool,
-    main_module: bool,
 ) -> ExitCode {
     let source = match read_source(file) {
         Ok(s) => s,
@@ -387,6 +462,9 @@ fn exec_json(
     let engine = Engine::new(config);
     let stdout = Arc::new(Mutex::new(String::new()));
     let mut fuel_used = None;
+    let mut digest = None;
+    let entropy = Arc::new(AtomicU64::new(0));
+    let entropy = flags.digest.then_some(&entropy);
     let (result, error) = match engine.compile(&source, &display_path(file)) {
         Err(e) => (
             serde_json::Value::Null,
@@ -396,27 +474,34 @@ fn exec_json(
                 "traceback": e.rendered,
             }),
         ),
-        Ok(code) => match Session::new_with(&engine, settings()) {
+        Ok(code) => match Session::new_with(&engine, settings(entropy)) {
             Err(e) => (serde_json::Value::Null, exception_json(&e)),
             Ok(mut session) => {
                 session.set_local_timezone(local_zone());
                 session.set_zone_source(Some(zone_source()));
-                let dunders = if main_module {
+                let dunders = if flags.main_module {
                     session.set_module_dunders(Some("__main__"), Some(&absolute(file)))
                 } else {
                     session.set_module_dunders(None, None)
                 };
                 if let Err(e) = dunders {
-                    print_report("", &serde_json::Value::Null, &exception_json(&e), None);
+                    print_report(
+                        "",
+                        &serde_json::Value::Null,
+                        &exception_json(&e),
+                        None,
+                        None,
+                    );
                     return ExitCode::SUCCESS;
                 }
                 let sink = Arc::clone(&stdout);
                 session.set_output(Box::new(move |s: &str| lock(&sink).push_str(s)));
-                if fixtures {
+                if flags.fixtures {
                     install_fixtures(&engine, &mut session);
                 }
                 // The fuel spent, counted exactly, parked or not: the
                 // session's total (kept in the image) from `u64::MAX` down.
+                let report_fuel = flags.report_fuel || flags.park_every.is_some();
                 if durable.is_some() || report_fuel {
                     session.set_fuel_total(Some(u64::MAX));
                 }
@@ -427,30 +512,64 @@ fn exec_json(
                     let host = HostSide {
                         park: 0,
                         every: d.every,
-                        fixtures,
+                        fixtures: flags.fixtures,
                         later: BTreeMap::new(),
                         vfs: vfs::Vfs::default(),
+                        entropy: entropy.cloned(),
                     };
                     return drive_durable(d, session, first, host, &stdout);
                 }
-                if report_fuel {
+                if flags.park_every.is_some() {
+                    session = yielding(session);
+                    session.set_fuel(flags.park_every);
+                } else if report_fuel {
                     session.set_fuel(Some(u64::MAX));
                 }
-                let progress = if fixtures {
-                    let first = session.start(&code);
-                    drive_fixtures(&mut session, first)
-                } else {
-                    session.start(&code)
-                };
+                let first = session.start(&code);
+                let progress = drive(
+                    &mut session,
+                    first,
+                    flags.fixtures,
+                    flags.park_every,
+                    flags.snapshot_continue,
+                );
                 if report_fuel {
                     fuel_used = spent(&session);
+                }
+                if flags.digest {
+                    digest = Some(final_digest(&mut session));
                 }
                 report_parts(progress)
             }
         },
     };
-    print_report(&lock(&stdout), &result, &error, fuel_used);
+    print_report(
+        &lock(&stdout),
+        &result,
+        &error,
+        fuel_used,
+        digest.as_deref(),
+    );
     ExitCode::SUCCESS
+}
+
+/// The final-state digest (`--digest`): the checksum that ends the
+/// session's image, taken with the fuel and its total cleared so it covers
+/// the state alone, or why there is no image.
+fn final_digest(session: &mut Session) -> String {
+    session.set_fuel(None);
+    session.set_fuel_total(None);
+    match session.snapshot() {
+        Ok(bytes) => bytes
+            .iter()
+            .rev()
+            .take(8)
+            .fold(String::new(), |mut hex, b| {
+                let _ = std::fmt::Write::write_fmt(&mut hex, format_args!("{b:02x}"));
+                hex
+            }),
+        Err(e) => format!("no image: {e}"),
+    }
 }
 
 /// The fuel the session's cells spent, exactly: what `exec_json` set as
@@ -479,14 +598,16 @@ fn report_parts(progress: Progress) -> (serde_json::Value, serde_json::Value) {
     }
 }
 
-/// Prints the report; `fuel` (with `--report-fuel`, and at the end of a
-/// parked chain) is the fuel the run used: the safepoints it ran, plus
-/// what natives charged.
+/// Prints the report; `fuel` (with `--report-fuel` or `--park-every`, and
+/// at the end of a parked chain) is the fuel the run used: the safepoints
+/// it ran, plus what natives charged; `digest`, with `--digest`, the
+/// final-state digest.
 fn print_report(
     stdout: &str,
     result: &serde_json::Value,
     error: &serde_json::Value,
     fuel: Option<u64>,
+    digest: Option<&str>,
 ) {
     let exit = i32::from(!error.is_null());
     let mut doc = serde_json::json!({
@@ -497,6 +618,9 @@ fn print_report(
     });
     if let Some(f) = fuel {
         doc["fuel"] = f.into();
+    }
+    if let Some(d) = digest {
+        doc["digest"] = d.into();
     }
     println!("{doc}");
 }
@@ -518,6 +642,8 @@ struct HostSide {
     later: BTreeMap<u64, Result<HostValue, HostError>>,
     /// The fixtures' filesystem.
     vfs: vfs::Vfs,
+    /// With `--digest`: the entropy counter (`settings`).
+    entropy: Option<Arc<AtomicU64>>,
 }
 
 const SNAPSHOT_FILE: &str = "session.mmsnap";
@@ -570,14 +696,16 @@ fn drive_durable(
                 let (result, error) = report_parts(progress_error(
                     "the cell waits on calls the fixtures never saw",
                 ));
-                print_report(&lock(stdout), &result, &error, None);
+                print_report(&lock(stdout), &result, &error, None, None);
                 return ExitCode::SUCCESS;
             }
             (serde_json::json!({"batch": batch}), "waiting")
         }
         other => {
             let (result, error) = report_parts(other);
-            print_report(&lock(stdout), &result, &error, spent(&session));
+            let fuel = spent(&session);
+            let digest = host.entropy.is_some().then(|| final_digest(&mut session));
+            print_report(&lock(stdout), &result, &error, fuel, digest.as_deref());
             return ExitCode::SUCCESS;
         }
     };
@@ -602,6 +730,8 @@ fn drive_durable(
         "answer": answer,
         "later": later,
         "vfs": host.vfs.to_json(),
+        "digest": host.entropy.is_some(),
+        "entropy": host.entropy.as_ref().map_or(0, |e| e.load(Ordering::Relaxed)),
     });
     let written = std::fs::create_dir_all(&d.dir)
         .and_then(|()| std::fs::write(d.dir.join(SNAPSHOT_FILE), &bytes))
@@ -638,8 +768,13 @@ fn resume_json(dir: &std::path::Path) -> ExitCode {
         Ok(b) => b,
         Err(e) => return fail(format!("{}: {e}", dir.join(SNAPSHOT_FILE).display())),
     };
+    let entropy = (state["digest"] == true)
+        .then(|| Arc::new(AtomicU64::new(state["entropy"].as_u64().unwrap_or(0))));
     let engine = Engine::new(EngineConfig::default());
-    let mut session = match engine.restore_with(&bytes, settings()).map(yielding) {
+    let mut session = match engine
+        .restore_with(&bytes, settings(entropy.as_ref()))
+        .map(yielding)
+    {
         Ok(s) => s,
         Err(e) => return fail(format!("cannot restore {}: {e}", dir.display())),
     };
@@ -656,6 +791,7 @@ fn resume_json(dir: &std::path::Path) -> ExitCode {
         fixtures: state["fixtures"].as_bool().unwrap_or(false),
         later,
         vfs: vfs::Vfs::from_json(&state["vfs"]),
+        entropy,
     };
     let stdout = Arc::new(Mutex::new(
         state["stdout"].as_str().unwrap_or_default().to_owned(),
@@ -966,19 +1102,31 @@ fn fixture(name: &str, args: &[HostValue], kwargs: &[(String, HostValue)]) -> An
     }
 }
 
-/// Answers host calls and waits with the fixtures until the cell ends.
-fn drive_fixtures(session: &mut Session, mut progress: Progress) -> Progress {
+/// Runs the cell on in this process until it ends or stops for good: with
+/// `fixtures`, host calls and waits are answered with the fixtures; with
+/// `every` (`--park-every`), every stop gives the cell `every` more fuel,
+/// as each process of a parked chain does, and a park resumes; with `snap`
+/// (`--snapshot-continue`), every stop first takes a snapshot, which is
+/// dropped: the same session goes on.
+fn drive(
+    session: &mut Session,
+    mut progress: Progress,
+    fixtures: bool,
+    every: Option<u64>,
+    snap: bool,
+) -> Progress {
     let mut later: BTreeMap<u64, Result<HostValue, HostError>> = BTreeMap::new();
     let mut vfs = vfs::Vfs::default();
     loop {
         let resume = match progress {
+            Progress::Parked { .. } if every.is_some() => Resume::Continue,
             Progress::HostCall {
                 call,
                 name,
                 args,
                 kwargs,
                 ..
-            } => {
+            } if fixtures => {
                 let base = name.rsplit('.').next().unwrap_or(&name);
                 match vfs
                     .call(&name, &args)
@@ -992,7 +1140,7 @@ fn drive_fixtures(session: &mut Session, mut progress: Progress) -> Progress {
                     }
                 }
             }
-            Progress::Waiting { calls } => {
+            Progress::Waiting { calls } if fixtures => {
                 let batch: Vec<_> = calls
                     .iter()
                     .filter_map(|c| later.remove(c).map(|r| (*c, r)))
@@ -1004,6 +1152,12 @@ fn drive_fixtures(session: &mut Session, mut progress: Progress) -> Progress {
             }
             other => return other,
         };
+        if snap && let Err(e) = session.snapshot() {
+            return progress_error(&format!("snapshot failed: {e}"));
+        }
+        if every.is_some() {
+            session.set_fuel(every);
+        }
         progress = match session.resume(resume) {
             Ok(p) => p,
             Err(e) => return progress_error(&e.to_string()),

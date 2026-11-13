@@ -101,18 +101,20 @@ tasks:
       --timeout <s>          seconds per mm run (default 10)
       --target wasm32-wasip1 micro-monty: mm for wasm32-wasip1 under wasmtime,
                              scored against the native results (writes nothing)
-  durability [options]       park every passing case, snapshot it and continue
-                             in a new mm process at each park; compare with an
-                             unparked run
+  durability [options]       run every passing case unparked, parked, parked
+                             with snapshots, and parked with each park restored
+                             in a new mm process; compare reports, fuel and
+                             final-state digests, allowing only the differences
+                             conformance/durability-results.txt records
       --every <n>            fuel units between parks (default: the gate's policy)
       --fine <n:m>           the own cases' and subset's cap (default 1:1000)
       --filter <substring>   only cases whose path contains it
       --timeout <s>          seconds per mm process (default 20)
       --cross-target         own cases only, each snapshot restored on the other
                              target (native <-> wasm32-wasip1 under wasmtime)
-      --fuel                 also compare each chain's fuel with the unparked
-                             run's; fail on a case not in
-                             conformance/durability-fuel-allow.txt (not in check)
+      --record               rewrite the results file without the entries no
+                             run differed in (a whole run; never adds one)
+      --report-only          compare reports only (gc-stress)
   shipped-mm                 build `mm` natively as shipped (the binary the
                              bench Ir rule measures) and print its path
   wasm                       build the facade as shipped (wasm-opt -Oz) for

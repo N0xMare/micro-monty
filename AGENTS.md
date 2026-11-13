@@ -38,7 +38,8 @@ just lint                rustfmt --check and clippy with warnings denied
 just check               the landing tier: every gate (logs in target/check/logs/)
 just release-gate        the release gate (`cargo xtask check --release-gate`)
 just conformance [args]  Monty's corpus on mm vs conformance/results (`--filter X`)
-just durability [args]   every passing case parked, snapshotted, resumed in a new process
+just durability [args]   every passing case parked, snapshotted, restored: reports, fuel and
+                         final-state digests vs conformance/durability-results.txt
 just wasm                the facade on both wasm targets, round trip under wasmtime
 just size                the shipped builds against xtask/size-ceilings.txt
 just bench [args]        bench checksums on CPython and mm (`--reps N` for timings)
@@ -48,9 +49,7 @@ just pretag [base]       the pre-tag checklist against the previous `v*` tag
 Run `just --list` for the rest. Gates without a recipe are `cargo xtask`
 commands: `wasm-ir`, `wasm-host`, `wasm-wall`, `gc-stress`, `parse-diff`,
 `docs`, `difffuzz`, `handoffs` (writes `xtask/handoff-sites.txt`, the
-`need_py()` hand-off sites; `--check` is in `check`), `durability --fuel`
-(fuel totals parked against unparked, past
-`conformance/durability-fuel-allow.txt`; not in `check`) and `shipped-mm`
+`need_py()` hand-off sites; `--check` is in `check`) and `shipped-mm`
 (`mm` built natively as shipped, the binary bench Ir measures).
 
 "Shipped" means built as embedders ship it (spec §6): std rebuilt with

@@ -783,12 +783,16 @@ are the rules above. Where the code falls short, the clause says so under
    (parked every few units, and across targets) and the fuel spent by
    `Vm::charge_ticks` (within 0.2% across slices of 1 to 30,000 [M]); a
    container `repr` walks `REPR_SLICE` visits natively whatever the fuel
-   left. `cargo xtask durability --fuel` also compares each parked
-   chain's fuel total with the unparked run's, against
-   `conformance/durability-fuel-allow.txt` (one case and reason per line);
-   it stays out of `check` until that list holds only the exceptions
-   documented here. Its first full run (1,416 runs) gave identical reports
-   in all and equal fuel in 1,397 [M]. Some copy and bulk
+   left. `cargo xtask durability` (in `check`) compares the report, the
+   fuel total and a final-state digest (the image's checksum at the end)
+   of each case unparked, parked in one process, parked with a snapshot
+   at every stop and parked with every park restored in a new process
+   (and, with `--cross-target`, on and across both targets), and fails on
+   a difference `conformance/durability-results.txt` does not record.
+   `--record` only removes entries; a change that makes a case differ for
+   a known cause adds its line by hand, naming the cause and the step
+   that closes it. Its first full run (1,416 runs) gave
+   identical reports in all and equal fuel in 1,397 [M]. Some copy and bulk
    operations the engine does not run again after a collection (§9.2),
    such as a call's `**kw` (`DICT_UPDATE` mode 1, which
    `Vm::oom_retry_fault` does not retry [S]), can raise `MemoryError`

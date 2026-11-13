@@ -64,6 +64,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         // runs and none is excluded.
         &[
             "durability",
+            "--report-only",
             "--filter",
             "conformance/own/",
             "--timeout",

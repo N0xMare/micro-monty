@@ -33,7 +33,8 @@ release-gate:
 conformance *args:
     cargo xtask conformance --engine micro-monty {{ if args == "" { "--check" } else { args } }}
 
-# Parked, snapshotted and resumed runs of every passing case.
+# Every passing case parked, snapshotted and restored: reports, fuel and
+# final-state digests against conformance/durability-results.txt.
 durability *args:
     cargo xtask durability {{args}}
 

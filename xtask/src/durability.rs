@@ -3,11 +3,17 @@
 //! Every case that passes on micro-monty (all of `conformance/own/` and the
 //! corpus cases `conformance/results/micro-monty.jsonl` records as `pass`)
 //! runs through `conformance/oracle.py --durability N`: once unparked, and
-//! once parked every N fuel units (one unit is one safepoint) and at every
-//! host call, each park saved to a FULL snapshot by one `mm` process and
-//! continued by a new one. stdout, the result and the exception must be
-//! identical. A failure names the case and the first park after which the
-//! output diverges.
+//! in four modes, with the wall clock pinned and counter entropy: unparked;
+//! parked every N fuel units (one unit is one safepoint) in one process
+//! (`parks`); the same with a snapshot at every stop and the session going
+//! on (`snapshot`); and parked every N units and at every host call, each
+//! park saved to a FULL snapshot by one `mm` process and continued by a new
+//! one (`restore`). Each parked mode's report (stdout, the result and the
+//! exception), fuel and final-state digest (the checksum of the session's
+//! image at the end) are compared with the unparked run's (docs/spec.md §5.1,
+//! clause 4). A difference fails unless `RESULTS` records it for that
+//! case and mode. A failure names the case, the mode and the columns, and
+//! for `restore` the first park after which the output diverges.
 //!
 //! Policy (`N:M`: park every N fuel units, or every ceil(fuel / M) units
 //! for a case whose unparked run uses more than N * M, so no case parks
@@ -23,13 +29,18 @@
 //! snapshot restored on the other target: the parked chain alternates
 //! between the native `mm` and `mm` built for `wasm32-wasip1` under
 //! wasmtime, once starting native and once starting on wasm (docs/user-guide.md,
-//! "Cross-target restore"). Both builds have the same build id.
+//! "Cross-target restore"); both builds have the same build id. That chain
+//! is mode `cross`, and the wasm-first job also runs the unparked and the
+//! in-process modes on wasm (`wasm`, `wasm-parks`, `wasm-snapshot`), each
+//! compared with the native unparked run.
 //!
-//! `--fuel` also compares the fuel each parked chain spent with the
-//! unparked run's (docs/spec.md §5.1, clause 4), prints every case's
-//! delta and fails on a case that differs unless `FUEL_ALLOWLIST` names
-//! it (one case and the reason per line). Not in `cargo xtask check` until
-//! the allowlist holds only the guarantee's documented exceptions.
+//! `--record` only shrinks `RESULTS`: it rewrites it without the entries no
+//! run differed in (an unfiltered run at the default policy only). An entry
+//! is added only by hand, in the commit that makes the case differ, with
+//! its cause and closing step on the line and the reason in the commit
+//! message (the file's header). `--report-only` compares the
+//! reports alone, as the gate did before fuel and digests (`gc-stress`,
+//! whose collections at every safepoint move both).
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -66,9 +77,20 @@ const MM_TIMEOUT_SECS: u64 = 20;
 /// processes), and 774–879 s while the rest of the parallel `check` runs
 /// on 16 cores [M], so 15 minutes left too little room.
 const CASE_TIMEOUT: Duration = Duration::from_mins(30);
-/// The cases `--fuel` lets differ in fuel: `FILE<TAB>reason` per line;
-/// `#` starts a comment.
-const FUEL_ALLOWLIST: &str = "conformance/durability-fuel-allow.txt";
+/// The differences the gate allows: `FILE<TAB>MODE<TAB>COLUMNS<TAB>reason`
+/// per line, `COLUMNS` a comma-separated subset of `report`, `fuel` and
+/// `digest`; `#` starts a comment.
+const RESULTS: &str = "conformance/durability-results.txt";
+/// The parked modes, and the columns each is compared in.
+const NATIVE_MODES: [&str; 3] = ["parks", "snapshot", "restore"];
+const CROSS_MODES: [&str; 4] = ["cross", "wasm", "wasm-parks", "wasm-snapshot"];
+const COLUMNS: [&str; 3] = ["report", "fuel", "digest"];
+
+/// A recorded difference: the columns and why.
+struct Recorded {
+    columns: Vec<String>,
+    reason: String,
+}
 
 struct Job {
     case: PathBuf,
@@ -90,8 +112,8 @@ struct Outcome {
     status: String,
     parks: u64,
     reason: String,
-    /// With `--fuel`: the parked chain's fuel less the unparked run's.
-    fuel_delta: i64,
+    /// Mode -> the columns in which it differed from the unparked run.
+    diffs: BTreeMap<String, Vec<String>>,
 }
 
 #[allow(
@@ -104,13 +126,15 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut fine = FINE.to_owned();
     let mut timeout = MM_TIMEOUT_SECS;
     let mut cross = false;
-    let mut fuel = false;
+    let mut record = false;
+    let mut report_only = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--filter" => filter = Some(it.next().ok_or("--filter needs a substring")?.clone()),
             "--cross-target" => cross = true,
-            "--fuel" => fuel = true,
+            "--record" => record = true,
+            "--report-only" => report_only = true,
             "--every" => every = Some(it.next().ok_or("--every needs N or N:M")?.clone()),
             "--fine" => fine.clone_from(it.next().ok_or("--fine needs N:M")?),
             "--timeout" => {
@@ -122,12 +146,15 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             other => return Err(format!("durability: unknown option `{other}`")),
         }
     }
+    if record && (filter.is_some() || every.is_some() || fine != FINE || report_only) {
+        return Err(
+            "--record rewrites the results of a whole run at the default policy: \
+             no --filter, --every, --fine or --report-only"
+                .to_owned(),
+        );
+    }
     let root = workspace_root();
-    let allowed = if fuel {
-        read_allowlist(&root.join(FUEL_ALLOWLIST))?
-    } else {
-        BTreeMap::new()
-    };
+    let recorded = read_results(&root.join(RESULTS))?;
     let mm = micro_monty_binary()?;
     let python = python();
     let oracle = root.join("conformance/oracle.py");
@@ -247,15 +274,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             scope.spawn(|| {
                 while let Some(job) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
                     let start = Instant::now();
-                    let o = run_job(
-                        &python,
-                        &oracle,
-                        &mm,
-                        alternate.as_ref(),
-                        job,
-                        timeout,
-                        fuel,
-                    );
+                    let o = run_job(&python, &oracle, &mm, alternate.as_ref(), job, timeout);
                     let took = start.elapsed().as_secs_f64();
                     if let Ok(mut all) = outcomes.lock() {
                         all.push((job_key(job), took, o));
@@ -276,75 +295,227 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         "durability"
     };
     let parks: u64 = outcomes.iter().map(|o| o.parks).sum();
-    // A fuel difference on an allowed case passes; its delta still prints.
-    let fuel_only = |o: &Outcome| o.status == "fuel" && allowed.contains_key(&o.file);
-    let failed: Vec<&Outcome> = outcomes
-        .iter()
-        .filter(|o| o.status != "pass" && o.status != "skip" && !fuel_only(o))
-        .collect();
-    let skipped = outcomes.iter().filter(|o| o.status == "skip").count();
-    println!(
-        "{label}: {} of {} runs identical to an unparked run, {skipped} skipped, {parks} \
-         parks (= {parks} snapshots restored in a new process), {:.1} s",
-        outcomes.len() - failed.len() - skipped,
-        outcomes.len(),
-        started.elapsed().as_secs_f64()
-    );
-    if fuel {
-        let moved: Vec<&Outcome> = outcomes.iter().filter(|o| o.fuel_delta != 0).collect();
-        println!(
-            "{label}: fuel equal to the unparked run in {} of {} runs",
-            outcomes.len() - moved.len() - skipped,
-            outcomes.len() - skipped
-        );
-        for o in &moved {
-            let why = allowed.get(&o.file).map_or("NOT ALLOWED", String::as_str);
-            println!(
-                "  fuel {:+} {} (at {}): {}",
-                o.fuel_delta, o.file, o.spec, why
-            );
-        }
-        let used: std::collections::BTreeSet<&str> =
-            moved.iter().map(|o| o.file.as_str()).collect();
-        for (file, _) in allowed.iter().filter(|(f, _)| !used.contains(f.as_str())) {
-            if filter.is_none() && every.is_none() {
-                println!("  note: {file} is allowed in {FUEL_ALLOWLIST} but its fuel did not move");
+    let modes: &[&str] = if cross { &CROSS_MODES } else { &NATIVE_MODES };
+    // Every (case, mode, column) that differed, and the runs that failed:
+    // crashed, timed out, or differed where `RESULTS` records nothing.
+    let mut seen: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    let mut failed: Vec<String> = Vec::new();
+    for o in &outcomes {
+        match o.status.as_str() {
+            "pass" | "skip" => continue,
+            "differs" => {}
+            _ => {
+                failed.push(format!(
+                    "{} (at {}): {} [{}]",
+                    o.file, o.spec, o.reason, o.status
+                ));
+                continue;
             }
         }
+        let mut unrecorded = Vec::new();
+        for (mode, columns) in &o.diffs {
+            let allowed = recorded.get(&(o.file.clone(), mode.clone()));
+            for column in columns {
+                if report_only && column != "report" {
+                    continue;
+                }
+                let entry = seen.entry((o.file.clone(), mode.clone())).or_default();
+                if !entry.contains(column) {
+                    entry.push(column.clone());
+                }
+                if allowed.is_none_or(|r| !r.columns.contains(column)) {
+                    unrecorded.push(format!("{mode} {column}"));
+                }
+            }
+        }
+        if !unrecorded.is_empty() {
+            failed.push(format!(
+                "{} (at {}): {} not in {RESULTS}; {}",
+                o.file,
+                o.spec,
+                unrecorded.join(", "),
+                o.reason
+            ));
+        }
+    }
+    let skipped = outcomes.iter().filter(|o| o.status == "skip").count();
+    let ran = outcomes.len() - skipped;
+    println!(
+        "{label}: {} of {ran} runs equal to an unparked run in every mode, {skipped} skipped, \
+         {parks} parks (= {parks} snapshots restored in a new process), {:.1} s",
+        outcomes.iter().filter(|o| o.status == "pass").count(),
+        started.elapsed().as_secs_f64()
+    );
+    let columns: &[&str] = if report_only { &COLUMNS[..1] } else { &COLUMNS };
+    for mode in modes {
+        let runs = outcomes
+            .iter()
+            .filter(|o| o.status == "pass" || o.diffs.contains_key(*mode) || o.status == "differs");
+        let runs: Vec<&Outcome> = runs.filter(|o| o.status != "skip").collect();
+        let runs: Vec<&Outcome> = if *mode == "wasm" || mode.starts_with("wasm-") {
+            runs.into_iter()
+                .filter(|o| o.spec.ends_with("wasm first"))
+                .collect()
+        } else {
+            runs
+        };
+        if runs.is_empty() {
+            continue;
+        }
+        let mut line = format!("  {mode:<14}");
+        for column in columns {
+            let equal = runs
+                .iter()
+                .filter(|o| {
+                    o.diffs
+                        .get(*mode)
+                        .is_none_or(|d| !d.iter().any(|c| c == column))
+                })
+                .count();
+            let _ = write!(line, " {column} {equal}/{}", runs.len());
+        }
+        println!("{line}");
+    }
+    // Recorded differences no run showed: a whole run at the default
+    // policy shrinks the file with `--record`.
+    let stale: Vec<(String, String, String)> = recorded
+        .iter()
+        .filter(|((_, mode), _)| modes.contains(&mode.as_str()))
+        .flat_map(|((file, mode), r)| {
+            r.columns.iter().filter_map(|c| {
+                let shown = seen
+                    .get(&(file.clone(), mode.clone()))
+                    .is_some_and(|s| s.contains(c));
+                (!shown).then(|| (file.clone(), mode.clone(), c.clone()))
+            })
+        })
+        .collect();
+    if filter.is_none() && every.is_none() && !report_only {
+        for (file, mode, column) in &stale {
+            println!(
+                "  note: {file} {mode} {column} is recorded in {RESULTS} but no run differed in it"
+            );
+        }
+    }
+    if record {
+        write_results(&root.join(RESULTS), &recorded, &seen, modes)?;
+        println!(
+            "{label}: rewrote {RESULTS} without the {} stale entries",
+            stale.len()
+        );
     }
     if failed.is_empty() {
         return Ok(());
     }
-    for o in &failed {
-        println!(
-            "  FAIL {} (at {}): {} [{}]",
-            o.file, o.spec, o.reason, o.status
-        );
+    for f in &failed {
+        println!("  FAIL {f}");
     }
+    println!(
+        "  A difference that is a known cause (the causes in {RESULTS}'s header) is \
+         added there by hand, one line per case and mode with its cause and closing step, \
+         and named with its reason in the commit message; any other difference is a bug. \
+         --record only removes entries."
+    );
     Err(format!("{label}: {} runs failed", failed.len()))
 }
 
-/// `FUEL_ALLOWLIST`: reason by case file name.
-fn read_allowlist(path: &Path) -> Result<BTreeMap<String, String>, String> {
+/// `RESULTS`: the recorded columns and reason by case and mode.
+fn read_results(path: &Path) -> Result<BTreeMap<(String, String), Recorded>, String> {
     let text =
         fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let mut allowed = BTreeMap::new();
+    let mut recorded = BTreeMap::new();
     for (n, line) in text.lines().enumerate() {
         let line = line.trim_end();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let Some((file, reason)) = line.split_once('\t').filter(|(_, r)| !r.trim().is_empty())
+        let bad = || {
+            format!(
+                "{}:{}: want `FILE<TAB>MODE<TAB>COLUMNS<TAB>reason`",
+                path.display(),
+                n + 1
+            )
+        };
+        let mut parts = line.splitn(4, '\t');
+        let (Some(file), Some(mode), Some(columns), Some(reason)) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
         else {
+            return Err(bad());
+        };
+        let columns: Vec<String> = columns.split(',').map(str::to_owned).collect();
+        let known = NATIVE_MODES.contains(&mode) || CROSS_MODES.contains(&mode);
+        if !known
+            || reason.trim().is_empty()
+            || !columns.iter().all(|c| COLUMNS.contains(&c.as_str()))
+        {
+            return Err(bad());
+        }
+        let key = (file.to_owned(), mode.to_owned());
+        if recorded.contains_key(&key) {
             return Err(format!(
-                "{}:{}: want `FILE<TAB>reason`",
+                "{}:{}: {file} {mode} is recorded twice",
                 path.display(),
                 n + 1
             ));
-        };
-        allowed.insert(file.to_owned(), reason.trim().to_owned());
+        }
+        recorded.insert(
+            key,
+            Recorded {
+                columns,
+                reason: reason.trim().to_owned(),
+            },
+        );
     }
-    Ok(allowed)
+    Ok(recorded)
+}
+
+/// Rewrites `RESULTS` keeping its comments and, for this run's `modes`,
+/// only the columns a run differed in; it never adds an entry.
+fn write_results(
+    path: &Path,
+    recorded: &BTreeMap<(String, String), Recorded>,
+    seen: &BTreeMap<(String, String), Vec<String>>,
+    modes: &[&str],
+) -> Result<(), String> {
+    let text =
+        fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mut out = String::new();
+    for line in text.lines() {
+        let mut parts = line.splitn(3, '\t');
+        let key = match (parts.next(), parts.next()) {
+            (Some(file), Some(mode)) if !line.starts_with('#') => {
+                (file.to_owned(), mode.to_owned())
+            }
+            _ => {
+                let _ = writeln!(out, "{line}");
+                continue;
+            }
+        };
+        let Some(r) = recorded.get(&key) else {
+            continue;
+        };
+        let columns: Vec<&String> = if modes.contains(&key.1.as_str()) {
+            let shown = seen.get(&key);
+            r.columns
+                .iter()
+                .filter(|c| shown.is_some_and(|s| s.contains(c)))
+                .collect()
+        } else {
+            r.columns.iter().collect()
+        };
+        if !columns.is_empty() {
+            let columns: Vec<&str> = columns.iter().map(|c| c.as_str()).collect();
+            let _ = writeln!(
+                out,
+                "{}\t{}\t{}\t{}",
+                key.0,
+                key.1,
+                columns.join(","),
+                r.reason
+            );
+        }
+    }
+    fs::write(path, out).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 /// A job's key in the times file: its case and parking policy.
@@ -391,7 +562,6 @@ fn run_job(
     alternate: Option<&Alternate>,
     job: &Job,
     timeout: u64,
-    fuel: bool,
 ) -> Outcome {
     let case_timeout = CASE_TIMEOUT.max(Duration::from_secs(timeout * 15));
     let file = job
@@ -408,7 +578,7 @@ fn run_job(
         status: status.to_owned(),
         parks: 0,
         reason,
-        fuel_delta: 0,
+        diffs: BTreeMap::new(),
     };
     let mut command = Command::new(python);
     command
@@ -418,9 +588,6 @@ fn run_job(
         .arg(&job.spec)
         .arg("--mm")
         .arg(mm);
-    if fuel {
-        command.arg("--fuel");
-    }
     if let (Some(alt), Some(first)) = (alternate, job.first) {
         command
             .arg("--alternate")
@@ -470,7 +637,18 @@ fn run_job(
         status: v["status"].as_str().unwrap_or("error").to_owned(),
         parks: v["parks"].as_u64().unwrap_or(0),
         reason: v["reason"].as_str().unwrap_or("").to_owned(),
-        fuel_delta: v["fuel_delta"].as_i64().unwrap_or(0),
+        diffs: v["diffs"].as_object().map_or_else(BTreeMap::new, |d| {
+            d.iter()
+                .map(|(mode, columns)| {
+                    let columns = columns.as_array().map_or_else(Vec::new, |c| {
+                        c.iter()
+                            .filter_map(|c| c.as_str().map(str::to_owned))
+                            .collect()
+                    });
+                    (mode.clone(), columns)
+                })
+                .collect()
+        }),
         file,
         spec,
     }

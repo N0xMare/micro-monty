@@ -12,7 +12,7 @@ unmodified in `conformance/monty-scripts/`.
 Usage: python3.14 conformance/oracle.py CASE.py [CASE.py ...]
        python3.14 conformance/oracle.py --engine micro-monty [--mm MM | --wasm MODULE --wasmtime WASMTIME]
            [--timeout S] CASE.py [...]
-       python3.14 conformance/oracle.py --engine micro-monty --durability N[:M] [--fuel] [--mm MM] [--timeout S]
+       python3.14 conformance/oracle.py --engine micro-monty --durability N[:M] [--mm MM] [--timeout S]
            [--alternate MODULE --wasmtime WASMTIME [--alternate-first native|wasm]] CASE.py [...]
 
 The second form runs each case through micro-monty's `mm exec --json` (`--mm`,
@@ -25,22 +25,27 @@ MODULE` it runs mm built for wasm32-wasip1 (a `.wasm` or a precompiled
 The third form is the durability test (docs/spec.md §13, `cargo xtask
 durability`): each case runs as mm runs it in the second form (a case outside
 `conformance/monty/` runs as a script, as `mm run` runs it: only with
-`--main-module`), once unparked and once
-parked every N fuel units (and at every host call), each park saved to a
-snapshot by one `mm` process and continued by a new one (`mm exec
---snapshot-every N`, then `mm resume` until done). With `N:M`, a case whose
-unparked run uses more than N * M fuel parks every ceil(fuel / M) units
-instead, so no case parks much more than M times. The reports (stdout,
-result, exception) must be identical; a failure names the first park after
-which the output diverges. With `--alternate MODULE` (mm built for
-wasm32-wasip1, a `.wasm` or a wasmtime-precompiled `.cwasm`), the parked
-chain alternates between the native mm and MODULE under wasmtime, starting
-with `--alternate-first` (default native), so every snapshot is restored on
-the other target; the unparked reference run stays native. With `--fuel`, a chain whose report
-is identical but whose fuel total (every `mm` prints the fuel spent, counted
-exactly) differs from the unparked run's has the status "fuel" and its
-`fuel_delta` (parked minus unparked; docs/spec.md §5, guarantee 4). It prints
-  {"file", "status": "pass"|"fail"|"fuel"|"crash"|"timeout"|"skip", "parks", "reason"}
+`--main-module`), with the clock pinned and counter entropy (`mm --digest`),
+in four modes: unparked; parked every N fuel units in one process ("parks",
+`mm exec --park-every N`); the same with a snapshot at every stop, the
+session going on ("snapshot", `--snapshot-continue`); and parked every N
+fuel units and at every host call, each park saved to a snapshot by one `mm`
+process and continued by a new one ("restore", `mm exec --snapshot-every N`,
+then `mm resume` until done). With `N:M`, a case whose unparked run uses
+more than N * M fuel parks every ceil(fuel / M) units instead, so no case
+parks much more than M times. Each parked mode's report (stdout, result,
+exception), fuel (every `mm` prints the fuel spent, counted exactly) and
+final-state digest (the checksum of the session's image at the end) are
+compared with the unparked run's (docs/spec.md §5.1, clause 4). With
+`--alternate MODULE` (mm built for wasm32-wasip1, a `.wasm` or a
+wasmtime-precompiled `.cwasm`), the parked chain alternates between the
+native mm and MODULE under wasmtime, starting with `--alternate-first`
+(default native), so every snapshot is restored on the other target
+("cross"), and with `wasm` first the unparked run and the two in-process
+modes also run on MODULE ("wasm", "wasm-parks", "wasm-snapshot"); the
+reference run stays native. It prints
+  {"file", "status": "pass"|"differs"|"crash"|"timeout"|"skip", "parks", "every",
+   "diffs": {MODE: ["report"|"fuel"|"digest", ...]}, "fuel": {MODE: parked - unparked}, "reason"}
 
 Prints one JSON object per case on stdout:
   {"file", "status": "pass"|"fail"|"error"|"skip", "kind", "reason",
@@ -910,9 +915,17 @@ def wasm_command(wasmtime, module, scratch, args, zone=None):
     return command
 
 
-def run_durability_case(path, mm, every, max_parks, timeout, alternate=None, fuel=False):
-    """`alternate`: None, or (wasmtime, module, wasm_first) for a cross-target chain.
-    `fuel`: also compare the fuel the chain spent with the unparked run's."""
+def durability_diffs(plain, got):
+    """The columns in which run `got` differs from the unparked run `plain`."""
+    return [column for column, same in (
+        ('report', report_of(got) == report_of(plain)),
+        ('fuel', got.get('fuel') == plain.get('fuel')),
+        ('digest', got.get('digest') == plain.get('digest')),
+    ) if not same]
+
+
+def run_durability_case(path, mm, every, max_parks, timeout, alternate=None):
+    """`alternate`: None, or (wasmtime, module, wasm_first) for a cross-target chain."""
     name = os.path.basename(path)
     with open(path, encoding='utf-8', newline='') as f:
         content = f.read()
@@ -934,15 +947,32 @@ def run_durability_case(path, mm, every, max_parks, timeout, alternate=None, fue
         zone = header['timezone']
     scratch = os.path.realpath(tempfile.mkdtemp())
     parks = []
+    runs = {}
+    mode = 'unparked'
     try:
         with open(os.path.join(scratch, name), 'w', encoding='utf-8', newline='') as f:
             f.write(code)
-        plain = mm_json_line([mm, 'exec', '--json', '--report-fuel', *flags, name], scratch, timeout, zone)
-        want = report_of(plain)
+        plain = mm_json_line([mm, 'exec', '--json', '--report-fuel', '--digest', *flags, name], scratch, timeout, zone)
         if max_parks:
             every = max(every, -(-plain.get('fuel', 0) // max_parks))
+        # One process runs what the parked chain splits over up to about M
+        # + 1 processes, each with `timeout` seconds of CPU: a snapshot at
+        # each of 1,000 parks took own case 466 past 20 s [M]. The chain's
+        # backstop in xtask is 15 times `timeout` too.
+        long = timeout * 15
+        in_process = [('parks', ['--park-every', str(every)]),
+                      ('snapshot', ['--park-every', str(every), '--snapshot-continue'])]
+        if alternate is None:
+            for mode, extra in in_process:
+                runs[mode] = mm_json_line([mm, 'exec', '--json', '--digest', *extra, *flags, name], scratch, long, zone)
+        elif alternate[2]:
+            for mode, extra in [('wasm', ['--report-fuel']), *(('wasm-' + m, e) for m, e in in_process)]:
+                command = wasm_command(alternate[0], alternate[1], scratch,
+                                       ['exec', '--json', '--digest', *extra, *flags, name], zone)
+                runs[mode] = mm_json_line(command, scratch, timeout if mode == 'wasm' else long, zone)
+        mode = 'cross' if alternate else 'restore'
         snap = os.path.join(scratch, 'snap')
-        args = ['exec', '--json', *flags, '--snapshot-every', str(every), '--snapshot-dir', snap, name]
+        args = ['exec', '--json', '--digest', *flags, '--snapshot-every', str(every), '--snapshot-dir', snap, name]
         while True:
             # Process k of the chain is native unless it is wasm's turn.
             if alternate and (len(parks) + alternate[2]) % 2 == 1:
@@ -956,27 +986,30 @@ def run_durability_case(path, mm, every, max_parks, timeout, alternate=None, fue
             if len(parks) > 100_000:
                 raise MmAbnormal('timeout', 'more than 100000 parks', '')
             args = ['resume', '--json', snap]
-        got = report_of(line)
+        runs[mode] = line
     except MmAbnormal as abnormal:
         where = f' after park {len(parks)}' if parks else ''
         return {'file': name, 'status': abnormal.status, 'parks': len(parks),
-                'reason': f'{abnormal.reason}{where}', 'detail': clip(abnormal.detail, 2000)}
+                'reason': f'{mode}: {abnormal.reason}{where}', 'detail': clip(abnormal.detail, 2000)}
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
-    if got == want:
-        if fuel and line.get('fuel') != plain.get('fuel'):
-            delta = (line.get('fuel') or 0) - (plain.get('fuel') or 0)
-            return {'file': name, 'status': 'fuel', 'parks': len(parks), 'every': every, 'fuel_delta': delta,
-                    'reason': f'fuel {plain.get("fuel")} unparked, {line.get("fuel")} parked ({delta:+})'}
-        return {'file': name, 'status': 'pass', 'parks': len(parks), 'every': every, 'reason': ''}
-    # The first park whose output so far is not a prefix of the unparked run's.
-    diverged = next((p['park'] for p in parks if not (want['stdout'] or '').startswith(p['stdout'])), None)
-    where = f'output diverges by park {diverged}' if diverged else f'final report differs (after park {len(parks)})'
-    result = {'file': name, 'status': 'fail', 'parks': len(parks), 'reason': f'{where}: {first_difference(want, got)}'}
-    if fuel:
-        result['fuel_delta'] = (line.get('fuel') or 0) - (plain.get('fuel') or 0)
-        result['reason'] += f'; fuel {result["fuel_delta"]:+}'
-    return result
+    want = report_of(plain)
+    diffs = {m: d for m, run in runs.items() if (d := durability_diffs(plain, run))}
+    fuel = {m: (run.get('fuel') or 0) - (plain.get('fuel') or 0) for m, run in runs.items()}
+    reasons = []
+    for m, d in diffs.items():
+        detail = ', '.join(d)
+        if 'fuel' in d:
+            detail += f' (fuel {fuel[m]:+})'
+        if 'report' in d:
+            if m == mode:
+                # The first park whose output so far is not a prefix of the unparked run's.
+                diverged = next((p['park'] for p in parks if not (want['stdout'] or '').startswith(p['stdout'])), None)
+                detail += f'; output diverges by park {diverged}' if diverged else f'; after park {len(parks)}'
+            detail += f': {first_difference(want, report_of(runs[m]))}'
+        reasons.append(f'{m}: {detail}')
+    return {'file': name, 'status': 'differs' if diffs else 'pass', 'parks': len(parks), 'every': every,
+            'diffs': diffs, 'fuel': fuel, 'reason': '; '.join(reasons)}
 
 
 def run_case(path, mm=None, timeout=MM_TIMEOUT):
@@ -1047,7 +1080,7 @@ USAGE = """\
 usage: python3.14 conformance/oracle.py CASE.py [CASE.py ...]
        python3.14 conformance/oracle.py --engine micro-monty [--mm MM | --wasm MODULE --wasmtime WASMTIME]
            [--timeout S] CASE.py [...]
-       python3.14 conformance/oracle.py --engine micro-monty --durability N[:M] [--fuel] [--mm MM] [--timeout S]
+       python3.14 conformance/oracle.py --engine micro-monty --durability N[:M] [--mm MM] [--timeout S]
            [--alternate MODULE --wasmtime WASMTIME [--alternate-first native|wasm]] CASE.py [...]"""
 
 
@@ -1057,11 +1090,7 @@ def main(argv):
     durability = None
     max_parks = None
     alternate, wasmtime, wasm_first, wasm = None, None, 0, False
-    fuel = False
     while args and args[0].startswith('--') and len(args) > 1:
-        if args[0] == '--fuel':
-            fuel, args = True, args[1:]
-            continue
         option, value, args = args[0], args[1], args[2:]
         if option == '--engine' and value in ('cpython', 'micro-monty'):
             engine = value
@@ -1087,7 +1116,6 @@ def main(argv):
         not paths
         or paths[0] in ('-h', '--help')
         or (durability is not None and engine != 'micro-monty')
-        or (fuel and durability is None)
         or (alternate is not None and not wasmtime)
         or (alternate is not None and (durability is None) != wasm)
     ):
@@ -1105,7 +1133,7 @@ def main(argv):
         if durability is not None:
             for path in paths:
                 cross = (wasmtime, alternate, wasm_first) if alternate else None
-                result = run_durability_case(path, mm, durability, max_parks, timeout, cross, fuel)
+                result = run_durability_case(path, mm, durability, max_parks, timeout, cross)
                 print(json.dumps(result), flush=True)
             return 0
         # Each case is its own mm process; nothing runs in this interpreter.
