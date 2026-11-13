@@ -787,14 +787,7 @@ impl Lx<'_, '_> {
             return self.string(s, f);
         }
         if nonascii && let Some(c) = self.src[s..self.i].chars().find(|&c| needs_nfkc(c)) {
-            return Err(self.syntax(
-                format!(
-                    "micro-monty does not support identifiers that need NFKC normalization ('{c}', U+{:04X})",
-                    c as u32
-                ),
-                s,
-                self.i,
-            ));
+            return Err(self.syntax(crate::nfkc_unsupported(c), s, self.i));
         }
         if let Some(k) = keyword(w) {
             self.push(k, s, self.i, 0);

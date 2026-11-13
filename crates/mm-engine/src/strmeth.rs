@@ -1209,8 +1209,10 @@ pub(crate) fn isidentifier(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// What `str.isidentifier()` says of `s`.
 pub(crate) fn is_identifier(s: &str) -> bool {
     let mut cs = s.chars();
-    let start = cs.next().is_some_and(|c| c == '_' || ucd::xid_start(c));
-    start && cs.all(|c| c == '_' || ucd::xid_continue(c))
+    let start = cs
+        .next()
+        .is_some_and(|c| c == '_' || crate::text::xid_start(c));
+    start && cs.all(crate::text::xid_continue)
 }
 
 pub(crate) fn isalnum(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
@@ -1509,43 +1511,6 @@ mod ucd {
         alpha(c) || crate::text::is_numeric(c)
     }
 
-    /// XID_Start: letters, Nl and Other_ID_Start, less what NFKC maps out.
-    pub(super) fn xid_start(c: char) -> bool {
-        let cat = category_of(u32::from(c));
-        ((cat.starts_with('L') || cat == "Nl")
-            && !matches!(
-                c,
-                '\u{37a}' | '\u{e33}' | '\u{eb3}' | '\u{2e2f}' | '\u{fc5e}'
-                    ..='\u{fc63}'
-                        | '\u{fdfa}'
-                        | '\u{fdfb}'
-                        | '\u{fe70}'
-                        | '\u{fe72}'
-                        | '\u{fe74}'
-                        | '\u{fe76}'
-                        | '\u{fe78}'
-                        | '\u{fe7a}'
-                        | '\u{fe7c}'
-                        | '\u{fe7e}'
-                        | '\u{ff9e}'
-                        | '\u{ff9f}'
-            ))
-            || matches!(c, '\u{1885}' | '\u{1886}' | '\u{2118}' | '\u{212e}')
-    }
-
-    /// XID_Continue: XID_Start, marks, Nd, Pc and Other_ID_Continue.
-    pub(super) fn xid_continue(c: char) -> bool {
-        xid_start(c)
-            || matches!(c, '\u{e33}' | '\u{eb3}' | '\u{ff9e}' | '\u{ff9f}')
-            || (matches!(category_of(u32::from(c)), "Mn" | "Mc" | "Nd" | "Pc")
-                && !matches!(c, '\u{fe70}'..='\u{fe7e}'))
-            || matches!(
-                c,
-                '\u{b7}' | '\u{387}' | '\u{1369}'
-                    ..='\u{1371}' | '\u{19da}' | '\u{200c}' | '\u{200d}' | '\u{30fb}' | '\u{ff65}'
-            )
-    }
-
     pub(super) fn title(c: char, out: &mut String) -> bool {
         special_case(c, TITLE_RANGES, TITLE_ONE, out)
     }
@@ -1778,16 +1743,6 @@ mod ucd {
 
     pub(super) fn alnum(c: char) -> bool {
         c.is_alphanumeric()
-    }
-
-    pub(super) fn xid_start(c: char) -> bool {
-        c.is_alphabetic()
-    }
-
-    pub(super) fn xid_continue(c: char) -> bool {
-        c.is_alphanumeric()
-            || matches!(c, '\u{300}'..='\u{36f}' | '\u{1ab0}'..='\u{1aff}' | '\u{1dc0}'..='\u{1dff}'
-                | '\u{20d0}'..='\u{20ff}' | '\u{fe20}'..='\u{fe2f}' | '\u{200c}' | '\u{200d}')
     }
 
     pub(super) fn title(_: char, _: &mut String) -> bool {
@@ -4074,8 +4029,8 @@ fn scan_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
             sk::ALNUM => ucd::alnum(c),
             sk::SPACE => is_space(c),
             sk::PRINTABLE => crate::text::is_printable(c),
-            sk::IDENTIFIER if i == 0 && x == 0 => c == '_' || ucd::xid_start(c),
-            sk::IDENTIFIER => c == '_' || ucd::xid_continue(c),
+            sk::IDENTIFIER if i == 0 && x == 0 => c == '_' || crate::text::xid_start(c),
+            sk::IDENTIFIER => crate::text::xid_continue(c),
             sk::TITLE => {
                 // Cased runs start upper or title case, then lower.
                 let (up, low) = (is_upper(c) || is_title(c), is_lower(c));

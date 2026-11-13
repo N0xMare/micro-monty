@@ -39,6 +39,15 @@ hashes are pre-release history, kept in the private archive
 - `import xml` and `import email` no longer carry a redirect hint;
   `HintGroup::XmlEmail` covers no modules and keeps its key (`xml`), so a
   host that sets it still succeeds.
+- A host `Record`'s names are checked as `collections.namedtuple` checks
+  them, in its order: `ValueError` with its messages (was `TypeError`),
+  and `SyntaxError` for fields NFKC makes equal, such as `ﬁ` and `fi`. A
+  field name holding a character whose NFKC micro-monty does not carry,
+  such as `ℌ`, is refused with the lexer's `SyntaxError`.
+- `str.isidentifier` is exact for Unicode 16 without `mod-unicodedata`
+  (it accepted `x²` and refused `a·b`): XID_Start and XID_Continue tables
+  of 4,388 B. With the name check, `hello.wasm` +6,357 B, native `hello`
+  +6,176 B [M].
 - `mm-compile`'s `CompileError` is boxed: it is now
   `CompileError(Box<ErrorData>)`, and its `kind`, `msg` and `pos` fields
   moved to the new public `ErrorData`. Reads such as `e.msg` still compile

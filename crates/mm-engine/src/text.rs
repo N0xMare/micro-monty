@@ -413,40 +413,58 @@ fn quoted(s: &[u8], bytes: bool, apostrophe: bool, out: &mut ReprWriter<'_>) {
     out.push_str(q);
 }
 
-/// `str.isprintable`'s table (tools/gen_ucd.py, `printable.bin`): u16
-/// plane starts, then the low 16 bits of each boundary code point.
-static PRINTABLE: &[u8] = include_bytes!("ucd/printable.bin");
+/// Boundary tables (tools/gen_ucd.py): u16 plane starts, then the low 16
+/// bits of each code point where membership changes. Exact for Unicode
+/// 16.0, with or without the `unicodedata` feature.
+static NOT_PRINTABLE: &[u8] = include_bytes!("ucd/printable.bin");
+static XID_START: &[u8] = include_bytes!("ucd/xid_start.bin");
+static XID_MORE: &[u8] = include_bytes!("ucd/xid_more.bin");
 
-fn printable_entry(i: usize) -> u32 {
-    PRINTABLE
-        .get(2 * i..2 * i + 2)
-        .map_or(0, |b| u32::from(b[0]) | u32::from(b[1]) << 8)
-}
-
-/// `str.isprintable` for one character, which also decides `repr`
-/// escaping. Exact for Unicode 16.0, with or without the `unicodedata`
-/// feature: a code point is printable when an even number of boundaries
-/// lie at or below it.
-#[must_use]
-pub fn is_printable(c: char) -> bool {
-    if c.is_ascii() {
-        return (' '..'\x7f').contains(&c);
-    }
+/// Is `c` in boundary table `t`: do an odd number of its boundaries lie at
+/// or below `c`?
+fn in_table(t: &[u8], c: char) -> bool {
+    let entry = |i: usize| {
+        t.get(2 * i..2 * i + 2)
+            .map_or(0, |b| usize::from(b[0]) | usize::from(b[1]) << 8)
+    };
     let cp = u32::from(c);
     let plane = (cp >> 16) as usize;
-    let (mut lo, mut hi) = (
-        printable_entry(plane) as usize,
-        printable_entry(plane + 1) as usize,
-    );
+    let (mut lo, mut hi) = (entry(plane), entry(plane + 1));
     while lo < hi {
         let mid = usize::midpoint(lo, hi);
-        if printable_entry(18 + mid) <= cp & 0xFFFF {
+        if entry(19 + mid) <= (cp & 0xFFFF) as usize {
             lo = mid + 1;
         } else {
             hi = mid;
         }
     }
-    lo % 2 == 0
+    lo % 2 == 1
+}
+
+/// `str.isprintable` for one character, which also decides `repr`
+/// escaping.
+#[must_use]
+pub fn is_printable(c: char) -> bool {
+    if c.is_ascii() {
+        return (' '..'\x7f').contains(&c);
+    }
+    !in_table(NOT_PRINTABLE, c)
+}
+
+/// Can an identifier start with `c` (XID_Start; `_` aside)?
+pub(crate) fn xid_start(c: char) -> bool {
+    if c.is_ascii() {
+        return c.is_ascii_alphabetic();
+    }
+    in_table(XID_START, c)
+}
+
+/// Can an identifier continue with `c` (XID_Continue)?
+pub(crate) fn xid_continue(c: char) -> bool {
+    if c.is_ascii() {
+        return c.is_ascii_alphanumeric() || c == '_';
+    }
+    in_table(XID_START, c) || in_table(XID_MORE, c)
 }
 
 enum Work {

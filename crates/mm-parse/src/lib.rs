@@ -40,12 +40,32 @@ mod walk;
 #[cfg(feature = "ruff-oracle")]
 pub mod ruff;
 
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 use mm_compile::{CompileError, ast::Module};
 
 /// The message of a source holding a null byte (CPython 3.14 reading a
 /// file; `compile()` of a string says "source code string ...").
 pub const NULL_BYTES: &str = "source code cannot contain null bytes";
+
+/// `name` as an identifier in source means it: NFKC applied as the lexer
+/// applies it, or `Err` with the first character whose NFKC micro-monty
+/// does not carry (the lexer refuses such an identifier).
+pub fn nfkc_identifier(name: &str) -> Result<String, char> {
+    match name.chars().find(|&c| lexer::needs_nfkc(c)) {
+        Some(c) => Err(c),
+        None => Ok(lexer::nfkc_name(name)),
+    }
+}
+
+/// The `SyntaxError` message for an identifier holding `c`, a character
+/// whose NFKC micro-monty does not carry.
+#[must_use]
+pub fn nfkc_unsupported(c: char) -> String {
+    alloc::format!(
+        "micro-monty does not support identifiers that need NFKC normalization ('{c}', U+{:04X})",
+        c as u32
+    )
+}
 
 /// Parses `source` into the engine AST.
 pub fn parse(source: &str) -> Result<Module, CompileError> {

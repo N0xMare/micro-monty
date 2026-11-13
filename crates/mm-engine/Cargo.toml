@@ -14,8 +14,9 @@ categories = ["compilers", "no-std"]
 [dependencies]
 mm-core.workspace = true
 mm-compile.workspace = true
-# The own parser, for `ast.parse` (already in every build through the facade).
-mm-parse = { workspace = true, optional = true }
+# The own parser: `ast.parse`, `tokenize`, and the NFKC of host record field
+# names (in every build through the facade already).
+mm-parse.workspace = true
 
 # The prelude (src/prelude.py) is compiled at build time.
 [build-dependencies]
@@ -36,9 +37,9 @@ binascii = []
 struct = []
 datetime = []
 # `ast.parse` over the own parser.
-ast = ["dep:mm-parse"]
+ast = []
 # `tokenize` over the own lexer.
-tokenize = ["dep:mm-parse"]
+tokenize = []
 # The Unicode Character Database tables (about 340 KB; not in the default stdlib).
 unicodedata = []
 # The `asyncio` module: its natives, its prelude units and the scheduler's

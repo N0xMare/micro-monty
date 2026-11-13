@@ -23,11 +23,15 @@ Formats (all little-endian; read by src/unicodedata.rs):
   (LEB128), a byte `shared << 4 | count` (count 15: a second byte holds it):
   the first `shared` words repeat the previous name's, then `count` word
   codes, one byte below 192, else two: `192 + (id - 192) / 256`, `(id - 192) % 256`.
-- `printable.bin` (used without the `unicodedata` feature, for `repr` and
-  `str.isprintable`): u16 per plane 0..=17, the index of the plane's first
-  boundary, then u16 per boundary, the low 16 bits of each code point where
-  `str.isprintable` changes, in order from U+0000 (not printable). A code
-  point with an even number of boundaries at or below it is printable.
+- Boundary tables, used without the `unicodedata` feature too: u16 per
+  plane 0..=18, the index of the plane's first boundary (18: past the
+  last), then u16 per
+  boundary, the low 16 bits of each code point where membership changes, in
+  order. A code point with an odd number of boundaries at or below it is in
+  the set. `printable.bin` holds the characters `str.isprintable` refuses
+  (for `repr` and `str.isprintable`), `xid_start.bin` XID_Start and
+  `xid_more.bin` XID_Continue less XID_Start, as `str.isidentifier` reads
+  them.
 - tables.rs: CATEGORIES, TAGS and ALGORITHMIC, the `PREFIX-%X` name ranges.
 
 `unicodedata.py` (mm-stdlib) holds `unidata_version`.
@@ -63,6 +67,18 @@ def ranges(value, shift):
     return struct.pack(f'<{len(out)}I', *out)
 
 
+def boundaries(member):
+    bounds = []
+    prev = False
+    for c in range(MAXCP):
+        m = member(c)
+        if m != prev:
+            bounds.append(c)
+            prev = m
+    planes = [sum(1 for b in bounds if b >> 16 < k) for k in range(19)]
+    return struct.pack(f'<19H{len(bounds)}H', *planes, *(b & 0xFFFF for b in bounds))
+
+
 def is_hangul(c):
     return 0xAC00 <= c <= 0xD7A3
 
@@ -71,15 +87,10 @@ def main():
     write('cat.bin', ranges(lambda c: CATEGORIES.index(u.category(chr(c))), 5))
     write('ccc.bin', ranges(lambda c: u.combining(chr(c)), 8))
 
-    bounds = []
-    prev = False
-    for c in range(MAXCP):
-        p = chr(c).isprintable()
-        if p != prev or c == 0:
-            bounds.append(c)
-            prev = p
-    planes = [sum(1 for b in bounds if b >> 16 < k) for k in range(18)]
-    write('printable.bin', struct.pack(f'<18H{len(bounds)}H', *planes, *(b & 0xFFFF for b in bounds)))
+    write('printable.bin', boundaries(lambda c: not chr(c).isprintable()))
+    write('xid_start.bin', boundaries(lambda c: chr(c).isidentifier()))
+    write('xid_more.bin', boundaries(
+        lambda c: ('a' + chr(c)).isidentifier() and not chr(c).isidentifier()))
 
     values = []
     nums = []

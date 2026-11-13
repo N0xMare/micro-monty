@@ -294,19 +294,22 @@ for bad in ({1, 2}, {1: 'x'}, print):
     );
 }
 
-/// A host record's names follow `namedtuple`'s rule, without renaming:
-/// the cell gets a `TypeError` at the call for any other.
+/// A host record's names follow `namedtuple`'s rule, without renaming,
+/// and a field is the field even when named like a tuple method. The
+/// expected lines are what python3.14 prints for the same loop over
+/// `namedtuple(name, fields)(*range(len(fields)))`; the last case is
+/// micro-monty's own (python3.14 raises `duplicate argument 'H'`).
 #[test]
-fn host_record_names_must_be_namedtuple_names() {
+fn host_record_names_are_namedtuple_names() {
     let out = Arc::new(Mutex::new(String::new()));
     let (engine, mut s) = session(&out);
     s.define(&HostModule::untyped("", &["echo"]))
         .expect("defined");
     let rec = |name: &str, fields: &[&str]| HostValue::Record {
         name: name.into(),
-        fields: fields
-            .iter()
-            .map(|f| ((*f).into(), HostValue::Int(1)))
+        fields: (0..)
+            .zip(fields)
+            .map(|(i, f)| ((*f).into(), HostValue::Int(i)))
             .collect(),
     };
     let cases = [
@@ -318,27 +321,51 @@ fn host_record_names_must_be_namedtuple_names() {
         rec("R", &["a", "_b"]),
         rec("R", &["a", "b", "a"]),
         rec("_R", &["a", "match", "été"]),
+        rec("R", &["_a", "def"]),
+        rec("R", &["a", "a", "1x"]),
+        rec("R", &["ﬁ", "fi"]),
+        rec("R", &["a", "ﬁ", "b", "fi"]),
+        rec("R", &["x²"]),
+        rec("R", &["a·b"]),
+        rec("R", &["count", "index"]),
+        rec("ℛ", &["a"]),
+        rec("R", &["ﬃ", "ｍ", "m", "ffi"]),
+        rec("R", &["ℌ", "H"]),
     ];
+    let cell = "try:
+    r = echo()
+    print(repr(r), [getattr(r, f) for f in r._fields])
+except ValueError as e:
+    print('ValueError', e)
+except SyntaxError as e:
+    print('SyntaxError', e, e.offset, e.end_offset)";
     for answer in cases {
-        let p = start(
-            &engine,
-            &mut s,
-            "try:\n    print(echo())\nexcept TypeError as e:\n    print(e)",
-        );
+        let p = start(&engine, &mut s, cell);
         assert!(matches!(p, Progress::HostCall { .. }), "{p:?}");
         let p = s.resume(Resume::Value(answer)).expect("resumes");
         assert_eq!(p, Progress::Complete(None));
     }
     assert_eq!(
         out.lock().expect("output lock").as_str(),
-        "Type names and field names must be valid identifiers: 'my-rec'\n\
-         Type names and field names must be valid identifiers: '1b'\n\
-         Type names and field names must be valid identifiers: ''\n\
-         Type names and field names cannot be a keyword: 'class'\n\
-         Type names and field names cannot be a keyword: 'None'\n\
-         Field names cannot start with an underscore: '_b'\n\
-         Encountered duplicate field name: 'a'\n\
-         _R(a=1, match=1, été=1)\n"
+        "ValueError Type names and field names must be valid identifiers: 'my-rec'
+ValueError Type names and field names must be valid identifiers: '1b'
+ValueError Type names and field names must be valid identifiers: ''
+ValueError Type names and field names cannot be a keyword: 'class'
+ValueError Type names and field names cannot be a keyword: 'None'
+ValueError Field names cannot start with an underscore: '_b'
+ValueError Encountered duplicate field name: 'a'
+_R(a=0, match=1, été=2) [0, 1, 2]
+ValueError Type names and field names cannot be a keyword: 'def'
+ValueError Type names and field names must be valid identifiers: '1x'
+SyntaxError duplicate argument 'fi' in function definition (<string>, line 1) 19 21
+SyntaxError duplicate argument 'fi' in function definition (<string>, line 1) 25 27
+ValueError Type names and field names must be valid identifiers: 'x²'
+R(a·b=0) [0]
+R(count=0, index=1) [0, 1]
+ℛ(a=0) [0]
+SyntaxError duplicate argument 'm' in function definition (<string>, line 1) 24 25
+SyntaxError micro-monty does not support identifiers that need NFKC normalization ('ℌ', U+210C) (<string>, line 1) 14 17
+"
     );
 }
 

@@ -112,9 +112,12 @@ pub enum HostValue {
     Dict(Vec<(String, HostValue)>),
     /// A named tuple: its type name and fields in order. The names follow
     /// `collections.namedtuple`'s rule without `rename`: each an identifier
-    /// and not a keyword, field names not starting with `_` and not
-    /// repeated. Passed to Python with any other, it raises `TypeError`
-    /// with `namedtuple`'s message.
+    /// and not a keyword, field names not starting with `_`, not repeated
+    /// and not the same after NFKC. Passed to Python with any other, it
+    /// raises what `namedtuple` raises: `ValueError`, or `SyntaxError` for
+    /// fields NFKC makes equal. A field name holding a character whose NFKC
+    /// micro-monty does not carry is refused with `SyntaxError`, as the
+    /// lexer refuses it in source.
     Record {
         /// The type name.
         name: String,
@@ -1294,8 +1297,29 @@ impl Vm {
         // Only valid names reach the cache: `namedtuple`'s rule, without
         // renaming (a host bug is reported, not hidden).
         let fields: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
-        if let Some(msg) = record_names_error(name, &fields) {
-            return Err(self.err(T::TypeError, &msg));
+        match record_names_error(name, &fields) {
+            None => {}
+            Some(NamesError::Value(msg)) => return Err(self.err(T::ValueError, &msg)),
+            Some(NamesError::Syntax { msg, offset, end }) => {
+                // As CPython's compile of `lambda _cls, <fields>: ...`
+                // reports it.
+                let r = self.err(T::SyntaxError, &msg);
+                let e = self.exc;
+                let file = self.new_str("<string>")?;
+                let (offset, end) = (self.new_int(offset)?, self.new_int(end)?);
+                let one = self.new_int(1)?;
+                for (k, v) in [
+                    ("filename", file),
+                    ("lineno", one),
+                    ("offset", offset),
+                    ("end_lineno", one),
+                    ("end_offset", end),
+                ] {
+                    let k = self.intern(k)?;
+                    self.inst_set(e, k, v)?;
+                }
+                return Err(r);
+            }
         }
         let names = self.tuple_items(key);
         let field_names = self.alloc_tuple(names.get(1..).unwrap_or_default())?;
@@ -1795,11 +1819,22 @@ pub(crate) fn mm_host_help(vm: &mut Vm, a: crate::vm::CallArgs) -> Result<Value,
     }
 }
 
-/// Why `namedtuple(name, fields)` would refuse these names (CPython's
-/// messages, without `rename`): each an identifier and not a keyword, a
-/// field not starting with `_` and not repeated.
+/// Why [`record_names_error`] refuses a record's names.
+enum NamesError {
+    /// `namedtuple`'s own checks.
+    Value(String),
+    /// A field's name as source, at its 1-based byte offsets in CPython's
+    /// generated `lambda _cls, <fields>: ...`.
+    Syntax { msg: String, offset: i64, end: i64 },
+}
+
+/// Why `namedtuple(name, fields)` refuses these names, in CPython 3.14's
+/// order without `rename`: every name an identifier and not a keyword,
+/// then each field not starting with `_` and not repeated (`ValueError`);
+/// then CPython compiles `__new__` from the field names, so a name the
+/// lexer refuses, or two fields NFKC makes equal, is a `SyntaxError`.
 #[cfg_attr(mm_shipped, optimize(size))]
-fn record_names_error(name: &str, fields: &[&str]) -> Option<String> {
+fn record_names_error(name: &str, fields: &[&str]) -> Option<NamesError> {
     let keyword = |s: &str| {
         matches!(
             s,
@@ -1841,27 +1876,56 @@ fn record_names_error(name: &str, fields: &[&str]) -> Option<String> {
         )
     };
     let repr = crate::text::str_repr;
-    for (k, n) in core::iter::once(&name).chain(fields).enumerate() {
+    for n in core::iter::once(&name).chain(fields) {
         if !crate::strmeth::is_identifier(n) {
-            return Some(format!(
+            return Some(NamesError::Value(format!(
                 "Type names and field names must be valid identifiers: {}",
                 repr(n)
-            ));
+            )));
         }
         if keyword(n) {
-            return Some(format!(
+            return Some(NamesError::Value(format!(
                 "Type names and field names cannot be a keyword: {}",
                 repr(n)
-            ));
+            )));
         }
-        if k > 0 && n.starts_with('_') {
-            return Some(format!(
+    }
+    for (k, n) in fields.iter().enumerate() {
+        if n.starts_with('_') {
+            return Some(NamesError::Value(format!(
                 "Field names cannot start with an underscore: {}",
                 repr(n)
-            ));
+            )));
         }
-        if k > 0 && fields[..k - 1].contains(n) {
-            return Some(format!("Encountered duplicate field name: {}", repr(n)));
+        if fields[..k].contains(n) {
+            return Some(NamesError::Value(format!(
+                "Encountered duplicate field name: {}",
+                repr(n)
+            )));
+        }
+    }
+    // Each field's span in `lambda _cls, a, b: ...`.
+    let mut spans = Vec::with_capacity(fields.len());
+    let mut at = 14;
+    for f in fields {
+        let end = at + i64::try_from(f.len()).unwrap_or(i64::MAX);
+        spans.push((at, end));
+        at = end + 2;
+    }
+    let mut seen = Vec::with_capacity(fields.len());
+    for (f, &(offset, end)) in fields.iter().zip(&spans) {
+        match mm_parse::nfkc_identifier(f) {
+            Ok(n) => seen.push(n),
+            Err(c) => {
+                let msg = mm_parse::nfkc_unsupported(c);
+                return Some(NamesError::Syntax { msg, offset, end });
+            }
+        }
+    }
+    for (k, &(offset, end)) in spans.iter().enumerate() {
+        if seen[..k].contains(&seen[k]) {
+            let msg = format!("duplicate argument '{}' in function definition", seen[k]);
+            return Some(NamesError::Syntax { msg, offset, end });
         }
     }
     None
