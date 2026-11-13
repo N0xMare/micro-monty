@@ -885,7 +885,11 @@ pub(crate) fn lower(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
     let s = this(vm, &a, "lower")?;
     let (room, _native) = case_room(vm, &s, true)?;
-    if !s.is_ascii() && s.chars().any(case_after_16) {
+    // `str::to_lowercase` decides `Σ`'s context from `core`'s tables,
+    // Unicode 16's except where `sigma_after_16` says.
+    if !s.is_ascii()
+        && (s.chars().any(case_after_16) || (s.contains('Σ') && s.chars().any(sigma_after_16)))
+    {
         return vm.new_str(&recase(&s, room, &mut |_, _| Case::Lower));
     }
     vm.new_str(&s.to_lowercase())
@@ -1323,27 +1327,48 @@ enum Case {
 }
 
 /// `s` with each character's case changed as `pick` says, given its
-/// index. Lowering takes the character's part of `str::to_lowercase`, so
-/// `Σ`'s Final_Sigma context is decided over the whole string, as in
-/// CPython's `lower_ucs4`.
+/// index. A lowered `Σ` is final `ς` when the last char before it that is
+/// not case-ignorable is cased and the next one is not, over the whole
+/// string, as in CPython's `lower_ucs4`, with Unicode 16's classes
+/// ([`class`]): written `σ`, it is pending until that next char.
 fn recase(s: &str, room: usize, pick: &mut dyn FnMut(usize, char) -> Case) -> String {
-    let low = s.to_lowercase();
-    let mut low = low.chars();
+    let sigma = s.contains('Σ');
+    let (mut cache, mut misses) = ([(0u32, 0u8); 64], 0u64);
+    // Whether the last char that is not case-ignorable was cased, and
+    // the offset of a pending `σ` in `out`.
+    let (mut cased, mut pending) = (false, None);
     let mut out = String::with_capacity(room);
     for (i, c) in s.chars().enumerate() {
-        let lowered = low.by_ref().take(c.to_lowercase().len());
-        let case = pick(i, c);
-        match if case_after_16(c) { Case::Keep } else { case } {
-            Case::Lower => out.extend(lowered),
-            case => {
-                lowered.for_each(drop);
-                match case {
-                    Case::Keep => out.push(c),
-                    Case::Title if ucd::title(c, &mut out) => {}
-                    _ => out.extend(c.to_uppercase()),
-                }
-            }
+        let class = if sigma {
+            class(c, &mut cache, &mut misses)
+        } else {
+            (true, false)
+        };
+        if !class.0
+            && let Some(at) = pending.take().filter(|_| !class.1)
+        {
+            out.replace_range(at..at + 'σ'.len_utf8(), "ς");
         }
+        match if case_after_16(c) {
+            Case::Keep
+        } else {
+            pick(i, c)
+        } {
+            Case::Lower if c == 'Σ' => {
+                pending = cased.then_some(out.len());
+                out.push('σ');
+            }
+            Case::Lower => out.extend(c.to_lowercase()),
+            Case::Keep => out.push(c),
+            Case::Title if ucd::title(c, &mut out) => {}
+            Case::Upper | Case::Title => out.extend(c.to_uppercase()),
+        }
+        if !class.0 {
+            cased = class.1;
+        }
+    }
+    if let Some(at) = pending {
+        out.replace_range(at..at + 'σ'.len_utf8(), "ς");
     }
     out
 }
@@ -1377,6 +1402,41 @@ fn uncased_in_16(c: char) -> bool {
             | '\u{1df90}'..='\u{1df96}'
             | '\u{1dfcd}'..='\u{1dfff}'
     )
+}
+
+/// Code points unassigned in Unicode 16 that `core` makes case-ignorable,
+/// beside those `uncased_in_16` lists. `final_sigma_is_unicode_16`
+/// checks the list.
+fn ignorable_after_16(c: char) -> bool {
+    matches!(
+        c,
+        '\u{5c8}'..='\u{5c9}'
+            | '\u{b53}'..='\u{b54}'
+            | '\u{1acf}'..='\u{1af0}'
+            | '\u{208f}'
+            | '\u{10ec5}'
+            | '\u{10ec9}'..='\u{10ecf}'
+            | '\u{10ef0}'..='\u{10efb}'
+            | '\u{11b60}'
+            | '\u{11b62}'..='\u{11b64}'
+            | '\u{11b66}'
+            | '\u{11dd9}'
+            | '\u{11df0}'
+            | '\u{16ff2}'..='\u{16ff3}'
+            | '\u{1d127}'..='\u{1d128}'
+            | '\u{1d25b}'..='\u{1d25c}'
+            | '\u{1e6e3}'
+            | '\u{1e6e6}'
+            | '\u{1e6ee}'..='\u{1e6ef}'
+            | '\u{1e6f5}'
+            | '\u{1e6ff}'
+    )
+}
+
+/// Code points whose Final_Sigma class `core` takes from after Unicode
+/// 16: U+0295 (Ll in 16, Lo in 17) and those unassigned in 16.
+fn sigma_after_16(c: char) -> bool {
+    c == '\u{295}' || uncased_in_16(c) || ignorable_after_16(c)
 }
 
 /// Code points whose case mappings `core` takes from Unicode 17 or 18:
@@ -3328,9 +3388,10 @@ fn sigma_probe(cs: &[char]) -> bool {
     s.to_lowercase().ends_with('ς')
 }
 
-/// Whether `c` is case-ignorable and whether it is cased, as std's
-/// final-sigma rule reads them (CPython's `lower_ucs4` reads the same
-/// properties); probed once per char a step, `misses` counting probes.
+/// Whether `c` is case-ignorable and whether it is cased (and not
+/// ignorable), as CPython's `lower_ucs4` reads them for `Σ`'s context:
+/// std's final-sigma rule's, probed once per char a step, `misses`
+/// counting probes, with Unicode 16's for `sigma_after_16`'s.
 fn class(c: char, cache: &mut [(u32, u8); 64], misses: &mut u64) -> (bool, bool) {
     if c.is_ascii() {
         return (
@@ -3342,8 +3403,12 @@ fn class(c: char, cache: &mut [(u32, u8); 64], misses: &mut u64) -> (bool, bool)
     let slot = &mut cache[u as usize % 64];
     if slot.0 != u {
         *misses += 1;
-        let cased = sigma_probe(&[c, 'Σ']);
-        let ign = !cased && sigma_probe(&['A', c, 'Σ']);
+        let (ign, cased) = if sigma_after_16(c) {
+            (false, c == '\u{295}')
+        } else {
+            let cased = sigma_probe(&[c, 'Σ']);
+            (!cased && sigma_probe(&['A', c, 'Σ']), cased)
+        };
         *slot = (u, u8::from(ign) | u8::from(cased) << 1);
     }
     (slot.1 & 1 != 0, slot.1 & 2 != 0)
@@ -4080,8 +4145,12 @@ fn scan_big(
 
 #[cfg(all(test, feature = "unicodedata"))]
 mod tests {
-    use super::{case_after_16, is_lower, is_upper, uncased_in_16};
+    use super::{
+        Case, case_after_16, class, ignorable_after_16, is_lower, is_upper, recase, sigma_probe,
+        uncased_in_16,
+    };
     use crate::unicodedata::category_of;
+    use alloc::format;
 
     /// `core`'s case tables may be newer than Unicode 16 (CPython 3.14's):
     /// every code point they case is assigned in 16.0 unless
@@ -4114,5 +4183,43 @@ mod tests {
             assert!(cat != "Ll" || is_lower(c), "U+{at:04X} is Ll");
             assert!(cat != "Lu" || is_upper(c), "U+{at:04X} is Lu");
         }
+    }
+
+    /// `Σ`'s Final_Sigma context reads Unicode 16's classes on every code
+    /// point: one unassigned there is neither cased nor case-ignorable,
+    /// Lu, Ll and Lt are cased, Mn, Me, Cf, Lm and Sk ignorable, and
+    /// `ignorable_after_16` lists only code points `core` makes ignorable.
+    /// `lower` and the stepped maps decide `ς` from these.
+    #[test]
+    fn final_sigma_is_unicode_16() {
+        let (mut cache, mut misses) = ([(0u32, 0u8); 64], 0u64);
+        let low = |s: &str| recase(s, 0, &mut |_, _| Case::Lower);
+        for c in (0x80..=0x10_FFFF).filter_map(char::from_u32) {
+            let (cat, at) = (category_of(u32::from(c)), u32::from(c));
+            let (ign, cased) = class(c, &mut cache, &mut misses);
+            match cat {
+                "Cn" => assert!(!ign && !cased, "U+{at:04X} is unassigned in Unicode 16"),
+                "Lu" | "Ll" | "Lt" => assert!(cased && !ign, "U+{at:04X} is cased"),
+                "Mn" | "Me" | "Cf" | "Lm" | "Sk" => assert!(ign, "U+{at:04X} is ignorable"),
+                _ => {}
+            }
+            if ignorable_after_16(c) {
+                assert!(
+                    cat == "Cn" && !uncased_in_16(c) && sigma_probe(&['A', c, 'Σ']),
+                    "U+{at:04X} need not be listed"
+                );
+            }
+            let (before, between) = (low(&format!("{c}Σ")), low(&format!("A{c}Σ")));
+            assert_eq!(before.ends_with('ς'), cased, "U+{at:04X} before Σ");
+            assert_eq!(
+                between.ends_with('ς'),
+                ign || cased,
+                "U+{at:04X} between A and Σ"
+            );
+        }
+        assert_eq!(low("\u{295}Σ"), "\u{295}ς");
+        assert_eq!(low("A\u{1acf}Σ"), "a\u{1acf}σ");
+        assert_eq!(low("ΣAΣ'Σ.b"), "σaσ'σ.b");
+        assert_eq!(low("AΣ'.Σ :"), "aσ'.ς :");
     }
 }
