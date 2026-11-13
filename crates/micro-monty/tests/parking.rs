@@ -583,6 +583,14 @@ fn folds_over_an_endless_iterator_park_on_fuel_and_on_a_deadline() {
     }
 }
 
+/// The fuel slice [`collecting_an_endless_iterator_parks_on_fuel_and_on_a_deadline`]
+/// gives.
+const SLICE: u64 = 20_000;
+/// The most one of its slices may charge past [`SLICE`]: a chunk of the
+/// collect (`COLLECT_CHUNK`, 65,536 items) charges 45,537 to 111,078 units
+/// past it [M]; a chunk four times as large charges 274,917 and fails.
+const OVERDRAFT: u64 = 3 << 16;
+
 #[test]
 fn collecting_an_endless_iterator_parks_on_fuel_and_on_a_deadline() {
     // Fuel-audit finding: `collect` charged per item but gathered a native
@@ -609,8 +617,17 @@ fn collecting_an_endless_iterator_parks_on_fuel_and_on_a_deadline() {
         let mut s = session(&engine, &out);
         let src = format!("it = iter(range(10**18))\ndef f(*a): pass\nx = {op}\n");
         let code = engine.compile(&src, "<endless>").expect("compiles");
-        s.set_fuel(Some(20_000));
-        let t = Instant::now();
+        let total = u64::MAX / 2;
+        s.set_fuel_total(Some(total));
+        let mut left = total;
+        // What the slice just ended charged past the `given` units it had.
+        let mut over = |s: &Session, given: u64| {
+            let now = s.fuel_total().expect("a total");
+            let over = (left - now).saturating_sub(given);
+            left = now;
+            over
+        };
+        s.set_fuel(Some(SLICE));
         let mut p = s.start(&code);
         for _ in 0..3 {
             assert_eq!(
@@ -620,19 +637,23 @@ fn collecting_an_endless_iterator_parks_on_fuel_and_on_a_deadline() {
                 },
                 "{op}"
             );
-            s.set_fuel(Some(20_000));
+            // Fuel is the check, not time, so machine load cannot fail it:
+            // a collect gathering past its chunk overdraws the slice (one
+            // that runs on to MemoryError does not park at all).
+            let o = over(&s, SLICE);
+            assert!(
+                o <= OVERDRAFT,
+                "{op}: a slice charged {o} units past its {SLICE}"
+            );
+            s.set_fuel(Some(SLICE));
             p = s.resume(Resume::Continue).expect("resumes");
         }
-        // The parks above are the check; the wall bound only catches a
-        // slice that runs on to MemoryError (seconds even in release), with
-        // room for a debug build under `cargo xtask check`'s load.
-        assert!(t.elapsed().as_secs() < 5, "{op}: took {:?}", t.elapsed());
         let snapshot = s.snapshot().expect("snapshot");
         s = engine.restore(&snapshot).expect("restore");
         s.set_fuel(None);
         s.set_deadline(Some(Instant::now() + std::time::Duration::from_millis(50)));
-        let t = Instant::now();
         let p = s.resume(Resume::Continue).expect("resumes");
+        // A collect deaf to the deadline runs on to MemoryError instead.
         assert_eq!(
             p,
             Progress::Parked {
@@ -640,7 +661,6 @@ fn collecting_an_endless_iterator_parks_on_fuel_and_on_a_deadline() {
             },
             "{op}"
         );
-        assert!(t.elapsed().as_secs() < 2, "{op}: took {:?}", t.elapsed());
     }
     // Parked in the middle of a collect, through a snapshot, the result is
     // an unparked run's.
