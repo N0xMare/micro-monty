@@ -90,6 +90,12 @@ const CASE_TIMEOUT: Duration = Duration::from_mins(30);
 /// per line, `COLUMNS` a comma-separated subset of `report`, `fuel` and
 /// `digest`; `#` starts a comment.
 const RESULTS: &str = "conformance/durability-results.txt";
+/// The most one job holds in its scratch directory at once: the case and
+/// one image, which the chain rewrites in place and the default 256 MiB
+/// memory limit bounds (267 MB at most, own case 534 at 1:1000 [M]).
+const SCRATCH_PER_JOB: u64 = 320 << 20;
+/// The tmpfs the jobs' scratch goes to when it has room.
+const TMPFS: &str = "/dev/shm";
 /// The parked modes, and the columns each is compared in.
 /// `restore-vs-snapshot` compares the restore chain with the session that
 /// took the same snapshots and went on, not with the unparked run.
@@ -267,6 +273,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             .then_with(|| (a.spec != fine, &a.case).cmp(&(b.spec != fine, &b.case)))
     });
     let workers = thread::available_parallelism().map_or(1, usize::from);
+    let (scratch, place) = scratch_dir(workers.min(jobs.len()));
     let policy = match &every {
         _ if cross => format!(
             "at {}, each snapshot restored on the other target (native <-> wasm32-wasip1, \
@@ -286,7 +293,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     };
     println!(
         "durability: {} own + {} corpus cases ({} runs), parked {policy} and at every host \
-         call, one mm process per park ({}), {workers} workers",
+         call, one mm process per park ({}), {workers} workers, scratch {place}",
         own.iter().filter(|p| keep(p)).count(),
         corpus.iter().filter(|p| keep(p)).count(),
         jobs.len(),
@@ -300,7 +307,15 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             scope.spawn(|| {
                 while let Some(job) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
                     let start = Instant::now();
-                    let o = run_job(&python, &oracle, &mm, alternate.as_ref(), job, timeout);
+                    let o = run_job(
+                        &python,
+                        &oracle,
+                        &mm,
+                        alternate.as_ref(),
+                        scratch.as_deref(),
+                        job,
+                        timeout,
+                    );
                     let took = start.elapsed().as_secs_f64();
                     if let Ok(mut all) = outcomes.lock() {
                         all.push((job_key(job), took, o));
@@ -309,6 +324,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             });
         }
     });
+    if let Some(dir) = &scratch {
+        // Empty unless a job was killed before its oracle cleaned up.
+        let _ = fs::remove_dir_all(dir);
+    }
     let timed = outcomes
         .into_inner()
         .map_err(|_| "a worker thread panicked".to_owned())?;
@@ -589,11 +608,76 @@ fn write_times(path: &Path, timed: &[(String, f64, Outcome)]) {
     let _ = fs::write(path, text);
 }
 
+/// Where the jobs' scratch directories go, and how the header says it: a
+/// directory on [`TMPFS`] when it has room for `jobs` jobs'
+/// [`SCRATCH_PER_JOB`] and the memory twice that (a tmpfs page is memory
+/// no one can reclaim; the jobs' own heaps need the rest), so the images a
+/// fine chain writes and reads (about 33 GB each way for own cases 466
+/// and 534 at 1:1000 [M]) never reach the disk; else the system's
+/// temporary directory.
+fn scratch_dir(jobs: usize) -> (Option<PathBuf>, String) {
+    let need = SCRATCH_PER_JOB * jobs as u64;
+    let mib = |b: u64| format!("{} MiB", b >> 20);
+    // `df` prints the bytes available on the tmpfs; MemAvailable (KiB)
+    // whether the memory behind it has them too.
+    let tmpfs = Command::new("df")
+        .args(["-B1", "--output=avail", TMPFS])
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .nth(1)?
+                .trim()
+                .parse::<u64>()
+                .ok()
+        });
+    let memory = fs::read_to_string("/proc/meminfo").ok().and_then(|m| {
+        let line = m.lines().find(|l| l.starts_with("MemAvailable:"))?;
+        Some(line.split_whitespace().nth(1)?.parse::<u64>().ok()? * 1024)
+    });
+    let disk = |why: String| (None, format!("on disk ({why})"));
+    let (Some(free), Some(memory)) = (tmpfs, memory) else {
+        return disk(if !Path::new(TMPFS).is_dir() {
+            format!("no {TMPFS}")
+        } else if tmpfs.is_none() {
+            format!("`df` cannot tell {TMPFS}'s free space")
+        } else {
+            "no MemAvailable in /proc/meminfo".to_owned()
+        });
+    };
+    if free < need || memory < 2 * need {
+        return disk(format!(
+            "{TMPFS} has {} free and the memory {}; {jobs} jobs need {} there and {} of memory",
+            mib(free),
+            mib(memory),
+            mib(need),
+            mib(2 * need)
+        ));
+    }
+    let dir = Path::new(TMPFS).join(format!("mm-durability-{}", std::process::id()));
+    match fs::create_dir_all(&dir) {
+        Ok(()) => {
+            let shown = format!(
+                "on {} ({} free, {} needed)",
+                dir.display(),
+                mib(free),
+                mib(need)
+            );
+            (Some(dir), shown)
+        }
+        Err(e) => disk(format!("cannot create {}: {e}", dir.display())),
+    }
+}
+
 fn run_job(
     python: &Path,
     oracle: &Path,
     mm: &Path,
     alternate: Option<&Alternate>,
+    scratch: Option<&Path>,
     job: &Job,
     timeout: u64,
 ) -> Outcome {
@@ -622,6 +706,10 @@ fn run_job(
         .arg(&job.spec)
         .arg("--mm")
         .arg(mm);
+    if let Some(dir) = scratch {
+        // The oracle's scratch directories (`tempfile.mkdtemp`).
+        command.env("TMPDIR", dir);
+    }
     if let (Some(alt), Some(first)) = (alternate, job.first) {
         command
             .arg("--alternate")
