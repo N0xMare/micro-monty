@@ -364,7 +364,9 @@ pub(crate) fn join(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         }
         bytes = bytes.saturating_add(vm.str_bytes(*x).len());
     }
-    if (bytes / UNIT + 4 * items.len()) as u64 >= BIG {
+    // A result past one step's copy steps; so do many short items, which
+    // cost per item more than their bytes.
+    if (bytes / UNIT) as u64 >= FILL || (bytes / UNIT + 4 * items.len()) as u64 >= BIG {
         let items = vm.alloc_tuple(&items)?;
         return join_big(vm, sep, items);
     }

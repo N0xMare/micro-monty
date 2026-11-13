@@ -1798,6 +1798,15 @@ const SITES: &[(Row, &str, &str, usize)] = &[
     // (P2's row: `repr([S])` was one 106 ms step), escapes included:
     // 10-11 ms [M].
     (Row::Bounded, "S = 'a' * 30_000_000", "t = repr([S])", 1),
+    // Those pieces are joined: under 32 MiB a join copied its result in
+    // one step, twice (into the build buffer, then the str), 36 ms at 30
+    // MB with the page faults [M]; it now steps from one step's copy.
+    (
+        Row::Bounded,
+        "S = 'a' * 30_000_000",
+        "t = ''.join(['[', S, ']'])",
+        1,
+    ),
     (Row::Bounded, "B = b'a' * 30_000_000", "t = repr([B])", 1),
     (
         Row::Bounded,
