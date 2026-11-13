@@ -25,13 +25,13 @@ The first thing that stops each case: a feature `mm` reports it does not support
 | wrong traceback | 2 | `dataclass__call_field_error.py`, `dataclass__get_missing_attr_error.py` |
 | int work cap | 1 | `builtin__math_funcs.py` |
 | no exception raised | 1 | `import__star_error.py` |
-| unexpected ValueError | 1 | `str__format.py` |
+| unexpected TypeError | 1 | `iter__user_class.py` |
 
 ## Failing cases (35)
 
 | Case | Tag | Status | Cause | Reason |
 |---|---|---|---|---|
-| `args__macro_errors.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError: py-missing-pos: replace expected at least 2 arguments, got 1 |
+| `args__macro_errors.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError: py-dup-kw-only: function got multiple values for keyword argument 'key' |
 | `bytes__percent_format.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
 | `class__numeric.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
 | `collections__deque.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError: a NaN element makes the ordering false |
@@ -42,8 +42,8 @@ The first thing that stops each case: a feature `mm` reports it does not support
 | `id__non_overlapping_lifetimes_same_types.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
 | `import__sys_monty.py` | monty-specific | fail | unexpected AssertionError | unexpected exception: AssertionError: version should be 3.14.0 (Monty), got '&lt;version> (micro-monty)' |
 | `iter__generator_expr_type.py` | monty-specific | fail | unexpected AssertionError | unexpected exception: AssertionError |
-| `iter__user_class.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
 | `lookup__mutation.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
+| `str__format.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
 | `str__percent_format.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
 | `typing__get_type_hints.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
 | `typing__get_type_hints_classes.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
@@ -65,4 +65,4 @@ The first thing that stops each case: a feature `mm` reports it does not support
 | `dataclass__get_missing_attr_error.py` | host | fail | wrong traceback | traceback line 2: expected …__get_missing_attr_error.py", line 6, in &lt;module>, got …__get_missing_attr_error.py", line 5, in &lt;module> |
 | `builtin__math_funcs.py` | cpython | fail | int work cap | unexpected exception: MemoryError: integer operation too large |
 | `import__star_error.py` | monty-specific | fail | no exception raised | no exception raised, expected Traceback (most recent call last):\\n  File "import__star_error.py", line 4, in &lt;module>\\n    from s… |
-| `str__format.py` | cpython | fail | unexpected ValueError | unexpected exception: ValueError: Unknown format code '５' for object of type 'int' |
+| `iter__user_class.py` | cpython | fail | unexpected TypeError | unexpected exception: TypeError: acquire_partial() missing 1 required positional argument: 'instance' |

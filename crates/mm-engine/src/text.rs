@@ -1743,15 +1743,21 @@ impl Vm {
         if spec.contains(",_") || spec.contains("_,") {
             return Err(self.err(T::ValueError, "Cannot specify both ',' and '_'."));
         }
-        let Some(mut s) = Spec::parse(spec) else {
-            if Spec::missing_precision(spec) {
+        let mut s = match Spec::read(spec) {
+            Ok(s) => s,
+            Err(BadSpec::Digits) => {
+                return Err(self.err(T::ValueError, "Too many decimal digits in format string"));
+            }
+            Err(BadSpec::Invalid) if Spec::missing_precision(spec) => {
                 return Err(self.err(T::ValueError, "Format specifier missing precision"));
             }
-            let msg = format!(
-                "Invalid format specifier '{spec}' for object of type '{}'",
-                t.name()
-            );
-            return Err(self.err(T::ValueError, &msg));
+            Err(BadSpec::Invalid) => {
+                let msg = format!(
+                    "Invalid format specifier '{spec}' for object of type '{}'",
+                    t.name()
+                );
+                return Err(self.err(T::ValueError, &msg));
+            }
         };
         // Bound requested padding before zero-filled digit groups or native
         // strings are built. Width is in characters; fill can be multibyte.
@@ -1890,12 +1896,16 @@ impl Vm {
     }
 
     fn bad_code(&mut self, c: Option<char>, tname: &str) -> Raised {
+        // CPython prints a code outside 33..=127 as its hex value.
+        let c = c.unwrap_or(' ');
+        let code = if ('!'..='\u{7f}').contains(&c) {
+            String::from(c)
+        } else {
+            format!("\\x{:x}", u32::from(c))
+        };
         self.err(
             T::ValueError,
-            &format!(
-                "Unknown format code '{}' for object of type '{tname}'",
-                c.unwrap_or(' ')
-            ),
+            &format!("Unknown format code '{code}' for object of type '{tname}'"),
         )
     }
 
@@ -1922,6 +1932,10 @@ impl Vm {
     }
 
     fn format_int(&mut self, i: &crate::bigint::Big, s: &Spec) -> Result<NativeText, Raised> {
+        // An unknown code is reported first, as CPython's switch on it does.
+        if !matches!(s.ty, None | Some('b' | 'c' | 'd' | 'n' | 'o' | 'x' | 'X')) {
+            return Err(self.bad_code(s.ty, "int"));
+        }
         if s.precision.is_some() {
             return Err(self.err(
                 T::ValueError,
@@ -2227,6 +2241,53 @@ fn sat(n: u64) -> usize {
     usize::try_from(n).unwrap_or(usize::MAX)
 }
 
+/// The decimal digits `spec` starts with, any Unicode decimal digit as
+/// CPython's `get_integer` reads them: their length in bytes, and their
+/// value (`None` past `Py_ssize_t`, on every target).
+fn lead_digits(spec: &str) -> (usize, Option<u64>) {
+    // ASCII digits followed by an ASCII non-digit, the common spec: up to
+    // 18 digits fit i64, so no overflow test.
+    let b = spec.as_bytes();
+    let mut n = 0u64;
+    let mut len = 0;
+    while len < 18 {
+        match b.get(len) {
+            Some(c) if c.is_ascii_digit() => {
+                n = n * 10 + u64::from(c - b'0');
+                len += 1;
+            }
+            Some(c) if c.is_ascii() => return (len, Some(n)),
+            None => return (len, Some(n)),
+            Some(_) => break,
+        }
+    }
+    lead_digits_unicode(spec)
+}
+
+/// [`lead_digits`] past its ASCII fast path: any Unicode decimal digit,
+/// and a value checked against `Py_ssize_t`.
+#[cold]
+#[inline(never)]
+fn lead_digits_unicode(spec: &str) -> (usize, Option<u64>) {
+    let (mut len, mut n) = (0, Some(0u64));
+    for c in spec.chars() {
+        let d = if c.is_ascii_digit() {
+            u32::from(c) - u32::from('0')
+        } else if c.is_ascii() {
+            break;
+        } else if let Some(d) = decimal_value(c) {
+            d
+        } else {
+            break;
+        };
+        n = n
+            .and_then(|n| n.checked_mul(10)?.checked_add(u64::from(d)))
+            .filter(|&n| i64::try_from(n).is_ok());
+        len += c.len_utf8();
+    }
+    (len, n)
+}
+
 /// A parsed format spec.
 pub(crate) struct Spec {
     pub fill: char,
@@ -2243,9 +2304,21 @@ pub(crate) struct Spec {
     pub ty: Option<char>,
 }
 
+/// Why a format spec does not parse.
+pub(crate) enum BadSpec {
+    Invalid,
+    /// A width or precision past `Py_ssize_t`.
+    Digits,
+}
+
 impl Spec {
+    /// [`Spec::read`], for callers that need no reason.
+    pub(crate) fn parse(spec: &str) -> Option<Spec> {
+        Spec::read(spec).ok()
+    }
+
     /// Parses `[[fill]align][sign][z][#][0][width][grouping][.precision][type]`.
-    pub(crate) fn parse(mut spec: &str) -> Option<Spec> {
+    pub(crate) fn read(mut spec: &str) -> Result<Spec, BadSpec> {
         let mut s = Spec {
             fill: ' ',
             align: None,
@@ -2296,9 +2369,9 @@ impl Spec {
             s.zero = true;
             spec = rest;
         }
-        let digits = spec.bytes().take_while(u8::is_ascii_digit).count();
+        let (digits, width) = lead_digits(spec);
         if digits != 0 {
-            s.width = sat(spec[..digits].parse().ok()?);
+            s.width = sat(width.ok_or(BadSpec::Digits)?);
             spec = &spec[digits..];
         }
         if let Some(&group) = spec.as_bytes().first()
@@ -2308,12 +2381,12 @@ impl Spec {
             spec = &spec[1..];
         }
         if let Some(rest) = spec.strip_prefix('.') {
-            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+            let (digits, precision) = lead_digits(rest);
             spec = &rest[digits..];
             if digits != 0 {
-                s.precision = Some(sat(rest[..digits].parse().ok()?));
+                s.precision = Some(sat(precision.ok_or(BadSpec::Digits)?));
             } else if !spec.starts_with([',', '_']) {
-                return None;
+                return Err(BadSpec::Invalid);
             }
             if let Some(&group) = spec.as_bytes().first()
                 && matches!(group, b',' | b'_')
@@ -2324,7 +2397,7 @@ impl Spec {
         }
         s.ty = spec.chars().next();
         if spec.len() != s.ty.map_or(0, char::len_utf8) {
-            return None;
+            return Err(BadSpec::Invalid);
         }
         // `0` pads with zeros unless a fill is given, also after an
         // explicit alignment (`<08s` is `ab000000`).
@@ -2337,7 +2410,7 @@ impl Spec {
                 s.zero = false;
             }
         }
-        Some(s)
+        Ok(s)
     }
 
     /// `spec` without its width's digits, parsing as `spec` with width 0.
@@ -2354,7 +2427,7 @@ impl Spec {
         for flags in [&b"+- "[..], b"z", b"#", b"0"] {
             at += usize::from(b.get(at).is_some_and(|c| flags.contains(c)));
         }
-        let end = at + b[at..].iter().take_while(|c| c.is_ascii_digit()).count();
+        let end = at + lead_digits(&spec[at..]).0;
         format!("{}{}", &spec[..at], &spec[end..])
     }
 
@@ -2379,7 +2452,7 @@ impl Spec {
     /// Does `spec` fail only for a `.` without precision digits?
     pub(crate) fn missing_precision(spec: &str) -> bool {
         spec.find('.').is_some_and(|k| {
-            !spec[k + 1..].starts_with(|c: char| c.is_ascii_digit() || c == ',' || c == '_')
+            lead_digits(&spec[k + 1..]).0 == 0 && !spec[k + 1..].starts_with([',', '_'])
         })
     }
 

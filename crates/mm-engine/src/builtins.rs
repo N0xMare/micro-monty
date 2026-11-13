@@ -869,15 +869,7 @@ const DEFS: &[Def] = &[
     n!("strip", BY, 1, 2, NO, NO, crate::bytes::strip),
     n!("lstrip", BY, 1, 2, NO, NO, crate::bytes::lstrip),
     n!("rstrip", BY, 1, 2, NO, NO, crate::bytes::rstrip),
-    n!(
-        "replace",
-        BY,
-        3,
-        4,
-        &["", "", "", "count"],
-        NO,
-        crate::bytes::replace
-    ),
+    n!("replace", BY, 3, 4, NO, NO, crate::bytes::replace),
     n!("upper", BY, 1, 1, NO, NO, crate::bytes::upper),
     n!("lower", BY, 1, 1, NO, NO, crate::bytes::lower),
     n!("swapcase", BY, 1, 1, NO, NO, crate::bytes::swapcase),
@@ -2405,7 +2397,15 @@ impl Vm {
             return r;
         }
         if n.params().iter().all(str::is_empty) && n.kwonly().is_empty() {
-            let q = qualname(n);
+            // bytearray shares bytes' methods.
+            let q = if n.owner == Some(T::bytes)
+                && npos > 0
+                && Vm::is_bytearray(self.stack[base as usize])
+            {
+                format!("bytearray.{}", n.name())
+            } else {
+                qualname(n)
+            };
             // Dunders of builtin types are slot wrappers in CPython.
             let msg = if n.owner.is_some()
                 && n.name().starts_with("__")
@@ -2708,6 +2708,19 @@ impl Vm {
             } else {
                 format!("{q}() takes from {min} to {max} positional arguments but {got} were given")
             }
+        } else if method
+            && got < min
+            && named.is_empty()
+            && n.params().iter().any(|p| !p.is_empty())
+        {
+            // A clinic method taking keywords, short of its positional-only
+            // parameters (`str.replace`).
+            let s = if min == 1 { "" } else { "s" };
+            let least = if min < max { "at least" } else { "exactly" };
+            format!(
+                "{}() takes {least} {min} positional argument{s} ({got} given)",
+                n.name()
+            )
         } else if got < min && !named.is_empty() {
             let pos = clinic_pos(n, got);
             format!(
@@ -7477,8 +7490,12 @@ fn bi_float(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         return Ok(Value::float(f));
     }
     if vm.user_class(v).is_some() {
-        if let Some(r) = vm.dunder_call(v, Dn::Float, &[], Cont::Check(check::FLOAT))? {
-            return Ok(r);
+        if vm
+            .dunder(v, Dn::Float)
+            .is_some_and(|m| m == Value::NONE || m.as_native().is_none())
+        {
+            // `__float__`: the prelude twin names the class in its errors.
+            return Err(vm.need_py());
         }
         if !vm.num_backed(v)
             && let Some(r) = vm.dunder_call(v, Dn::Index, &[], Cont::Check(check::INDEX_FLOAT))?

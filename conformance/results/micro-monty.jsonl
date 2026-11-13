@@ -14,7 +14,7 @@
 {"file":"args__list_append_too_many.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"args__list_insert_too_few.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"args__list_insert_too_many.py","tags":["cpython"],"status":"pass","reason":""}
-{"file":"args__macro_errors.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError: py-missing-pos: replace expected at least 2 arguments, got 1","category":"unexpected AssertionError"}
+{"file":"args__macro_errors.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError: py-dup-kw-only: function got multiple values for keyword argument 'key'","category":"unexpected AssertionError"}
 {"file":"args__repr_no_args.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"arith__div_zero_float.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"arith__div_zero_int.py","tags":["cpython"],"status":"pass","reason":""}
@@ -370,7 +370,7 @@
 {"file":"iter__not_iterable.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"iter__reentrant.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"iter__sentinel.py","tags":["cpython"],"status":"pass","reason":""}
-{"file":"iter__user_class.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"iter__user_class.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: TypeError: acquire_partial() missing 1 required positional argument: 'instance'","category":"unexpected TypeError"}
 {"file":"itertools__adaptors.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"itertools__combinatoric.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"itertools__count_repeat.py","tags":["cpython"],"status":"pass","reason":""}
@@ -614,7 +614,7 @@
 {"file":"star__unpack_iterables.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"str__argument_errors.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"str__attribute_names.py","tags":["cpython"],"status":"pass","reason":""}
-{"file":"str__format.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: ValueError: Unknown format code '５' for object of type 'int'","category":"unexpected ValueError"}
+{"file":"str__format.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
 {"file":"str__format_long_int.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"str__getitem_index_error.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"str__index_not_found.py","tags":["cpython"],"status":"pass","reason":""}

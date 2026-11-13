@@ -23,7 +23,6 @@ pub(crate) mod check {
     pub const HASH: u8 = 3;
     pub const INDEX: u8 = 4;
     pub const INT: u8 = 5;
-    pub const FLOAT: u8 = 6;
     pub const ITER: u8 = 7;
     /// `__index__` for `float()`: an int, converted.
     pub const INDEX_FLOAT: u8 = 8;
@@ -670,7 +669,6 @@ impl Vm {
             check::HASH => self.int_of(v).is_some(),
             // int subclasses give the int they extend (CPython warns).
             check::INDEX | check::INT | check::INDEX_FLOAT => Vm::is_intlike(self.unbx(v)),
-            check::FLOAT => v.is_float(),
             check::ANEXT | check::AENTER | check::AEXIT => Vm::is_awaitable(v) || self.has_await(v),
             check::AITER_FOR | check::AITER => self.is_async_iterator(v),
             _ => self.is_iterator(v),
@@ -700,7 +698,6 @@ impl Vm {
             check::HASH => String::from("__hash__ method should return an integer"),
             check::INDEX | check::INDEX_FLOAT => format!("__index__ returned non-int (type {tn})"),
             check::INT => format!("__int__ returned non-int (type {tn})"),
-            check::FLOAT => format!("__float__ returned non-float (type {tn})"),
             check::ANEXT => format!("'async for' received an invalid object from __anext__: {tn}"),
             check::AENTER | check::AEXIT => format!(
                 "'async with' received an object from __a{}__ that does not implement __await__: {tn}",

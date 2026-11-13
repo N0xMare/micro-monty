@@ -2136,6 +2136,7 @@ pub(crate) fn format(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             let mode = if name.is_empty() { 1 } else { 2 };
             if j >= cs.len()
                 || field.contains(['{', '[', '.'])
+                || (numeric && !name.is_empty() && name.parse::<u32>().is_err())
                 || !name.is_ascii()
                 || conv.is_some_and(|c| c != "r" && c != "s")
                 || (numeric && manual != 0 && manual != mode)

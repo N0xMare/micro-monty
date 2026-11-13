@@ -361,10 +361,23 @@ def _op_contains(c, x):
             return False
         found, v = _dlookup(c, x[0])
         return found and (v is x[1] or v == x[1])
-    for y in c:
+    it = _iter_or_none(c)
+    if it is None:
+        raise TypeError(f"argument of type '{tn}' is not a container or iterable")
+    for y in it:
         if y is x or y == x:
             return True
     return False
+
+
+def _iter_or_none(x):
+    # `iter(x)`, or None where it raises TypeError: CPython replaces that
+    # error (`PySequence_Fast`, `_PySequence_IterSearch`), and raising the
+    # new one outside an `except` leaves it no context, as theirs.
+    try:
+        return iter(x)
+    except TypeError:
+        return None
 
 
 def _op_not_contains(c, x):
@@ -1910,7 +1923,17 @@ def _TextIOWrapper_writelines(a):
 
 
 def _str_join(a):
-    return a[0].join(_list((a[1],)))
+    it = _iter_or_none(a[1])
+    if it is None:
+        raise TypeError('can only join an iterable')
+    return a[0].join(_list((it,)))
+
+
+def _bytes_join(a):
+    it = _iter_or_none(a[1])
+    if it is None:
+        raise TypeError('can only join an iterable')
+    return a[0].join(list(it))
 
 
 def _sum(a):
@@ -2455,11 +2478,38 @@ def _int_from_bytes(a, signed):
     return a[0].from_bytes(b, *a[2:], signed=False if signed is _MISSING else signed)
 
 
+def _float(a):
+    # `float(x)` of an instance whose class defines `__float__`, as
+    # CPython's `PyNumber_Float`: a result that is not a float names the
+    # class; a float subclass's gives its value (CPython warns).
+    x = a[0]
+    # The slot as CPython's `slot_nb_float` finds it: the class's own
+    # value, bound only if it is a descriptor (`__float__ = float` is
+    # called with no argument; `None` is not callable).
+    f = None
+    for k in type(x).__mro__:
+        d = getattr(k, '__dict__', None)
+        if d is not None and '__float__' in d:
+            f = d['__float__']
+            break
+    get = getattr(type(f), '__get__', None)
+    r = (f if get is None else get(f, x, type(x)))()
+    if type(r) is float:
+        return r
+    if isinstance(r, float):
+        return _bx_value(r)
+    raise TypeError(f'{type(x).__name__}.__float__ returned non-float (type {type(r).__name__})')
+
+
 def _fmt_int(s):
-    # `get_integer`: -1 unless every character is a decimal digit.
+    # `get_integer`: -1 unless every character is a decimal digit, and an
+    # error past `Py_ssize_t`.
     if not s or not s.isdecimal():
         return -1
-    return int(s)
+    v = int(s)
+    if v > 9223372036854775807:
+        raise ValueError('Too many decimal digits in format string')
+    return v
 
 
 def _fmt_build(fmt, args, kw, auto, depth):
