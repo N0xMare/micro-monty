@@ -1,0 +1,190 @@
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/6", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/7", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/8", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/9", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/10", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/11", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/12", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/13", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/14", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/15", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/16", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/17", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/18", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/19", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/20", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/21", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/22", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/23", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/24", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/25", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/26", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/27", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/28", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/29", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/30", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/31", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/32", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/33", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/34", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/35", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-mm/builtins-callbacks/36", "dropped": {"g1": "coroutine", "g2": "coroutine", "g3": "coroutine"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/17", "dropped": {"call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/18", "dropped": {"call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/19", "dropped": {"call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/20", "dropped": {"call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/21", "dropped": {"call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/22", "dropped": {"call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/23", "dropped": {"call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/24", "dropped": {"call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/25", "dropped": {"call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/26", "dropped": {"call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/27", "dropped": {"by": "stdlib collections.defaultdict", "call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/28", "dropped": {"by": "stdlib collections.defaultdict", "call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/29", "dropped": {"by": "stdlib collections.defaultdict", "call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/30", "dropped": {"by": "stdlib collections.defaultdict", "call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/31", "dropped": {"by": "stdlib collections.defaultdict", "call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/32", "dropped": {"by": "stdlib collections.defaultdict", "call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/33", "dropped": {"by": "stdlib collections.defaultdict", "call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/builtins-callbacks/34", "dropped": {"by": "stdlib collections.defaultdict", "call_re": "stdlib re.Pattern"}}
+{"cell": "phase1/grok-ptc-monty/snapshot-format/2", "dropped": {"p": "stdlib pathlib.PosixPath"}}
+{"cell": "phase1/grok-ptc-monty/snapshot-format/3", "dropped": {"p": "stdlib pathlib.PosixPath"}}
+{"cell": "phase1/grok-ptc-monty/snapshot-format/4", "dropped": {"p": "stdlib pathlib.PosixPath"}}
+{"cell": "phase1/grok-ptc-monty/snapshot-format/5", "dropped": {"p": "stdlib pathlib.PosixPath"}}
+{"cell": "phase1/grok-ptc-monty/snapshot-format/6", "dropped": {"p": "stdlib pathlib.PosixPath"}}
+{"cell": "phase1/grok-ptc-monty/snapshot-format/7", "dropped": {"p": "stdlib pathlib.PosixPath"}}
+{"cell": "phase1/grok-ptc-monty/snapshot-format/8", "dropped": {"p": "stdlib pathlib.PosixPath"}}
+{"cell": "phase1/grok-ptc-monty/snapshot-format/9", "dropped": {"p": "stdlib pathlib.PosixPath"}}
+{"cell": "phase1/grok-ptc-monty/snapshot-format/10", "dropped": {"p": "stdlib pathlib.PosixPath"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/53", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/54", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/55", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/56", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/57", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/58", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/59", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/60", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/61", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/62", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/63", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/64", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/65", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/66", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/67", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/68", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/69", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/70", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/71", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/72", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/73", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/74", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/75", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/76", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/77", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/78", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/79", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/80", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/81", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/82", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-cache/dict-review/83", "dropped": {"rng": "stdlib random.Random"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/4", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/5", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/6", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/7", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/8", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/9", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/10", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/11", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/12", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/13", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/14", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/15", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/16", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/17", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/18", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/19", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/20", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/21", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/22", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/23", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/24", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/25", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/26", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/27", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/28", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-native/builtins-callbacks/29", "dropped": {"g1": "coroutine", "g2": "coroutine"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/4", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/5", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/6", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/7", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/8", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/9", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/10", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/11", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/12", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/13", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/14", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/15", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/16", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/17", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/18", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/19", "dropped": {"by": "stdlib collections.defaultdict", "m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/20", "dropped": {"by": "stdlib collections.defaultdict", "fn_re": "stdlib re.Pattern", "m": "stdlib re.Match", "marks": "generator", "pat": "stdlib re.Pattern"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/21", "dropped": {"by": "stdlib collections.defaultdict", "fn_re": "stdlib re.Pattern", "m": "stdlib re.Match", "marks": "generator", "pat": "stdlib re.Pattern"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/22", "dropped": {"by": "stdlib collections.defaultdict", "fn_re": "stdlib re.Pattern", "m": "stdlib re.Match", "marks": "generator", "pat": "stdlib re.Pattern"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/23", "dropped": {"by": "stdlib collections.defaultdict", "fn_re": "stdlib re.Pattern", "m": "stdlib re.Match", "marks": "generator", "pat": "stdlib re.Pattern"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/24", "dropped": {"by": "stdlib collections.defaultdict", "fn_re": "stdlib re.Pattern", "m": "stdlib re.Match", "marks": "generator", "pat": "stdlib re.Pattern"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/25", "dropped": {"by": "stdlib collections.defaultdict", "fn_re": "stdlib re.Pattern", "m": "stdlib re.Match", "marks": "generator", "pat": "stdlib re.Pattern"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/26", "dropped": {"by": "stdlib collections.defaultdict", "fn_re": "stdlib re.Pattern", "m": "stdlib re.Match", "marks": "generator", "pat": "stdlib re.Pattern"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/27", "dropped": {"by": "stdlib collections.defaultdict", "fn_re": "stdlib re.Pattern", "m": "stdlib re.Match", "marks": "generator", "pat": "stdlib re.Pattern"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/28", "dropped": {"by": "stdlib collections.defaultdict", "fn_re": "stdlib re.Pattern", "m": "stdlib re.Match", "marks": "generator", "pat": "stdlib re.Pattern"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/29", "dropped": {"by": "stdlib collections.defaultdict", "fn_re": "stdlib re.Pattern", "m": "stdlib re.Match", "marks": "generator", "pat": "stdlib re.Pattern"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/30", "dropped": {"by": "stdlib collections.defaultdict", "fn_re": "stdlib re.Pattern", "m": "stdlib re.Match", "marks": "generator", "pat": "stdlib re.Pattern"}}
+{"cell": "phase2/grok-ptc-wasm/builtins-callbacks/31", "dropped": {"by": "stdlib collections.defaultdict", "fn_re": "stdlib re.Pattern", "m": "stdlib re.Match", "marks": "generator", "pat": "stdlib re.Pattern"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/11", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/12", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/13", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/14", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/15", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/16", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/17", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/18", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/19", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/20", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/21", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/22", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/23", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/24", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/25", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/26", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/27", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/28", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/29", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/30", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/31", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/32", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/33", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/34", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/35", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/36", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/37", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/38", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/39", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/40", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/41", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/42", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/43", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/44", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/45", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/46", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/47", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/48", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/49", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/50", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/51", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/52", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/53", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/54", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/55", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/56", "dropped": {"m": "stdlib re.Match"}}
+{"cell": "phase2/grok-ptc-wasm/dict-review/57", "dropped": {"m": "stdlib re.Match"}}

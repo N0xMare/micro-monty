@@ -4,6 +4,7 @@
     python3 conformance/codemode/real/gate.py            # replay, rewrite results/gate.jsonl
     python3 conformance/codemode/real/gate.py --check    # fail if any cell moved
     python3 conformance/codemode/real/gate.py --filter grok-sdk --check
+    python3 conformance/codemode/real/gate.py --carry --base v0.0.1 --check   # carry.py's gate
 
 `traces.tar.xz` holds the 160 recorded sessions of Phase 1 and Phase 2 as
 the tracer wrote them (README "Regression gate"). Each session is replayed
@@ -26,6 +27,12 @@ expected result of a cell is the recording with that record's fields laid
 over it; `--check` fails on any difference and writes nothing. Without
 `--check` the file is rewritten, keeping each `why` whose cell still
 differs the same way; commit it to record an intended change.
+
+`--carry` replays the py-ptc sessions on a worker built from `--base` and
+carries each cell's starting state into a fresh worker of this build
+(`carry.py`, README "Idle state and carrying it across builds"); it fails
+if a carried cell differs from what results/gate.jsonl expects, or the
+names left behind differ from results/carry.jsonl.
 """
 
 from __future__ import annotations
@@ -44,6 +51,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent.parent
+sys.path.insert(0, str(HERE))
+
+import carry  # noqa: E402
 ARCHIVE = HERE / 'traces.tar.xz'
 EXPECTED = HERE / 'results' / 'gate.jsonl'
 FIELDS = ('calls', 'batches', 'deliveries', 'output', 'outcome')
@@ -262,14 +272,192 @@ def show(record: dict, expected: dict, recorded: dict):
             print(f'    now      {json.dumps(new)[:400]}')
 
 
+# --------------------------------------------------------------------------
+# --carry: the state carried across builds at every cell boundary (carry.py)
+
+CARRIED = HERE / 'results' / 'carry.jsonl'
+
+
+def build_base(rev: str) -> str:
+    """The replay worker built from `rev`, in a worktree under target/carry/."""
+    sha = subprocess.run(['git', 'rev-parse', f'{rev}^{{commit}}'], cwd=ROOT, check=True,
+                         capture_output=True, text=True).stdout.strip()
+    tree = ROOT / 'target' / 'carry' / sha[:12]
+    if not tree.exists():
+        subprocess.run(['git', 'worktree', 'add', '--detach', '--quiet', str(tree), sha], cwd=ROOT,
+                       check=True)
+    target = ROOT / 'target' / 'carry' / 'target'
+    subprocess.run(['cargo', 'build', '--release', '--locked', '--quiet', '-p', 'mm-cell-worker',
+                    '--example', 'replay_worker', '--target-dir', str(target)], cwd=tree, check=True)
+    return str(target / 'release' / 'examples' / 'replay_worker')
+
+
+def run_cells(worker, sources, cell, bootstrap=None):
+    """Runs helper cells with ids from `cell`; their printed output, or why one failed."""
+    output = ''
+    for k, source in enumerate(sources):
+        boot = bootstrap if k == 0 else None
+        frame = {'frame': 'start_cell', 'cell': cell + k, 'source': source,
+                 'prelude': {'engine': 'monty', 'bootstrap': boot}, 'window': None}
+        seen, diverged = replay_cell(worker, frame, {'answers': []})
+        if diverged or seen['outcome'].get('outcome') != 'completed':
+            return None, f'helper cell {k + 1}: {diverged or seen["outcome"]}'
+        output += seen['output']
+    return output, None
+
+
+def export(worker, tools, cell):
+    """The records and dropped names of the old worker's globals (several cells if large)."""
+    records, start = [], 0
+    while True:
+        output, failed = run_cells(worker, [carry.export_source(tools, start)], cell + start)
+        if failed:
+            return None, None, f'export: {failed}'
+        part, end = carry.parse_export(output)
+        if end is None:
+            return None, None, 'export: no end line'
+        records += part
+        start, total, dropped = end
+        if start >= total:
+            return records, dropped, None
+
+
+def carry_session(old_path, new_path, session, expected):
+    """Replays a session on the old build; before each cell but the first, carries its state
+    into a fresh worker of the new build and runs the cell there."""
+    sid, clock, lines = session
+    script, cells = recorded_cells(lines)
+    bootstrap, tools = carry.bootstrap_of(script)
+    configure = next(f for f in script if f['frame'] == 'configure')
+    sources = carry.Sources()
+    old = Worker(old_path, clock)
+    dropped_by_cell, problems, carried, first = [], [], 0, True
+    try:
+        if (old.recv() or {}).get('frame') != 'hello':
+            raise SystemExit(f'{sid}: no hello from {old_path}')
+        for frame in script:
+            if frame['frame'] != 'start_cell':
+                old.send(frame)
+                if frame['frame'] == 'reset':
+                    sources = carry.Sources()
+                continue
+            cell = frame['cell']
+            key = f'{sid}/{cell}'
+            want = expected.get(key, {})
+            if 'skipped' in want:
+                break
+            recorded = cells[cell]
+            if not first:
+                records, dropped, failed = export(old, tools, 1_000_000 + 1000 * cell)
+                if failed:
+                    problems.append(f'{key}: {failed}')
+                    break
+                records, statements, dropped = carry.plan(records, dropped, sources, tools)
+                names = [r[1] for r in records if r[0] == '=']
+                new = Worker(new_path, clock)
+                try:
+                    if (new.recv() or {}).get('frame') != 'hello':
+                        raise SystemExit(f'{sid}: no hello from {new_path}')
+                    new.send(configure)
+                    helpers = [f'{carry.PREFIX}_parts = []\n',
+                               *carry.import_cells(records, statements, names)]
+                    own = frame['prelude'].get('bootstrap')
+                    _, failed = run_cells(new, helpers, 2_000_000 + 1000 * cell,
+                                          None if own else bootstrap)
+                    if failed:
+                        problems.append(f'{key}: import: {failed}')
+                        break
+                    seen, diverged = replay_cell(new, frame, recorded)
+                finally:
+                    new.process.kill()
+                    new.process.wait()
+                carried += 1
+                if dropped:
+                    dropped_by_cell.append({'cell': key, 'dropped': dict(sorted(dropped.items()))})
+                moved = [f for f in FIELDS if seen[f] != want.get(f, recorded[f])]
+                if diverged != want.get('diverged'):
+                    moved.append('diverged')
+                if moved:
+                    problems.append(f'{key}: carried from the old build, {", ".join(moved)} '
+                                    'differ from the straight replay')
+            first = False
+            seen, diverged = replay_cell(old, frame, recorded)
+            sources.add(frame['source'])
+            if diverged:
+                if diverged != want.get('diverged'):
+                    problems.append(f'{key}: the old build diverged: {diverged}')
+                break
+        old.process.kill()
+        old.process.wait(timeout=TIMEOUT)
+    finally:
+        if old.process.poll() is None:
+            old.process.kill()
+    return sid, carried, dropped_by_cell, problems
+
+
+def carry_main(args, began) -> int:
+    new_path = args.worker or build()
+    old_path = build_base(args.base) if args.base else new_path
+    expected = {}
+    for line in EXPECTED.read_text().splitlines():
+        record = json.loads(line)
+        expected[record['cell']] = record
+    todo = sorted((s for s in sessions(args.filter) if '-ptc-' in s[0]), key=busy, reverse=True)
+    with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
+        results = sorted(pool.map(lambda s: carry_session(old_path, new_path, s, expected), todo))
+    records = [r for _, _, rs, _ in results for r in rs]
+    problems = [p for _, _, _, ps in results for p in ps]
+    carried = sum(c for _, c, _, _ in results)
+    committed = [json.loads(line) for line in CARRIED.read_text().splitlines()] \
+        if CARRIED.exists() else []
+    if args.filter:
+        committed = [r for r in committed if args.filter in r['cell']]
+    old_by, new_by = {r['cell']: r for r in committed}, {r['cell']: r for r in records}
+    changed = sorted(c for c in old_by.keys() | new_by.keys() if old_by.get(c) != new_by.get(c))
+    for problem in problems:
+        print(problem)
+    for cell in changed:
+        print(f'{cell}: dropped {json.dumps(old_by.get(cell, {}).get("dropped"))} -> '
+              f'{json.dumps(new_by.get(cell, {}).get("dropped"))}')
+    names = sum(len(r['dropped']) for r in records)
+    print(f'carry ({args.base or "this build"} -> this build): {carried} cells in {len(results)} '
+          f'py-ptc sessions run on carried state, {time.monotonic() - began:.1f} s: '
+          f'{len(problems)} differ from the straight replay; {len(records)} boundaries left '
+          f'{names} names behind, {len(changed)} changed since results/carry.jsonl')
+    if problems:
+        print('FAIL: a cell run on carried state differs from the straight replay')
+        return 1
+    if args.check:
+        if changed:
+            print('FAIL: the names left behind differ from results/carry.jsonl; rerun without '
+                  '--check and commit it if the change is intended')
+            return 1
+        return 0
+    if args.filter:
+        print('not written: --filter replays a subset')
+        return 0
+    with CARRIED.open('w') as out:
+        for record in records:
+            out.write(json.dumps(record, ensure_ascii=False) + '\n')
+    print(f'wrote {CARRIED.relative_to(ROOT)}')
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--check', action='store_true', help='write nothing; fail if any cell moved')
     ap.add_argument('--filter', help='only sessions whose id contains this')
     ap.add_argument('--jobs', type=int, default=os.cpu_count() or 4)
     ap.add_argument('--worker', help='a replay worker to use instead of building one')
+    ap.add_argument('--carry', action='store_true',
+                    help='py-ptc sessions only: carry the state into a new worker before each cell')
+    ap.add_argument('--base', help='with --carry: the build the state is carried from (a git rev)')
     args = ap.parse_args()
     began = time.monotonic()
+    if args.base and not args.carry:
+        ap.error('--base needs --carry')
+    if args.carry:
+        return carry_main(args, began)
     path = args.worker or build()
     expected = {}
     if EXPECTED.exists():

@@ -59,6 +59,8 @@ host1 (AMD Ryzen, 16 threads, Linux 7.0) unless labelled; the per-arm tables are
 | `traces-js-vs-python.tar.xz` | the raw traces, `run.json` and answers of the JS-vs-Python study (32 sessions); not replayed by `gate.py` |
 | `traces-js-vs-python-host1.tar.xz` | the same for its second sample on host1 (32 sessions), redacted; not replayed by `gate.py` |
 | `gate.py`, `results/gate.jsonl` | the regression gate: every recorded cell replayed on current mm ("Regression gate") |
+| `idle_state.py`, `results/idle-state.md` | what globals hold between cells, recorded and synthetic ("Idle state and carrying it across builds") |
+| `carry.py`, `results/carry.jsonl` | the host-side carry of an idle session to another build, and the names it leaves behind (same section) |
 
 `cells.jsonl` has one record per cell: arm, prompt, cell number, `source`, `imports`,
 `from_imports`, `host_calls` (tool name per call), `batches` (calls per batch), outcome and
@@ -128,3 +130,46 @@ cell that differs from that file; without `--check` the file is rewritten, keepi
 cell still differs the same way. Commit it to record an intended change, as with
 `conformance/results/`. A run takes 8.6 s on 16 cores and 16.7 s on one (the 16-core gVisor sandbox, [M]), most of it
 one 4 s `dict-review` cell.
+
+## Idle state and carrying it across builds
+
+```sh
+python3.14 conformance/codemode/real/idle_state.py [--check]                 # results/idle-state.md
+python3.14 conformance/codemode/real/gate.py --carry --base v0.0.1 --check   # not in `cargo xtask check`
+```
+
+A snapshot restores only on the build that wrote it, so a host that upgrades drains its sessions
+(docs/user-guide.md). Between cells it can carry a session instead, with ordinary cells and no engine
+change. These two scripts measure how much that covers and gate a reference implementation.
+
+**The census** (`idle_state.py`, UPG-1) replays every py-ptc session as `gate.py` does and runs a
+probe cell after each recorded cell that classifies everything reachable from `globals()`; it also
+runs the probe after each synthetic solution (`../solutions/`). On the 80 recorded py-ptc sessions
+(1,216 states) [M]: 36 hold nothing, 983 only plain data, imports and top-level defs, 125 also stdlib
+instances (`re.Match`, `defaultdict`, `re.Pattern`, `random.Random`, `PosixPath`) and 72 a
+coroutine or generator; none holds a user class or instance, closure, lambda or task, and every
+instance and coroutine state is Grok's. The synthetic solutions leave more: of the 1,732 that reach
+the probe, 49 (2.8%) end with a user class, instance or lambda in their globals and 581 with a stdlib
+instance (`Counter`, `re.Match`, `datetime`, ...). py-sdk sessions have no state between cells:
+plak resets them before each one. The probes move no recorded cell.
+
+**The carry** (`carry.py`, UPG-2) is the reference implementation. Before a cell, an export cell
+on the old build prints the globals as a tagged, id-numbered value graph (shared and cyclic
+containers, nan and inf as `float.hex`, big ints, bytes, ranges), in lines of at most 32 KiB and
+cells of at most 900 KB, with modules by name and functions and classes by the statement that
+bound them; it reports each global it could not carry and why. The host starts a worker of the
+new build, runs the bootstrap, sends the records as literals, re-runs the binding statements
+(`import`, `from ... import`, `def`, `class`, the last one of each name in the cells it sent) and
+rebuilds the values. Lambdas, closures, user instances, coroutines, generators, tasks and stdlib
+instances are not carried: a host drains such a session, or, as the gate does, drops the names.
+
+**The gate** (`gate.py --carry [--base REV]`) replays each py-ptc session on a worker built from
+`REV` (in a worktree under `target/carry/`; default: this build) and, before every cell but the
+first, carries its state into a fresh worker of this build and runs the recorded cell there. Every
+such cell must give what `results/gate.jsonl` expects of the straight replay, and the names left
+behind must equal `results/carry.jsonl` (rerun without `--check` and commit it to record a change).
+With `--base v0.0.1` [M]: 1,136 of 1,136 cells in 80 sessions match the straight replay, carried
+from v0.0.1's build id to this one at every boundary; 190 boundaries in 7 sessions leave 15 names
+behind (coroutines and generators, `re.Match`, `re.Pattern`, `defaultdict`, `random.Random`,
+`PosixPath`), which no later cell reads. Control: carrying nothing, 74 cells differ. About 20 s on
+16 cores after the base build (several minutes cold).

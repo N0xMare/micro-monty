@@ -131,7 +131,11 @@ to `target/check/logs/<stage>.log`.
   why, with the measurement); never edit one.
 - Results that move on purpose are rerun and committed:
   `conformance/results/` (`cargo xtask conformance`), and
-  `conformance/codemode/real/results/gate.jsonl` with a `why`.
+  `conformance/codemode/real/results/gate.jsonl` with a `why`. The
+  idle-state census and the cross-build carry gate are not in `check`:
+  `python3.14 conformance/codemode/real/idle_state.py --check` and
+  `python3.14 conformance/codemode/real/gate.py --carry --base v0.0.1 --check`
+  (`results/idle-state.md`, `results/carry.jsonl`; README there).
 - Commits are authored and committed by
   `n0x <54751288+N0xMare@users.noreply.github.com>`, with no Amp-Thread-ID
   or Co-authored-by lines.
