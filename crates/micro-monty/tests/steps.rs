@@ -21,11 +21,13 @@
 //! A row is a site of guest-controlled work at about the largest size the
 //! default 256 MiB allows. `Open` rows are known to exceed the limit and
 //! are only reported, until their fix makes them `Bounded`; a `Bounded` row
-//! over the limit fails the test.
+//! over the limit runs again after the other rows ([`retry`]), and fails
+//! the test, with its index, setup and program, if no run is under it.
 
 #![allow(clippy::expect_used, clippy::panic, reason = "tests")]
 
 use micro_monty::{Engine, EngineConfig, ParkReason, Progress, Resume, Session};
+use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 /// The longest native step allowed on the reference machine: mm-wasm runs
@@ -2122,6 +2124,116 @@ const SITES: &[(Row, &str, &str, usize)] = &[
     ),
 ];
 
+/// How many more times a bounded row over the limit runs. This host has
+/// slow phases of 1.6 to 2 times that outlast three runs taken back to
+/// back [M, 300 runs of one row]: the least of 3 at once failed 5 of 100
+/// at 2.0 times headroom and 22 of 100 at 1.8, the least of 6 none of 50
+/// at 2.0, the least of 9 none of 33 at 1.8.
+const RETRIES: usize = 6;
+
+/// A timed row: its index in its table, its setup and program, and its
+/// verdict so far: the run with the least ratio of its longest step to the
+/// limit it was judged against, and every retry as (step, limit).
+struct Timed<'a> {
+    row: Row,
+    index: usize,
+    setup: &'a str,
+    src: String,
+    shown: String,
+    worst: Duration,
+    parks: usize,
+    limit: Duration,
+    tries: Vec<(Duration, Duration)>,
+}
+
+impl<'a> Timed<'a> {
+    fn new(
+        engine: &Engine,
+        (index, row, setup, src, shown): (usize, Row, &'a str, String, String),
+    ) -> Self {
+        let (worst, parks) = gaps(engine, setup, &src);
+        Timed {
+            row,
+            index,
+            setup,
+            src,
+            shown,
+            worst,
+            parks,
+            limit: Duration::ZERO,
+            tries: Vec::new(),
+        }
+    }
+
+    fn over(&self) -> bool {
+        self.row != Row::Open && self.worst > self.limit
+    }
+}
+
+/// Runs each bounded row over its limit again, once a round for up to
+/// [`RETRIES`] rounds, after every row has run, so the retries spread over
+/// time instead of landing in one slow phase. A probe ([`speed`]) runs
+/// between every two retries; each retry is judged against the limit at
+/// the faster of the probes on either side of it, as the first runs are
+/// against the faster of the probes before and after them all (a load
+/// spike can only slow a probe). A row passes if any run is under its
+/// limit.
+fn retry(engine: &Engine, runs: &mut [Timed<'_>]) {
+    let mut probe = None;
+    for _ in 0..RETRIES {
+        if !runs.iter().any(Timed::over) {
+            return;
+        }
+        for run in runs.iter_mut().filter(|run| run.over()) {
+            let before = probe.unwrap_or_else(|| speed(engine).0);
+            let (worst, parks) = gaps(engine, run.setup, &run.src);
+            let after = speed(engine).0;
+            probe = Some(after);
+            let limit = LIMIT.mul_f64(before.min(after).clamp(0.5, 2.0));
+            run.tries.push((worst, limit));
+            if worst.as_secs_f64() / limit.as_secs_f64()
+                < run.worst.as_secs_f64() / run.limit.as_secs_f64()
+            {
+                (run.worst, run.parks, run.limit) = (worst, parks, limit);
+            }
+        }
+    }
+}
+
+/// Prints each row's verdict and fails on a bounded row over its limit,
+/// naming its index, setup and program, and every run it took.
+fn report(runs: &[Timed<'_>]) {
+    let mut over = Vec::new();
+    for run in runs {
+        let tag = match (run.row, run.worst <= run.limit) {
+            (Row::Bounded, true) => "ok",
+            (Row::Bounded, false) => "OVER",
+            (Row::Open, true) => "open (under the limit now: mark it Bounded)",
+            (Row::Open, false) => "open",
+        };
+        let (index, worst, parks, shown) = (run.index, run.worst, run.parks, &run.shown);
+        let mut tries = String::new();
+        for (step, limit) in &run.tries {
+            let _ = write!(tries, " {step:.1?}/{limit:.1?}");
+        }
+        if !tries.is_empty() {
+            tries = format!("  retries (step/limit):{tries}");
+        }
+        println!("steps: #{index:<3} {worst:>9.1?} {parks:>7} parks  {tag:<5} {shown}{tries}");
+        if run.over() {
+            over.push(format!(
+                "row #{index}: {worst:?} against {:?}{tries}\nsetup:\n{}\nprogram:\n{}",
+                run.limit, run.setup, run.src
+            ));
+        }
+    }
+    if !over.is_empty() {
+        let over = over.join("\n\n");
+        println!("steps: rows over the limit:\n{over}");
+        panic!("native steps over the limit:\n{over}");
+    }
+}
+
 #[test]
 #[cfg_attr(debug_assertions, ignore = "release only: cargo xtask check runs it")]
 fn no_native_step_runs_longer_than_the_limit() {
@@ -2130,35 +2242,17 @@ fn no_native_step_runs_longer_than_the_limit() {
     // The probes run before and after the rows and the faster counts: a
     // load spike can only slow a probe, which would loosen the limit.
     let before = speed(&engine);
-    let mut runs = Vec::new();
-    for &(row, setup, op, times) in SITES {
-        let src = format!("{op}\n").repeat(times);
-        let (worst, parks) = gaps(&engine, setup, &src);
-        runs.push((row, op, times, worst, parks));
-    }
+    let mut runs: Vec<_> = SITES
+        .iter()
+        .enumerate()
+        .map(|(index, &(row, setup, op, times))| {
+            let src = format!("{op}\n").repeat(times);
+            Timed::new(&engine, (index, row, setup, src, shown(op, times)))
+        })
+        .collect();
     let after = speed(&engine);
     let (ratio, fresh, scan, loads) = if after.0 < before.0 { after } else { before };
     let limit = LIMIT.mul_f64(ratio.clamp(0.5, 2.0));
-    // A bounded row over the limit runs twice more and the least counts,
-    // as the probes' least does: a load spike can only lengthen a step.
-    // Judged against this machine's limit, not the reference's 50 ms, so
-    // a faster machine retries too.
-    for (run, &(_, setup, _, _)) in runs.iter_mut().zip(SITES) {
-        let (row, op, times, worst, parks) = run;
-        if *row == Row::Open || *worst <= limit {
-            continue;
-        }
-        let src = format!("{op}\n").repeat(*times);
-        for _ in 0..2 {
-            let (w, p) = gaps(&engine, setup, &src);
-            if w < *worst {
-                (*worst, *parks) = (w, p);
-            }
-            if *worst <= limit {
-                break;
-            }
-        }
-    }
     println!(
         "steps: limit {limit:.1?}: this machine runs at {ratio:.2} of the reference's time \
          (fresh 64 MiB {fresh:.1?}, scan {scan:.1?}, loads {loads:.1?}; before {:.2}, after {:.2})",
@@ -2168,21 +2262,11 @@ fn no_native_step_runs_longer_than_the_limit() {
         ratio <= 2.0,
         "this machine takes {ratio:.2} times the reference's time; the step oracle cannot judge it"
     );
-    let mut over = Vec::new();
-    for (row, op, times, worst, parks) in runs {
-        let tag = match (row, worst <= limit) {
-            (Row::Bounded, true) => "ok",
-            (Row::Bounded, false) => "OVER",
-            (Row::Open, true) => "open (under the limit now: mark it Bounded)",
-            (Row::Open, false) => "open",
-        };
-        let first = shown(op, times);
-        println!("steps: {worst:>9.1?} {parks:>7} parks  {tag:<5} {first}");
-        if row == Row::Bounded && worst > limit {
-            over.push(format!("{first}: {worst:?}"));
-        }
+    for run in &mut runs {
+        run.limit = limit;
     }
-    assert!(over.is_empty(), "native steps over {limit:?}: {over:#?}");
+    retry(&engine, &mut runs);
+    report(&runs);
 }
 
 /// The fuel half of [`no_native_step_runs_longer_than_the_limit`]: on the
@@ -2194,12 +2278,12 @@ fn no_native_step_runs_longer_than_the_limit() {
 fn no_slice_charges_more_than_one_step_past_its_fuel() {
     let engine = Engine::new(EngineConfig::default());
     let mut over = Vec::new();
-    for &(row, setup, op, times) in SITES {
+    for (index, &(row, setup, op, times)) in SITES.iter().enumerate() {
         let drawn = overdraft(&engine, setup, &format!("{op}\n").repeat(times));
         let first = shown(op, times);
-        println!("steps: {drawn:>10} past a slice  {first}");
+        println!("steps: #{index:<3} {drawn:>10} past a slice  {first}");
         if row == Row::Bounded && drawn > OVERDRAFT {
-            over.push(format!("{first}: {drawn} units past a slice"));
+            over.push(format!("row #{index}, {first}: {drawn} units past a slice"));
         }
     }
     assert!(
@@ -2358,31 +2442,18 @@ fn no_opt_in_module_step_runs_longer_than_the_limit() {
     raise_mmap_threshold();
     let engine = Engine::new(EngineConfig::default());
     let limit = LIMIT.mul_f64(speed(&engine).0.clamp(0.5, 2.0));
-    let mut over = Vec::new();
-    for &(row, setup, op) in OPT_IN {
-        // The least of three runs, for a loaded machine.
-        let (mut worst, mut parks) = gaps(&engine, setup, op);
-        for _ in 0..2 {
-            if worst <= limit || row == Row::Open {
-                break;
-            }
-            let (w, p) = gaps(&engine, setup, op);
-            if w < worst {
-                (worst, parks) = (w, p);
-            }
-        }
-        let tag = match (row, worst <= limit) {
-            (Row::Bounded, true) => "ok",
-            (Row::Bounded, false) => "OVER",
-            (Row::Open, true) => "open (under the limit now: mark it Bounded)",
-            (Row::Open, false) => "open",
-        };
-        println!("steps: {worst:>9.1?} {parks:>7} parks  {tag:<5} {op}");
-        if row == Row::Bounded && worst > limit {
-            over.push(format!("{op}: {worst:?}"));
-        }
+    let mut runs: Vec<_> = OPT_IN
+        .iter()
+        .enumerate()
+        .map(|(index, &(row, setup, op))| {
+            Timed::new(&engine, (index, row, setup, op.to_owned(), shown(op, 1)))
+        })
+        .collect();
+    for run in &mut runs {
+        run.limit = limit;
     }
-    assert!(over.is_empty(), "native steps over {limit:?}: {over:#?}");
+    retry(&engine, &mut runs);
+    report(&runs);
 }
 
 /// [`no_slice_charges_more_than_one_step_past_its_fuel`] on the opt-in
@@ -2393,11 +2464,11 @@ fn no_opt_in_module_step_runs_longer_than_the_limit() {
 fn no_opt_in_module_slice_charges_more_than_one_step_past_its_fuel() {
     let engine = Engine::new(EngineConfig::default());
     let mut over = Vec::new();
-    for &(row, setup, op) in OPT_IN {
+    for (index, &(row, setup, op)) in OPT_IN.iter().enumerate() {
         let drawn = overdraft(&engine, setup, op);
-        println!("steps: {drawn:>10} past a slice  {op}");
+        println!("steps: #{index:<3} {drawn:>10} past a slice  {op}");
         if row == Row::Bounded && drawn > OVERDRAFT {
-            over.push(format!("{op}: {drawn} units past a slice"));
+            over.push(format!("row #{index}, {op}: {drawn} units past a slice"));
         }
     }
     assert!(
