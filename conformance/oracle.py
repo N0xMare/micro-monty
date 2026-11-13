@@ -871,6 +871,10 @@ def run_mm_case(name, code, expectation, header, mm, timeout):
 # -- Durability (`--durability N`) ----------------------------------------------
 
 
+# `SnapshotError::TooLarge`, as `mm resume` reports it.
+CROSS_TOO_LARGE = 'the snapshot needs more memory than allowed'
+
+
 def mm_json_line(command, cwd, timeout, zone=None):
     """Runs one mm process; returns its last stdout line parsed, or raises MmAbnormal."""
     proc = run_limited(command, cwd, timeout, zone)
@@ -981,7 +985,17 @@ def run_durability_case(path, mm, every, max_parks, timeout, alternate=None):
                 command = wasm_command(alternate[0], alternate[1], scratch, args, zone)
             else:
                 command = [mm, *args]
-            line = mm_json_line(command, scratch, timeout, zone)
+            try:
+                line = mm_json_line(command, scratch, timeout, zone)
+            except MmAbnormal as abnormal:
+                # The targets charge different bytes for the same state
+                # (step 4), so a park near the memory limit may not fit on
+                # the other one: the chain ends there, a difference in every
+                # column that only an entry allows.
+                if not (alternate and parks and CROSS_TOO_LARGE in abnormal.detail):
+                    raise
+                line = {'stdout': parks[-1].get('stdout'), 'error': CROSS_TOO_LARGE}
+                break
             if 'park' not in line:
                 break
             parks.append(line)

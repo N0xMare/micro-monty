@@ -43,8 +43,12 @@
 #     snapshot is lost too (step 6);
 #   char cache: the char-position cache is cleared by every collection and
 #     absent from the image (step 3);
-#   accounting: bytes charged outside the arena follow `Vec` capacities and
-#     the target's word size (`wasm` has no parks; step 4).
+#   accounting: bytes charged outside the arena, the VM's vectors among
+#     them, follow `Vec` capacities and the target's word size (`wasm` has
+#     no parks; step 4). A restore charges only what the image holds, so it
+#     sheds the capacity a peak left (`restore-vs-snapshot`, own 534-536),
+#     and a park near the limit may not fit on the target that charges
+#     more: the `cross` chain then ends there, a `report` difference.
 01_args_defaults.py	cross	digest	accounting across targets and the snapshot's collection (steps 4, 5)
 01_args_defaults.py	restore	digest	snapshot collection: the snapshot collects in full and drops caches (step 5)
 01_args_defaults.py	snapshot	digest	snapshot collection: the snapshot collects in full and drops caches (step 5)
@@ -1452,6 +1456,27 @@
 533_snapshot_sweeps_as_restore.py	snapshot	fuel,digest	snapshot collection, large heap: a lazy sweep or a mark in flight at the snapshot (step 6)
 533_snapshot_sweeps_as_restore.py	wasm-parks	digest	accounting: the final state follows the target (step 4); parks move collections (step 2)
 533_snapshot_sweeps_as_restore.py	wasm-snapshot	fuel,digest	accounting across targets and the snapshot's collection, large heap (steps 4, 6)
+534_stack_peak_then_fill.py	cross	fuel,digest	accounting across targets and the snapshot's collection (steps 4, 5)
+534_stack_peak_then_fill.py	restore	fuel,digest	VM vector capacity and the snapshot's collection: a restore charges what the image holds (steps 4, 5)
+534_stack_peak_then_fill.py	restore-vs-snapshot	fuel,digest	VM vector capacity: a restore charges what the image holds, not the capacity a peak left (step 4)
+534_stack_peak_then_fill.py	snapshot	fuel,digest	snapshot collection: the snapshot collects in full and drops caches (step 5)
+534_stack_peak_then_fill.py	wasm-snapshot	fuel,digest	accounting across targets and the snapshot's collection (steps 4, 5)
+535_task_peak_then_fill.py	cross	report,fuel,digest	accounting across targets: a park near the limit does not fit on the target that charges more (steps 4, 5)
+535_task_peak_then_fill.py	parks	digest	collection points: a park moves where a collection starts (step 2)
+535_task_peak_then_fill.py	restore	fuel,digest	VM vector capacity and the snapshot's collection: a restore charges what the image holds (steps 4, 5)
+535_task_peak_then_fill.py	restore-vs-snapshot	fuel,digest	VM vector capacity: a restore charges what the image holds, not the capacity a peak left (step 4)
+535_task_peak_then_fill.py	snapshot	fuel,digest	snapshot collection: the snapshot collects in full and drops caches (step 5)
+535_task_peak_then_fill.py	wasm	fuel,digest	accounting: the final state follows the target (step 4)
+535_task_peak_then_fill.py	wasm-parks	fuel,digest	accounting: the final state follows the target (step 4); parks move collections (step 2)
+535_task_peak_then_fill.py	wasm-snapshot	fuel,digest	accounting across targets and the snapshot's collection (steps 4, 5)
+536_signature_peak_then_fill.py	cross	report,fuel,digest	accounting across targets: a park near the limit does not fit on the target that charges more (steps 4, 5)
+536_signature_peak_then_fill.py	parks	fuel,digest	collection points: a park moves where a collection starts (step 2)
+536_signature_peak_then_fill.py	restore	fuel,digest	VM vector capacity and the snapshot's collection: a restore charges what the image holds (steps 4, 5)
+536_signature_peak_then_fill.py	restore-vs-snapshot	digest	VM vector capacity: a restore charges what the image holds, not the capacity a peak left (step 4)
+536_signature_peak_then_fill.py	snapshot	fuel,digest	snapshot collection: the snapshot collects in full and drops caches (step 5)
+536_signature_peak_then_fill.py	wasm	fuel,digest	accounting: the final state follows the target (step 4)
+536_signature_peak_then_fill.py	wasm-parks	fuel,digest	accounting: the final state follows the target (step 4); parks move collections (step 2)
+536_signature_peak_then_fill.py	wasm-snapshot	fuel,digest	accounting across targets and the snapshot's collection (steps 4, 5)
 53_scoping_more.py	cross	digest	accounting across targets and the snapshot's collection (steps 4, 5)
 53_scoping_more.py	restore	digest	snapshot collection: the snapshot collects in full and drops caches (step 5)
 53_scoping_more.py	snapshot	digest	snapshot collection: the snapshot collects in full and drops caches (step 5)
