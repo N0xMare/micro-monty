@@ -1489,15 +1489,27 @@ timer deadlines.
   limit live [M]). The failing operation is charged for the collection
   instead, at once: a unit per 64 bytes of the memory limit, the most one
   collection marks, capped at `RETRY_CHARGE` (2^20 units;
-  `Vm::collect_for_retry`). The charge is a constant of the session, so it
-  does not depend on how the run is sliced or where snapshots fall (a
-  charge by the live bytes the collection left differed by 4 units after
-  a restore [M]), and a guest that catches `MemoryError` in a loop pays
-  for each collection in fuel. A chunked set or dict operation whose new
-  table does not fit, at its first step or a later one, leaves the table
-  for its next step, which waits for the same collection, charged the same
-  way, and allocates again; a second failure raises (`Vm::oom_defer`). Its
-  work so far is kept. The retried `CALL`'s fuel is
+  `Vm::collect_for_retry`), so a guest that catches `MemoryError` in a
+  loop pays for each collection in fuel. The charge per collection is a
+  constant of the session (a charge by the live bytes the collection left
+  differed by 4 units after a restore [M]); how many collections a run
+  asks for still moves with snapshots, whose collection can leave a retry
+  nothing to wait for (-4.2M to +5.0M units [M, reviewer]), until
+  snapshots stop collecting. A collection is charged once: a retry while
+  one is asked for and not ended pays nothing more. A result of 64 KiB or
+  more that asks for a collection (`Vm::collect_for_result`) with less
+  than 1/64 of the limit allocated since the engine's own last one tops
+  its result's charge up to the same amount, only for the request that
+  starts the wait: near the limit a loop of such results ran a full
+  collection each for 1,094 units [M, reviewer], and a top-up per result
+  charged one `split` into 61 parts 32.6 million units [M, reviewer]. A
+  chunked set or dict operation whose new table does not fit, at its
+  first step or a later one, leaves the table for its next step, which
+  waits for the same collection, charged the same way, and allocates
+  again; a second failure raises (`Vm::oom_defer`). That the step has
+  waited is in its own state, so in the image: kept in the VM, it was
+  lost on a restore, and a chain restored at every park deferred for ever
+  [M, reviewer]. Its work so far is kept. The retried `CALL`'s fuel is
   charged again. An instruction whose native raises `MemoryError` straight
   back to the dispatch loop retries the same way (`Vm::oom_retry_op`): a
   binary operator (`Vm::op_binop`) unless it may have changed its left
@@ -1520,7 +1532,10 @@ timer deadlines.
   slices end, and whether a later instruction runs again does not depend
   on the slices. The hooks sit outside the dispatch loop's arms
   (`Vm::op_binop`, `Vm::op_setitem`, `Vm::oom_retry_fault`), so its code is
-  unchanged.
+  unchanged. A size the heap refuses before the native allocates
+  (`Heap::would_fit`, `list(range(n))`) is retried as a block that did not
+  fit is. A refusal no retry took dies with its `MemoryError`
+  (`Vm::unwind`), so it never reaches a later request or a park.
 - **Large blocks that grow.** A byte block written over several steps
   (`json.dumps`, §5) that grows by moving to a new block holds both blocks
   until the move ends; the old one is then garbage, and a collection is

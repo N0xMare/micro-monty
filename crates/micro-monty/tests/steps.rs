@@ -513,6 +513,19 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "xs = s.splitlines()",
         1,
     ),
+    // Near the limit (6 MiB free), each of 61 parts of 70 KB asks for a
+    // collection (`Vm::collect_for_result`), and each was topped up to the
+    // retry's charge: one slice charged 32.6 million units past its 1,000
+    // [M, reviewer]. Charged once per collection: 1.18 million [M].
+    (
+        Row::Bounded,
+        "import gc\nbig = ('a' * 69999 + ',') * 60\npad = []\nmid = []\nsmall = []\n\
+         for xs, n in ((pad, 1 << 20), (mid, 70001), (small, 2000)):\n    try:\n        \
+         while True:\n            xs.append(bytes(n))\n    except MemoryError:\n        pass\n\
+         del pad[-6:]\ngc.collect()",
+        "parts = big.split(',')",
+        1,
+    ),
     (Row::Bounded, "s = 'é' * 33_000_000", "t = s.upper()", 1),
     (Row::Bounded, "s = 'a' * 60_000_000", "t = s.swapcase()", 1),
     (Row::Bounded, "s = 'Σa' * 10_000_000", "t = s.lower()", 1),

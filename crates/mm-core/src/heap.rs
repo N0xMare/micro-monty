@@ -1067,6 +1067,13 @@ impl Heap {
         Error::OutOfMemory
     }
 
+    /// Whether a request was refused for room since the last
+    /// [`Heap::take_refused`], without taking it.
+    #[must_use]
+    pub fn refusal_pending(&self) -> bool {
+        self.refused.load(Ordering::Relaxed) != 0
+    }
+
     /// The bytes of the last request refused for room since the last call
     /// (0: none), so a caller can tell a refusal a collection might help
     /// (a request no larger than the limit) from one it cannot (larger, or

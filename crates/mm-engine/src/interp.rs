@@ -473,6 +473,18 @@ impl Vm {
         self.partial = None;
     }
 
+    /// Drops the refusal behind a `MemoryError` that no retry took (a
+    /// retry's second failure, an operation not retried; `would_fit`
+    /// raises a new one, not `memory_error`): else a later request past
+    /// the limit read it, collected and paid, except after a restore,
+    /// which starts without it [M, reviewer]. Out of line, as
+    /// `drop_partial`.
+    #[cold]
+    #[inline(never)]
+    fn drop_refusal(&mut self) {
+        self.heap.take_refused();
+    }
+
     /// Finds a handler for the pending exception (or a continuation that
     /// takes it).
     fn unwind(&mut self, st: &mut State, mut reraise: bool) -> Unwound {
@@ -481,6 +493,7 @@ impl Vm {
         if self.partial.is_some() {
             self.drop_partial();
         }
+        self.drop_refusal();
         if self.exc == self.memory_error {
             // A full arena may be mostly garbage that no successful
             // allocation would ever schedule a collection for.

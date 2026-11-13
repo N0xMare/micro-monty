@@ -73,10 +73,15 @@ pub(crate) const fn phase(a: u64, out: u64, src: u64, other: u64) -> u64 {
 
 /// Phase bits of [`Bulk::pc`] (the phase is bits 0-2): the phase began;
 /// a set copy into an empty table goes slot for slot or by clean inserts
-/// (CPython's `set_merge`).
+/// (CPython's `set_merge`); the new table that did not fit has waited for
+/// its collection ([`Vm::oom_defer`]), so its next failure raises.
+/// `WAITED` is in the step's state, so in the image: a restore once lost
+/// it, and a step deferred again after every restore, never raising
+/// `MemoryError` on a chain restored at every park [M, reviewer].
 const BEGUN: u64 = 1 << 3;
 const SLOTS: u64 = 1 << 4;
 const CLEAN: u64 = 1 << 5;
+const WAITED: u64 = 1 << 6;
 
 /// The largest set table under the object cap (a word per slot in its
 /// key buffer and in its hashes, the header not counted).
@@ -1316,9 +1321,9 @@ impl Vm {
                     match nv {
                         Ok(nv) => {
                             b.nv = nv;
-                            self.oom_defer_at = 0;
+                            b.pc &= !WAITED;
                         }
-                        Err(Raised) if b.step && self.oom_defer() => return Ok(Flow::More),
+                        Err(Raised) if self.bulk_defer(b) => return Ok(Flow::More),
                         Err(e) => return Err(e),
                     }
                 }
@@ -1982,14 +1987,25 @@ impl Vm {
         };
         // A table that does not fit comes at the start of a later step,
         // after a collection (`Vm::oom_defer`).
-        if r.is_err() && b.step && self.oom_defer() {
+        if r.is_err() && self.bulk_defer(b) {
             (b.nk, b.j) = (Value::NONE, n as u64);
             return Ok(());
         }
         if r.is_ok() {
-            self.oom_defer_at = 0;
+            b.pc &= !WAITED;
         }
         r
+    }
+
+    /// A new table of `b` did not fit: leaves it for a later step, after a
+    /// collection ([`Vm::oom_defer`]), unless it has waited for one
+    /// already ([`WAITED`]) or cannot hand a request on.
+    fn bulk_defer(&mut self, b: &mut Bulk) -> bool {
+        if !b.step || b.pc & WAITED != 0 || !self.oom_defer() {
+            return false;
+        }
+        b.pc |= WAITED;
+        true
     }
 
     /// Action `a` of a phase on item `x` at `at` (dict value `v`, stored

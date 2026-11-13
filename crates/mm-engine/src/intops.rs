@@ -401,14 +401,19 @@ impl Vm {
     /// its result up to [`Vm::collection_charge`], as a retry after
     /// `MemoryError` pays: a constant of the session and the result's
     /// size, not of the heap, so the charge does not depend on slicing or
-    /// snapshots. Topped up, not added, so the step charges no more than
-    /// a 64 MiB result's own 2^20 units (the steps oracle's overdraft
-    /// bound).
+    /// snapshots. Topped up, not added, and only by the request that
+    /// starts a wait: a native building many results asks for the same
+    /// collection again for each, and a top-up per result charged
+    /// `big.split(',')` into 61 parts of 70 KB 32.6 million units past a
+    /// slice [M, reviewer]. So a step charges no more than a 64 MiB
+    /// result's own 2^20 units for it (the steps oracle's overdraft bound).
     pub(crate) fn collect_for_result(&mut self, bytes: usize) {
         if bytes >= 1 << 16
             && self.heap.stats().allocated_since_gc >= self.heap.available_bytes() / 2
         {
-            if self.heap.allocated_since_own_gc() < self.heap.memory_limit() / 64 {
+            if self.gc_wait <= self.heap.stats().collections
+                && self.heap.allocated_since_own_gc() < self.heap.memory_limit() / 64
+            {
                 self.burn(self.collection_charge().saturating_sub(bytes as u64 / 64));
             }
             self.collect_in_steps(false);

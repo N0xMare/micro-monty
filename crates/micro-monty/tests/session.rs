@@ -2805,3 +2805,129 @@ fn a_retry_charges_its_collection() {
         "{failed} against {raised}"
     );
 }
+
+/// Runs `setup`, then `src` on fuel slices of `slice` units with a
+/// snapshot at every park, restored (`restore`) or the session going on,
+/// at a 64 MiB limit: what `src` came to, its output and the fuel it
+/// spent. At most 2,000 parks.
+fn sliced(setup: &str, src: &str, slice: u64, restore: bool) -> (Progress, String, u64) {
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(64 << 20)));
+    let out = Arc::new(Mutex::new(String::new()));
+    let hook = |s: &mut Session| {
+        let sink = Arc::clone(&out);
+        s.set_output(Box::new(move |t: &str| {
+            sink.lock().expect("output lock").push_str(t);
+        }));
+    };
+    let mut s = Session::new(&engine).expect("session");
+    hook(&mut s);
+    let p = s.start(&engine.compile(setup, "setup.py").expect("compiles"));
+    assert_eq!(p, Progress::Complete(None), "{setup}");
+    let total = 1 << 40;
+    s.set_fuel_total(Some(total));
+    s.set_fuel(Some(slice));
+    let mut spent = 0;
+    let mut p = s.start(&engine.compile(src, "test.py").expect("compiles"));
+    for _ in 0..2_000 {
+        if p != (Progress::Parked {
+            reason: ParkReason::Fuel,
+        }) {
+            break;
+        }
+        let image = s.snapshot().expect("snapshot");
+        if restore {
+            spent += total - s.fuel_total().expect("a total");
+            s = engine.restore(&image).expect("restores");
+            hook(&mut s);
+            s.set_fuel_total(Some(total));
+        }
+        s.set_fuel(Some(slice.max(s.fuel_wanted())));
+        p = s.resume(Resume::Continue).expect("resumes");
+    }
+    spent += total - s.fuel_total().expect("a total");
+    let text = out.lock().expect("output lock").clone();
+    (p, text, spent)
+}
+
+/// A set or dict table that does not fit after its collection raises
+/// `MemoryError` on a chain restored at every park, as on one that goes
+/// on. The step that waited for the collection kept that in the VM, not
+/// in the image: restored, it waited again, and at slices under the
+/// 1.57 million units a wait charges it never raised [M, reviewer]. Now
+/// it is in the step's state (`set::WAITED`).
+#[test]
+fn a_table_that_does_not_fit_raises_after_a_restore_at_every_park() {
+    let set = "x = set(range(600_000))\nkeep = bytearray(20_000_000)";
+    let dict = "x = dict.fromkeys(range(400_000))\nkeep = bytearray(25_000_000)";
+    let list = "x = list(range(600_000))\nkeep = bytearray(20_000_000)";
+    for (setup, op) in [
+        (set, "x.copy()"),
+        (set, "x | {1}"),
+        (set, "frozenset(x)"),
+        (dict, "x.copy()"),
+        (dict, "dict(x)"),
+        (dict, "{**x}"),
+        (dict, "dict.fromkeys(x)"),
+        (
+            "x = list(range(600_000))\nkeep = bytearray(40_000_000)",
+            "set(x)",
+        ),
+        (list, "dict.fromkeys(x)"),
+        (list, "dict(zip(x, x))"),
+    ] {
+        let src = format!(
+            "try:\n    y = {op}\n    print('fit')\nexcept MemoryError:\n    print('MemoryError')\n"
+        );
+        for slice in [1_000, 100_000] {
+            let (p, out, spent) = sliced(setup, &src, slice, true);
+            assert_eq!(p, Progress::Complete(None), "{op}, {slice}");
+            assert_eq!(out, "MemoryError\n", "{op}, {slice}");
+            if slice == 100_000 {
+                let (_, _, went_on) = sliced(setup, &src, slice, false);
+                assert_eq!(spent, went_on, "{op}, {slice}");
+            }
+        }
+    }
+}
+
+/// A request the heap refused, which no retry took (here a retry's second
+/// failure), dies with its `MemoryError`: it stayed, so a later request
+/// past the limit collected and paid for it as if room might help, except
+/// after a restore, which starts without it (2,725,188 units unparked,
+/// 1,676,612 restored at every park [M, reviewer]).
+#[test]
+fn a_refusal_dies_with_its_memory_error() {
+    let setup = "keep = bytearray(40_000_000)\nz = 'ab' * 1000";
+    let src = "\
+try:
+    x = z * 15000
+except MemoryError:
+    pass
+try:
+    y = z * 10**12
+except MemoryError:
+    print('second')
+";
+    let (p, out, unparked) = sliced(setup, src, 1 << 40, false);
+    assert_eq!((p, out.as_str()), (Progress::Complete(None), "second\n"));
+    let (_, _, restored) = sliced(setup, src, 1_000, true);
+    assert_eq!(unparked, restored);
+}
+
+/// A result whose size the heap refused before the native allocated
+/// (`Heap::would_fit`) raises a `MemoryError` of its own, and only the
+/// heap's shared one was retried, so `list(range(8_000_000))` beside
+/// 160 MB live and a dropped 64 MB list raised 6 times in 6 where Python
+/// 3.14 completes [M, reviewer]. It waits for a collection as a block that
+/// did not fit does.
+#[test]
+fn a_size_refused_up_front_waits_for_a_collection() {
+    for op in ["list(range(8_000_000))", "tuple(range(8_000_000))"] {
+        let src = format!(
+            "keep = [bytearray(40_000_000) for _ in range(4)]\nr = 0\nfor _ in range(3):\n    g = [0] * 8_000_000\n    g = None\n    x = {op}\n    x = None\n    r += 1\nprint(r)\n"
+        );
+        let (p, out) = run(&src);
+        assert!(matches!(p, Progress::Complete(_)), "{op}: {p:?}\n{out}");
+        assert_eq!(out, "3\n", "{op}");
+    }
+}

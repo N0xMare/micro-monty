@@ -836,9 +836,9 @@ pub struct Vm {
     /// move. Not in the image.
     pub(crate) oom_rerun: u64,
     /// The collection count a chunked step's deferred allocation waits for
-    /// ([`Vm::oom_defer`]), until that allocation succeeds; 0: none. Not in
-    /// the image: a snapshot collects in full, so a restored step at most
-    /// defers once more.
+    /// ([`Vm::oom_defer`]); 0: none. Not in the image: a snapshot collects
+    /// in full, so after a restore that wait is over. Whether the step has
+    /// waited is in its own state (`set::WAITED`).
     pub(crate) oom_defer_at: u64,
     /// The [`Vm::op_stamp`] `consumed` belongs to: entries from an earlier
     /// instruction are dropped, not read. Not in the image.
@@ -1465,11 +1465,12 @@ impl Vm {
     }
 
     /// A fault the dispatch loop reports where the heap's `MemoryError`
-    /// (`memory_error`) came from an instruction whose native changed
-    /// nothing before its block did not fit, and no user code ran:
-    /// [`Vm::oom_retry_op`] for it. `BUILD_STRING` (an f-string's join of
-    /// its pieces, all str already); `LIST_TO_TUPLE` (a starred tuple
-    /// display's tuple of its list); `UNPACK_EX` from a list or tuple (a
+    /// (`memory_error`: a block that did not fit, or a size
+    /// `Heap::would_fit` refused, `Vm::err`) came from an instruction
+    /// whose native changed nothing before its block did not fit, and no
+    /// user code ran: [`Vm::oom_retry_op`] for it. `BUILD_STRING` (an
+    /// f-string's join of its pieces, all str already); `LIST_TO_TUPLE` (a
+    /// starred tuple display's tuple of its list); `UNPACK_EX` from a list or tuple (a
     /// starred target's list, written to its registers only once it
     /// exists); `LIST_EXTEND` from a list or tuple (the list grows once,
     /// to its final length, before any item is written); and `CALL_EX` of a
@@ -1534,20 +1535,16 @@ impl Vm {
     /// dropping one allocates nothing), so the error is dropped, the guest
     /// waits for a full collection at the safepoint before that step (held,
     /// as for a retry: no guest code or fuel between its steps), and the
-    /// next step allocates again; true. A failure again before that
-    /// allocation succeeded (the step clears `oom_defer_at`) stands; false.
-    /// Not a count of bytes allocated since the collection: a table's
-    /// first half that fit, dropped when its second did not, counted as
-    /// progress, and a step at the limit collected for ever.
+    /// next step allocates again; true. The step keeps that it has waited
+    /// in its own state (`set::WAITED`, in the image), so a failure again
+    /// before the table is allocated stands, also after a restore. Not a
+    /// count of bytes allocated since the collection: a table's first half
+    /// that fit, dropped when its second did not, counted as progress, and
+    /// a step at the limit collected for ever.
     #[cold]
     #[inline(never)]
     pub(crate) fn oom_defer(&mut self) -> bool {
         if self.exc_type(self.exc) != T::MemoryError || !self.room_may_help() {
-            return false;
-        }
-        let retried = self.oom_defer_at != 0 && self.heap.stats().collections >= self.oom_defer_at;
-        if retried {
-            self.oom_defer_at = 0;
             return false;
         }
         self.exc = Value::NONE;
@@ -1586,12 +1583,18 @@ impl Vm {
     /// it, so no count says a collection cannot help. The failing operation
     /// is charged for it instead, at once: a unit per 64 bytes of the
     /// memory limit (what one collection can mark at most), at most
-    /// [`RETRY_CHARGE`] units. A constant of the session, so the charge
-    /// does not depend on how the run is sliced or where snapshots fall,
-    /// and a guest that catches `MemoryError` in a loop pays for each
-    /// collection in fuel.
+    /// [`RETRY_CHARGE`] units, so a guest that catches `MemoryError` in a
+    /// loop pays for each collection in fuel. A constant of the session per
+    /// collection; how many collections a run asks for still moves with
+    /// snapshots, whose own collection can leave a retry nothing to wait
+    /// for (-4.2M to +5.0M units on the correctness review's programs
+    /// [M, reviewer]), until snapshots stop collecting (lane D step 5).
     fn collect_for_retry(&mut self) {
-        self.burn(self.collection_charge());
+        // A collection already asked for (a result's, `collect_for_result`)
+        // and not ended is paid for: one charge per collection.
+        if self.gc_wait <= self.heap.stats().collections {
+            self.burn(self.collection_charge());
+        }
         self.heap.restart_collection();
         self.collect_in_steps(false);
     }
@@ -1958,8 +1961,17 @@ impl Vm {
         }
     }
 
-    /// Raises `t(msg)`; returns the marker to propagate.
+    /// Raises `t(msg)`; returns the marker to propagate. A `MemoryError`
+    /// for a size the heap refused before allocating (`Heap::would_fit`)
+    /// is the heap's own `memory_error`, as for a block that did not fit
+    /// (`MemoryError()`, as CPython raises both), so the dispatch loop
+    /// retries both alike: a new one was never retried, and
+    /// `list(range(8_000_000))` beside garbage raised [M, reviewer].
     pub(crate) fn err(&mut self, t: T, msg: &str) -> Raised {
+        if t == T::MemoryError && self.heap.refusal_pending() {
+            self.exc = self.memory_error;
+            return Raised;
+        }
         let tv = self.types[t as usize];
         let exc = (|| {
             let m = self.new_str(msg)?;
