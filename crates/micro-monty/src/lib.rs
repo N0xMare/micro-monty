@@ -679,6 +679,12 @@ impl std::error::Error for SnapshotError {}
 pub struct SessionTemplate {
     engine: Engine,
     image: Vec<u8>,
+    /// Set once this engine has restored `image` checked: later
+    /// instantiations skip the validation walks (the checksum is still
+    /// compared). The image is private and never changes, and what an
+    /// image's host code resolves against in the engine's cache only
+    /// grows, so the walks would find what they found then.
+    checked: std::sync::OnceLock<()>,
 }
 
 impl SessionTemplate {
@@ -696,9 +702,11 @@ impl SessionTemplate {
         if session.phase() != Phase::Idle {
             return Err(SnapshotError::Busy);
         }
+        // Never restored yet: the first instantiation reads it checked.
         Ok(SessionTemplate {
             engine: engine.clone(),
             image: session.snapshot()?,
+            checked: std::sync::OnceLock::new(),
         })
     }
 
@@ -713,17 +721,21 @@ impl SessionTemplate {
         Ok(SessionTemplate {
             engine: engine.clone(),
             image,
+            checked: std::sync::OnceLock::from(()),
         })
     }
 
-    /// A new session in the saved state.
+    /// A new session in the saved state. The first restore of the image
+    /// (here, or in [`SessionTemplate::from_image`]) is checked as
+    /// [`Engine::restore`] checks; later ones compare its checksum but
+    /// skip the walks that validate what it holds.
     ///
     /// # Errors
     ///
     /// The errors of [`Engine::restore`]: [`SnapshotError::TooLarge`] if
     /// the engine's memory limit is now too small.
     pub fn instantiate(&self) -> Result<Session, SnapshotError> {
-        self.engine.restore(&self.image)
+        self.instantiate_with(SessionSettings::default())
     }
 
     /// [`SessionTemplate::instantiate`], with `settings` instead of the
@@ -733,7 +745,12 @@ impl SessionTemplate {
     ///
     /// The errors of [`Engine::restore`].
     pub fn instantiate_with(&self, settings: SessionSettings) -> Result<Session, SnapshotError> {
-        self.engine.restore_with(&self.image, settings)
+        let trusted = self.checked.get().is_some();
+        let session = self
+            .engine
+            .restore_contained(&self.image, settings, trusted)?;
+        let _ = self.checked.set(());
+        Ok(session)
     }
 
     /// The saved image (a snapshot), e.g. to store it.
@@ -924,6 +941,11 @@ pub mod test_hooks {
     /// inside the engine part of its work, once.
     pub fn panic_next(op: &'static str) {
         ARMED.set(Some(op));
+    }
+
+    /// `template`'s image, to corrupt it before an instantiation.
+    pub fn template_image(template: &mut crate::SessionTemplate) -> &mut Vec<u8> {
+        &mut template.image
     }
 
     #[allow(clippy::panic, reason = "the point of the hook")]
@@ -1224,7 +1246,18 @@ impl Engine {
         bytes: &[u8],
         settings: SessionSettings,
     ) -> Result<Session, SnapshotError> {
-        contain(|| self.restore_unguarded(bytes, settings)).unwrap_or_else(|payload| {
+        self.restore_contained(bytes, settings, false)
+    }
+
+    /// [`Engine::restore_with`]; `trusted` skips the validation walks, for
+    /// a [`SessionTemplate`]'s image this engine restored checked.
+    fn restore_contained(
+        &self,
+        bytes: &[u8],
+        settings: SessionSettings,
+        trusted: bool,
+    ) -> Result<Session, SnapshotError> {
+        contain(|| self.restore_unguarded(bytes, settings, trusted)).unwrap_or_else(|payload| {
             Err(SnapshotError::Internal {
                 message: internal_error_message(
                     payload.as_ref(),
@@ -1238,6 +1271,7 @@ impl Engine {
         &self,
         bytes: &[u8],
         settings: SessionSettings,
+        trusted: bool,
     ) -> Result<Session, SnapshotError> {
         let image::Image {
             mut vm,
@@ -1246,7 +1280,7 @@ impl Engine {
             stop,
             text_limit,
             fuel_total,
-        } = image::read(self, bytes)?;
+        } = image::read(self, bytes, trusted)?;
         vm.set_host_code_in_snapshots(self.host_code_in_snapshots);
         vm.set_known_modules(mm_stdlib::ALL_MODULES);
         test_hooks::point("restore");

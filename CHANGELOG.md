@@ -44,6 +44,15 @@ hashes are pre-release history, kept in the private archive
   The shipped `hello.wasm` falls by 54,039 B and native `hello` by
   42,912 B [M]. The facade's `micro_monty::CompileError`, the mm-wasm ABI
   and the build id do not change.
+- `SessionTemplate::instantiate` restores its image checked once per
+  template, then skips the validation walks (strings, references, dict
+  indexes, bytecode, generators, native steps) and keeps the checksum,
+  the bounds checks done while reading and the memory charges. A
+  template from `from_image` is checked by that call; one from `capture`
+  by its first instantiation. A tools template (eight typed host
+  functions, `json`, `asyncio`) instantiates in 77.8 µs instead of
+  175.1 µs, and restore Ir falls 49–66% [M]. `Engine::restore` stays fully
+  checked. The build id moves.
 
 ## 0.0.1 (2026-11-12)
 

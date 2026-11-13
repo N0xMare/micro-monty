@@ -278,6 +278,25 @@ impl Heap {
     /// if the segments need more than the limits allow.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub fn read_snapshot(r: &mut Reader<'_>, max_commit: u64) -> Result<Heap, Error> {
+        Self::read_snapshot_as(r, max_commit, true)
+    }
+
+    /// [`Heap::read_snapshot`] of an image this process already read with
+    /// it (a session template's): the same heap, admitted the same way,
+    /// without the walk that checks every `str` and intern table. Only for
+    /// bytes that passed the checked read and have not changed since.
+    ///
+    /// # Errors
+    ///
+    /// As [`Heap::read_snapshot`], apart from what the skipped walk finds.
+    #[doc(hidden)]
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub fn read_snapshot_trusted(r: &mut Reader<'_>, max_commit: u64) -> Result<Heap, Error> {
+        Self::read_snapshot_as(r, max_commit, false)
+    }
+
+    #[cfg_attr(mm_shipped, optimize(size))]
+    fn read_snapshot_as(r: &mut Reader<'_>, max_commit: u64, check: bool) -> Result<Heap, Error> {
         let config = HeapConfig {
             memory_limit: r.u64().ok_or(Error::BadSnapshot)?.min(max_commit),
             gc_ratio_percent: r.u32().ok_or(Error::BadSnapshot)?,
@@ -326,7 +345,9 @@ impl Heap {
             }
             heap.intern_table = Some(t);
         }
-        heap.check_objects()?;
+        if check {
+            heap.check_objects()?;
+        }
         Ok(heap)
     }
 

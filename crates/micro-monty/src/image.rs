@@ -88,7 +88,10 @@ pub(crate) fn write(s: &mut Session, max_bytes: usize) -> Result<Vec<u8>, Snapsh
 
 /// The session image `bytes` holds, read for `engine` ([`Engine::restore`]):
 /// refused as incompatible unless a build with this build id wrote it.
-pub(crate) fn read(engine: &Engine, bytes: &[u8]) -> Result<Image, SnapshotError> {
+/// `trusted` skips the engine's validation walks
+/// ([`Vm::read_snapshot_trusted`]), for a template's image this engine has
+/// read checked; the checksum is compared either way.
+pub(crate) fn read(engine: &Engine, bytes: &[u8], trusted: bool) -> Result<Image, SnapshotError> {
     let corrupt = |what: &str| SnapshotError::Corrupt {
         what: what.to_owned(),
     };
@@ -143,7 +146,12 @@ pub(crate) fn read(engine: &Engine, bytes: &[u8]) -> Result<Image, SnapshotError
         _ => return Err(corrupt("session")),
     };
     let cache = engine.module_cache();
-    let vm = Vm::read_snapshot(
+    let read = if trusted {
+        Vm::read_snapshot_trusted
+    } else {
+        Vm::read_snapshot
+    };
+    let vm = read(
         &mut r,
         mm_stdlib::MODULES,
         cache.clone(),

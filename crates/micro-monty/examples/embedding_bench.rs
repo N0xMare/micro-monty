@@ -5,8 +5,8 @@
 //! conversion AND execution; serialized bytes are not RSS or a memory bound.
 
 use micro_monty::{
-    Code, Engine, EngineConfig, HostError, HostErrorKind, HostModule, HostValue, Limits,
-    ParkReason, Progress, Resume, Session,
+    Code, Engine, EngineConfig, HostError, HostErrorKind, HostModule, HostParam, HostSignature,
+    HostValue, Limits, ParkReason, Progress, Resume, Session, SessionTemplate,
 };
 use std::{collections::BTreeMap, process::ExitCode, time::Instant};
 
@@ -231,6 +231,53 @@ fn expect_ints(progress: &Progress, expected: &[i64]) -> Result<(), String> {
     }
 }
 
+/// A tools template: eight typed host functions, `json` and `asyncio`
+/// imported. Its first instantiation restores it checked, as
+/// `Engine::restore` always does; later ones skip the validation walks.
+fn templates(engine: &Engine, m: &mut Measurements) -> Result<(), String> {
+    let mut session = Session::new(engine).map_err(|e| e.traceback)?;
+    let functions = (0..8)
+        .map(|i| HostSignature {
+            name: format!("tool_{i}"),
+            params: vec![HostParam {
+                name: "query".to_owned(),
+                annotation: "str".to_owned(),
+                ..HostParam::default()
+            }],
+            returns: "dict".to_owned(),
+            ..HostSignature::default()
+        })
+        .collect();
+    session
+        .define(&HostModule {
+            name: "tools".to_owned(),
+            functions,
+            ..HostModule::default()
+        })
+        .map_err(|e| e.to_string())?;
+    let code = compile(engine, "import json, asyncio, tools\n", m)?;
+    let (mut session, progress) = run_cell(engine, session, &code, m)?;
+    if !matches!(progress, Progress::Complete(_)) {
+        return Err(format!("template setup: {progress:?}"));
+    }
+    let template = SessionTemplate::capture(engine, &mut session).map_err(|e| e.to_string())?;
+    m.images.push(template.image().len());
+    template.instantiate().map_err(|e| e.to_string())?;
+    for _ in 0..200 {
+        let start = Instant::now();
+        let s = engine
+            .restore(template.image())
+            .map_err(|e| e.to_string())?;
+        m.record("template-checked", start);
+        drop(s);
+        let start = Instant::now();
+        let s = template.instantiate().map_err(|e| e.to_string())?;
+        m.record("template-trusted", start);
+        drop(s);
+    }
+    Ok(())
+}
+
 fn measure() -> Result<(), String> {
     let mut m = Measurements {
         stress: std::env::var("MM_GC_STRESS").as_deref() == Ok("1"),
@@ -313,6 +360,7 @@ fn measure() -> Result<(), String> {
     let (session, progress) = run_cell(&engine, session, &code, &mut m)?;
     expect_ints(&progress, &[3])?;
     let _session = hibernate(&engine, session, &mut m)?;
+    templates(&engine, &mut m)?;
     if m.host_calls != 13 || m.fuel_parks == 0 {
         return Err(format!(
             "unexpected host/fuel counts: {} / {}",

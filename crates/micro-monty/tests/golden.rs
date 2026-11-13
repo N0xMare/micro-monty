@@ -23,8 +23,8 @@
 #![allow(clippy::expect_used, clippy::panic, reason = "tests")]
 
 use micro_monty::{
-    Engine, EngineConfig, HostModule, HostParam, HostSignature, HostValue, Progress, Resume,
-    Session, SnapshotError,
+    Engine, EngineConfig, HostModule, HostParam, HostSignature, HostValue, ParkReason, Progress,
+    Resume, Session, SessionTemplate, SnapshotError,
 };
 use std::{
     fmt::Write as _,
@@ -311,13 +311,144 @@ fn golden_images_continue_under_the_build_id_that_wrote_them() {
             &micro_monty::build_id()[..4]
         );
         let expected = fs::read_to_string(dir().join(format!("{name}.txt"))).expect("txt");
-        let mut s = engine()
-            .restore(&image)
-            .expect("an image of this build id restores");
-        let out = capture(&mut s);
-        let p = s.pending().expect("stopped for the host");
-        assert_eq!(finish(&mut s, p, &out), expected, "{name}");
+        // Restored checked, and instantiated trusted from a template the
+        // same engine checked: the same session, which continues the same.
+        let e = engine();
+        let template = SessionTemplate::from_image(&e, image.clone()).expect("a template");
+        let mut sessions = [
+            e.restore(&image)
+                .expect("an image of this build id restores"),
+            template.instantiate().expect("instantiates trusted"),
+        ];
+        let [checked, trusted] = &mut sessions;
+        assert!(
+            checked.snapshot().expect("snapshot") == trusted.snapshot().expect("snapshot"),
+            "{name}: a trusted instantiation's image differs from a checked restore's"
+        );
+        for s in &mut sessions {
+            s.set_fuel_total(Some(1 << 40));
+            let out = capture(s);
+            let p = s.pending().expect("stopped for the host");
+            assert_eq!(finish(s, p, &out), expected, "{name}");
+        }
+        assert_eq!(sessions[0].fuel_total(), sessions[1].fuel_total(), "{name}");
     }
+}
+
+/// Runs cell `src` in `s` to its end, refuelling parks; `false` if it
+/// stopped for the host.
+fn run_to_end(s: &mut Session, e: &Engine, src: &str, name: &str) -> bool {
+    let Ok(code) = e.compile(src, name) else {
+        return true;
+    };
+    let mut p = s.start(&code);
+    loop {
+        match p {
+            Progress::Parked {
+                reason: ParkReason::Fuel,
+            } => {
+                s.set_fuel(Some(1 << 30));
+                p = s.resume(Resume::Continue).expect("resume");
+            }
+            Progress::Parked { .. } => p = s.resume(Resume::Continue).expect("resume"),
+            Progress::Complete(_) | Progress::Error(_) => return true,
+            _ => return false,
+        }
+    }
+}
+
+/// A cell that reads every global of a session's state.
+const SURVEY: &str = r"
+import gc
+gc.collect()
+for _k in sorted(k for k in globals() if not k.startswith('_')):
+    _v = globals()[_k]
+    try:
+        _r = repr(_v)[:300]
+    except BaseException as _x:
+        _r = type(_x).__name__
+    print(_k, type(_v).__name__, _r)
+";
+
+/// TPL-1's acceptance: for each own case's end state, a template's
+/// trusted instantiation (its second) gives the image a checked restore
+/// gives, and both continue with the same output and fuel.
+#[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "release only: cargo test --release --locked -p micro-monty --test golden"
+)]
+fn templates_of_own_case_end_states_instantiate_trusted_as_restored_checked() {
+    let own = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../conformance/own");
+    let mut cases: Vec<_> = fs::read_dir(&own)
+        .expect("conformance/own")
+        .map(|d| d.expect("entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "py"))
+        .collect();
+    cases.sort();
+    assert!(cases.len() > 250, "{} own cases", cases.len());
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let compared = std::sync::atomic::AtomicUsize::new(0);
+    let workers = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                while let Some(path) =
+                    cases.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                {
+                    if trusted_matches_checked(path) {
+                        compared.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            });
+        }
+    });
+    let compared = compared.into_inner();
+    assert!(compared > 250, "only {compared} own cases end idle");
+}
+
+/// [`templates_of_own_case_end_states_instantiate_trusted_as_restored_checked`]
+/// for the case at `path`; `false` if it does not end idle.
+fn trusted_matches_checked(path: &std::path::Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str()).expect("a name");
+    let src = fs::read_to_string(path).expect("source");
+    let e = engine();
+    let mut s = Session::new(&e).expect("session");
+    if !run_to_end(&mut s, &e, &src, name) {
+        return false;
+    }
+    let Ok(template) = SessionTemplate::capture(&e, &mut s) else {
+        return false;
+    };
+    drop(s);
+    let first = template
+        .instantiate()
+        .expect("the first instantiation, checked");
+    let mut sessions = [
+        e.restore(template.image()).expect("restores checked"),
+        template
+            .instantiate()
+            .expect("a later instantiation, trusted"),
+    ];
+    drop(first);
+    let [checked, trusted] = &mut sessions;
+    assert!(
+        checked.snapshot().expect("snapshot") == trusted.snapshot().expect("snapshot"),
+        "{name}: a trusted instantiation's image differs from a checked restore's"
+    );
+    let mut ends = Vec::new();
+    for s in &mut sessions {
+        s.set_fuel_total(Some(1 << 40));
+        let out = capture(s);
+        assert!(run_to_end(s, &e, SURVEY, "survey.py"), "{name}");
+        let out = out.lock().map_or_default(|o| o.clone());
+        ends.push((out, s.fuel_total(), s.snapshot().expect("snapshot")));
+    }
+    assert!(
+        ends[0] == ends[1],
+        "{name}: the sessions continue differently"
+    );
+    true
 }
 
 /// An image whose id another build wrote (as after a layout change) is
@@ -341,4 +472,57 @@ fn a_golden_image_under_another_build_id_is_incompatible() {
             build_id: id
         })
     );
+}
+
+/// A template [`SessionTemplate::capture`] made has never been restored:
+/// its first instantiation runs checked, so a change the checksum does not
+/// see (resealed here) is still refused, and the checksum refuses one at
+/// every instantiation, trusted ones included.
+#[test]
+fn a_corrupted_captured_template_is_refused() {
+    let reseal = |image: &mut Vec<u8>| {
+        let n = image.len();
+        let sum = mm_core::xxh64(&image[..n - 8], 0);
+        image[n - 8..].copy_from_slice(&sum.to_le_bytes());
+    };
+    let e = engine();
+    let mut s = Session::new(&e).expect("session");
+    assert!(run_to_end(
+        &mut s,
+        &e,
+        "marker = 'qzqzmarkerqzqz' * 3",
+        "m.py"
+    ));
+    let template = SessionTemplate::capture(&e, &mut s).expect("captured");
+
+    // Invalid UTF-8 in a str, under a valid checksum: only the checked
+    // read's walk of the heap sees it.
+    let mut bad = template.clone();
+    let image = micro_monty::test_hooks::template_image(&mut bad);
+    let at = image
+        .windows(14)
+        .position(|w| w == b"qzqzmarkerqzqz")
+        .expect("the str's bytes");
+    image[at] = 0xff;
+    reseal(image);
+    assert!(
+        matches!(bad.instantiate(), Err(SnapshotError::Corrupt { .. })),
+        "the first instantiation is checked"
+    );
+
+    // Any changed byte, after a checked instantiation: the checksum.
+    let mut bad = template.clone();
+    bad.instantiate().expect("checked, then trusted");
+    let image = micro_monty::test_hooks::template_image(&mut bad);
+    let n = image.len();
+    image[n / 2] ^= 1;
+    assert_eq!(
+        bad.instantiate().err(),
+        Some(SnapshotError::Corrupt {
+            what: "checksum".to_owned()
+        })
+    );
+    template
+        .instantiate()
+        .expect("the template itself is intact");
 }

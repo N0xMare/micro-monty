@@ -1414,13 +1414,57 @@ impl Vm {
         host_code: HostCode<'_>,
         max_commit: u64,
     ) -> Res<Vm> {
-        let heap = Heap::read_snapshot(r, max_commit).map_err(|e| match e {
+        Self::read_snapshot_as(r, stdlib, module_cache, host_code, max_commit, true)
+    }
+
+    /// [`Vm::read_snapshot`] of an image this process already read with it
+    /// under the same module cache (a session template's): the same
+    /// session, built and admitted the same way, with every count, index
+    /// and host-code key still checked as it is read, but without the
+    /// validation walks ([`Heap::read_snapshot_trusted`], the reference,
+    /// dict, bytecode, generator and native-step checks). Only for bytes
+    /// that passed the checked read and have not changed since: what the
+    /// walks would find there, a later run trusts.
+    ///
+    /// # Errors
+    ///
+    /// As [`Vm::read_snapshot`], apart from what the skipped walks find.
+    #[doc(hidden)]
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub fn read_snapshot_trusted(
+        r: &mut Reader<'_>,
+        stdlib: &'static [crate::vm::StdModule],
+        module_cache: Option<Arc<dyn crate::vm::ModuleCache>>,
+        host_code: HostCode<'_>,
+        max_commit: u64,
+    ) -> Res<Vm> {
+        Self::read_snapshot_as(r, stdlib, module_cache, host_code, max_commit, false)
+    }
+
+    /// [`Vm::read_snapshot`], with the validation walks only if `check`.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    fn read_snapshot_as(
+        r: &mut Reader<'_>,
+        stdlib: &'static [crate::vm::StdModule],
+        module_cache: Option<Arc<dyn crate::vm::ModuleCache>>,
+        host_code: HostCode<'_>,
+        max_commit: u64,
+        check: bool,
+    ) -> Res<Vm> {
+        let heap = if check {
+            Heap::read_snapshot(r, max_commit)
+        } else {
+            Heap::read_snapshot_trusted(r, max_commit)
+        }
+        .map_err(|e| match e {
             mm_core::Error::OutOfMemory => SnapError::TooLarge,
             _ => SnapError::Corrupt("heap"),
         })?;
-        check_refs(&heap)?;
-        if !crate::dict::check_indexes(&heap) || !linear_dicts_ok(&heap) {
-            return Err(SnapError::Corrupt("dict index"));
+        if check {
+            check_refs(&heap)?;
+            if !crate::dict::check_indexes(&heap) || !linear_dicts_ok(&heap) {
+                return Err(SnapError::Corrupt("dict index"));
+            }
         }
         let r = &mut Rd { r, heap: &heap };
 
@@ -1627,7 +1671,7 @@ impl Vm {
             let scratch = code.verify_scratch_bytes() as u64;
             charge(&mut budget, scratch.saturating_sub(verify_scratch))?;
             verify_scratch = verify_scratch.max(scratch);
-            if kind == CODE_ENCODED && !(code.verify() && sends_ok(&code)) {
+            if check && kind == CODE_ENCODED && !(code.verify() && sends_ok(&code)) {
                 return Err(SnapError::Corrupt("code verification"));
             }
             let module_base = need(r.u32(), "code")?;
@@ -2036,7 +2080,9 @@ impl Vm {
         {
             return Err(SnapError::Corrupt("host call"));
         }
-        check_generators(&heap, &codes)?;
+        if check {
+            check_generators(&heap, &codes)?;
+        }
         // `HostArgs` setters cap the depth; keep the cap.
         host_args.max_depth = host_args.max_depth.min(1000);
 
@@ -2174,7 +2220,9 @@ impl Vm {
         vm.ics.resize(ics_len, crate::vm::Ic::Empty);
         vm.reserve_scheduler(ntasks, ngathers, 0)
             .map_err(|_| SnapError::TooLarge)?;
-        check_steps(&vm)?;
+        if check {
+            check_steps(&vm)?;
+        }
         Ok(vm)
     }
 }
