@@ -1006,7 +1006,12 @@ impl Vm {
     /// comparison needs Python code.
     fn probe(&self, d: Ref, k: Value, h: u64) -> Result<(u32, Option<u32>), Hard> {
         let mut left = WALK;
-        self.probe_with(d, k, h, 0, &mut left, &mut |_, _| {})
+        let r = self.probe_with(d, k, h, 0, &mut left, &mut |_, _| {});
+        // Uncharged: no visits past `left` are left for a later walk.
+        if left == 0 {
+            self.text_over.set(0);
+        }
+        r
     }
 
     /// [`Vm::probe`] charging the slots it walked past the first eight, for
@@ -1159,8 +1164,15 @@ impl Vm {
             Ok((first_free.unwrap_or(0), None, 0))
         };
         if !RESUME && n > FREE_SLOTS {
-            let slots = u32::try_from((n / 8).saturating_sub(FREE_SLOTS / 8)).unwrap_or(u32::MAX);
-            *left = left.saturating_sub(slots);
+            // Visits past `left` are kept, as a long text's are
+            // (`text_over`), for [`Vm::walked_of`] to charge: capped at
+            // `left`, a native loop of long lookups was one step.
+            let (slots, l) = ((n / 8).saturating_sub(FREE_SLOTS / 8), u64::from(*left));
+            if slots > l {
+                self.text_over
+                    .set(self.text_over.get().saturating_add(slots - l));
+            }
+            *left = u32::try_from(l.saturating_sub(slots)).unwrap_or(0);
         }
         r
     }

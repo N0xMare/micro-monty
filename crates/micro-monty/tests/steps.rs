@@ -2312,6 +2312,24 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "r = set(i for i in range(3_000_000))",
         1,
     ),
+    // A native probe's charge stopped at its walk's budget, 16,383 units,
+    // so a native loop of lookups each past 131,104 slots was one step:
+    // 97.9 ms for `dd.keys() & zs` and 80.4 ms for `isdisjoint` with
+    // 2,097,144 int keys on the probe path of 'zz', the most the default
+    // limit holds, on 11110028 [M, correctness review]. The visits past it
+    // are now charged too, and a step holds one lookup.
+    (
+        Row::Bounded,
+        "mask = (1 << 22) - 1\ndef path(q, n):\n    q &= (1 << 64) - 1\n    i = (q ^ (q >> 32)) & mask\n    p, seen, out = q, set(), []\n    while len(out) < n:\n        if i not in seen:\n            seen.add(i)\n            out.append(i)\n        p >>= 5\n        i = (5 * i + 1 + p) & mask\n    return out\ndd = dict.fromkeys(path(hash('zz'), 2_097_144))\nzs = ['zz'] * 100",
+        "r = dd.keys() & zs",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "mask = (1 << 22) - 1\ndef path(q, n):\n    q &= (1 << 64) - 1\n    i = (q ^ (q >> 32)) & mask\n    p, seen, out = q, set(), []\n    while len(out) < n:\n        if i not in seen:\n            seen.add(i)\n            out.append(i)\n        p >>= 5\n        i = (5 * i + 1 + p) & mask\n    return out\ndd = dict.fromkeys(path(hash('zz'), 2_097_144))\nzs = ['zz'] * 100",
+        "r = dd.keys().isdisjoint(zs)",
+        1,
+    ),
     // Big ints and long texts: a compare or hash counted one visit
     // whatever the operands' size, and copied each big int (`big_of`). On
     // 9a80bbea [M]: 4,000 references to one 2^20-bit int took 882-889 ms
