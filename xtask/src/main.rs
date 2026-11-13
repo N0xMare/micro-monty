@@ -86,7 +86,10 @@ tasks:
       --serial               one stage at a time, output on the terminal
       --release-gate         the full gate: release builds, durability at
                              1:1000, also wasm-host and the codemode check
-                             (default: the landing tier, AGENTS.md)
+                             (default: the landing tier, or the release gate
+                             when the change touches parking, snapshots, the
+                             GC, the wasm crates or a profile; AGENTS.md)
+      --landing-tier         the landing tier whatever the change touches
   size [--base <rev>]        build `hello` and the mm-wasm guests as shipped
                              (wasm-opt -Oz on wasm), and the base's (default
                              origin/main) and the release's, in worktrees
@@ -224,15 +227,23 @@ fn main() -> ExitCode {
 /// measures wall time, so it runs last, alone.
 #[allow(clippy::too_many_lines, reason = "one flat list of stages")]
 fn check(args: &[String]) -> Result<(), String> {
-    let (mut serial, mut release_gate) = (false, false);
+    let (mut serial, mut release_gate, mut landing_tier) = (false, false, false);
     for arg in args {
         match arg.as_str() {
             "--serial" => serial = true,
             "--release-gate" => release_gate = true,
+            "--landing-tier" => landing_tier = true,
             other => return Err(format!("check: unknown option `{other}`\n{USAGE}")),
         }
     }
     let root = workspace_root();
+    if !release_gate
+        && !landing_tier
+        && let Some(why) = release_gate_reason(&root)
+    {
+        println!("check: the release gate, as the change touches {why} (AGENTS.md)");
+        release_gate = true;
+    }
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     // Stages run a copy of this binary, which no stage's build replaces.
     let xtask = root.join("target/check/xtask");
@@ -539,6 +550,64 @@ fn check(args: &[String]) -> Result<(), String> {
             )),
     );
     check::run(stages, &root, serial)
+}
+
+/// Paths (prefixes) whose change makes plain `check` the release gate:
+/// parking, snapshots, the GC and the wasm crates.
+const RELEASE_GATE_PATHS: &[&str] = &[
+    "crates/mm-engine/src/interp.rs",
+    "crates/mm-engine/src/snapshot.rs",
+    "crates/mm-engine/src/nstep.rs",
+    "crates/mm-core/src/gc.rs",
+    "crates/mm-core/src/snapshot.rs",
+    "crates/micro-monty/src/image.rs",
+    "crates/mm-compile/src/encode.rs",
+    "crates/mm-wasm-",
+];
+
+/// Why the change since the merge base with `origin/main`, committed or
+/// not (new untracked files included), needs the release gate: a path of [`RELEASE_GATE_PATHS`], Cargo.toml's
+/// `[profile.*]` tables, or no merge base to tell.
+fn release_gate_reason(root: &Path) -> Option<String> {
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .ok()?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let Some(base) = git(&["merge-base", "origin/main", "HEAD"]) else {
+        return Some("an unknown set of files (no merge base with origin/main)".to_owned());
+    };
+    let base = base.trim();
+    let changed = git(&["diff", "--name-only", base]).unwrap_or_default()
+        + &git(&["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
+    if let Some(path) = changed
+        .lines()
+        .find(|path| RELEASE_GATE_PATHS.iter().any(|p| path.starts_with(p)))
+    {
+        return Some(path.to_owned());
+    }
+    let old = git(&["show", &format!("{base}:Cargo.toml")]).unwrap_or_default();
+    let new = fs::read_to_string(root.join("Cargo.toml")).unwrap_or_default();
+    (profile_lines(&old) != profile_lines(&new)).then(|| "Cargo.toml's [profile.*]".to_owned())
+}
+
+/// The lines of `toml`'s `[profile.*]` tables, without comments.
+fn profile_lines(toml: &str) -> Vec<&str> {
+    let mut inside = false;
+    toml.lines()
+        .map(str::trim)
+        .filter(|line| {
+            if line.starts_with('[') {
+                inside = line.starts_with("[profile.");
+            }
+            inside && !line.is_empty() && !line.starts_with('#')
+        })
+        .collect()
 }
 
 fn run_gate(cargo: &str, args: &[&str]) -> Result<(), String> {
