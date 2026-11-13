@@ -5,7 +5,7 @@
 # `__getstate__`/`__dict__`, and the list/dict items of builtin subclasses.
 
 import sys
-import _mm
+from _mm import backing as _backing
 
 
 class Error(Exception):
@@ -236,7 +236,7 @@ def _reduce(x):
         args = getnewargs(x)
     else:
         args = ()
-        backing = _mm.backing(x)
+        backing = _backing(x)
         if backing is not x and isinstance(backing, (tuple, str, bytes, int, float)):
             args = (backing,)
         elif isinstance(x, set):

@@ -441,7 +441,8 @@ impl Vm {
             self.module_set(m, "copyright", copyright)?;
             self.module_set(m, "pycache_prefix", Value::NONE)?;
             let mut names = Vec::new();
-            for &n in BUNDLED {
+            // `_mm` is the bundled modules' own (`Vm::import_checked`).
+            for &n in BUNDLED.iter().filter(|&&n| n != "_mm") {
                 names.push(self.new_str(n)?);
             }
             let names = self.alloc_tuple(&names)?;
@@ -501,6 +502,24 @@ impl Vm {
     pub(crate) fn is_package(&self, name: &str) -> bool {
         matches!(name, "collections" | "json" | "asyncio" | "urllib" | "html")
             || self.host_modules.iter().any(|h| h.name == name)
+    }
+
+    /// [`Vm::import`] for code that runs in user globals (`user`) or for
+    /// `__import__`: `_mm`, the bundled modules' engine helpers, is not
+    /// found there, as if it did not exist.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub(crate) fn import_checked(
+        &mut self,
+        dotted: Value,
+        top: bool,
+        user: bool,
+    ) -> Result<Value, Raised> {
+        if user && self.str_ref(dotted).split('.').next() == Some("_mm") {
+            let e = self.err(T::ModuleNotFoundError, "No module named '_mm'");
+            self.set_import_names("_mm", Value::UNDEFINED);
+            return Err(e);
+        }
+        self.import(dotted, top)
     }
 
     /// `import dotted`: the leaf module, or the top-level one if `top`.

@@ -282,6 +282,23 @@ pub enum Exit {
     Waiting(Vec<u64>),
 }
 
+/// What a cell is stopped at, as the VM holds it ([`Vm::stopped`]): a
+/// restore checks it against the stop its image's header names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Stopped {
+    /// No cell is active.
+    Idle,
+    /// At the host call with this id ([`Exit::HostCall`]).
+    HostCall(u64),
+    /// Every task waits on host futures ([`Exit::Waiting`]).
+    Waiting,
+    /// At a safepoint ([`Exit::Parked`]).
+    Parked,
+    /// A pending host call without saved registers: no exit leaves this.
+    Inconsistent,
+}
+
 /// An output stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1274,6 +1291,20 @@ impl Vm {
     #[must_use]
     pub fn fuel(&self) -> Option<u64> {
         self.fuel
+    }
+
+    /// What the cell is stopped at: a park and a host call save the
+    /// registers (a host call also its id); a wait saves none, with the
+    /// cell's tasks still held.
+    #[must_use]
+    pub fn stopped(&self) -> Stopped {
+        match (&self.saved, self.host_call) {
+            (Some(_), Some((id, _))) => Stopped::HostCall(id),
+            (Some(_), None) => Stopped::Parked,
+            (None, None) if self.tasks.is_empty() => Stopped::Idle,
+            (None, None) => Stopped::Waiting,
+            (None, Some(_)) => Stopped::Inconsistent,
+        }
     }
 
     /// Starts a new period of safepoints before the next check: `TICKS`,

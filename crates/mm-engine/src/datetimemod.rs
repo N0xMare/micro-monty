@@ -834,3 +834,38 @@ pub(crate) fn dt_ymd(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         _ => Ok(Value::NONE),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::strptime;
+    use alloc::string::String;
+    use std::time::{Duration, Instant};
+
+    /// Each alternative once rescanned a whitespace run: a run of 2M
+    /// spaces before a failing `%Y` must cost about what 2,000 do. The
+    /// facade's parking test held this bound through `_mm`, which is now
+    /// the bundled modules' own.
+    #[test]
+    fn a_long_whitespace_run_is_scanned_once() {
+        let time = |n: usize| {
+            let mut s = String::from(" ").repeat(n);
+            s.push('x');
+            let t = Instant::now();
+            assert!(strptime(s.as_bytes(), b" %Y", &mut 0).is_none());
+            t.elapsed()
+        };
+        let (mut slow, mut control) = (time(2_000_000), time(2_000));
+        for _ in 0..2 {
+            if slow < control * 4 + Duration::from_millis(500) {
+                break;
+            }
+            slow = slow.min(time(2_000_000));
+            control = control.min(time(2_000));
+        }
+        assert!(
+            slow < control * 4 + Duration::from_millis(500),
+            "{slow:?} against {control:?}"
+        );
+    }
+}

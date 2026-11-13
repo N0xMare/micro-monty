@@ -4,7 +4,7 @@
 # safepoint, and, having no count of what it freed, returns 0. The rest is
 # CPython's API surface.
 
-import _mm
+from _mm import gc_collect as _gc_collect, gc_wait as _gc_wait
 
 _enabled = True
 garbage = []
@@ -22,10 +22,10 @@ def collect(generation=2):
         raise TypeError(f"'{type(generation).__name__}' object cannot be interpreted as an integer")
     if generation < 0 or generation > 2:
         raise ValueError('invalid generation')
-    _mm.gc_collect()
+    _gc_collect()
     # Over 32 MiB live the collection marks a step per safepoint, so a park
     # can come between steps; it has ended when this returns.
-    while _mm.gc_wait():
+    while _gc_wait():
         pass
     return 0
 

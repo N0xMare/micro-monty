@@ -2,7 +2,7 @@
 # (PSF license, see THIRD_PARTY.md). namedtuple builds its methods without
 # exec; deque is written here (CPython's is C).
 
-import _mm
+from _mm import backing as _backing, signature as _signature
 
 __all__ = ['ChainMap', 'Counter', 'OrderedDict', 'UserDict', 'UserList',
            'UserString', 'defaultdict', 'deque', 'namedtuple']
@@ -14,7 +14,6 @@ _KEYWORDS = {'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await',
              'try', 'while', 'with', 'yield'}
 
 _tuple_new = tuple.__new__
-_backing = _mm.backing
 
 
 # `deque[int]` is a `types.GenericAlias` (the builtin containers' class
@@ -95,7 +94,7 @@ def namedtuple(typename, field_names, *, rename=False, defaults=None, module=Non
     def _new_impl(_cls, *args):
         return _tuple_new(_cls, args)
 
-    __new__ = _mm.signature('__new__', f'{typename}.__new__', ('_cls',) + field_names,
+    __new__ = _signature('__new__', f'{typename}.__new__', ('_cls',) + field_names,
                             (), defaults, None, _new_impl)
 
     @classmethod

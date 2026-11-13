@@ -6,7 +6,7 @@
 # has none). catch_warnings ignores its module argument.
 
 import sys
-import _mm
+from _mm import caller as _caller
 
 __all__ = ["warn", "warn_explicit", "showwarning",
            "formatwarning", "filterwarnings", "simplefilter",
@@ -162,7 +162,7 @@ def warn(message, category=None, stacklevel=1, source=None,
                         f"not {type(skip_file_prefixes).__name__}")
     if skip_file_prefixes and stacklevel < 2:
         stacklevel = 2
-    frame = _mm.caller(stacklevel, skip_file_prefixes)
+    frame = _caller(stacklevel, skip_file_prefixes)
     if frame is None:
         filename, lineno, module, registry = "<sys>", 0, "sys", _registry
     else:

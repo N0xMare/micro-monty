@@ -3,7 +3,7 @@
 # and SimpleNamespace written here (CPython's are C).
 
 import sys
-import _mm
+from _mm import code_kind as _code_kind
 
 
 def _f():
@@ -171,7 +171,7 @@ def coroutine(func):
     """Convert regular generator function to a coroutine."""
     if not callable(func):
         raise TypeError('types.coroutine() expects a callable')
-    kind = _mm.code_kind(func)
+    kind = _code_kind(func)
     if kind == 3:
         return func
     if kind == 2:

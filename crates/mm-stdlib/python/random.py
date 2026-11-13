@@ -9,8 +9,7 @@ from math import lgamma as _lgamma, fabs as _fabs, log2 as _log2
 from operator import index as _index
 from itertools import accumulate as _accumulate, repeat as _repeat
 from bisect import bisect as _bisect
-import _mm
-_urandom = _mm.urandom
+from _mm import clock as _clock, urandom as _urandom
 __all__ = ['Random', 'SystemRandom', 'betavariate', 'binomialvariate', 'choice', 'choices', 'expovariate', 'gammavariate', 'gauss', 'getrandbits', 'getstate', 'lognormvariate', 'normalvariate', 'paretovariate', 'randbytes', 'randint', 'random', 'randrange', 'sample', 'seed', 'setstate', 'shuffle', 'triangular', 'uniform', 'vonmisesvariate', 'weibullvariate']
 NV_MAGICCONST = 4 * _exp(-0.5) / _sqrt(2.0)
 LOG4 = _log(4.0)
@@ -57,7 +56,7 @@ class _BaseRandom:
             except RuntimeError:
                 # No entropy from the host: the clock, else a fixed seed.
                 try:
-                    n = int(_mm.clock() * 1000000)
+                    n = int(_clock() * 1000000)
                 except RuntimeError:
                     n = 0
                 key = n.to_bytes((n.bit_length() + 7) // 8, 'little')

@@ -809,13 +809,14 @@ subject = 'a' * 100_000
 }
 
 #[test]
-fn long_lines_tracebacks_and_strptime_runs_stay_linear() {
+fn long_lines_and_tracebacks_stay_linear() {
     // Fuel-audit sweep: one native step was quadratic in its input. A
     // column on a non-ASCII line counted from the line start (`ast.parse`
     // and `tokenize` of one long line: over 80 s), each traceback frame
     // split the whole source, and each `strptime` alternative rescanned a
-    // whitespace run. Each slow case must stay within a small factor of its
-    // control.
+    // whitespace run (now mm-engine's `a_long_whitespace_run_is_scanned_once`:
+    // its native is the bundled modules' own). Each slow case must stay
+    // within a small factor of its control.
     let engine = Engine::new(EngineConfig::default());
     let time = |src: &str| {
         let out = Arc::new(Mutex::new(String::new()));
@@ -838,12 +839,9 @@ fn long_lines_tracebacks_and_strptime_runs_stay_linear() {
             pad.repeat(lines)
         )
     };
-    let strptime =
-        |n: usize| format!("import _mm\nassert _mm.dt_strptime(' ' * {n} + 'x', ' %Y') is None\n");
     for (what, slow, control) in [
         ("tokenize", lex("'é'"), lex("'e'")),
         ("traceback", trace(2_500), trace(1)),
-        ("strptime", strptime(2_000_000), strptime(2_000)),
     ] {
         // A run over the bound runs twice more and the least counts: load
         // (`cargo xtask check` runs the other tests beside it) can only

@@ -160,7 +160,83 @@ fn images(e: &Engine) -> Vec<Vec<u8>> {
     out
 }
 
-fn reseal(b: &mut [u8]) {
+/// Where the header's stop starts: after the magic, the format, the build
+/// id and the two last-expression flags (`micro-monty/src/image.rs`).
+const STOP_AT: usize = 44;
+
+/// The header's stop phase: 0 idle, 1 a host call, 2 waiting, 3 parked.
+#[must_use]
+pub fn stop_phase(image: &[u8]) -> Option<u8> {
+    image.get(STOP_AT).copied()
+}
+
+/// `image` with its header's stop rewritten to one of `phase` (as
+/// [`stop_phase`] numbers them), the rest unchanged and the checksum
+/// stale: a host call to `ask` with no arguments, a wait on one call, a
+/// fuel park. Its call id is one the image names (a waiting image's first
+/// call, for a host call; a host call's, for a wait), else 1. An image
+/// already at `phase` keeps its own stop. `None` if the stop does not
+/// parse.
+#[must_use]
+pub fn forge_stop(image: &[u8], phase: u8) -> Option<Vec<u8>> {
+    let body = image.get(STOP_AT..)?;
+    let mut r = mm_core::Reader::new(body);
+    let mut budget = u64::MAX;
+    let mut call = 1;
+    match r.u8()? {
+        0 => {}
+        1 => {
+            call = r.u64()?;
+            r.u32()?;
+            r.str()?;
+            for _ in 0..r.count(1)? {
+                mm_engine::read_host_value(&mut r, &mut budget)?;
+            }
+            for _ in 0..r.count(5)? {
+                r.str()?;
+                mm_engine::read_host_value(&mut r, &mut budget)?;
+            }
+        }
+        2 => {
+            let n = r.count(8)?;
+            call = r.u64()?;
+            for _ in 1..n {
+                r.u64()?;
+            }
+        }
+        3 => {
+            r.u8()?;
+        }
+        _ => return None,
+    }
+    if stop_phase(image) == Some(phase) {
+        return Some(image.to_vec());
+    }
+    let end = STOP_AT + body.len() - r.remaining();
+    let mut stop = vec![phase];
+    match phase {
+        1 => {
+            stop.extend_from_slice(&call.to_le_bytes());
+            stop.extend_from_slice(&0u32.to_le_bytes());
+            stop.extend_from_slice(&3u32.to_le_bytes());
+            stop.extend_from_slice(b"ask");
+            stop.extend_from_slice(&[0; 8]);
+        }
+        2 => {
+            stop.extend_from_slice(&1u32.to_le_bytes());
+            stop.extend_from_slice(&call.to_le_bytes());
+        }
+        3 => stop.push(0),
+        _ => {}
+    }
+    let mut out = image[..STOP_AT].to_vec();
+    out.extend_from_slice(&stop);
+    out.extend_from_slice(&image[end..]);
+    Some(out)
+}
+
+/// Recomputes the checksum of image `b`, so an edit reaches the decoder.
+pub fn reseal(b: &mut [u8]) {
     if b.len() < 8 {
         return;
     }
@@ -241,14 +317,23 @@ pub fn run(data: &[u8]) {
             return;
         };
         // Pick 0xFE is the last program, added after seeds were stored:
-        // every other pick keeps the image it had.
+        // every other pick keeps the image it had. Picks 0xE0..=0xEF (no
+        // seed stored before them used one) take program `pick >> 2 & 3`
+        // (idle, parked, at a host call, waiting) with its header's stop
+        // forged to phase `pick & 3` (`forge_stop`) before the edits.
+        let forged = (0xE0..=0xEF).contains(&pick).then_some(pick & 3);
         let k = if pick == 0xFE {
             PROGRAMS.len() - 1
+        } else if forged.is_some() {
+            usize::from(pick >> 2 & 3)
         } else {
             pick as usize % (PROGRAMS.len() - 1)
         };
         let base = &bases()[usize::from(mode & 0x10 != 0)][k];
-        let mut b = base.clone();
+        let mut b = match forged.and_then(|phase| forge_stop(base, phase)) {
+            Some(f) => f,
+            None => base.clone(),
+        };
         // Edits of 4 bytes: a 16-bit position (from the start, or within
         // the last 8 KiB for the VM-state tail), a xor byte, and a byte
         // that may truncate (0xFF), delete the byte (0xFE) or insert the

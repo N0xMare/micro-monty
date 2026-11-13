@@ -7,7 +7,7 @@
 # the environment and directory scans. Argument checks and messages follow
 # CPython's posixmodule.c.
 
-import _mm
+from _mm import hint as _hint, os_function as _os_function, urandom as _urandom
 from operator import index as _index
 
 name = 'posix'
@@ -70,7 +70,7 @@ def _clinic(fname, args, kwargs, names, maxpos, minpos):
 def _unavailable(op, kind):
     # The second sentence is the host's to replace (`HintGroup::OsHooks`);
     # the host-facing reason, a missing host function, is in docs/user-guide.md.
-    hint = _mm.hint("os")
+    hint = _hint("os")
     raise kind(f"{op} is not available: this sandbox has no ambient "
                f"{'filesystem' if kind is PermissionError else 'operating system'}"
                + (". " + hint if hint else ""))
@@ -78,7 +78,7 @@ def _unavailable(op, kind):
 
 def _fs(op, *args):
     # A filesystem operation: the host's answer, or PermissionError.
-    f = _mm.os_function(op)
+    f = _os_function(op)
     if f is None:
         _unavailable(op, PermissionError)
     return f(*args)
@@ -86,7 +86,7 @@ def _fs(op, *args):
 
 def _host(op, *args):
     # Any other OS operation: the host's answer, or RuntimeError.
-    f = _mm.os_function(op)
+    f = _os_function(op)
     if f is None:
         _unavailable(op, RuntimeError)
     return f(*args)
@@ -210,15 +210,15 @@ def urandom(size):
     size = _index(size)
     if size < 0:
         raise ValueError('negative argument not allowed')
-    f = _mm.os_function('os.urandom')
+    f = _os_function('os.urandom')
     if f is not None:
         return f(size)
-    return _mm.urandom(size)
+    return _urandom(size)
 
 
 def getcwd():
     """Return a unicode string representing the current working directory."""
-    f = _mm.os_function('os.getcwd')
+    f = _os_function('os.getcwd')
     return '/' if f is None else f()
 
 

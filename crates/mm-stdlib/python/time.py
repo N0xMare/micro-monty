@@ -5,7 +5,7 @@
 # TZif data, read once here), else UTC. Conversions follow
 # CPython's Modules/timemodule.c (checks and messages) with C-locale names.
 
-import _mm
+from _mm import clock as _clock, local_zone as _local_zone, os_function as _os_function
 from operator import index as _index
 
 _MISSING = object()
@@ -43,7 +43,7 @@ def _no_args(name, args, kwargs):
 
 
 def _now():
-    return _mm.clock() + _slept
+    return _clock() + _slept
 
 
 def _mono():
@@ -144,7 +144,7 @@ def sleep(*args, **kwargs):
     secs = _seconds(args[0])
     if secs < 0:
         raise ValueError('sleep length must be non-negative')
-    host = _mm.os_function('time.sleep')
+    host = _os_function('time.sleep')
     if host is not None:
         host(secs)
         return None
@@ -414,7 +414,7 @@ def _local_tm(t):
 def _init_zone():
     # `init_timezone` on glibc: the zones of January and July of this year.
     global timezone, altzone, daylight, tzname
-    _load_zone(_mm.local_zone() or b'')
+    _load_zone(_local_zone() or b'')
     if _types is None:
         return
     try:

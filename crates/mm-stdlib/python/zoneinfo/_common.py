@@ -5,7 +5,7 @@
 import io
 import struct
 
-import _mm
+from _mm import tzif as _tzif
 
 
 # TZif v2 data for UTC (no transitions, footer "UTC0"), for sessions
@@ -18,7 +18,7 @@ _UTC = (b'TZif2' + bytes(15) + bytes(16) + b'\x00\x00\x00\x01\x00\x00\x00\x04'
 
 def load_tzdata(key):
     # The host's zone source in place of the tzdata package.
-    data = _mm.tzif(key)
+    data = _tzif(key)
     if data is False:
         if key == 'UTC':
             return io.BytesIO(_UTC)

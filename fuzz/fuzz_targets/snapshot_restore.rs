@@ -14,7 +14,8 @@
 //! the code again from the image's definitions and checks its key; another
 //! restores on both engines and requires the same verdict on the host code
 //! (the cached engine takes its code by key only for the definition it was
-//! built from).
+//! built from). Picks 0xE0..=0xEF forge the header's stop to another phase
+//! than the VM is stopped at first, which a restore must refuse.
 //!
 //! ```bash
 //! cd fuzz && cargo +nightly fuzz run snapshot_restore

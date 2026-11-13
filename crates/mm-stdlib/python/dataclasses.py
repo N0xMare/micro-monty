@@ -7,7 +7,7 @@
 # name, as CPython does for string annotations.
 
 import copy
-import _mm
+from _mm import signature as _signature
 
 __all__ = ['dataclass',
            'field',
@@ -315,7 +315,7 @@ def _init_fn(cls, fields, std_fields, kw_only_fields, frozen, has_post_init,
         if has_post_init:
             self.__post_init__(*[given[n] for n in initvars])
 
-    return _mm.signature('__init__', f'{cls.__qualname__}.__init__', params,
+    return _signature('__init__', f'{cls.__qualname__}.__init__', params,
                          kwonly, tuple(defaults) if defaults else None,
                          kwdefaults or None, __init__)
 

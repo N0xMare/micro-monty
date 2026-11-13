@@ -6934,7 +6934,7 @@ fn bi_import(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         _ => false,
     };
     if empty {
-        return vm.import(name, true);
+        return vm.import_checked(name, true, true);
     }
     let pkg = Value::from_bool(vm.is_package(&String::from(vm.str_ref_o(name))));
     vm.prelude_request(

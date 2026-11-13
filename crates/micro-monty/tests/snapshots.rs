@@ -1487,8 +1487,13 @@ from datetime import datetime
 paris = ZoneInfo('Europe/Paris')
 summer = datetime(2026, 7, 1, 12, tzinfo=paris)
 print(summer.utcoffset(), ZoneInfo('Europe/Paris') is paris)
-import _mm
-print([_mm.tzif(k) for k in ('/etc/passwd', '../etc/passwd', 'Europe//Paris', 'Europe/./Paris', '')])
+bad = []
+for k in ('/etc/passwd', '../etc/passwd', 'Europe//Paris', 'Europe/./Paris', ''):
+    try:
+        ZoneInfo(k)
+    except ValueError as e:
+        bad.append(type(e).__name__)
+print(bad)
 ";
     let p = s.start(&e.compile(first, "a.py").expect("compiles"));
     assert_eq!(outcome(&p), "complete Some(\"None\")");
@@ -1513,7 +1518,7 @@ print(ZoneInfo('UTC').utcoffset(None))
     assert_eq!(*calls.lock().expect("calls lock"), ["Europe/Paris"]);
     assert_eq!(
         out.lock().expect("output lock").as_str(),
-        "2:00:00 True\n[None, None, None, None, None]\nTrue CET\n2:00:00\nZoneInfoNotFoundError 'No time zone found with key \
+        "2:00:00 True\n['ValueError', 'ValueError', 'ValueError', 'ValueError', 'ValueError']\nTrue CET\n2:00:00\nZoneInfoNotFoundError 'No time zone found with key \
          Asia/Tokyo (this sandbox has no time zone data: the host provides none; \
          datetime.timezone works for fixed offsets)'\n0:00:00\n"
     );
@@ -1521,6 +1526,85 @@ print(ZoneInfo('UTC').utcoffset(None))
 
 #[path = "../../../fuzz/fuzz_targets/snapshot_restore_input.rs"]
 mod fuzz_input;
+
+/// The header's stop must be what the VM is stopped at: real images at
+/// each of the four phases, the header rewritten to each other phase (the
+/// checksum recomputed), are `Corrupt`; rewritten to their own phase, they
+/// restore and finish. A host call under another call id is corrupt too.
+/// The waiting image holds a future the cell cancelled, whose answer
+/// `resume` accepts and drops.
+#[test]
+fn a_stop_the_vm_is_not_at_is_corrupt() {
+    let e = engine();
+    let image = |src: &str, fuel: Option<u64>, futures: bool| {
+        let mut s = Session::new(&e).expect("session");
+        s.define(&HostModule::untyped("", &["ask"]))
+            .expect("defines");
+        s.set_fuel(fuel);
+        let mut p = s.start(&e.compile(src, "stop.py").expect("compiles"));
+        while futures && matches!(p, Progress::HostCall { .. }) {
+            p = s.resume(Resume::Future).expect("future");
+        }
+        (s.snapshot().expect("snapshot"), p)
+    };
+    let waiting = "import asyncio\nasync def main():\n    f = asyncio.ensure_future(ask(1))\n\
+                   \x20   await asyncio.sleep(0)\n    f.cancel()\n    return await ask(2)\n\
+                   asyncio.run(main())\n";
+    let images = [
+        image("x = 1\n", None, false),
+        image("y = ask(1) + 1\ny\n", None, false),
+        image(waiting, None, true),
+        image(
+            "t = 0\nfor i in range(10_000):\n    t += i\nt\n",
+            Some(50),
+            false,
+        ),
+    ];
+    for (phase, (img, stop)) in (0u8..).zip(&images) {
+        assert_eq!(fuzz_input::stop_phase(img), Some(phase), "{stop:?}");
+        for to in 0..4u8 {
+            let mut forged = fuzz_input::forge_stop(img, to).expect("a stop");
+            fuzz_input::reseal(&mut forged);
+            let restored = e.restore(&forged);
+            if to != phase {
+                assert_eq!(
+                    restored.err(),
+                    Some(SnapshotError::Corrupt {
+                        what: "stop".into()
+                    }),
+                    "phase {phase} forged to {to}"
+                );
+                continue;
+            }
+            let mut s = restored.expect("restores");
+            assert_eq!(s.pending().as_ref(), (phase != 0).then_some(stop));
+            let answer = match stop {
+                Progress::HostCall { .. } => Resume::Value(HostValue::Int(2)),
+                Progress::Waiting { calls } => {
+                    assert_eq!(calls, &[2]);
+                    Resume::Batch(vec![(1, Ok(HostValue::Int(0))), (2, Ok(HostValue::Int(5)))])
+                }
+                Progress::Parked { .. } => {
+                    s.set_fuel(None);
+                    Resume::Continue
+                }
+                _ => continue,
+            };
+            let p = s.resume(answer).expect("resumes");
+            let want = ["", "Some(\"3\")", "Some(\"5\")", "Some(\"49995000\")"][usize::from(phase)];
+            assert_eq!(outcome(&p), format!("complete {want}"));
+        }
+    }
+    let mut other = images[1].0.clone();
+    other[45] ^= 0x40;
+    fuzz_input::reseal(&mut other);
+    assert_eq!(
+        e.restore(&other).err(),
+        Some(SnapshotError::Corrupt {
+            what: "stop".into()
+        })
+    );
+}
 
 /// The `snapshot_restore` fuzz target's stored crash and out-of-memory
 /// seeds, then every byte of each program's VM-state tail near its end,

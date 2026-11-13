@@ -8,7 +8,7 @@
 use crate::{
     Engine, ParkReason, Progress, Session, SnapshotError, build_id, host_defs, test_hooks,
 };
-use mm_engine::Vm;
+use mm_engine::{FutureStatus, Stopped, Vm};
 
 /// The first bytes of every snapshot.
 const SNAPSHOT_MAGIC: [u8; 8] = *b"MMSNAP\0\x01";
@@ -127,7 +127,8 @@ pub(crate) fn read(engine: &Engine, bytes: &[u8]) -> Result<Image, SnapshotError
     // output is.
     let mut budget = engine.config.limits.memory;
     let header = *r.rest_mut();
-    let stop = match read_stop(&mut r, &mut budget)? {
+    let pending = read_stop(&mut r, &mut budget)?;
+    let stop = match pending {
         Some(_) => header[..header.len() - r.remaining()].to_vec(),
         None => Vec::new(),
     };
@@ -155,6 +156,24 @@ pub(crate) fn read(engine: &Engine, bytes: &[u8]) -> Result<Image, SnapshotError
         mm_engine::SnapError::Corrupt(what) => corrupt(what),
         mm_engine::SnapError::TooLarge => SnapshotError::TooLarge,
     })?;
+    // The header's stop is what the session reports and which answer it
+    // takes, so it must be what the VM is stopped at. A waiting cell's
+    // futures may have been cancelled since (the host's answer to one is
+    // then dropped), but the VM still holds each.
+    let consistent = match (&pending, vm.stopped()) {
+        (None, Stopped::Idle) | (Some(Progress::Parked { .. }), Stopped::Parked) => true,
+        (Some(Progress::HostCall { call, .. }), Stopped::HostCall(id)) => *call == id,
+        (Some(Progress::Waiting { calls }), Stopped::Waiting) => {
+            !calls.is_empty()
+                && calls
+                    .iter()
+                    .all(|&c| vm.future_status(c) != FutureStatus::Unknown)
+        }
+        _ => false,
+    };
+    if !consistent {
+        return Err(corrupt("stop"));
+    }
     Ok(Image {
         vm,
         returns_last_expr,

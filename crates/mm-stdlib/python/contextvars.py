@@ -3,7 +3,7 @@
 # each asyncio task runs in a copy of its creator's (or the one given to
 # `create_task(context=)`), and `Context.run` swaps one in.
 
-import _mm
+from _mm import ctx_get as _ctx_get, ctx_swap as _ctx_swap
 
 __all__ = ('Context', 'ContextVar', 'Token', 'copy_context')
 
@@ -25,11 +25,11 @@ class Context:
         if self._entered:
             raise RuntimeError(f'cannot enter context: {self!r} is already entered')
         self._entered = True
-        old = _mm.ctx_swap(self._data)
+        old = _ctx_swap(self._data)
         try:
             return callable(*args, **kwargs)
         finally:
-            _mm.ctx_swap(old)
+            _ctx_swap(old)
             self._entered = False
 
     def copy(self):
@@ -83,7 +83,7 @@ def _context(d):
 
 
 def copy_context():
-    return _context(dict(_mm.ctx_get()))
+    return _context(dict(_ctx_get()))
 
 
 class Token:
@@ -129,7 +129,7 @@ class ContextVar:
         return self._name
 
     def get(self, default=_MISSING):
-        v = _mm.ctx_get().get(self, _MISSING)
+        v = _ctx_get().get(self, _MISSING)
         if v is not _MISSING:
             return v
         if default is not _MISSING:
@@ -139,7 +139,7 @@ class ContextVar:
         raise LookupError(self)
 
     def set(self, value):
-        d = _mm.ctx_get()
+        d = _ctx_get()
         token = Token(d, self, d.get(self, _MISSING))
         d[self] = value
         return token
@@ -151,7 +151,7 @@ class ContextVar:
             raise RuntimeError(f'{token!r} has already been used once')
         if token._var is not self:
             raise ValueError(f'{token!r} was created by a different ContextVar')
-        d = _mm.ctx_get()
+        d = _ctx_get()
         if token._ctx is not d:
             raise ValueError(f'{token!r} was created in a different Context')
         if token._old_value is _MISSING:
