@@ -452,8 +452,11 @@ impl Vm {
             // Builtin-type subclasses compare as the values they extend
             // (errors name the subclasses).
             let mut left = crate::dict::WALK;
-            if !matches!(opcode, op::TEST_EQ | op::TEST_NE)
-                && !Vm::is_set(ua)
+            // A set, or a dict view with a set, orders as sets do.
+            let setlike = |t: T| matches!(t, T::set | T::frozenset | T::dict_keys | T::dict_items);
+            let sets = Vm::is_set(ua) || setlike(self.type_of(ua)) && setlike(self.type_of(ub));
+            let eq = matches!(opcode, op::TEST_EQ | op::TEST_NE);
+            if !(eq || sets)
                 && let Err(crate::ops::OrdErr::Types(p, q)) = self.order_pure(ua, ub, 0, &mut left)
                 && p == ua
                 && q == ub

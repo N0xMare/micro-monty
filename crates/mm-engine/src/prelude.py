@@ -297,8 +297,10 @@ def _op_cmp(a, b, op, d=0):
         if op == 31:
             return len(b) < len(a) and _ssub(b, a, d)
         return _ssub(b, a, d)
-    if _setlike(ta) and _setlike(tb):
-        # A set-like dict view: CPython's `all_contained_in`.
+    if (ta is _KEYS or ta is _ITEMS or tb is _KEYS or tb is _ITEMS) and (
+            _setlike(ta) or isinstance(a, set)) and (_setlike(tb) or isinstance(b, set)):
+        # A set-like dict view and a set, or a set subclass's instance:
+        # CPython's `all_contained_in`.
         if op > 30:
             a, b = b, a
             op -= 2
@@ -648,11 +650,54 @@ def _op_binop(a, b, op, inplace):
     view = ta is _KEYS or ta is _ITEMS
     if (op == 1 or 9 <= op <= 11) and (view or type(b) is _KEYS or type(b) is _ITEMS) and not (
             inplace and ta is dict):
-        # A set-like dict view with any iterable: plain sets.
+        # A set-like dict view with any iterable: plain sets, as CPython's
+        # `dictviews_*` make them.
         if op == 9:
-            v, other = (a, b) if view else (b, a)
-            return {x for x in other if x in v}
-        return _op_binop(set(a), set(b), op, False)
+            # An exact set at least as long as the view reads the view; of
+            # two views the longer is probed.
+            v, o = (a, b) if view else (b, a)
+            if type(o) is set and len(v) <= len(o):
+                return set.intersection(o, v)
+            if (type(o) is _KEYS or type(o) is _ITEMS) and len(o) > len(v):
+                v, o = o, v
+            out = set()
+            for x in o:
+                if x in v:
+                    out.add(x)
+            return out
+        if op == 11 and ta is _ITEMS and type(b) is _ITEMS:
+            # `dictitems_xor`: the pairs of `b` that `a` lacks, then those
+            # of `a` that `b` did not match.
+            out = set()
+            hit = set()
+            for k, v in b:
+                e = _dfind(a, k, _khash(k, 'dict key'))
+                if e >= 0:
+                    w = _dict_value_at(a, e)
+                    if w is v or w == v:
+                        hit.add(e)
+                        continue
+                out.add((k, v))
+            e = 0
+            p = _dict_at(a, 0)
+            while p is not None:
+                if p is not False and e not in hit:
+                    out.add(p)
+                e += 1
+                p = _dict_at(a, e)
+            return out
+        # `dictviews_to_set`: a keys view presizes as its dict does.
+        out = set()
+        if ta is _KEYS:
+            _set_table(out, (a,))
+        set.update(out, a)
+        if op == 10:
+            set.update(out, b)
+        elif op == 1:
+            set.difference_update(out, b)
+        else:
+            set.symmetric_difference_update(out, b)
+        return out
     # Sets and their subclasses: the values they extend; an in-place
     # operator returns its left operand.
     ua = _bx_value(a)
@@ -707,8 +752,9 @@ def _op_setop(a, b, op, inplace):
     # left operand of `==`).
     if op == 10:
         out = set(a) if not inplace else a
-        for x, h in _set_hashed(b):
-            _sadd_h(out, x, h)
+        # `set_merge`: presized, as the native is; `a | a` is a copy.
+        if b is not a:
+            set.update(out, b)
         return out
     out = set()
     if op == 9:
@@ -1372,14 +1418,18 @@ def _set_update(a):
             # The native, which presizes `s` first as CPython's
             # `set_merge` does (its table order depends on it).
             set.update(s, other)
+        elif isinstance(other, set):
+            # A set subclass's instance merges as its set does.
+            set.update(s, _bx_value(other))
         else:
             for x in other:
                 _sadd(s, x)
 
 
 def _set_union(a):
+    # CPython's `set_union`: the set itself among the others is skipped.
     s = set(a[0])
-    _set_update((s,) + a[1:])
+    _set_update((s,) + tuple(o for o in a[1:] if o is not a[0]))
     return s
 
 
@@ -1535,6 +1585,24 @@ def _set_issuperset(a):
 _frozenset_issubset = _set_issubset
 _frozenset_issuperset = _set_issuperset
 _frozenset_isdisjoint = _set_isdisjoint
+
+
+def _dict_keys_isdisjoint(a):
+    # CPython's `dictviews_isdisjoint`: a longer set or view is probed by
+    # the view's items, else the other's items probe the view.
+    v, o = a[0], a[1]
+    if v is o:
+        return len(v) == 0
+    to = type(o)
+    if (isinstance(o, set) or isinstance(o, frozenset) or to is _KEYS or to is _ITEMS) and len(o) > len(v):
+        v, o = o, v
+    for x in o:
+        if x in v:
+            return False
+    return True
+
+
+_dict_items_isdisjoint = _dict_keys_isdisjoint
 
 
 def _frozenset_union(a):
@@ -5572,6 +5640,8 @@ def _bulk(r, prog, pc, i, res):
     # `pc` on, once an item needs Python code: each phase is 16 bits of
     # `prog` (action, then the out, source and other registers of `r`;
     # `set::phase`), the value register `res`, or 6 for None, 7 for True.
+    # The phase `pc` names has begun natively; a later one begins here.
+    fresh = False
     while True:
         p = (prog >> (16 * pc)) & 0xFFFF
         if not p:
@@ -5580,6 +5650,11 @@ def _bulk(r, prog, pc, i, res):
         out = r[(p >> 4) & 7]
         src = r[(p >> 7) & 7]
         other = r[(p >> 10) & 7]
+        if fresh and a == 3 and not p & 24576 and (
+                type(src) is set or type(src) is frozenset or type(src) is dict):
+            # A set or dict (not a view) presizes `out` (`set_merge`).
+            _set_table(out, (src,))
+        fresh = True
         if a == 10:
             _set_table(out, src)
             i = 0

@@ -776,10 +776,14 @@ const SITES: &[(Row, &str, &str, usize)] = &[
     // objects it had to hold. Its worst steps were then the mark step
     // after the result's 32 MiB of hashes, paced to mark all of the heap
     // (30-35 ms), and the first inserts faulting those in (24-26 ms); now
-    // 21-23 ms, the discard steps [M].
+    // 21-23 ms, the discard steps [M]. Its set of 2M pairs is no longer
+    // presized, as CPython's `dictviews_to_set` does not presize for an
+    // items view: its last growth holds the old 32 MiB table beside the
+    // new one, so `e` has 500,000 pairs, not 1,000,000 (800,000 raise
+    // `MemoryError` now) [M].
     (
         Row::Bounded,
-        "d = {i: i for i in range(2_000_000)}\ne = {(i, i) for i in range(1_000_000)}",
+        "d = {i: i for i in range(2_000_000)}\ne = {(i, i) for i in range(500_000)}",
         "k = d.items() - e",
         1,
     ),

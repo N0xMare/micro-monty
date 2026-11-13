@@ -6482,7 +6482,7 @@ fn pl_dict_value_at(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// past the last one (a walk that sees later insertions, as `PyDict_Next`).
 fn pl_dict_at(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let e = u32::try_from(vm.int_of_o(vm.arg_o(&a, 1)).unwrap_or(-1)).unwrap_or(u32::MAX);
-    match vm.dict_entry_at(vm.arg_o(&a, 0), e) {
+    match vm.dict_entry_at(view_dict(vm, vm.arg_o(&a, 0)), e) {
         None => Ok(Value::NONE),
         Some((k, _)) if k == Value::UNDEFINED => Ok(Value::FALSE),
         Some((k, v)) => vm.alloc_tuple(&[k, v]),
@@ -6767,13 +6767,18 @@ fn pl_set_hashed(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `_set_table(s, x)`, the prelude twins' edits of set `s`'s table: an
 /// int `x` removes the entry in slot `x`, a set `x` gives `s` its table
-/// ([`Vm::set_move`]), `x` being `s` settles it ([`Vm::set_settle`]), and
+/// ([`Vm::set_move`]), `x` being `s` settles it ([`Vm::set_settle`]),
+/// `(src,)` presizes it for a merge of `src` ([`Vm::set_presize`]), and
 /// `None` makes `s` a frozenset and gives it back. One native for the
-/// four, as each prelude native is bound at startup.
+/// five, as each prelude native is bound at startup.
 fn pl_set_table(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (s, x) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if s == x {
         vm.set_settle(s)?;
+    } else if x.is_obj_kind(ty::TUPLE as u8) {
+        // `(src,)`: presized for a merge of set or dict `src`.
+        let src = vm.tuple_items(x).first().copied().unwrap_or(Value::NONE);
+        vm.set_presize(s, src)?;
     } else if x == Value::NONE {
         // A set the prelude built becomes the frozenset it returns.
         vm.set_freeze(s);
@@ -7785,6 +7790,12 @@ fn set_with(
 ) -> Result<Value, Raised> {
     use crate::set::{act, phase};
     use mm_compile::ast::BinOp;
+    // A set subclass's instance is read as its set (`PyAnySet_Check`).
+    let o = if vm.backing(o).is_some_and(Vm::is_set) {
+        vm.unbx(o)
+    } else {
+        o
+    };
     if Vm::is_set(o) {
         return vm.set_binop(op, s, o, false, top);
     }
@@ -7842,6 +7853,7 @@ fn set_many(
     use crate::set::{act, phase, res};
     use mm_compile::ast::BinOp;
     let mut s = vm.check_anyset(a, name)?;
+    let first = s;
     if a.n == 1 {
         // A copy, in steps.
         let out = vm.new_set_like(s)?;
@@ -7857,7 +7869,11 @@ fn set_many(
             continue;
         }
         // CPython's `set_union` and `set_difference_multi`: the result of
-        // the first updated in place by the others, not copied again.
+        // the first updated in place by the others, not copied again; a
+        // union skips the set itself.
+        if op == BinOp::BitOr && vm.arg_o(a, i) == first {
+            continue;
+        }
         let (src, items) = vm.view_src(vm.arg_o(a, i))?;
         let act = if op == BinOp::Sub {
             act::DISCARD
@@ -7897,6 +7913,12 @@ fn set_inplace(
 ) -> Result<Value, Raised> {
     use crate::set::{act, phase, res};
     use mm_compile::ast::BinOp;
+    // A set subclass's instance is read as its set (`PyAnySet_Check`).
+    let o = if vm.backing(o).is_some_and(Vm::is_set) {
+        vm.unbx(o)
+    } else {
+        o
+    };
     if Vm::is_set(o) {
         // A request (the operation goes on in steps) or the set.
         let v = vm.set_binop(op, s, o, true, top)?;
@@ -7997,8 +8019,20 @@ fn set_isdisjoint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `dict_keys.isdisjoint` / `dict_items.isdisjoint`.
 fn view_isdisjoint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    let v = vm.arg_o(&a, 0);
-    for &x in &vm.collect(vm.arg_o(&a, 1))? {
+    let (mut v, mut o) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
+    if v == o {
+        return Ok(Value::from_bool(vm.len_of(v)? == 0));
+    }
+    // CPython's `dictviews_isdisjoint`: a longer set or view is probed by
+    // the view's items.
+    let setlike = |t: T| matches!(t, T::set | T::frozenset | T::dict_keys | T::dict_items);
+    if setlike(vm.type_of(vm.unbx(o))) && vm.len_of(vm.unbx(o))? > vm.len_of(v)? {
+        if vm.user_class(o).is_some() {
+            return Err(vm.need_py());
+        }
+        (v, o) = (o, v);
+    }
+    for &x in &vm.collect(o)? {
         if vm.contains(v, x)? {
             return Ok(Value::FALSE);
         }

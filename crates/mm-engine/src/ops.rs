@@ -265,11 +265,16 @@ impl Vm {
     }
 
     /// A bulk source of the items of `v` and its flag: a keys view is
-    /// its dict, an items view its dict read as `(key, value)` pairs.
+    /// its dict, read a key at a time as an iterator is (no presize), an
+    /// items view its dict read as `(key, value)` pairs, a set subclass's
+    /// instance its set.
     pub(crate) fn view_src(&mut self, v: Value) -> Result<(Value, u64), Raised> {
         match self.type_of(v) {
-            T::dict_keys => Ok((self.vslot(v, 0), 0)),
+            T::dict_keys => Ok((self.vslot(v, 0), crate::set::act::VIEW)),
             T::dict_items => Ok((self.vslot(v, 0), crate::set::act::ITEMS)),
+            // A set subclass's instance is read as its set
+            // (`PyAnySet_Check`), whatever its `__iter__`.
+            _ if self.backing(v).is_some_and(Vm::is_set) => Ok((self.unbx(v), 0)),
             _ => Ok((self.bulk_src(v)?, 0)),
         }
     }
@@ -541,69 +546,7 @@ impl Vm {
                     || matches!(tb, T::dict_keys | T::dict_items))
                     && !(inplace && ta == T::dict) =>
             {
-                // A set-like dict view with any iterable: plain sets;
-                // `&` keeps the items of the other operand the view
-                // contains (CPython's `_PyDictView_Intersect`).
-                use crate::set::{act, phase};
-                let (view, other) = if matches!(ta, T::dict_keys | T::dict_items) {
-                    (a, b)
-                } else {
-                    (b, a)
-                };
-                let out = self.new_set()?;
-                if op == BinOp::BitAnd && ta != T::dict_items && tb != T::dict_items {
-                    let d = self.vslot(view, 0);
-                    let to = if matches!(ta, T::dict_keys) { tb } else { ta };
-                    // A set (not a subclass) at least as long as the view
-                    // reads the view instead: `other.intersection(view)`,
-                    // in the dict's order.
-                    let (src, probe) = if to == T::set && self.dict_len(d) <= self.set_len(other) {
-                        (d, other)
-                    } else {
-                        (self.bulk_src(other)?, d)
-                    };
-                    return self.bulk(&[out, src, probe], phase(act::AND, 0, 1, 2), 0, top);
-                }
-                if op == BinOp::BitAnd {
-                    for &x in &self.collect(other)? {
-                        if self.contains(view, x)? {
-                            self.set_add_plain(out, x)?;
-                        }
-                    }
-                    return Ok(out);
-                }
-                // `set(a)`, then `b` taken in, removed or toggled: a set
-                // or a keys view toggles as it is, anything else as the
-                // set of its items.
-                let (x, fx) = self.view_src(a)?;
-                let fill = phase(act::ADD | fx, 0, 1, 0);
-                if !matches!(
-                    b.obj_kind().map(u16::from),
-                    Some(ty::LIST | ty::TUPLE | ty::SET | ty::DICT | ty::RANGE)
-                ) && !matches!(tb, T::dict_keys | T::dict_items)
-                {
-                    // `set(a)` is made before `b` is read, as CPython's
-                    // `dictviews_or` does (its errors come first).
-                    self.bulk(&[out, x], fill, 0, false)?;
-                }
-                let (y, fy) = self.view_src(b)?;
-                let regs = [out, x, y, Value::NONE];
-                let prog = match op {
-                    BinOp::BitOr => fill | phase(act::ADD | fy, 0, 2, 0) << 16,
-                    BinOp::Sub => fill | phase(act::DISCARD | fy, 0, 2, 0) << 16,
-                    _ if Vm::is_set(y) || (y.is_obj_kind(ty::DICT as u8) && fy == 0) => {
-                        fill | phase(act::TOGGLE, 0, 2, 0) << 16
-                    }
-                    _ => {
-                        let tmp = self.new_set()?;
-                        let regs = [out, x, y, tmp];
-                        let prog = phase(act::ADD | fy, 3, 2, 0)
-                            | fill << 16
-                            | phase(act::TOGGLE, 0, 3, 0) << 32;
-                        return self.bulk(&regs, prog, 0, top);
-                    }
-                };
-                return self.bulk(&regs, prog, 0, top);
+                return self.view_setop(op, a, b, top, true);
             }
             (
                 BinOp::BitOr | BinOp::BitAnd | BinOp::Sub | BinOp::BitXor,
@@ -647,6 +590,87 @@ impl Vm {
         Err(self.err(T::TypeError, &msg))
     }
 
+    /// `a <op> b` (`&`, `|`, `-`, `^`) with a set-like dict view: a plain
+    /// set, as CPython's `dictviews_*` make it. `exact`: a `set` operand is
+    /// one (`PySet_CheckExact`), not a subclass's value.
+    fn view_setop(
+        &mut self,
+        op: BinOp,
+        a: Value,
+        b: Value,
+        top: bool,
+        exact: bool,
+    ) -> Result<Value, Raised> {
+        use crate::set::{act, phase};
+        let view = |t: T| matches!(t, T::dict_keys | T::dict_items);
+        let (ta, tb) = (self.type_of(a), self.type_of(b));
+        if op == BinOp::BitXor && ta == T::dict_items && tb == T::dict_items {
+            // `dictitems_xor` compares values: the prelude twin.
+            return Err(self.need_py());
+        }
+        let out = self.new_set()?;
+        if op == BinOp::BitAnd {
+            // `_PyDictView_Intersect`: an exact set at least as long as
+            // the view reads the view (`set.intersection`); of two views
+            // the longer is probed; otherwise the other operand is read.
+            let (v, o) = if view(ta) { (a, b) } else { (b, a) };
+            let lv = self.dict_len(self.vslot(v, 0));
+            let (src, mut probe) = if (exact && self.type_of(o) == T::set && lv <= self.set_len(o))
+                || (view(self.type_of(o)) && self.dict_len(self.vslot(o, 0)) > lv)
+            {
+                (v, o)
+            } else {
+                (o, v)
+            };
+            // Each item of `src` kept if `probe` has it.
+            if self.type_of(probe) == T::dict_items {
+                for &x in &self.collect(src)? {
+                    if self.contains(probe, x)? {
+                        self.set_add_plain(out, x)?;
+                    }
+                }
+                return Ok(out);
+            }
+            if self.type_of(probe) == T::dict_keys {
+                probe = self.vslot(probe, 0);
+            }
+            let (src, fs) = self.view_src(src)?;
+            return self.bulk(&[out, src, probe], phase(act::AND | fs, 0, 1, 2), 0, top);
+        }
+        // `dictviews_to_set(a)`, then `b` taken in, removed or toggled: a
+        // set or a dict toggles as it is, anything else as the set of its
+        // items. Only a keys view's dict presizes the set, as a dict does.
+        let (x, fx) = self.view_src(a)?;
+        let fx = if ta == T::dict_keys { 0 } else { fx };
+        let fill = phase(act::ADD | fx, 0, 1, 0);
+        if !matches!(
+            b.obj_kind().map(u16::from),
+            Some(ty::LIST | ty::TUPLE | ty::SET | ty::DICT | ty::RANGE)
+        ) && !view(tb)
+        {
+            // `set(a)` is made before `b` is read, as CPython's
+            // `dictviews_or` does (its errors come first).
+            self.bulk(&[out, x], fill, 0, false)?;
+        }
+        let (y, fy) = self.view_src(b)?;
+        let regs = [out, x, y, Value::NONE];
+        let prog = match op {
+            BinOp::BitOr => fill | phase(act::ADD | fy, 0, 2, 0) << 16,
+            BinOp::Sub => fill | phase(act::DISCARD | fy, 0, 2, 0) << 16,
+            _ if Vm::is_set(y) || (y.is_obj_kind(ty::DICT as u8) && fy == 0) => {
+                fill | phase(act::TOGGLE, 0, 2, 0) << 16
+            }
+            _ => {
+                let tmp = self.new_set()?;
+                let regs = [out, x, y, tmp];
+                let prog =
+                    phase(act::ADD | fy, 3, 2, 0) | fill << 16 | phase(act::TOGGLE, 0, 3, 0) << 32;
+                return self.bulk(&regs, prog, 0, top);
+            }
+        };
+        self.bulk(&regs, prog, 0, top)
+    }
+
     /// `binop` with an instance operand: on the builtin values instances
     /// of builtin-type subclasses extend (`+=` on a list subclass keeps
     /// the instance).
@@ -687,6 +711,13 @@ impl Vm {
                 crate::percent::Pct::Done(v) => Ok(v),
                 crate::percent::Pct::Need(..) => Err(self.need_py()),
             };
+        }
+        if op == BinOp::BitAnd
+            && (matches!(self.type_of(x), T::dict_keys | T::dict_items)
+                || matches!(self.type_of(y), T::dict_keys | T::dict_items))
+        {
+            // A set subclass's value is not read as an exact set.
+            return self.view_setop(op, x, y, false, false);
         }
         let r = match self.binop(op, x, y, inplace) {
             Ok(r) => r,
@@ -1081,8 +1112,14 @@ impl Vm {
                 };
                 let setlike =
                     |t: T| matches!(t, T::set | T::frozenset | T::dict_keys | T::dict_items);
-                let (ta, tb) = (self.type_of(a), self.type_of(b));
-                if setlike(ta) && setlike(tb) && !(Vm::is_set(a) && Vm::is_set(b)) {
+                let (ua, ub) = (self.unbx(a), self.unbx(b));
+                let (ta, tb) = (self.type_of(ua), self.type_of(ub));
+                if setlike(ta) && setlike(tb) && !(Vm::is_set(ua) && Vm::is_set(ub)) {
+                    if ua != a || ub != b {
+                        // A view and a set subclass's instance: the twin
+                        // reads the instance as itself.
+                        return Err(self.need_py());
+                    }
                     // A set-like dict view: CPython's `all_contained_in`.
                     let lt = matches!(opcode, o::TEST_LT | o::TEST_LE);
                     let (x, y) = if lt { (a, b) } else { (b, a) };

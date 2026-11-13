@@ -50,7 +50,11 @@ pub(crate) mod act {
     /// `out` takes the table of set `src` (CPython's `set_swap_bodies`).
     pub const MOVE: u64 = 10;
     /// Flag: a dict source gives `(key, value)` tuples (an items view).
+    /// It is read as a view: an `ADD` does not presize for it.
     pub const ITEMS: u64 = 1 << 13;
+    /// Flag: a dict source is a keys view, read a key at a time as
+    /// CPython's `set_update_iterable` does: an `ADD` does not presize.
+    pub const VIEW: u64 = 1 << 14;
 }
 
 /// A bulk operation's value when its phases are done: a register (0 to
@@ -865,6 +869,9 @@ impl Vm {
         let out = self.new_set_like(a)?;
         let regs = [out, a, b];
         let prog = match op {
+            // CPython's `set_or` and `set_union`: a copy, which `a` itself
+            // as the other operand leaves as it is.
+            BinOp::BitOr if a == b => phase(act::ADD, 0, 1, 0),
             BinOp::BitOr => phase(act::ADD, 0, 1, 0) | phase(act::ADD, 0, 2, 0) << 16,
             BinOp::BitAnd if lb > la => phase(act::AND, 0, 1, 2),
             BinOp::BitAnd => phase(act::AND, 0, 2, 1),
@@ -1219,7 +1226,8 @@ impl Vm {
             if b.pc & BEGUN == 0 {
                 b.pc |= BEGUN;
                 b.i = 0;
-                if let Some(v) = self.bulk_begin(b, a, out, src, other)? {
+                let view = p & (act::ITEMS | act::VIEW) != 0;
+                if let Some(v) = self.bulk_begin(b, a, view, out, src, other)? {
                     return Ok(Flow::Done(v));
                 }
                 continue;
@@ -1367,13 +1375,57 @@ impl Vm {
         }
     }
 
-    /// A phase begins: presizing `out` as CPython does, or an action done
-    /// whole (`MOVE`), or a value already decided.
+    /// The entries set or dict `src` gives a merge.
+    fn merge_len(&self, src: Value) -> u64 {
+        if Self::is_set(src) {
+            self.set_len(src) as u64
+        } else {
+            self.dict_len(src) as u64
+        }
+    }
+
+    /// The table size, and the `minused` behind it, that `set_merge`
+    /// presizes set `out` to before taking in `n` entries of a set or a
+    /// dict, if the table changes.
+    fn merge_size(&self, out: Value, n: u64) -> Option<(usize, usize)> {
+        let (r, _, _, size) = self.set_parts(out)?;
+        let (fill, used) = (self.raw_o(r, FILL), self.raw_o(r, USED));
+        if (fill + n) * 5 < (size as u64 - 1) * 3 {
+            return None;
+        }
+        // Presized at most to the cap: past it, only growth the items
+        // need (they may overlap) can fail.
+        let minused = usize::try_from((used + n) * 2).unwrap_or(usize::MAX);
+        let new = Self::set_size_for(minused).min(MAX_SIZE);
+        (new > size || fill > used).then_some((new, minused))
+    }
+
+    /// Set `s` presized, at once, as a merge of set or dict `src` presizes
+    /// it (a keys view as its dict): for the prelude twins of a bulk `ADD`
+    /// phase and of `dictviews_to_set`.
+    pub(crate) fn set_presize(&mut self, s: Value, src: Value) -> Result<(), Raised> {
+        // A keys view as its dict (`dictviews_to_set`).
+        let src = if src.is_obj_kind(ty::VIEW as u8) && self.type_of(src) == T::dict_keys {
+            self.vslot(src, 0)
+        } else {
+            src
+        };
+        let n = self.merge_len(src);
+        match self.merge_size(s, n).filter(|_| n != 0 && s != src) {
+            Some((_, minused)) => self.set_resize(s, minused),
+            None => Ok(()),
+        }
+    }
+
+    /// A phase begins: presizing `out` as CPython does (not for a dict
+    /// read as a `view`), or an action done whole (`MOVE`), or a value
+    /// already decided.
     #[inline(never)]
     fn bulk_begin(
         &mut self,
         b: &mut Bulk,
         a: u64,
+        view: bool,
         out: Value,
         src: Value,
         other: Value,
@@ -1389,29 +1441,15 @@ impl Vm {
                     return Ok(Some(Value::FALSE));
                 }
             }
-            act::ADD if set_src && src != out => {
+            act::ADD if set_src && src != out && !view => {
                 // `set_merge` / `set_update_internal` with a dict.
-                let Some((r, _, _, size)) = self.set_parts(out) else {
-                    return Ok(None);
-                };
-                let (fill, used) = (self.raw_o(r, FILL), self.raw_o(r, USED));
-                let n = if Self::is_set(src) {
-                    self.set_len(src)
-                } else {
-                    self.dict_len(src)
-                } as u64;
+                let n = self.merge_len(src);
                 if n == 0 {
                     b.pc = (b.pc & 7) + 1;
                     return Ok(None);
                 }
-                if (fill + n) * 5 >= (size as u64 - 1) * 3 {
-                    // Presized at most to the cap: past it, only growth
-                    // the items need (they may overlap) can fail.
-                    let minused = usize::try_from((used + n) * 2).unwrap_or(usize::MAX);
-                    let new = Self::set_size_for(minused).min(MAX_SIZE);
-                    if new > size || fill > used {
-                        self.bulk_grow(b, out, new)?;
-                    }
+                if let Some((new, _)) = self.merge_size(out, n) {
+                    self.bulk_grow(b, out, new)?;
                 }
                 self.bulk_mode(b, out, src);
             }
