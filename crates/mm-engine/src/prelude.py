@@ -704,7 +704,7 @@ def _op_binop(a, b, op, inplace):
     ub = _bx_value(b)
     tu = type(ua)
     if (tu is set or tu is frozenset) and (type(ub) is set or type(ub) is frozenset):
-        out = _op_setop(ua, ub, op, inplace)
+        out = _op_setop(ua, ub, op, inplace and tu is set)
         if out is not None:
             if inplace and out is ua:
                 return a

@@ -1127,6 +1127,11 @@ impl Vm {
                     if lx > ly || (strict && lx == ly) {
                         return Ok(Value::FALSE);
                     }
+                    // `collect` hands a long operand off part way: the
+                    // twin's own loop runs on the operands as they are.
+                    if lx > 1024 {
+                        return Err(self.need_py());
+                    }
                     for &item in &self.collect(x)? {
                         if !self.contains(y, item)? {
                             return Ok(Value::FALSE);
@@ -1135,7 +1140,9 @@ impl Vm {
                     return Ok(Value::TRUE);
                 }
                 let ord = self.order(a, b, sym)?;
-                if Vm::is_set(a) {
+                if Vm::is_set(ua) && Vm::is_set(ub) {
+                    // A set subclass's instance compares as its set.
+                    let (a, b) = (ua, ub);
                     let (sub, sup) = (self.set_issubset_r(a, b)?, self.set_issubset_r(b, a)?);
                     let n = self.set_len(a) != self.set_len(b);
                     return Ok(Value::from_bool(match opcode {
