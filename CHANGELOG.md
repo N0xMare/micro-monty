@@ -12,8 +12,29 @@ hashes are pre-release history, kept in the private archive
 
 ## 0.0.2 (unreleased)
 
+### Added
+
+- `xml.etree.ElementTree` (features `mod-xml`, default on): CPython's
+  Element, ElementTree, ElementPath paths, TreeBuilder and serializer over
+  a small non-validating parser in place of expat, with expat's messages,
+  codes and positions for `ParseError`. It expands the predefined
+  entities, character references and a DOCTYPE's internal entities; no
+  `iterparse`, `XMLPullParser`, `canonicalize`, `xml.dom` or `xml.sax`.
+- `email.utils`'s date functions (`mod-email`, default on):
+  `parsedate_to_datetime`, `parsedate`, `parsedate_tz`, `mktime_tz`,
+  `formatdate` and `format_datetime`. No address or message parsing.
+- `html.unescape` in a build without `mod-html-entities` resolves HTML 4's
+  252 named references (CPython's `html5` entries for them, with and
+  without the semicolon), not only the five of `escape()`.
+- The codemode census passes 1,722 of 1,722 CPython-passing solutions on
+  the default build (1,701 before). `hello.wasm` +17,780 B, native `hello`
+  +18,432 B [M]. The default build's id moves.
+
 ### Changed
 
+- `import xml` and `import email` no longer carry a redirect hint;
+  `HintGroup::XmlEmail` covers no modules and keeps its key (`xml`), so a
+  host that sets it still succeeds.
 - `mm-compile`'s `CompileError` is boxed: it is now
   `CompileError(Box<ErrorData>)`, and its `kind`, `msg` and `pos` fields
   moved to the new public `ErrorData`. Reads such as `e.msg` still compile

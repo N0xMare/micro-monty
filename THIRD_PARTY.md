@@ -112,7 +112,11 @@ CPython 3.14's pure-Python standard library (`Lib/collections/__init__.py`,
 `Lib/html/parser.py`, `Lib/_markupbase.py`, `Lib/calendar.py`, `Lib/hmac.py`,
 `Lib/zoneinfo/` (`__init__.py`, `_common.py`, `_zoneinfo.py`, `_tzpath.py`),
 `Lib/_py_warnings.py` (as `warnings.py`), `Lib/ast.py`, `Lib/token.py`,
-`Lib/tokenize.py`,
+`Lib/tokenize.py`, `Lib/xml/etree/ElementTree.py` and
+`Lib/xml/etree/ElementPath.py` (also under the ElementTree toolkit's
+notice, Copyright (c) 1999-2008 by Fredrik Lundh, kept in each file; the
+parser is micro-monty's), `Lib/email/utils.py` and `Lib/email/_parseaddr.py`
+(the date functions),
 `Lib/tomllib/` (also MIT, Copyright (c) 2021 Taneli
 Hukkinen; relative imports made absolute);
 `csv.py` also ports `Modules/_csv.c`'s reader and writer), and

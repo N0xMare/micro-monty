@@ -54,7 +54,7 @@ DEFAULT_MODULES = {
     'bisect', 'string', 'textwrap', 'enum', 'abc', 'binascii', 'time', 'os', 'pathlib',
     'fnmatch', 'posixpath', 'csv', 'io', 'gc', 'types', 'contextlib', 'traceback',
     'logging', 'urllib', 'pprint', 'shlex', 'difflib', 'struct', 'html', 'warnings',
-    'codecs', 'platform', 'sys',
+    'codecs', 'platform', 'sys', 'xml', 'email',
 }
 OPTIONAL_MODULES = {
     'fractions', 'statistics', 'uuid', 'tomllib', 'decimal', 'numbers', 'contextvars',
@@ -65,7 +65,7 @@ OPTIONAL_MODULES = {
 def tier(module: str) -> str:
     if module in ('html.entities',):
         return 'optional'
-    if module in ('html.parser', 'urllib.request', 'urllib.error', 'email', 'xml'):
+    if module in ('html.parser', 'urllib.request', 'urllib.error'):
         return 'unsupported'
     top = module.split('.')[0]
     if module in DEFAULT_MODULES or top in DEFAULT_MODULES and module not in ('collections.abc',):

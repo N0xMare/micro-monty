@@ -24,7 +24,8 @@ mm-stdlib.workspace = true
 host-bundle = ["mm-stdlib/host-bundle"]
 # The default module set (docs/user-guide.md, "Optional stdlib modules"); since
 # the codemode census it includes fractions, statistics, tomllib, decimal, numbers, contextvars,
-# calendar, hmac, zlib and zoneinfo. To leave modules out, turn off default
+# calendar, hmac, zlib and zoneinfo, and since 0.0.2 xml (ElementTree) and
+# email (email.utils). To leave modules out, turn off default
 # features and list the ones you want. `mod-ast`, `mod-uuid`,
 # `mod-unicodedata` and `mod-html-entities` are opt-in. A module brings the
 # modules it imports (`mod-datetime` brings `mod-time`, `mod-re`,
@@ -86,6 +87,8 @@ default = [
     "mod-zlib",
     "mod-zoneinfo",
     "mod-tokenize",
+    "mod-xml",
+    "mod-email",
 ]
 mod-abc = ["mm-stdlib/mod-abc"]
 mod-ast = ["mm-stdlib/mod-ast"]
@@ -104,6 +107,7 @@ mod-dataclasses = ["mm-stdlib/mod-dataclasses"]
 mod-datetime = ["mm-stdlib/mod-datetime"]
 mod-decimal = ["mm-stdlib/mod-decimal"]
 mod-difflib = ["mm-stdlib/mod-difflib"]
+mod-email = ["mm-stdlib/mod-email"]
 mod-enum = ["mm-stdlib/mod-enum"]
 mod-fnmatch = ["mm-stdlib/mod-fnmatch"]
 mod-fractions = ["mm-stdlib/mod-fractions"]
@@ -143,6 +147,7 @@ mod-unicodedata = ["mm-stdlib/mod-unicodedata"]
 mod-urllib = ["mm-stdlib/mod-urllib"]
 mod-uuid = ["mm-stdlib/mod-uuid"]
 mod-warnings = ["mm-stdlib/mod-warnings"]
+mod-xml = ["mm-stdlib/mod-xml"]
 mod-zlib = ["mm-stdlib/mod-zlib"]
 mod-zoneinfo = ["mm-stdlib/mod-zoneinfo"]
 # `test_hooks::panic_next`: injects a panic into a facade operation, for the

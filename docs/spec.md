@@ -2430,8 +2430,8 @@ The default module set is the facade's `default` features
 `html.parser`), `mod-warnings`, `mod-codecs`, `mod-platform`,
 `mod-tempfile`, `mod-decimal`, `mod-numbers`, `mod-contextvars`,
 `mod-fractions`, `mod-statistics`, `mod-tomllib`, `mod-calendar`,
-`mod-hmac`, `mod-zlib`, `mod-zoneinfo` and `mod-tokenize` (with `token`;
-mm-engine feature `tokenize`). Optional: `mod-uuid`, `mod-unicodedata`,
+`mod-hmac`, `mod-zlib`, `mod-zoneinfo`, `mod-tokenize` (with `token`;
+mm-engine feature `tokenize`), `mod-xml` and `mod-email`. Optional: `mod-uuid`, `mod-unicodedata`,
 `mod-html-entities` (32,470 bytes of bytecode [M]) and `mod-ast` (mm-engine
 feature `ast`; about 48 KB of `hello.wasm` [M]). `mm` enables all four, so
 `cargo xtask check` runs their own cases, conformance and durability.

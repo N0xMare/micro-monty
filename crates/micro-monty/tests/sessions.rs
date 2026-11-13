@@ -766,10 +766,6 @@ fn unsupported_imports_keep_cpython_text_and_add_a_replaceable_hint() {
             "Use re and str methods on the text, or a tool",
         ),
         (
-            "import email.utils",
-            "micro-monty does not bundle 'email'; use re and str methods on the text, or a tool",
-        ),
-        (
             "import asyncio\nasyncio.eager_task_factory",
             "micro-monty's asyncio has ALL_COMPLETED, Barrier, BoundedSemaphore, BrokenBarrierError, Condition, Event, EventLoop, FIRST_COMPLETED, \
              FIRST_EXCEPTION, Future, Handle, LifoQueue, Lock, PriorityQueue, Queue, QueueEmpty, \

@@ -621,7 +621,7 @@ it too.
 | `Validation` | `pydantic`, `attrs`, `attr`, `marshmallow` | Use dataclasses |
 | `Yaml` | `yaml`, `ruamel` | Use json, or tomllib for TOML |
 | `HtmlParsing` | `bs4`, `lxml`, `html5lib` | Use re and str methods on the text, or a tool |
-| `XmlEmail` | `xml`, `email` | micro-monty does not bundle '{module}'; use re and str methods on the text, or a tool |
+| `XmlEmail` | covers no modules; its key stays for hosts that set it | micro-monty does not bundle '{module}'; use re and str methods on the text, or a tool |
 | `NotEnabled` | a bundled module whose `mod-*` feature this build leaves out | '{module}' is not enabled in this build of micro-monty |
 | `Asyncio` | a name `asyncio` lacks; its streams get `Network`, and `create_subprocess_*`, `to_thread`, `run_coroutine_threadsafe` get `Processes` | micro-monty's asyncio has ALL_COMPLETED, Barrier, ... ; pass coroutines to asyncio.gather (the list is generated) |
 | `OsHooks` | a refused OS hook (`open`, `Path.*`, `os.environ`, `tempfile`) | Use a tool for files, environment variables and commands |
@@ -1231,7 +1231,9 @@ The default build bundles `json`, `re`, `collections`, `itertools`,
 `urllib.parse`, `pprint`, `shlex`, `difflib`, `struct`, `html` (with
 `html.parser`), `warnings`, `codecs`, `platform`, `tempfile`, `decimal`,
 `numbers`, `contextvars`, `fractions`, `statistics`, `tomllib`, `calendar`,
-`hmac`, `zlib` (checksums only), `zoneinfo`, `tokenize` and `token`, plus
+`hmac`, `zlib` (checksums only), `zoneinfo`, `tokenize` and `token`,
+`xml.etree.ElementTree` (its own non-validating parser, no expat) and
+`email.utils` (the date functions only), plus
 `sys`, `math`, `cmath` and the builtins, which are always built. The
 engine's internal `_mm` is hidden: importing it raises `ModuleNotFoundError`.
 
@@ -1241,8 +1243,9 @@ underscores become `-`: `mod-html-entities`; `urllib.parse` is
 `mod-html`). `uuid`, `unicodedata`, `html.entities` and `ast` are opt-in;
 without one, importing it raises `ModuleNotFoundError: No module named
 'ast'. 'ast' is not enabled in this build of micro-monty`. Without
-`html.entities` (the default build), `html.unescape` resolves only numeric
-references and `amp`, `lt`, `gt`, `quot` and `apos`. `ast` is CPython's `ast` over micro-monty's own
+`html.entities` (the default build), `html.unescape` resolves numeric
+references and HTML 4's 252 named references, but not names only HTML 5
+defines. `ast` is CPython's `ast` over micro-monty's own
 parser (`parse`, `dump`, `walk`, `NodeVisitor`, `NodeTransformer`,
 `literal_eval`, ...; no `unparse` and no `compile()` of a tree) and adds
 about 48 KB to `hello.wasm` \[M\]. To enable one, list it:

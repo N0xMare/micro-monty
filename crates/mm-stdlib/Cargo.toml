@@ -58,6 +58,11 @@ mod-shlex = ["mod-io", "mod-collections"]
 mod-difflib = ["mod-heapq", "mod-collections", "mod-types", "mod-re"]
 mod-struct = ["mm-engine/struct", "mod-operator"]
 mod-html = ["mod-re"]
+# A slim ElementTree with its own parser (codemode census: 18 of 1,722
+# solutions import it).
+mod-xml = ["mod-re"]
+# email.utils's date functions (3 of 1,722 solutions).
+mod-email = ["mod-datetime", "mod-time"]
 mod-warnings = ["mod-re", "mod-functools"]
 mod-codecs = []
 mod-platform = []

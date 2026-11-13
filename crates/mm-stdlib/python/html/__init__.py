@@ -1,17 +1,53 @@
 # html: CPython 3.14's Lib/html/__init__.py (PSF; THIRD_PARTY.md). The
 # named-reference table, html.entities, is about 32 KB of bytecode and sits
 # behind its own feature (mod-html-entities). Without it, unescape resolves
-# every numeric reference and the html5 entries for amp, lt, gt, quot and
-# apos (all of escape()'s output, with CPython's exact entries), and leaves
-# other named references as written.
+# every numeric reference and HTML 4's 252 named references, with the
+# entries CPython's html5 table has for them (with and without the
+# semicolon), plus apos; and the uppercase AMP, COPY, GT, LT, QUOT and
+# REG. Other HTML 5 names are left as written.
 
 import re as _re
 try:
     from html.entities import html5 as _html5
 except ImportError:
-    _html5 = {'AMP': '&', 'amp': '&', 'AMP;': '&', 'amp;': '&', 'apos;': "'",
-              'GT': '>', 'gt': '>', 'GT;': '>', 'gt;': '>', 'LT': '<', 'lt': '<',
-              'LT;': '<', 'lt;': '<', 'QUOT': '"', 'quot': '"', 'QUOT;': '"', 'quot;': '"'}
+    # Each entry is a name and its character; a leading '!' marks a name
+    # html5 also has without the semicolon.
+    _HTML4 = (
+        '!AEligÆ !AMP& !AacuteÁ !AcircÂ !AgraveÀ AlphaΑ !AringÅ !AtildeÃ '
+        '!AumlÄ BetaΒ !COPY© !CcedilÇ ChiΧ Dagger‡ DeltaΔ !ETHÐ !EacuteÉ '
+        '!EcircÊ !EgraveÈ EpsilonΕ EtaΗ !EumlË !GT> GammaΓ !IacuteÍ '
+        '!IcircÎ !IgraveÌ IotaΙ !IumlÏ KappaΚ !LT< LambdaΛ MuΜ !NtildeÑ '
+        'NuΝ OEligŒ !OacuteÓ !OcircÔ !OgraveÒ OmegaΩ OmicronΟ !OslashØ '
+        '!OtildeÕ !OumlÖ PhiΦ PiΠ Prime″ PsiΨ !QUOT" !REG® RhoΡ ScaronŠ '
+        'SigmaΣ !THORNÞ TauΤ ThetaΘ !UacuteÚ !UcircÛ !UgraveÙ UpsilonΥ '
+        '!UumlÜ XiΞ !YacuteÝ YumlŸ ZetaΖ !aacuteá !acircâ !acute´ !aeligæ '
+        '!agraveà alefsymℵ alphaα !amp& and∧ ang∠ !aringå asymp≈ !atildeã '
+        '!aumlä bdquo„ betaβ !brvbar¦ bull• cap∩ !ccedilç !cedil¸ !cent¢ '
+        'chiχ circˆ clubs♣ cong≅ !copy© crarr↵ cup∪ !curren¤ dArr⇓ dagger† '
+        'darr↓ !deg° deltaδ diams♦ !divide÷ !eacuteé !ecircê !egraveè '
+        'empty∅ emsp\u2003 ensp\u2002 epsilonε equiv≡ etaη !ethð !eumlë euro€ exist∃ '
+        'fnofƒ forall∀ !frac12½ !frac14¼ !frac34¾ frasl⁄ gammaγ ge≥ !gt> '
+        'hArr⇔ harr↔ hearts♥ hellip… !iacuteí !icircî !iexcl¡ !igraveì '
+        'imageℑ infin∞ int∫ iotaι !iquest¿ isin∈ !iumlï kappaκ lArr⇐ '
+        'lambdaλ lang⟨ !laquo« larr← lceil⌈ ldquo“ le≤ lfloor⌊ lowast∗ '
+        'loz◊ lrm\u200e lsaquo‹ lsquo‘ !lt< !macr¯ mdash— !microµ !middot· '
+        'minus− muμ nabla∇ !nbsp\xa0 ndash– ne≠ ni∋ !not¬ notin∉ nsub⊄ '
+        '!ntildeñ nuν !oacuteó !ocircô oeligœ !ograveò oline‾ omegaω '
+        'omicronο oplus⊕ or∨ !ordfª !ordmº !oslashø !otildeõ otimes⊗ '
+        '!oumlö !para¶ part∂ permil‰ perp⊥ phiφ piπ pivϖ !plusmn± !pound£ '
+        'prime′ prod∏ prop∝ psiψ !quot" rArr⇒ radic√ rang⟩ !raquo» rarr→ '
+        'rceil⌉ rdquo” realℜ !reg® rfloor⌋ rhoρ rlm\u200f rsaquo› rsquo’ sbquo‚ '
+        'scaronš sdot⋅ !sect§ !shy\xad sigmaσ sigmafς sim∼ spades♠ sub⊂ sube⊆ '
+        'sum∑ sup⊃ !sup1¹ !sup2² !sup3³ supe⊇ !szligß tauτ there4∴ thetaθ '
+        'thetasymϑ thinsp\u2009 !thornþ tilde˜ !times× trade™ uArr⇑ !uacuteú '
+        'uarr↑ !ucircû !ugraveù !uml¨ upsihϒ upsilonυ !uumlü weierp℘ xiξ '
+        '!yacuteý !yen¥ !yumlÿ zetaζ zwj\u200d zwnj\u200c')
+    _html5 = {'apos;': "'"}
+    for _e in _HTML4.split(' '):
+        _html5[_e[_e[0] == '!':-1] + ';'] = _e[-1]
+        if _e[0] == '!':
+            _html5[_e[1:-1]] = _e[-1]
+    del _e, _HTML4
 
 
 __all__ = ['escape', 'unescape']

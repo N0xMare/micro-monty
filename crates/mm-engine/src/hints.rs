@@ -30,7 +30,8 @@ pub enum HintGroup {
     Yaml,
     /// `bs4`, `lxml`.
     HtmlParsing,
-    /// `xml`, `email`.
+    /// No modules since 0.0.2, which bundles `xml` and `email`; the key
+    /// (`xml`) stays so that hosts that set it keep working.
     XmlEmail,
     /// A bundled module whose feature this build does not enable.
     NotEnabled,
@@ -142,7 +143,7 @@ const GROUPS: [(HintGroup, &str, &[&str], &str); 12] = [
     (
         HintGroup::XmlEmail,
         "xml",
-        &["xml", "email"],
+        &[],
         "micro-monty does not bundle '{module}'; use re and str methods on the text, or a tool",
     ),
     (
