@@ -1601,6 +1601,38 @@ fn grow_target(vm: &mut Vm, ctxs: Value, up: bool) -> Result<Option<(Value, usiz
     }
 }
 
+/// Whether the new tables `ne`, `ni` of a json scan state read from an
+/// image hold what its growth moved (`wd`'s `GAT`, `GN`): once the index
+/// exists, those of the object [`grow_step`] grows, as a bulk rebuild's
+/// ([`crate::snapshot::rebuild_ok`]). A count forged back put entries in
+/// again: a dict of 606,784 entries for 1,000,000 [M, reviewer].
+/// `word(i)` is the state's raw word `wd[i]`.
+pub(crate) fn grow_tables_ok(
+    vm: &Vm,
+    ctxs: Value,
+    (ne, ni): (Value, Value),
+    word: &dyn Fn(usize) -> u64,
+) -> bool {
+    if !ni.is_obj_kind(ty::RAW as u8) {
+        return true;
+    }
+    let target = |up: bool| {
+        let at = vm.list_len(ctxs).checked_sub(if up { 6 } else { 3 })?;
+        let w = vm.heap.slot_words(vm.list_buf(ctxs)?).ok()?;
+        let v = |i: usize| w.get(at + i).and_then(|&x| Value::from_bits(x));
+        let (c, obj) = (v(0)?, v(2) == Some(Value::TRUE));
+        big_table(vm, c)
+            .filter(|&(cap, used)| obj && cap - used.min(cap) < GROW_AT)
+            .map(|_| c)
+    };
+    let c = if word(w::FLAGS) & RAW == 0 {
+        target(false).or_else(|| (word(w::FLAGS) & UP != 0).then(|| target(true)).flatten())
+    } else {
+        None
+    };
+    c.is_some_and(|c| crate::snapshot::rebuild_ok(vm, c, ne, ni, word(w::GAT), word(w::GN)))
+}
+
 /// A step of growing a big open object's table before the scan goes on,
 /// with [`Vm::dict_grow_slice`]: the new entries table, then the new index,
 /// then the entries moved a slice per step. The innermost object grows when

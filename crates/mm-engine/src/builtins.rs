@@ -4113,6 +4113,9 @@ impl Vm {
             || pass > FINISH_B
             || (pass != 0 && pass < SORT_RUN_BITS)
             || i.max(l).max(r).max(k) > n
+            || !sort_at_ok(pass, [i, l, r, k], n, (rev, keyed))
+            || b == a
+            || [a, b].iter().any(|&t| t == xs || t == keys)
         {
             return Err(self.bad_sort());
         }
@@ -4367,6 +4370,37 @@ impl Vm {
     fn bad_sort(&mut self) -> Raised {
         self.err(T::SystemError, "micro-monty: bad sort state")
     }
+}
+
+/// Whether `at` (`[i, l, r, k]`) is where a slice of pass `pass` of a
+/// long sort of `n` items (`(reverse, key=)`) can stop: pass 0 at the
+/// start of a run; a merge pass inside a run pair, its read positions in
+/// their runs and the write position what they have read; a last pass
+/// (`i` alone) before its end. Another position completed the sort
+/// unsorted [M].
+fn sort_at_ok(pass: usize, [i, l, r, k]: [usize; 4], n: usize, how: (bool, bool)) -> bool {
+    if pass == 0 {
+        return i % (1 << SORT_RUN_BITS) == 0;
+    }
+    if pass >= FINISH_A {
+        let end = match how {
+            (false, false) => 0,
+            (true, _) => n.div_ceil(2),
+            (false, true) => n,
+        };
+        return i < end;
+    }
+    let (Some(w), Some(n)) = (1u64.checked_shl(pass as u32), u64::try_from(n).ok()) else {
+        return false;
+    };
+    let [i, l, r, k] = [i, l, r, k].map(|x| x as u64);
+    let (mid, hi) = ((i + w).min(n), (i + 2 * w).min(n));
+    w < n
+        && i < n
+        && i % (2 * w) == 0
+        && (i..=mid).contains(&l)
+        && (mid..=hi).contains(&r)
+        && k + mid == l + r
 }
 
 /// How a slice of a long sort's merging stopped.

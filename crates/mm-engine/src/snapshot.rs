@@ -2206,6 +2206,39 @@ fn check_steps(vm: &Vm) -> Res<()> {
     }
 }
 
+/// Whether the new tables `nk`, `nv` of a bulk rebuild of `out` hold
+/// what it moved, the live entries of `out`'s table before `j`: as many
+/// keys (a set, whose `n` is 0), or `n` entries in as many index slots (a
+/// dict). Restarted from an earlier `j`, it would put them in again.
+pub(crate) fn rebuild_ok(vm: &Vm, out: Value, nk: Value, nv: Value, j: u64, n: u64) -> bool {
+    let empty = Value::UNDEFINED.to_bits();
+    let live = |w: &[u64], step: usize| w.iter().step_by(step).filter(|&&x| x != empty).count();
+    let j = usize::try_from(j).unwrap_or(usize::MAX);
+    if let Some((_, ok, _, _)) = vm.set_parts(out) {
+        let new = nk.as_obj().and_then(|k| vm.heap.slot_words(k).ok());
+        let old = vm.heap.slot_words(ok).ok().and_then(|o| o.get(..j));
+        return n == 0 && matches!((old, new), (Some(o), Some(k)) if live(o, 1) == live(k, 1));
+    }
+    let (Some(o), Some(ix)) = (
+        out.as_obj().and_then(|r| vm.dv(r)),
+        nv.as_obj().and_then(|i| vm.heap.raw_words(i).ok()),
+    ) else {
+        return false;
+    };
+    #[allow(clippy::cast_possible_truncation, reason = "the two halves")]
+    let filled: usize = ix
+        .get(..ix.len() / 2)
+        .unwrap_or(&[])
+        .iter()
+        .map(|&w| usize::from(w as u32 != 0) + usize::from((w >> 32) as u32 != 0))
+        .sum();
+    let old = vm.heap.slot_words(o.entries).ok();
+    let moved = old
+        .and_then(|e| e.get(..j.checked_mul(2)?))
+        .map(|e| live(e, 2));
+    usize::try_from(n).is_ok_and(|n| moved == Some(n) && filled == n)
+}
+
 /// [`check_steps`] for one state of chunked native `o`: its value slots
 /// `v` and its raw words after the operation word, `w`.
 #[cfg_attr(mm_shipped, optimize(size))]
@@ -2250,6 +2283,11 @@ fn step_ok(vm: &Vm, o: u8, v: &dyn Fn(usize) -> Value, w: &[u64]) -> bool {
                 w(3) == 0 && w(4) == 0
             }
         }
+        // One with hashes or an index: what it moved is in them.
+        op::BULK if v(6).is_obj_kind(ty::BUF as u8) && v(7).is_obj_kind(ty::RAW as u8) => {
+            let p = w(0).checked_shr(16 * (w(1) & 7) as u32).unwrap_or(0);
+            rebuild_ok(vm, v(((p >> 4) & 7) as usize), v(6), v(7), w(3), w(4))
+        }
         op::SEQ_BUILD => {
             // `total, seg, pos, rep, at, dstep`, a spare, then five words a
             // segment, its `count` and `reps` last: item `pos` of segment
@@ -2261,6 +2299,9 @@ fn step_ok(vm: &Vm, o: u8, v: &dyn Fn(usize) -> Value, w: &[u64]) -> bool {
         }
         // `kind, i, stop, c`: the items counted were passed.
         op::SEQ_SCAN => w(3) <= w(1),
+        // `sv, ctxs, aux`, then a growing object's new entries and index.
+        #[cfg(feature = "json")]
+        op::JSON_SCAN => crate::json::grow_tables_ok(vm, v(1), (v(3), v(4)), &w),
         op::STR_FILL | op::STR_JOIN => {
             // `part, its bytes done, out, chars`: what is done of a part
             // was written, and a str's chars are those written. A join

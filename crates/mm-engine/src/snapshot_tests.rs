@@ -29,6 +29,11 @@ fn bundled() -> &'static [StdModule] {
 /// A session that ran `src` in fuel slices of one unit until `stop` held
 /// at a park (or, with `stop` never true, until it completed).
 fn session(src: &str, stop: impl Fn(&Vm) -> bool) -> Vm {
+    session_in(src, 1, stop)
+}
+
+/// [`session`] in fuel slices of `slice` units.
+fn session_in(src: &str, slice: u64, stop: impl Fn(&Vm) -> bool) -> Vm {
     let module = mm_parse::parse(src).expect("parses");
     let prog = mm_compile::compile(
         &module,
@@ -43,13 +48,13 @@ fn session(src: &str, stop: impl Fn(&Vm) -> bool) -> Vm {
     })
     .expect("vm");
     let entry = vm.load(&prog, "crafted.py", src).expect("loads");
-    vm.set_fuel(Some(1));
+    vm.set_fuel(Some(slice));
     let mut exit = vm.run(entry);
     loop {
         match exit {
             Exit::Parked(_) if stop(&vm) => return vm,
             Exit::Parked(_) => {
-                vm.set_fuel(Some(1));
+                vm.set_fuel(Some(slice));
                 exit = vm.resume();
             }
             Exit::Complete(_) => return vm,
@@ -497,8 +502,9 @@ fn a_forged_state_raises(
 
 /// `src` parked once a state of `op` passes `at`, its word `i` (value
 /// slots, then raw words) set to `x`, restored and resumed: the exception
-/// it raises, or `None` when it completes. It never panics, overflow
-/// checks on (the debug and fuzz builds) or off.
+/// it raises (`"refused"` if the restore refuses the image), or `None`
+/// when it completes. It never panics, overflow checks on (the debug and
+/// fuzz builds) or off.
 fn resume_forged(
     src: &str,
     op: u8,
@@ -527,7 +533,15 @@ fn resume_forged(
         _ => vm.heap.set_raw(r, i, x),
     };
     set.expect("a word of the state");
-    let mut vm = restore(&mut vm).expect("restores");
+    restore_and_finish(&mut vm)
+}
+
+/// `vm` snapshotted, restored and resumed: as [`resume_forged`].
+fn restore_and_finish(vm: &mut Vm) -> Option<(String, String)> {
+    // An image the restore check refuses (`check_steps`).
+    let Ok(mut vm) = restore(vm) else {
+        return Some(("refused".into(), String::new()));
+    };
     for _ in 0..64 {
         vm.set_fuel(Some(1 << 20));
         match vm.resume() {
@@ -1362,4 +1376,165 @@ fn a_linear_dict_uses_no_more_entries_than_it_holds() {
             }
         },
     );
+}
+
+#[test]
+fn a_rebuild_restarted_or_given_full_tables_is_refused() {
+    // BULK part way through rebuilding a set's or a dict's table into new
+    // tables (value slots 6 and 7, raw words `[op, prog, pc, i, j, n,
+    // res]` after them, `j` old slots or entries moved). Restarted from
+    // `j` 0, the rebuild put its keys in again (`len(s)` 2,000,000 and
+    // `len(list(s))` 3,048,576 [M]); given the set's own tables, or a
+    // list's full buffer, its probes for a free slot found none, a step
+    // that never ended [M].
+    let bulk = crate::nstep::op::BULK;
+    let word = |vm: &Vm, r, i: u32| raw(vm, r, 8 + i);
+    let rebuilding = |vm: &Vm, r| {
+        vm.heap
+            .get(r, 7)
+            .is_ok_and(|h| h.is_obj_kind(ty::RAW as u8))
+            && word(vm, r, 4) > 1
+    };
+    let forged = |src: &str, edit: &dyn Fn(&mut Vm, mm_core::Ref)| {
+        let mut vm = session(src, |vm| {
+            step_state(vm, bulk).is_some_and(|r| rebuilding(vm, r))
+        });
+        let r = step_state(&vm, bulk).expect("parked rebuilding");
+        edit(&mut vm, r);
+        restore(&mut vm).is_err()
+    };
+    let set = "s = set(range(3_000_000))\n";
+    let dict = "d = dict.fromkeys(range(1_000_000))\n";
+    for src in [set, dict] {
+        // Unforged, it restores (and `resume_forged` finishes it).
+        assert!(!forged(src, &|_, _| {}), "{src}");
+        // Restarted, or with fewer entries moved than it put in.
+        // (A set's `n` is 0 here; a dict's counts what it moved.)
+        let n0 = if src == dict { (5, 0) } else { (4, 0) };
+        for (i, x) in [(4, 0), (4, 1), (5, 1), n0] {
+            let edit = |vm: &mut Vm, r| vm.heap.set_raw(r, 8 + i, x).expect("word");
+            assert!(forged(src, &edit), "{src} word {i} = {x}");
+        }
+    }
+    // A set's: as if its hashes were still being written.
+    let touching = |vm: &mut Vm, r| {
+        let len = vm.heap.get(r, 7).ok().and_then(Value::as_obj);
+        let len = len.map_or(0, |h| vm.heap.header(h).expect("hashes").len());
+        vm.heap.set_raw(r, 8 + 4, 0).expect("j");
+        vm.heap.set_raw(r, 8 + 5, u64::from(len)).expect("n");
+    };
+    assert!(forged(set, &touching));
+    // Its own key table as the new one, then a list's full buffer.
+    let own = |vm: &mut Vm, r| {
+        let s = objects(vm, ty::SET).into_iter().max_by_key(|&s| {
+            let k = vm.heap.get(s, 0).ok().and_then(Value::as_obj);
+            k.map_or(0, |k| vm.heap.header(k).expect("keys").len())
+        });
+        let keys = vm.heap.get(s.expect("the set"), 0).expect("keys");
+        vm.heap.set(r, 6, keys).expect("slot");
+    };
+    assert!(forged(set, &own));
+    let src = "xs = [0] * 4_194_304\ns = set(range(3_000_000))\n";
+    let full = |vm: &mut Vm, r| {
+        let l = objects(vm, ty::LIST).into_iter().find(|&l| {
+            let b = vm.heap.get(l, 0).ok().and_then(Value::as_obj);
+            b.is_some_and(|b| vm.heap.header(b).expect("buf").len() >= 4_194_304)
+        });
+        let buf = vm.heap.get(l.expect("the list"), 0).expect("buf");
+        vm.heap.set(r, 6, buf).expect("slot");
+    };
+    assert!(forged(src, &full));
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn a_json_objects_growth_restarted_is_refused() {
+    // json's growth of a big object (`JSON_SCAN`, value slots `sv, ctxs,
+    // aux, ne, ni`, raw words after the operation word, `GAT` 13 and `GN`
+    // 14): `n` forged to 0 gave 606,784 entries of 1,000,000 [M, reviewer].
+    let src = "import json\nt = str(list(range(300_000)))[1:-1].replace(', ', '\": 1, \"')\nd = json.loads('{\"' + t + '\": 1}')\nassert len(d) == 300_000\n";
+    let scan = crate::nstep::op::JSON_SCAN;
+    let growing = |vm: &Vm, r| {
+        vm.heap
+            .get(r, 4)
+            .is_ok_and(|h| h.is_obj_kind(ty::RAW as u8))
+            && raw(vm, r, 6 + 14) > 1
+    };
+    let find = |vm: &Vm| step_state(vm, scan).filter(|&r| growing(vm, r));
+    for (i, x) in [
+        (6 + 13, 0),
+        (6 + 14, 0),
+        (6 + 14, 1),
+        (6 + 14, u64::MAX - 1),
+    ] {
+        let mut vm = session_in(src, 1 << 12, |vm| find(vm).is_some());
+        let r = find(&vm).expect("parked growing an object");
+        vm.heap.set_raw(r, i, x).expect("a word");
+        let got = restore_and_finish(&mut vm);
+        assert!(
+            got.as_ref().is_some_and(|(name, _)| name == "refused"),
+            "{i} {x}: {got:?}"
+        );
+    }
+    // Unforged, it restores and finishes.
+    let mut vm = session_in(src, 1 << 12, |vm| find(vm).is_some());
+    assert_eq!(restore_and_finish(&mut vm), None);
+}
+
+#[test]
+fn a_forged_merge_position_raises() {
+    // Items of the state to set, from its items.
+    type Edit = dyn Fn(&[u64]) -> Vec<(u32, Value)>;
+    fn int(v: u64) -> Option<i64> {
+        Value::from_bits(v).and_then(Value::as_int)
+    }
+    fn small(x: i64) -> Value {
+        Value::int(x).expect("small")
+    }
+    // A long sort's state, a list `[a, b, pass, i, l, r, k, reverse,
+    // kind]` (`Vm::sort_more`), parked in a merge pass part way through a
+    // run pair. A write position other than what the reads took, reads
+    // outside their runs, or `b` as `a` completed with an unsorted list
+    // [M, reviewer].
+    let src = "xs = [(i * 7919) % 300_007 for i in range(300_000)]\nys = sorted(xs)\n";
+    let merging = |vm: &Vm| {
+        objects(vm, ty::LIST).into_iter().find(|&l| {
+            let w = vm.seq_words(Value::from_ref(l, ty::LIST as u8));
+            w.len() == 9
+                && Value::from_bits(w[0]).is_some_and(|a| a.is_obj_kind(ty::LIST as u8))
+                && int(w[2]).is_some_and(|p| (10..62).contains(&p))
+                && int(w[6]) > int(w[3])
+        })
+    };
+    let forged = |edit: &Edit| {
+        let mut vm = session(src, |vm| merging(vm).is_some());
+        let st = Value::from_ref(merging(&vm).expect("a merge pass"), ty::LIST as u8);
+        let w = vm.seq_words(st).to_vec();
+        let buf = vm.list_buf(st).expect("its items");
+        for (i, v) in edit(&w) {
+            vm.heap.set_values(buf, i, &[v]).expect("an item");
+        }
+        restore_and_finish(&mut vm)
+    };
+    // Unforged, it finishes.
+    assert_eq!(forged(&|_| Vec::new()), None);
+    let edits: [(&str, &Edit); 5] = [
+        ("k 0", &|_| vec![(6, small(0))]),
+        ("l = r = i", &|w| {
+            let i = Value::from_bits(w[3]).expect("i");
+            vec![(4, i), (5, i)]
+        }),
+        ("k + 1", &|w| vec![(6, small(int(w[6]).expect("k") + 1))]),
+        ("b = a", &|w| vec![(1, Value::from_bits(w[0]).expect("a"))]),
+        ("i off a pair", &|w| {
+            vec![(3, small(int(w[3]).expect("i") + 1))]
+        }),
+    ];
+    for (what, edit) in edits {
+        let got = forged(edit);
+        assert!(
+            got.as_ref().is_some_and(|(name, _)| name == "SystemError"),
+            "{what}: {got:?}"
+        );
+    }
 }
