@@ -1742,6 +1742,7 @@ const DEFS: &[Def] = &[
     p!("_bx_init", 1, 1, pl_bx_init),
     p!("_bx_make", 2, 2, pl_bx_make),
     p!("_bx_value", 1, 1, crate::mmmod::mm_backing),
+    p!("_sum_off", 1, 1, pl_sum_off),
 ];
 
 // ------------------------------------------------------- packed table
@@ -7286,6 +7287,22 @@ fn pl_hash_tuple(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let i = vm.new_int(i64::try_from(i).unwrap_or(i64::MAX))?;
     let acc = vm.new_int(acc.cast_signed())?;
     vm.alloc_tuple(&[i, acc])
+}
+
+/// `_sum_off(s)`: whether `sum`'s fast int loop in the prelude stops at
+/// sum `s`: unless `s` is an int (not a bool) in [-2**62, 2**62). From a
+/// total in that range, an int item outside i64 takes the sum out of it,
+/// so the loop needs no test of the item. One argument, as the call per
+/// item is the bench Ir rule's cost. No user code runs.
+#[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+fn pl_sum_off(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let s = vm.arg_o(&a, 0);
+    let fits = s != Value::TRUE
+        && s != Value::FALSE
+        && vm
+            .int_of_o(s)
+            .is_some_and(|i| (-(1 << 62)..1 << 62).contains(&i));
+    Ok(Value::from_bool(!fits))
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]

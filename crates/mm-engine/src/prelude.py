@@ -2005,40 +2005,34 @@ def _sum_rest(total, x, it, stage, lo):
     if stage == 0:
         stage = 1
         if type(total) is int and -9223372036854775808 <= total <= 9223372036854775807:
-            # One shift and a test per item (the bench Ir rule; a call such
-            # as `type(s)` costs twice the add): while the total keeps its
-            # sign, `s >> 63` is 0 (or -1) exactly while `s` fits i64, and
-            # raises TypeError for a float or complex total. Anything else
-            # stops at the check below, which also sees an item outside i64
-            # (the total then changes sign). The stage ends with `s`, the
-            # first sum it does not take, as CPython's does.
+            # Tests that run no user code (a shift would call a `__radd__`
+            # result's `__rshift__`): a native one per item while the total
+            # is within 2**62 (`_sum_off`), and CPython's exact one, its
+            # types first, when that stops or the total is outside it. The
+            # stage ends with `s`, the first sum it does not take, as
+            # CPython's does at an item that is not an int or does not fit
+            # i64, or a sum that does not.
             s = total
-            try:
-                while True:
-                    if total >= 0:
-                        for x in it:
-                            s = total + x
-                            if s >> 63:
-                                break
-                            total = s
-                        else:
-                            return total
-                    else:
-                        for x in it:
-                            s = total + x
-                            if s >> 63 != -1:
-                                break
-                            total = s
-                        else:
-                            return total
-                    if (type(s) is not int or type(x) is not int and type(x) is not bool
-                            or not -9223372036854775808 <= s <= 9223372036854775807
-                            or not -9223372036854775808 <= x <= 9223372036854775807):
+            while True:
+                if _sum_off(total):
+                    for x in it:
+                        s = total + x
                         break
-                    total = s
-            except TypeError:
-                if s is total:
-                    raise
+                    else:
+                        return total
+                else:
+                    for x in it:
+                        s = total + x
+                        if _sum_off(s):
+                            break
+                        total = s
+                    else:
+                        return total
+                if (type(s) is not int or type(x) is not int and type(x) is not bool
+                        or not -9223372036854775808 <= s <= 9223372036854775807
+                        or not -9223372036854775808 <= x <= 9223372036854775807):
+                    break
+                total = s
             total = s
     if stage == 1:
         stage = 2
