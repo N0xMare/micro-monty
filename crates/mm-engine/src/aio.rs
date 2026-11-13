@@ -1539,6 +1539,9 @@ impl Vm {
         if let Ok(l) = self.new_list(&results) {
             self.settle(g, true, l);
         } else {
+            // Raised later, in the task that awaits it: its refusal is
+            // not this instruction's to retry.
+            self.heap.take_refused();
             let e = self.exc;
             self.settle(g, false, e);
         }

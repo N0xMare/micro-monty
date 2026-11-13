@@ -5733,6 +5733,9 @@ def _bulk(r, prog, pc, i, res):
                 break
             at, x, v, h = t
             i = at + 1
+            if a == 6 and type(src) is dict:
+                # An intersection hashes a dict's keys again (`Vm::bulk`).
+                h = None
             if a <= 2:
                 if a == 1:
                     pair = _pair_list(x)

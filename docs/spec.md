@@ -1502,8 +1502,11 @@ timer deadlines.
   room. A method of an immutable builtin type (`str`, `bytes`, `int`,
   `float`, `tuple`, `frozenset`), a copying method of a mutable one (`copy`
   of a list, dict or set, `dict.fromkeys`, `set.union`, `intersection`,
-  `difference`, `symmetric_difference`) or a constructor that copies its
-  argument (`list`, `tuple`, `set`, `frozenset`, `dict`), called straight
+  `difference`, `symmetric_difference`), a growth that writes nothing
+  until its new buffer or table is in place (`list.append`, `set.add`,
+  `list.extend` from a list or tuple), `sorted` without `key=`, or a
+  constructor that builds or copies its argument (`list`, `tuple`, `set`,
+  `frozenset`, `dict`, `bytes`, `bytearray`), called straight
   from a `CALL` that raises `MemoryError`, changed nothing and consumed no
   iterator, so the `CALL` runs again once a collection that started after
   the failure has ended (`Vm::oom_retry`). That collection is a fresh one:
@@ -1542,18 +1545,24 @@ timer deadlines.
   again; a second failure raises (`Vm::oom_defer`). That the step has
   waited is in its own state, so in the image: kept in the VM, it was
   lost on a restore, and a chain restored at every park deferred for ever
-  [M, reviewer]. Its work so far is kept. The retried `CALL`'s fuel is
+  [M, reviewer]. Its work so far is kept. A long sort's second array, or
+  a slice's room, waits the same way, its wait in the sort's state. The
+  retried `CALL`'s fuel is
   charged again. An instruction whose native raises `MemoryError` straight
   back to the dispatch loop retries the same way (`Vm::oom_retry_op`): a
   binary operator (`Vm::op_binop`) unless it may have changed its left
   operand first (an in-place operator on a dict or set, or on an instance
   of a subclass of one), an f-string's `BUILD_STRING`, a starred display's
   `LIST_TO_TUPLE`, `UNPACK_EX` from a list or tuple, `LIST_EXTEND` from a
-  list or tuple, `CALL_EX` of a Python function, `SET_ITEM` (stores are
+  list or tuple or an iterator over one, `CALL_EX` of a Python function, `SET_ITEM` (stores are
   idempotent, and a list slice builds its new buffer before installing it),
   `GET_ITEM` of a builtin container (a slice builds only its result),
   `LIST_APPEND` (a comprehension's list grows into a new buffer before it
-  changes) and `CALL` of a builtin type whose constructor copies its
+  changes), `SET_ADD` and `DICT_INSERT` (a comprehension's set or dict
+  takes the entry out again, or writes nothing, when its table does not
+  grow: its outgrown tables are garbage only a collection frees),
+  `FORMAT` and `FORMAT_SPEC` of an int, float, str or bytes (a
+  container's `repr` may run user code) and `CALL` of a builtin type whose constructor copies its
   argument (`list(l)`), the last three read at the fault exit
   (`Vm::oom_retry_fault`). Not yet retried, being fixed in 0.0.2 [M,
   reviewer]: set and dict comprehensions and `add`/`append` calls, which
@@ -1562,7 +1571,10 @@ timer deadlines.
   User code never runs inside those natives (a dunder runs as a request),
   so it never runs twice. Nothing that drew items from a one-shot iterator
   runs again: `Vm::collect` marks the failure as a rerun's (`oom_rerun`)
-  as it starts on one. That mark, the rerun's own, and the items a builtin
+  as it starts on one. A builtin iterator over a list or tuple, forward or
+  reversed, is copied as a slice of it instead, and ends once the copy's
+  buffer is allocated (`Vm::seq_items_left`), so a copy that did not fit
+  changed nothing and runs again. That mark, the rerun's own, and the items a builtin
   consumed (`consumed`) belong to the instruction that set them
   (`Vm::op_stamp`), so they end at the next tick wherever a host's fuel
   slices end, and whether a later instruction runs again does not depend
@@ -1571,7 +1583,11 @@ timer deadlines.
   unchanged. A size the heap refuses before the native allocates
   (`Heap::would_fit`, `list(range(n))`) is retried as a block that did not
   fit is. A refusal no retry took dies with its `MemoryError`
-  (`Vm::unwind`), so it never reaches a later request or a park.
+  (`Vm::unwind`), and a builtin that goes on another way when a request
+  fails, raising nothing, drops the refusal it made, so a refusal does not
+  reach a later request or a park. Each of these raises a fresh `MemoryError()` with empty args and
+  no `__context__`, as CPython's (`Vm::raise_no_memory`); the shared one
+  is raised only when there is no room for a new one.
 - **Large blocks that grow.** A byte block written over several steps
   (`json.dumps`, §5) that grows by moving to a new block holds both blocks
   until the move ends; the old one is then garbage, and a collection is

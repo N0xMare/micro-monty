@@ -2397,7 +2397,7 @@ impl Vm {
                 self.slow = false;
                 return self.hand_to_twin(idx, n, args);
             }
-            if r.is_err() && direct && self.oom_retry(n) {
+            if r.is_err() && direct && self.oom_retry(n, &args) {
                 return Err(Raised);
             }
             return r;
@@ -2549,7 +2549,7 @@ impl Vm {
         }
         // Out of memory that garbage may hold: called straight from `CALL`,
         // it may run again after a collection (`Vm::oom_retry`).
-        if r.is_err() && direct && self.oom_retry(n) {
+        if r.is_err() && direct && self.oom_retry(n, &args) {
             return Err(Raised);
         }
         r
@@ -4196,12 +4196,44 @@ impl Vm {
             int(0),
             Value::from_bool(reverse),
             Value::int(kind).unwrap_or(Value::NONE),
+            Value::FALSE,
         ])?;
         self.sort_more(xs, keys, st)
     }
 
+    /// The sort's allocation (`b`, or the room a slice writes) did not fit
+    /// at pass `pass` and positions `at`, `e` pending, after `visits` of
+    /// work. Unless it waited for a collection already, the sort waits for
+    /// one (`Vm::oom_defer`) and goes on from there at its next step,
+    /// `waited` in its state `st`, so in the image too: a failure again
+    /// before a slice writes its output stands.
+    #[cold]
+    fn sort_wait(
+        &mut self,
+        st: Value,
+        waited: bool,
+        e: Raised,
+        pass: usize,
+        at: [usize; 4],
+        visits: u64,
+    ) -> Result<Sorted, Raised> {
+        self.burn(visits);
+        if waited || !self.oom_defer() {
+            return Err(e);
+        }
+        let int = |x: usize| Value::int(x as i64).unwrap_or(Value::NONE);
+        let state = [int(pass), int(at[0]), int(at[1]), int(at[2]), int(at[3])];
+        if let Some(buf) = self.list_buf(st) {
+            let res = self.heap.set_values(buf, 2, &state);
+            self.hx_o(res)?;
+            let res = self.heap.set_values(buf, 9, &[Value::TRUE]);
+            self.hx_o(res)?;
+        }
+        Ok(Sorted::More(st))
+    }
+
     /// One slice of the sort [`Vm::sort_by_keys`] started, from state list
-    /// `st`: `[a, b, pass, i, l, r, k, reverse, kind]`, merging runs of
+    /// `st`: `[a, b, pass, i, l, r, k, reverse, kind, waited]`, merging runs of
     /// `1 << pass` items of `a` (`b` on odd passes) into the other, the
     /// run pair at `i` with `l`, `r` and `k` its read and write positions;
     /// pass 0 sorts runs of `1 << SORT_RUN_BITS` items of `a` in place,
@@ -4234,10 +4266,14 @@ impl Vm {
         else {
             return Err(self.bad_sort());
         };
+        // Whether the slice's allocation (`b`, or the room a slice writes)
+        // did not fit and the sort waited for a collection: a failure again
+        // before it fits stands (`Vm::oom_defer`).
+        let mut waited = get(9) == Value::TRUE;
         // `b` is `NONE` until the merge passes start, so while `a` holds
         // the items (an even pass).
         let no_b = b == Value::NONE && pass % 2 == 0 && (pass <= SORT_RUN_BITS || pass >= FINISH_A);
-        if w.len() != 9
+        if w.len() != 10
             || !a.is_obj_kind(ty::LIST as u8)
             || !(no_b || b.is_obj_kind(ty::LIST as u8) && self.list_len(b) == n)
             || !keys.is_obj_kind(ty::LIST as u8)
@@ -4345,20 +4381,32 @@ impl Vm {
                 }
                 return Ok(Sorted::More(st));
             }
-            b = self.list_of_len(n)?;
+            // An array that does not fit waits for a collection and the
+            // next step, once, as a bulk operation's new table does: beside
+            // 64 MB of garbage, `sorted(l)` of 4M ints raised at 256 MiB
+            // [M, reviewer].
+            b = match self.list_of_len(n) {
+                Ok(b) => b,
+                Err(e) => return self.sort_wait(st, waited, e, pass, at, 0),
+            };
             if let Some(buf) = self.list_buf(st) {
                 let res = self.heap.set_values(buf, 1, &[b]);
                 self.hx_o(res)?;
+                let res = self.heap.set_values(buf, 9, &[Value::FALSE]);
+                self.hx_o(res)?;
             }
+            waited = false;
         }
         while (1u64 << pass) < n as u64 {
             let width = 1usize << pass;
             let (src, dst) = if pass % 2 == 0 { (a, b) } else { (b, a) };
-            let k0 = at[3];
+            let (k0, start) = (at[3], at);
             // Room for what a slice writes in the common case, at once.
             let mut out = NativeValues::default();
             let res = out.reserve(&mut self.heap, (n - k0.min(n)).min(SORT_SLICE as usize));
-            self.hx_o(res)?;
+            if let Err(e) = self.hx_o(res) {
+                return self.sort_wait(st, waited, e, pass, at, visits);
+            }
             let stop = {
                 let vm: &Vm = self;
                 let s = vm.seq_words(src);
@@ -4411,12 +4459,21 @@ impl Vm {
             // Long texts compared past a walk's budget (`spend_text`).
             visits += self.text_over.take();
             if let Merge::Oom = stop {
+                // The slice again from where it started, after the wait.
                 let res: Result<(), _> = Err(mm_core::Error::OutOfMemory);
-                self.hx_o(res)?;
+                if let Err(e) = self.hx_o(res) {
+                    return self.sort_wait(st, waited, e, pass, start, visits);
+                }
             }
             if let Some(dst) = self.list_buf(dst) {
                 let res = self.heap.set_values(dst, k0 as u32, &out);
                 self.hx_o(res)?;
+            }
+            // The wait, if any, is over: this slice wrote its output.
+            if waited && let Some(buf) = self.list_buf(st) {
+                let res = self.heap.set_values(buf, 9, &[Value::FALSE]);
+                self.hx_o(res)?;
+                waited = false;
             }
             match stop {
                 Merge::Fail(e) => {
@@ -7470,21 +7527,25 @@ fn bi_bool(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::from_bool(v != Value::UNDEFINED && vm.truthy(v)))
 }
 
-/// A copy of long list or tuple `v` as a list or a tuple, a slice per
-/// step; `None` for anything else.
+/// A copy of long list or tuple `v`, or of the items a builtin iterator
+/// over one has left ([`Vm::seq_items_left`]), as a list or a tuple, a
+/// slice per step; `None` for anything else.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn seq_copy_long(vm: &mut Vm, v: Value, tuple: bool) -> Result<Option<Value>, Raised> {
-    if !(v.is_obj_kind(ty::LIST as u8) || v.is_obj_kind(ty::TUPLE as u8)) {
+    let Some((seq, seg)) = vm.seq_items_left(v) else {
         return Ok(None);
-    }
-    let n = vm.seq_words(v).len();
+    };
+    let n = seg.count as usize;
     if n < crate::ops::SEQ_LONG {
         return Ok(None);
     }
     // Charged by the steps that copy it, as a slice copy is (a unit per
     // 8 items), not up front, so no fuel slice is overdrawn.
-    let segs = [crate::ops::Seg::of(3, 0, 1, n as u64)];
-    vm.seq_new(tuple, &[v], &segs, n).map(Some)
+    let r = vm.seq_new(tuple, &[seq], &[seg], n)?;
+    if seq != v {
+        vm.seq_iter_end(v);
+    }
+    Ok(Some(r))
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]

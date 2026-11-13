@@ -681,10 +681,13 @@ impl Vm {
                     return 0;
                 }
                 let rbits = bits(a).saturating_mul(e);
-                if rbits > MAX_BITS
-                    || !self.heap.would_fit(rbits / 8 * 2 + 64)
-                    || pow_ns(bits(a), e) > WORK_MAX
-                {
+                if rbits > MAX_BITS || pow_ns(bits(a), e) > WORK_MAX {
+                    return 0;
+                }
+                if !self.heap.would_fit(rbits / 8 * 2 + 64) {
+                    // An estimate only, raising nothing: the power itself
+                    // raises when its result does not fit.
+                    self.heap.take_refused();
                     return 0;
                 }
                 let limbs = rbits / 32;

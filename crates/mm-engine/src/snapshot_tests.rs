@@ -1492,7 +1492,7 @@ fn a_forged_merge_position_raises() {
         Value::int(x).expect("small")
     }
     // A long sort's state, a list `[a, b, pass, i, l, r, k, reverse,
-    // kind]` (`Vm::sort_more`), parked in a merge pass part way through a
+    // kind, waited]` (`Vm::sort_more`), parked in a merge pass part way through a
     // run pair. A write position other than what the reads took, reads
     // outside their runs, or `b` as `a` completed with an unsorted list
     // [M, reviewer].
@@ -1500,7 +1500,7 @@ fn a_forged_merge_position_raises() {
     let merging = |vm: &Vm| {
         objects(vm, ty::LIST).into_iter().find(|&l| {
             let w = vm.seq_words(Value::from_ref(l, ty::LIST as u8));
-            w.len() == 9
+            w.len() == 10
                 && Value::from_bits(w[0]).is_some_and(|a| a.is_obj_kind(ty::LIST as u8))
                 && int(w[2]).is_some_and(|p| (10..62).contains(&p))
                 && int(w[6]) > int(w[3])

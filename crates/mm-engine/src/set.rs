@@ -1517,6 +1517,10 @@ impl Vm {
             let tuple =
                 items || src.is_obj_kind(ty::ZIP as u8) || src.is_obj_kind(ty::ENUMERATE as u8);
             *units += self.bulk_unit(out, other) + if tuple { TUPLE_ITEM - 1 } else { 0 };
+            // An intersection reads a dict or a keys view as an iterable
+            // and hashes each key (`set_intersection`, `_PyDictView_Intersect`):
+            // a user `__hash__` runs, as in CPython, not the stored hash.
+            let h = h.filter(|_| a != act::AND || !src.is_obj_kind(ty::DICT as u8));
             let r = self.bulk_act(b, a, out, other, at, x, v, h);
             if one_shot && (matches!(r, Ok(Item::Wait)) || r.is_err() && self.slow) {
                 for &(o, i, w) in pos.iter().flatten() {

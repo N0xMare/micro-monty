@@ -1730,15 +1730,72 @@ impl Vm {
         l: Value,
         src: Value,
     ) -> Option<Result<Value, Raised>> {
-        if !(src.is_obj_kind(ty::LIST as u8) || src.is_obj_kind(ty::TUPLE as u8)) {
-            return None;
-        }
-        let (n, m) = (self.list_len(l), self.seq_words(src).len());
+        // An iterator over `l` itself reads what it appends, as CPython's
+        // does: not a copy.
+        let (seq, seg) = self
+            .seq_items_left(src)
+            .filter(|&(seq, _)| seq == src || seq != l)?;
+        let (n, m) = (self.list_len(l), seg.count as usize);
         if n + m < SEQ_LONG {
             return None;
         }
-        let segs = [Seg::of(3, 0, 1, n as u64), Seg::of(4, 0, 1, m as u64)];
-        Some(self.list_rebuild(l, Value::NONE, &[l, src], &segs, n + m))
+        let segs = [Seg::of(3, 0, 1, n as u64), Seg { src: 4, ..seg }];
+        let r = self.list_rebuild(l, Value::NONE, &[l, seq], &segs, n + m);
+        if r.is_ok() && seq != src {
+            self.seq_iter_end(src);
+        }
+        Some(r)
+    }
+
+    /// The items list or tuple `v` holds, or builtin iterator `v` has left
+    /// when it reads one, forward or reversed: the sequence and the segment
+    /// of it (register 3) they are; `None` for any other value. Copied as a
+    /// slice of the sequence, the iterator ended once the copy's buffer is
+    /// allocated ([`Vm::seq_iter_end`]), a copy that does not fit changes
+    /// nothing and runs again after a collection (`Vm::oom_retry`):
+    /// `list(iter(l))` and `list(reversed(l))` beside garbage raised, as
+    /// gathering the items an iterator yields does not run again
+    /// [M, reviewer].
+    pub(crate) fn seq_items_left(&self, v: Value) -> Option<(Value, Seg)> {
+        let len = |seq: Value| self.seq_words(seq).len() as u64;
+        if v.is_obj_kind(ty::LIST as u8) || v.is_obj_kind(ty::TUPLE as u8) {
+            return Some((v, Seg::of(3, 0, 1, len(v))));
+        }
+        let r = v.as_obj()?;
+        let seq = self.slot(r, 0);
+        if !(seq.is_obj_kind(ty::LIST as u8) || seq.is_obj_kind(ty::TUPLE as u8)) {
+            return None;
+        }
+        if v.is_obj_kind(ty::REVERSED as u8) {
+            // From item `i` down, while `i` is an index of `seq`.
+            let i = self.raw(r, 1).cast_signed();
+            let n = if i < 0 || i.cast_unsigned() >= len(seq) {
+                0
+            } else {
+                i + 1
+            };
+            return Some((seq, Seg::of(3, i, -1, n.cast_unsigned())));
+        }
+        if !v.is_obj_kind(ty::ITER as u8) || !matches!(self.raw(r, 1), it::LIST | it::TUPLE) {
+            return None;
+        }
+        let at = self.raw(r, 2).min(len(seq));
+        Some((seq, Seg::of(3, at.cast_signed(), 1, len(seq) - at)))
+    }
+
+    /// Ends builtin iterator `v` over a list or tuple, whose items left
+    /// were copied ([`Vm::seq_items_left`]), as `next` ends it.
+    pub(crate) fn seq_iter_end(&mut self, v: Value) {
+        let Some(r) = v.as_obj() else { return };
+        if v.is_obj_kind(ty::REVERSED as u8) {
+            self.set_raw(r, 1, u64::MAX);
+        } else if self.raw(r, 1) == it::LIST {
+            self.set_raw(r, 2, u64::MAX >> 1);
+        } else {
+            let n = self.seq_words(self.slot(r, 0)).len() as u64;
+            self.set_raw(r, 2, n);
+        }
+        self.iter_drop(r);
     }
 
     /// Appends up to `COLLECT_CHUNK` items of iterator `it` to list `l` as

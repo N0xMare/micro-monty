@@ -271,10 +271,12 @@ impl Vm {
     }
 
     /// Sets `exc.__context__` to the exception being handled (CPython's
-    /// `_PyErr_SetObject`), breaking any cycle that would create.
-    pub(crate) fn attach_context(&mut self, exc: Value) {
-        if exc == self.memory_error {
-            self.fresh_memory_error();
+    /// `_PyErr_SetObject`), breaking any cycle that would create, as `exc`
+    /// is raised at `(ci, pc)`; the heap's shared `MemoryError` is raised
+    /// as [`Vm::raise_no_memory`] says.
+    pub(crate) fn attach_context(&mut self, exc: Value, ci: u32, pc: u32) {
+        if exc == self.memory_error && self.raise_no_memory(ci, pc) {
+            return;
         }
         let h = self.handled;
         if h == Value::NONE || h == exc || !exc.is_obj_kind(ty::EXC as u8) {
@@ -314,6 +316,58 @@ impl Vm {
         }
     }
 
+    /// Raises the heap's shared `MemoryError` (`memory_error`: a block that
+    /// did not fit, or a size the heap refused or that passes a cap) at
+    /// `(ci, pc)`: a fresh `MemoryError()` in its place, as CPython's
+    /// `PyErr_NoMemory` takes one from its free list, so an error saved by
+    /// an `except` keeps its own traceback and attributes (two were one
+    /// object, with the second raise's traceback [M, reviewer]). Like
+    /// CPython's, it has no `__context__`, also inside an `except` block:
+    /// true. With no room for one, the shared one is raised, cleared; caught
+    /// and raised again by `raise e`, it stays itself and takes its context
+    /// (false). A full arena may be mostly garbage that no successful
+    /// allocation would ever schedule a collection for, so one is asked
+    /// for. Out of line: `attach_context` is inlined into `Vm::unwind`.
+    #[cold]
+    #[inline(never)]
+    fn raise_no_memory(&mut self, ci: u32, pc: u32) -> bool {
+        self.request_gc();
+        let by_raise = ci != self.tramp
+            && self.codes.get(ci as usize).is_some_and(|c| {
+                c.code
+                    .bytecode
+                    .get(pc as usize)
+                    .copied()
+                    .map(crate::interp::op_of)
+                    == Some(mm_compile::bytecode::op::RAISE)
+            });
+        if by_raise {
+            self.fresh_memory_error();
+            return false;
+        }
+        let tv = self.types[T::MemoryError as usize];
+        let args = self.empty_tuple;
+        if let Ok(e) = self.alloc_exc(tv, args) {
+            self.exc = e;
+        } else {
+            self.exc = self.memory_error;
+            self.fresh_memory_error();
+        }
+        // Its own failed request, if it had no room, dies with it.
+        self.heap.take_refused();
+        true
+    }
+
+    /// Restores `e` as the exception being raised after work on it that
+    /// may have failed for room: a refusal that failure left dies, as it
+    /// raised nothing (`Vm::unwind` drops only a raised one's).
+    fn keep_raising(&mut self, e: Value) {
+        if self.exc != e {
+            self.heap.take_refused();
+        }
+        self.exc = e;
+    }
+
     /// Appends a traceback entry `(ci, pc)`.
     pub(crate) fn add_tb(&mut self, exc: Value, ci: u32, pc: u32) {
         if self.codes.get(ci as usize).is_some_and(|c| c.prelude) {
@@ -330,15 +384,25 @@ impl Vm {
                     tb = l;
                     self.set_slot(r, exc_slot::TRACEBACK, l);
                 }
-                Err(Raised) => return,
+                Err(Raised) => return self.drop_tb_refusal(),
             }
         }
         let entry = (i64::from(ci) << 28) | i64::from(pc & 0x0FFF_FFFF);
         if let Some(v) = Value::int(entry) {
             let saved = self.exc;
-            let _ = self.list_push(tb, v);
+            if self.list_push(tb, v).is_err() {
+                self.drop_tb_refusal();
+            }
             self.exc = saved;
         }
+    }
+
+    /// A traceback that did not grow for room raises nothing of its own:
+    /// the refusal dies (`Vm::unwind` dropped the raised error's before).
+    #[cold]
+    #[inline(never)]
+    fn drop_tb_refusal(&mut self) {
+        self.heap.take_refused();
     }
 
     pub(crate) fn set_hint_suffix(&mut self, hint: &str) {
@@ -349,7 +413,7 @@ impl Vm {
         {
             self.set_slot_o(r, HINT, s);
         }
-        self.exc = e;
+        self.keep_raising(e);
     }
 
     /// Records the hint data on the exception being raised: the
@@ -372,7 +436,7 @@ impl Vm {
         {
             self.set_slot_o(r, HINT, t);
         }
-        self.exc = e;
+        self.keep_raising(e);
     }
 
     /// The hint data of `e` (see [`HINT`]), when it is of `kind`.
@@ -430,7 +494,7 @@ impl Vm {
         if from != Value::UNDEFINED {
             let _ = set(self, "name_from", from);
         }
-        self.exc = e;
+        self.keep_raising(e);
     }
 
     /// A `SyntaxError`'s `msg`, `filename`, `lineno`, `offset`, `text`,
@@ -981,6 +1045,9 @@ impl Vm {
                         out.push_str(&pad);
                         out.extend(core::iter::repeat_n('^', n));
                         out.push('\n');
+                    } else {
+                        // Left out, raising nothing: the refusal dies.
+                        self.heap.take_refused();
                     }
                 }
             }

@@ -1403,8 +1403,22 @@ impl Vm {
     /// step per safepoint. Returns whether it will.
     #[cold]
     #[inline(never)]
-    pub(crate) fn oom_retry(&mut self, n: &crate::builtins::Native) -> bool {
-        self.oom_retry_if(Self::native_pure(n))
+    pub(crate) fn oom_retry(&mut self, n: &crate::builtins::Native, a: &CallArgs) -> bool {
+        let pure = Self::native_pure(n)
+            || match (n.owner, n.name()) {
+                // From a list or tuple, `l.extend(x)` grows `l` once to its
+                // new length before any item is written (`Vm::list_room`,
+                // `list_rebuild`); from an iterator it may have appended.
+                (Some(T::list), "extend") => {
+                    let x = self.arg_o(a, 1);
+                    x.is_obj_kind(ty::LIST as u8) || x.is_obj_kind(ty::TUPLE as u8)
+                }
+                // Without a key, `sorted(x)` sorts a copy it builds first;
+                // a key may be user code, which runs once only.
+                (None, "sorted") => n.module().is_none() && a.kw == u32::MAX,
+                _ => false,
+            };
+        self.oom_retry_if(pure)
     }
 
     /// Whether builtin `n` changes nothing before its result is allocated,
@@ -1415,6 +1429,14 @@ impl Vm {
             // Methods of mutable types that only read: they build their
             // result before anything changes.
             Some(T::list | T::dict | T::set) if n.name() == "copy" => true,
+            // A list grows into a new buffer before it changes
+            // (`Vm::list_grow`); a set takes an element out again when its
+            // table does not grow (`set_unput`). The outgrown tables of a
+            // set or list built an item at a time are garbage only a
+            // collection frees: beside 20 MB live, 3M `s.add(x)` raised
+            // at 256 MiB [M, reviewer].
+            Some(T::list) if n.name() == "append" => true,
+            Some(T::set) if n.name() == "add" => true,
             Some(T::dict) => n.name() == "fromkeys",
             Some(T::set) => matches!(
                 n.name(),
@@ -1430,7 +1452,10 @@ impl Vm {
             // The constructors that copy their argument.
             None => {
                 n.module().is_none()
-                    && matches!(n.name(), "list" | "tuple" | "set" | "frozenset" | "dict")
+                    && matches!(
+                        n.name(),
+                        "list" | "tuple" | "set" | "frozenset" | "dict" | "bytes" | "bytearray"
+                    )
             }
             _ => false,
         }
@@ -1485,6 +1510,13 @@ impl Vm {
     pub(crate) fn oom_retry_fault(&mut self, st: &State) -> bool {
         use mm_compile::bytecode::{op, operand};
         let seq = |v: Value| v.is_obj_kind(ty::LIST as u8) || v.is_obj_kind(ty::TUPLE as u8);
+        let scalar = |v: Value| {
+            v.is_int()
+                || v.is_float()
+                || [ty::STR, ty::INT, ty::BYTES]
+                    .iter()
+                    .any(|&t| v.is_obj_kind(t as u8))
+        };
         let Some(bc) = self
             .codes
             .get(st.ci as usize)
@@ -1495,9 +1527,31 @@ impl Vm {
         };
         let rerun = match bc.get(st.pc).copied().map(crate::interp::op_of) {
             // A list grows into a new buffer before it changes
-            // (`Vm::list_grow`).
-            Some(op::BUILD_STRING | op::LIST_TO_TUPLE | op::LIST_APPEND) => true,
-            Some(op::UNPACK_EX | op::LIST_EXTEND) => seq(st.acc),
+            // (`Vm::list_grow`); a comprehension's set or dict takes the
+            // entry out again, or writes nothing, when its table does not
+            // grow (`set_unput`, `Vm::dict_resize`), and a user `__hash__`
+            // or `__eq__` runs in the prelude twin, whose insert retries as
+            // a call.
+            Some(
+                op::BUILD_STRING
+                | op::LIST_TO_TUPLE
+                | op::LIST_APPEND
+                | op::SET_ADD
+                | op::DICT_INSERT,
+            ) => true,
+            // An int, float, str or bytes formatted (`f'{1:>64000000}'`)
+            // builds only its result; a container's `repr` may have run a
+            // user `__repr__`.
+            Some(op::FORMAT) => scalar(st.acc),
+            Some(op::FORMAT_SPEC) => self
+                .stack
+                .get(st.base + operand(bc, st.pc, 0))
+                .is_some_and(|&o| scalar(o)),
+            Some(op::UNPACK_EX) => seq(st.acc),
+            // A list's or tuple's iterator too: its items are copied before
+            // it ends (`Vm::seq_items_left`), or `collect` marks what it
+            // took (`oom_rerun`).
+            Some(op::LIST_EXTEND) => self.seq_items_left(st.acc).is_some(),
             Some(op::CALL_EX) => self
                 .stack
                 .get(st.base + operand(bc, st.pc, 0))
@@ -1968,13 +2022,15 @@ impl Vm {
     }
 
     /// Raises `t(msg)`; returns the marker to propagate. A `MemoryError`
-    /// for a size the heap refused before allocating (`Heap::would_fit`)
-    /// is the heap's own `memory_error`, as for a block that did not fit
-    /// (`MemoryError()`, as CPython raises both), so the dispatch loop
-    /// retries both alike: a new one was never retried, and
-    /// `list(range(8_000_000))` beside garbage raised [M, reviewer].
+    /// with no message (a size the heap refused before allocating,
+    /// `Heap::would_fit`, or one past a cap) is the heap's own
+    /// `memory_error`, as for a block that did not fit: the dispatch loop
+    /// retries those the heap refused alike (a new one was never retried,
+    /// and `list(range(8_000_000))` beside garbage raised [M, reviewer]),
+    /// and each is raised as a fresh `MemoryError()` with empty args, as
+    /// CPython's (`Vm::raise_no_memory`).
     pub(crate) fn err(&mut self, t: T, msg: &str) -> Raised {
-        if t == T::MemoryError && self.heap.refusal_pending() {
+        if t == T::MemoryError && msg.is_empty() {
             self.exc = self.memory_error;
             return Raised;
         }

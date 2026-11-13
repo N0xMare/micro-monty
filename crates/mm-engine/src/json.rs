@@ -562,7 +562,9 @@ fn move_text(
         if let Ok(b) = vm.heap.append_bytes(nb, &buf[..k], room) {
             nb = b;
         } else {
-            // No room for both blocks: grow in place.
+            // No room for both blocks: grow in place, raising nothing for
+            // the move (a failure there records its own refusal).
+            vm.heap.take_refused();
             *next = Value::NONE;
             raw[dw::MOVED] = 0;
             put(vm, text, raw, &[], need)?;

@@ -1008,10 +1008,10 @@ fn memory_limit_raises_memory_error() {
     );
     assert_eq!(out, "caught\n");
     assert_eq!(error_of(&p).type_name, "MemoryError");
-    // A full heap raises the one preallocated MemoryError: each raise
-    // starts it afresh, as CPython's free list does, so its traceback
-    // does not grow by a raise's frames each time, nor keep a note or a
-    // context (it grew 3, 6, 9 frames).
+    // A full heap raises a fresh MemoryError each time, as CPython's free
+    // list gives one, so its traceback does not grow by a raise's frames
+    // each time, nor keep a note (it grew 3, 6, 9 frames); like CPython's,
+    // it has no context, also inside an `except` block.
     let (p, out) = run_with(
         Limits::new().with_memory(8 << 20),
         "\
@@ -1034,7 +1034,7 @@ for i in range(3):
     assert!(matches!(p, Progress::Complete(_)), "{p:?}");
     assert_eq!(
         out,
-        "3 NoneType False\n3 KeyError False\n3 NoneType False\n"
+        "3 NoneType False\n3 NoneType False\n3 NoneType False\n"
     );
     // An int result past the limit is refused before anything is built:
     // the shift's 2^40-bit result would otherwise ask the host allocator
@@ -1343,9 +1343,10 @@ fn printing_output_is_admitted_and_released_across_prelude_handoffs() {
 #[test]
 fn iterator_buffers_stay_budgeted_until_their_results_are_allocated() {
     for (expression, check, success) in [
-        // A list iterator's items are gathered natively into a buffer (a
-        // range's go into a list sized up front, with no buffer).
-        ("list(iter([*range(300000)]))", "sum(result)", "44999850000"),
+        // A str iterator's items are gathered natively into a buffer (a
+        // range's go into a list sized up front, and a list or tuple
+        // iterator's are copied as a slice, with no buffer).
+        ("list(iter('x' * 400000))", "len(result)", "400000"),
         (
             "''.join(iter(['é', '€', 'x'] * 100000))",
             "result[-3:]",
@@ -3015,6 +3016,17 @@ fn a_deferred_table_ends_with_its_collection_wait() {
     }
 }
 
+/// Each `MemoryError` for a block that did not fit is a new object, as in
+/// Python 3.14: two saved ones were one, with the last raise's traceback
+/// and without the attributes set on the first [M, reviewer].
+#[test]
+fn a_block_that_does_not_fit_raises_a_new_memory_error_each_time() {
+    let src = "s = set(range(500_000))\nkeep = []\nerrs = []\nwhile len(errs) < 3:\n    try:\n        keep.append(s.copy())\n    except MemoryError as e:\n        e.tag = len(errs)\n        errs.append(e)\nprint(errs[0] is errs[1], errs[1] is errs[2], [e.tag for e in errs], [e.args for e in errs])\n";
+    let (p, out) = run_with(Limits::new().with_memory(64 << 20), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{out}");
+    assert_eq!(out, "False False [0, 1, 2] [(), (), ()]\n");
+}
+
 /// A result whose size the heap refused before the native allocated
 /// (`Heap::would_fit`) raises a `MemoryError` of its own, and only the
 /// heap's shared one was retried, so `list(range(8_000_000))` beside
@@ -3031,4 +3043,156 @@ fn a_size_refused_up_front_waits_for_a_collection() {
         assert!(matches!(p, Progress::Complete(_)), "{op}: {p:?}\n{out}");
         assert_eq!(out, "3\n", "{op}");
     }
+}
+
+/// Builds that failed beside garbage a collection frees, at a 64 MiB limit
+/// with 12 MB live and 20 MB dropped before each try; Python 3.14 runs
+/// them all [M]. `bytes(n)` and `bytearray(n)` were not among the retried
+/// constructors, `sorted(l)` and `l.extend(l2)` not among the retried
+/// natives, a scalar's format not among the retried instructions, and a
+/// copy from an iterator over a list was not run again, as gathering a
+/// one-shot iterator is not (a correctness review's L4 and L6).
+#[test]
+fn a_big_result_beside_garbage_waits_for_a_collection() {
+    let short = "list(range(1_250_000))";
+    let long = "list(range(2_500_000))";
+    for (setup, op) in [
+        (short, "bytes(30_000_000)"),
+        (short, "bytearray(30_000_000)"),
+        (short, "f'{1:>30000000}'"),
+        ("list(range(1_500_000, 0, -1))", "sorted(x)"),
+        (long, "ext(x)"),
+        (long, "list(iter(x))"),
+        (long, "tuple(iter(x))"),
+        (long, "[*iter(x)]"),
+        (long, "list(reversed(x))"),
+    ] {
+        let src = format!(
+            "keep = [list(range(500_000)) for _ in range(3)]
+x = {setup}
+def ext(l):
+    b = []
+    b.extend(l)
+    return b
+def garbage():
+    g = [list(range(500_000)) for _ in range(5)]
+for _ in range(3):
+    garbage()
+    r = {op}
+    r = None
+print('ok')
+"
+        );
+        let (p, out) = run_with(Limits::new().with_memory(64 << 20), &src);
+        assert!(matches!(p, Progress::Complete(_)), "{op}: {p:?}\n{out}");
+        assert_eq!(out, "ok\n", "{op}");
+    }
+}
+
+/// A set, dict or list built an item at a time outgrows its tables, which
+/// only a collection frees: at a 64 MiB limit with 12 MB live these raised
+/// where Python 3.14 runs them [M]; at 256 MiB, 3M items of
+/// `{x for x in range(n)}` beside 20 MB did [M, reviewer]. The growth that
+/// does not fit now waits for one collection (`SET_ADD`, `DICT_INSERT`,
+/// `set.add`, `list.append`).
+#[test]
+fn a_collection_built_an_item_at_a_time_frees_its_outgrown_tables() {
+    let src = "\
+keep = [list(range(500_000)) for _ in range(3)]
+def comp(n):
+    return len({x for x in range(n)})
+def add(n):
+    s = set()
+    for x in range(n):
+        s.add(x)
+    return len(s)
+def dcomp(n):
+    return len({x: x for x in range(n)})
+def append(n):
+    l = []
+    for x in range(n):
+        l.append(x)
+    return len(l)
+for f, n in [(comp, 750_000), (add, 750_000), (dcomp, 600_000), (append, 3_000_000)]:
+    for _ in range(2):
+        assert f(n) == n, f
+print('ok')
+";
+    let (p, out) = run_with(Limits::new().with_memory(64 << 20), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{out}");
+    assert_eq!(out, "ok\n");
+}
+
+/// An iterator over a list or tuple whose items left are copied as a slice
+/// (`list(it)`, `l.extend(it)`) ends as `next` would have ended it, from
+/// where it stood, forward or reversed; an iterator over the list it
+/// extends reads what it appends. Python 3.14's output.
+#[test]
+fn a_copied_sequence_iterator_ends_where_next_would() {
+    let src = "\
+s = list(range(40_000))
+it = iter(s)
+next(it)
+r = list(it)
+print(len(r), r[0], next(it, 'end'))
+rv = reversed(s)
+next(rv)
+r = tuple(rv)
+print(len(r), r[0], r[-1], next(rv, 'end'))
+r = [*iter(tuple(s))]
+print(len(r), r[-1])
+y = list(range(40_000))
+y.extend(reversed(y))
+print(len(y), y[40_000], y[-1])
+it = iter(s)
+y = []
+y.extend(it)
+print(len(y), next(it, 'end'))
+";
+    let (p, out) = run(src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{out}");
+    assert_eq!(
+        out,
+        "39999 1 end\n39999 39998 0 end\n40000 39999\n80000 39999 0\n40000 end\n"
+    );
+}
+
+/// A long sort's second array that does not fit waits for a collection at
+/// its next step, and a second failure raises, also on a chain restored at
+/// every park, with the fuel of one that goes on: that it waited is in the
+/// sort's state, so in the image.
+#[test]
+fn a_sort_that_does_not_fit_raises_after_a_restore_at_every_park() {
+    let setup = "x = list(range(300_000, 0, -1))\nkeep = bytearray(58_000_000)";
+    let src = "try:\n    y = sorted(x)\n    print('fit')\nexcept MemoryError:\n    print('MemoryError')\n";
+    let (_, _, unparked) = sliced(setup, src, 1 << 40, false);
+    for slice in [1_000, 100_000] {
+        let (p, out, spent) = sliced(setup, src, slice, true);
+        assert_eq!(p, Progress::Complete(None), "{slice}");
+        assert_eq!(out, "MemoryError\n", "{slice}");
+        assert_eq!(spent, unparked, "{slice}");
+    }
+}
+
+/// An intersection with a dict's keys view hashes each key it reads, as
+/// Python 3.14's `set_intersection` does, not the hash the dict stored:
+/// a counting `__hash__` saw 0 calls where Python 3.14 makes 1,000 [M,
+/// reviewer].
+#[test]
+fn a_keys_view_intersection_hashes_its_keys() {
+    let src = "\
+n = 0
+class K:
+    def __init__(s, v): s.v = v
+    def __hash__(s):
+        global n; n += 1; return s.v
+    def __eq__(s, o): return s.v == o.v
+xs = [K(i) for i in range(1000)]
+s0 = set(xs); d0 = dict.fromkeys(xs, 1)
+n = 0; r = d0.keys() & s0; print(len(r), n)
+n = 0; r = s0 & d0.keys(); print(len(r), n)
+";
+    let (p, out) = run(src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{out}");
+    assert_eq!(out, "1000 1000\n1000 1000\n");
 }

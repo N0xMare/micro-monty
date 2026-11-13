@@ -474,10 +474,9 @@ impl Vm {
     }
 
     /// Drops the refusal behind a `MemoryError` that no retry took (a
-    /// retry's second failure, an operation not retried; `would_fit`
-    /// raises a new one, not `memory_error`): else a later request past
-    /// the limit read it, collected and paid, except after a restore,
-    /// which starts without it [M, reviewer]. Out of line, as
+    /// retry's second failure, an operation not retried): else a later
+    /// request past the limit read it, collected and paid, except after a
+    /// restore, which starts without it [M, reviewer]. Out of line, as
     /// `drop_partial`.
     #[cold]
     #[inline(never)]
@@ -494,16 +493,14 @@ impl Vm {
             self.drop_partial();
         }
         self.drop_refusal();
-        if self.exc == self.memory_error {
-            // A full arena may be mostly garbage that no successful
-            // allocation would ever schedule a collection for.
-            self.request_gc();
-        }
         'raise: loop {
             if !reraise {
                 let exc = self.exc;
-                self.attach_context(exc);
-                self.add_tb(exc, st.ci, u32::try_from(st.pc).unwrap_or(0));
+                let pc = u32::try_from(st.pc).unwrap_or(0);
+                self.attach_context(exc, st.ci, pc);
+                // A fresh `MemoryError` may stand in for the shared one.
+                let exc = self.exc;
+                self.add_tb(exc, st.ci, pc);
             }
             reraise = false;
             loop {

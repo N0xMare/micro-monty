@@ -1702,6 +1702,8 @@ fn stack_charge(charge: &mut Scratch, heap: &Heap, want: usize, len: usize) -> u
     let words = want.min(room).max(len);
     let bytes = words.saturating_mul(STACK_WORD_COST as usize);
     if charge.resize(heap, bytes).is_err() {
+        // Matching goes on with the stack it has: nothing is raised.
+        heap.take_refused();
         return len;
     }
     words
