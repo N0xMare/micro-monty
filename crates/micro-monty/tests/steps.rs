@@ -2245,6 +2245,64 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "d = {}\nfor x in xs: d[x] = None",
         1,
     ),
+    // Lookups past deleted slots and colliding keys counted no slots, so
+    // a native loop of them was one step: 1,517 ms for `s.isdisjoint(big)`
+    // and 344 ms for the dict's keys with all but one key deleted, 869 ms
+    // and 1,412 ms for items views at 5,000 colliding keys; a big int
+    // copied before `inf` or `nan` was looked at, 363-447 ms; a set grown
+    // by the prelude's inserts (a generator) rebuilt its table in one
+    // step, 61 ms and 84 ms; on 3feacaa1, plain release [M]. A probe now
+    // spends a visit per run of slots and ends a slice on them, `nan` and
+    // the infinities decide without a copy, and an insert of a natively
+    // hashed key grows a big table in steps.
+    (
+        Row::Bounded,
+        "M = (1 << 61) - 1\nxs = [k * M for k in range(1, 10_001)]\nbig = [k * M for k in range(20_001, 40_001)]\ns = set(xs)\nfor x in xs[:-1]: s.discard(x)",
+        "r = s.isdisjoint(big)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "M = (1 << 61) - 1\nxs = [k * M for k in range(1, 10_001)]\nbig = [k * M for k in range(20_001, 40_001)]\nd = dict.fromkeys(xs)\nfor x in xs[:-1]: del d[x]",
+        "r = d.keys().isdisjoint(big)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "M = (1 << 61) - 1\nxs = [k * M for k in range(1, 5_001)]\nd = dict.fromkeys(xs)\nd3 = dict.fromkeys(xs[::2])",
+        "r = d.items() & d3.items()",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "M = (1 << 61) - 1\nxs = [k * M for k in range(1, 5_001)]\nd = dict.fromkeys(xs)\nd2 = dict.fromkeys([k * M for k in range(5_001, 10_001)])",
+        "r = d.items().isdisjoint(d2.items())",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "c = (1 << (2**20 - 1)) | 0x1234567\nzs = [c] * 4000\ninf = float('inf')\nnan = float('nan')",
+        "r = inf in zs",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "c = (1 << (2**20 - 1)) | 0x1234567\nzs = [c] * 4000\ninf = float('inf')\nnan = float('nan')",
+        "r = zs.count(nan)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "d = dict(zip(range(1_000_000), range(1_000_000)))\ndef gen():\n    for i in range(1_000_000, 2_000_000):\n        yield (i, i)",
+        "r = d.items() | gen()",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "x = 0",
+        "r = set(i for i in range(3_000_000))",
+        1,
+    ),
     // Big ints and long texts: a compare or hash counted one visit
     // whatever the operands' size, and copied each big int (`big_of`). On
     // 9a80bbea [M]: 4,000 references to one 2^20-bit int took 882-889 ms

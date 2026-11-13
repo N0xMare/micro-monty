@@ -1695,7 +1695,7 @@ const DEFS: &[Def] = &[
     n!("__copy__", MA, 1, 1, NO, NO, crate::re::match_copy),
     #[cfg(feature = "re")]
     n!("__deepcopy__", MA, 2, 2, NO, NO, crate::re::match_copy),
-    p!("_dict_probe", 3, 3, pl_dict_probe),
+    p!("_dict_probe", 4, 4, pl_dict_probe),
     p!("_pct", 3, 3, crate::percent::pl_pct),
     #[cfg(feature = "json")]
     p!("_json_encode", 10, 10, crate::json::pl_json_encode),
@@ -1710,7 +1710,7 @@ const DEFS: &[Def] = &[
     p!("_dict_set_at", 3, 3, pl_dict_set_at),
     p!("_dict_at", 2, 2, pl_dict_at),
     p!("_dict_del_at", 2, 2, pl_dict_del_at),
-    p!("_set_probe", 4, 4, pl_set_probe),
+    p!("_set_probe", 5, 5, pl_set_probe),
     p!("_seq_scan", 4, 4, pl_seq_scan),
     p!("_more", 1, 4, pl_more),
     p!("_dict_scan", 4, 4, pl_dict_scan),
@@ -1719,7 +1719,7 @@ const DEFS: &[Def] = &[
     p!("_walk_repr", 3, 3, pl_walk_repr),
     p!("_set_insert", 3, 3, pl_set_insert),
     p!("_set_table", 2, 2, pl_set_table),
-    p!("_set_hashed", 1, 1, pl_set_hashed),
+    p!("_set_hashed_at", 2, 2, pl_set_hashed),
     p!("_cell_set", 2, 2, pl_cell_set),
     p!("_build_class", 5, 5, pl_build_class),
     // A builtin bound on its first lookup (`prelude::AS_BUILTINS`), so
@@ -6541,7 +6541,8 @@ fn view_dict(vm: &Vm, d: Value) -> Value {
 
 fn pl_dict_probe(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let h = pl_hash_arg(vm, vm.arg_o(&a, 2))?;
-    vm.dict_probe_py(view_dict(vm, vm.arg_o(&a, 0)), vm.arg_o(&a, 1), h)
+    let d = view_dict(vm, vm.arg_o(&a, 0));
+    vm.dict_probe_py(d, vm.arg_o(&a, 1), h, vm.arg_o(&a, 3))
 }
 
 fn pl_dict_insert(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
@@ -6587,7 +6588,7 @@ fn pl_dict_del_at(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 fn pl_set_probe(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let h = pl_hash_arg(vm, vm.arg_o(&a, 2))?;
     let depth = pl_depth(vm, vm.arg_o(&a, 3));
-    vm.set_probe_py(vm.arg_o(&a, 0), vm.arg_o(&a, 1), h, depth)
+    vm.set_probe_py(vm.arg_o(&a, 0), vm.arg_o(&a, 1), h, depth, vm.arg_o(&a, 4))
 }
 
 /// `_more(src, i, items, None)`: item `i` on of a bulk operation's source
@@ -6818,15 +6819,29 @@ fn pl_set_insert(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(stored(vm))
 }
 
-/// `_set_hashed(s)`: `[(key, stored hash), ...]`, so the prelude never
-/// rehashes a set's elements (CPython reuses the stored hashes).
+/// `_set_hashed_at(s, i)`: `([(key, stored hash), ...], j)` for set `s`'s
+/// elements from slot `i`, at most `1 << 14` of them, `j` the slot after
+/// the last; `None` past the end. The prelude's `_set_hashed` reads a set
+/// with them a slice per call, so it never rehashes its elements (CPython
+/// reuses the stored hashes) and never builds all their pairs in a step.
 fn pl_set_hashed(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let mut i = usize::try_from(vm.int_of_o(vm.arg_o(&a, 1)).unwrap_or(0)).unwrap_or(0);
+    let s = vm.arg_o(&a, 0);
     let mut out = Vec::new();
-    for (k, h) in vm.set_items_hashed(vm.arg_o(&a, 0)) {
+    while out.len() < 1 << 14 {
+        let Some((k, h)) = vm.set_entry_from(s, &mut i) else {
+            break;
+        };
+        i += 1;
         let h = vm.new_int(h.cast_signed())?;
         out.push(vm.alloc_tuple(&[k, h])?);
     }
-    vm.new_list(&out)
+    if out.is_empty() {
+        return Ok(Value::NONE);
+    }
+    let list = vm.new_list(&out)?;
+    let j = vm.new_int(i64::try_from(i).unwrap_or(i64::MAX))?;
+    vm.alloc_tuple(&[list, j])
 }
 
 /// `_set_table(s, x)`, the prelude twins' edits of set `s`'s table: an
@@ -8105,7 +8120,13 @@ fn view_isdisjoint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         }
         (v, o) = (o, v);
     }
+    // Lookups of keys with equal hashes are charged by the slots they
+    // pass: past a step's work the twin goes on, a safepoint per item.
+    let start = vm.work;
     for &x in &vm.collect(o)? {
+        if vm.work.wrapping_sub(start) >= nstep::STEP_WORK {
+            return Err(vm.need_py());
+        }
         if vm.contains(v, x)? {
             return Ok(Value::FALSE);
         }

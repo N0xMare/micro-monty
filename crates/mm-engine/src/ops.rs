@@ -641,9 +641,15 @@ impl Vm {
             } else {
                 (o, v)
             };
-            // Each item of `src` kept if `probe` has it.
+            // Each item of `src` kept if `probe` has it. Lookups of keys
+            // with equal hashes are charged by the slots they pass: past a
+            // step's work the twin goes on, a safepoint per item.
             if self.type_of(probe) == T::dict_items {
+                let start = self.work;
                 for &x in &self.collect(src)? {
+                    if self.work.wrapping_sub(start) >= crate::nstep::STEP_WORK {
+                        return Err(self.need_py());
+                    }
                     if self.contains(probe, x)? {
                         self.set_add_plain(out, x)?;
                     }

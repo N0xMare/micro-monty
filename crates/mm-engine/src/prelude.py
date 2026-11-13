@@ -31,13 +31,20 @@ def _khash(k, what):
 
 
 def _dfind(d, k, h):
-    r = _dict_probe(d, k, h)
-    if type(r) is int:
-        return r
-    for e, key in r:
-        if key is k or key == k:
-            return e
-    return -1
+    # As `_sfind`: the keys only Python can compare, a bounded list at a
+    # time (`dict_probe_py`).
+    r = _dict_probe(d, k, h, None)
+    while type(r) is not int:
+        at = None
+        if type(r) is tuple:
+            r, at = r
+        for e, key in r:
+            if key is k or key == k:
+                return e
+        if at is None:
+            return -1
+        r = _dict_probe(d, k, h, at)
+    return r
 
 
 def _dlookup(d, k):
@@ -65,14 +72,35 @@ def _ddel(d, k):
     return True, v
 
 
-def _sfind(s, x, h):
-    r = _set_probe(s, x, h, 0)
-    if type(r) is int:
-        return r
-    for i, key in r:
-        if key is x or key == x:
-            return i
-    return -1
+def _set_hashed(s):
+    # A set's elements with their stored hashes, a slice per native call
+    # (`_set_hashed_at`), each a safepoint.
+    i = 0
+    while True:
+        r = _set_hashed_at(s, i)
+        if r is None:
+            return
+        xs, i = r
+        for p in xs:
+            yield p
+
+
+def _sfind(s, x, h, d=-1):
+    # The keys only Python can compare come a bounded list at a time, with
+    # where the probe goes on (`set_probe_py`). Inside a comparison at
+    # nesting `d` (see `_eq`), they compare by `_eqd`.
+    r = _set_probe(s, x, h, d if d > 0 else 0, None)
+    while type(r) is not int:
+        at = None
+        if type(r) is tuple:
+            r, at = r
+        for i, key in r:
+            if key is x or (key == x if d < 0 else _eqd(key, x, d + 1)):
+                return i
+        if at is None:
+            return -1
+        r = _set_probe(s, x, h, d if d > 0 else 0, at)
+    return r
 
 
 def _sadd(s, x):
@@ -101,20 +129,8 @@ def _ssub(a, b, d=-1):
             r = _more(a, b, r, d)
             continue
         j, x, h = r
-        if d < 0:
-            if _sfind(b, x, h) < 0:
-                return False
-        else:
-            p = _set_probe(b, x, h, d)
-            if type(p) is int:
-                if p < 0:
-                    return False
-            else:
-                for i, key in p:
-                    if key is x or _eqd(key, x, d + 1):
-                        break
-                else:
-                    return False
+        if _sfind(b, x, h, d) < 0:
+            return False
         r = _more(a, b, j + 1, d)
     return True
 

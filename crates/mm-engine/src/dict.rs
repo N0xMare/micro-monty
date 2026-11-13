@@ -57,6 +57,9 @@ pub(crate) enum Hard {
 /// in bytecode, where fuel and parking apply (docs/spec.md §5). A
 /// constant, so a parked and an unparked run take the same path.
 pub(crate) const WALK: u32 = 1 << 14;
+/// The slots a probe walks before every 8 more spend a walk visit, for
+/// the reason [`crate::set::FREE_RUNS`] gives.
+const FREE_SLOTS: u64 = 32;
 
 /// The budget of a native walk a prelude twin starts at nesting `depth`
 /// of a comparison it took over: halved per level, down to one visit.
@@ -1006,6 +1009,17 @@ impl Vm {
         self.probe_with(d, k, h, 0, &mut left, &mut |_, _| {})
     }
 
+    /// [`Vm::probe`] charging the slots it walked past the first eight, for
+    /// lookups a native loop makes (`dict_has_hashed`, `dict_del`).
+    fn probe_charged(&mut self, d: Ref, k: Value, h: u64) -> Result<(u32, Option<u32>), Hard> {
+        let mut left = WALK;
+        let r = self.probe_with(d, k, h, 0, &mut left, &mut |_, _| {});
+        if left != WALK {
+            self.walked(left);
+        }
+        r
+    }
+
     /// `probe` inside a walk at `depth` with `left` visits, reporting every
     /// entry whose hash matches and whose key compares only in Python to
     /// `undecided` (then going on as if unequal).
@@ -1050,6 +1064,29 @@ impl Vm {
         left: &mut u32,
         undecided: &mut dyn FnMut(u32, Value),
     ) -> Result<(u32, Option<u32>, u64), Hard> {
+        self.probe_from::<false>(dv, k, h, depth, left, undecided, None, &mut None)
+    }
+
+    /// [`Vm::probe_val`] that spends a visit of `left` per 8 slots past
+    /// the first, deleted ones included, so a long chain is charged as it
+    /// is walked. Out of visits, or with [`crate::set::PY_CHUNK`] keys
+    /// reported, it stops with `Err(Hard::Py)` and its place in `at`, from
+    /// which a caller can go on (the prelude's `_dfind`) as `from`.
+    /// `RESUME` false (every native lookup) stops only when out of
+    /// visits, and starts at the hash's first slot.
+    #[allow(clippy::too_many_arguments, reason = "a lookup's state")]
+    #[inline]
+    fn probe_from<const RESUME: bool>(
+        &self,
+        dv: Dv,
+        k: Value,
+        h: u64,
+        depth: u32,
+        left: &mut u32,
+        undecided: &mut dyn FnMut(u32, Value),
+        from: Option<(usize, u64, u64)>,
+        at: &mut Option<(usize, u64, u64)>,
+    ) -> Result<(u32, Option<u32>, u64), Hard> {
         let Some(index) = dv.index else {
             return self.scan(dv, k, h, depth, left, undecided);
         };
@@ -1060,16 +1097,19 @@ impl Vm {
             return Ok((0, None, 0));
         }
         let g = Geo::new(cap);
-        let mut deferred = false;
-        let mut i = g.start(h);
+        let mut deferred = 0;
+        let (mut i, mut perturb, mut n) = match from {
+            #[allow(clippy::cast_possible_truncation, reason = "masked")]
+            Some((i, p, n)) if RESUME => ((i as u32) & g.mask, p, n),
+            _ => (g.start(h), h, 0),
+        };
         let tag = g.tag(h);
         let mut first_free = None;
         let val = |e: u32| kvs.get(2 * e as usize + 1).copied().unwrap_or(0);
-        let mut perturb = h;
-        for _ in 0..=g.steps() {
+        while n <= u64::from(g.steps()) {
             let w = islot(words, i);
             if w == 0 {
-                if deferred {
+                if deferred > 0 {
                     return Err(Hard::Py);
                 }
                 return Ok((first_free.unwrap_or(i), None, 0));
@@ -1091,15 +1131,26 @@ impl Vm {
                         Ok(false) => {}
                         Err(Hard::Deep) => return Err(Hard::Deep),
                         Err(Hard::Py) => {
-                            deferred = true;
+                            deferred += 1;
                             undecided(e, key);
                         }
                     }
                 }
             }
             i = g.next(i, &mut perturb);
+            n += 1;
+            // Every 8 slots past the free runs' worth spend a visit.
+            if n % 8 == 0 && n > FREE_SLOTS {
+                if *left == 0 || RESUME && deferred >= crate::set::PY_CHUNK {
+                    if RESUME {
+                        *at = Some((i as usize, perturb, n));
+                    }
+                    return Err(Hard::Py);
+                }
+                *left -= 1;
+            }
         }
-        if deferred {
+        if deferred > 0 {
             return Err(Hard::Py);
         }
         Ok((first_free.unwrap_or(0), None, 0))
@@ -1178,25 +1229,45 @@ impl Vm {
     /// For the prelude's lookups of keys with Python `__hash__`/`__eq__`:
     /// the entry of `k` (hash `h`) if native comparison finds it, else the
     /// `[(entry, key), ...]` whose keys Python must compare, else -1.
-    pub(crate) fn dict_probe_py(&mut self, d: Value, k: Value, h: u64) -> Result<Value, Raised> {
-        let Some(r) = d.as_obj().filter(|_| d.is_obj_kind(ty::DICT as u8)) else {
+    /// At most [`crate::set::PY_CHUNK`] keys come a call, as
+    /// `(list, at)` with the place `at` the next call goes on from, as
+    /// [`Vm::set_probe_py`]'s.
+    pub(crate) fn dict_probe_py(
+        &mut self,
+        d: Value,
+        k: Value,
+        h: u64,
+        at: Value,
+    ) -> Result<Value, Raised> {
+        let Some(dv) = d
+            .as_obj()
+            .filter(|_| d.is_obj_kind(ty::DICT as u8))
+            .and_then(|r| self.dv(r))
+        else {
             return Err(self.err(T::TypeError, "expected a dict"));
         };
         let mut cands: Vec<(u32, Value)> = Vec::new();
         let mut left = WALK;
-        let found = self.probe_with(r, k, h, 0, &mut left, &mut |e, key| cands.push((e, key)));
+        let from = self.probe_place(at);
+        let mut at = None;
+        let found = self.probe_from::<true>(
+            dv,
+            k,
+            h,
+            0,
+            &mut left,
+            &mut |e, key| cands.push((e, key)),
+            from,
+            &mut at,
+        );
         self.walked(left);
         match found {
-            Ok((_, Some(e))) => self.new_int(i64::from(e)),
-            Ok((_, None)) => Ok(Value::int(-1).unwrap_or(Value::NONE)),
+            Ok((_, Some(e), _)) => self.new_int(i64::from(e)),
+            Ok((_, None, _)) => Ok(Value::int(-1).unwrap_or(Value::NONE)),
             Err(Hard::Deep) => Err(self.hard(Hard::Deep)),
             Err(Hard::Py) => {
-                let mut items = Vec::with_capacity(cands.len());
-                for (e, key) in cands {
-                    let ev = self.new_int(i64::from(e))?;
-                    items.push(self.alloc_tuple(&[ev, key])?);
-                }
-                self.new_list(&items)
+                let cands = cands.into_iter().map(|(e, key)| (u64::from(e), key));
+                self.probe_chunk(cands, at)
             }
         }
     }
@@ -1437,7 +1508,9 @@ impl Vm {
     pub(crate) fn dict_lookup_str(&self, d: Value, k: Value) -> Option<Value> {
         let h = self.key_hash_pure(k)?;
         let dv = self.dv(d.as_obj()?)?;
-        let mut left = WALK;
+        // Uncharged and never handed on: a long chain is walked to its end
+        // (str keys of names), not taken as absent.
+        let mut left = u32::MAX;
         let (_, e, vb) = self
             .probe_val(dv, k, h, 0, &mut left, &mut |_, _| {})
             .ok()?;
@@ -1791,7 +1864,7 @@ impl Vm {
         let Some(r) = d.as_obj() else {
             return Ok(false);
         };
-        let found = self.probe(r, k, h);
+        let found = self.probe_charged(r, k, h);
         Ok(found.map_err(|x| self.hard(x))?.1.is_some())
     }
 
@@ -1812,7 +1885,7 @@ impl Vm {
     pub(crate) fn dict_del(&mut self, d: Value, k: Value) -> Result<Option<Value>, Raised> {
         let h = self.key_hash(k)?;
         let Some(r) = d.as_obj() else { return Ok(None) };
-        let (slot, found) = self.probe(r, k, h).map_err(|x| self.hard(x))?;
+        let (slot, found) = self.probe_charged(r, k, h).map_err(|x| self.hard(x))?;
         let Some(e) = found else { return Ok(None) };
         let Some(dv) = self.dv(r) else {
             return Ok(None);

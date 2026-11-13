@@ -1081,11 +1081,21 @@ impl Vm {
         }
     }
 
-    /// Exact comparison of int `a` with float `f`; an int past every
-    /// finite float is decided by its sign without a copy.
+    /// Exact comparison of int `a` with float `f`; `nan`, the infinities
+    /// and an int past every finite float are decided without a copy.
     #[allow(clippy::option_option, reason = "not an int vs unordered")]
     fn int_cmp_float(&self, a: Value, f: f64) -> Option<Option<Ordering>> {
-        if f.is_finite() && Vm::is_heap_int(a) {
+        if !f.is_finite() {
+            if !Vm::is_intlike(a) {
+                return None;
+            }
+            return Some((!f.is_nan()).then_some(if f > 0.0 {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }));
+        }
+        if Vm::is_heap_int(a) {
             // |a| >= 2^1024 > every finite float.
             let (neg, mag) = self.heap_int_mag(a);
             if mag.len() > 128 {

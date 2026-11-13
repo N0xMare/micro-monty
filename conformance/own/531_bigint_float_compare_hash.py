@@ -42,3 +42,11 @@ big = (1 << 100000) | 5
 print(sorted([big, -big, big + 0, 2**1024, -inf])[3:] == [big, big + 0])
 print({big: 1}.get(big + 0), {2**1023: 'i'}.get(2.0**1023), len({2**1023, 2.0**1023, 2**1024}))
 print(hash(frozenset([big, big + 0, 2**1023, 2.0**1023])) == hash(frozenset([big, 2**1023])))
+
+# Membership, counts and folds of big ints against nan and the infinities
+# (decided before the int is read).
+zs = [big, -big, 2**1024, -(2**1024), 2**1023, 0]
+for f in (inf, -inf, nan, -0.0, fmax, -fmax):
+    print(repr(f), f in zs, zs.count(f), [z < f for z in zs], [z == f for z in zs], [f >= z for z in zs])
+print(max(zs + [-inf]) == big, min(zs + [inf]) == -big, sorted(zs + [inf, -inf])[::7] == [-inf, inf])
+print(zs.index(-(2**1024)), (inf, big) > (inf, 0), [big, nan].count(nan), big in [nan, -inf, inf])

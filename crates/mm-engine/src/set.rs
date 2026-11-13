@@ -22,6 +22,24 @@ const FROZEN: u32 = 4;
 const FINGER: u32 = 5;
 pub(crate) const LINEAR_PROBES: usize = 9;
 pub(crate) const PERTURB_SHIFT: u32 = 5;
+/// The keys a probe hands Python to compare at most per call (and a run's
+/// worth more), then it stops where it is (`set_probe_py`,
+/// `dict_probe_py`): a long chain of keys only Python can compare is
+/// handed over a bounded list at a time.
+pub(crate) const PY_CHUNK: usize = 64;
+/// The runs of slots a probe walks before each further one spends a walk
+/// visit: a constant bound on the uncharged walk of one lookup or insert
+/// (160 slots), so a chain of colliding keys or deleted slots pays and the
+/// step bound holds. Below it a probe's fuel does not depend on where keys
+/// landed. Identity hashes follow addresses, which a snapshot's collection
+/// moves, and objects made one after another hash to neighbouring slots:
+/// charged from the second run, 13 corpus and own cases spent other fuel
+/// with a snapshot at every park; from the 17th, none [M]. A set of more
+/// than 160 objects made in sequence can still walk past it; a fuel
+/// difference from that is the snapshot-collection cause in
+/// `conformance/durability-results.txt`, which GC step 5 (a snapshot
+/// leaves the live session unchanged) removes.
+pub(crate) const FREE_RUNS: u32 = 16;
 const DUMMY: u64 = u64::MAX;
 
 /// What a phase of a chunked set or dict operation does with each item of
@@ -265,20 +283,6 @@ impl Vm {
         out
     }
 
-    pub(crate) fn set_items_hashed(&self, s: Value) -> Vec<(Value, u64)> {
-        let mut out = Vec::new();
-        if let Some((_, k, h, size)) = self.set_parts(s) {
-            for i in 0..size {
-                let i = u32::try_from(i).unwrap_or(0);
-                let v = self.slot_o(k, i);
-                if v != Value::UNDEFINED {
-                    out.push((v, self.raw_o(h, i)));
-                }
-            }
-        }
-        out
-    }
-
     /// The first element at slot `i` or after (for iterators) and its
     /// slot, or `None` and the table's size: one scan of the slots.
     pub(crate) fn set_next_at(&self, s: Value, i: usize) -> (usize, Option<Value>) {
@@ -306,10 +310,17 @@ impl Vm {
         depth: u32,
         left: &mut u32,
     ) -> Result<Option<usize>, Hard> {
-        self.set_find_with(s, key, hash, depth, left, &mut |_, _| {})
+        self.set_find_with(s, key, hash, depth, left, &mut |_, _| {}, &mut None)
     }
 
     /// `set_find`, reporting entries whose keys only Python can compare.
+    /// Each run of slots past the first spends a visit of `left`, so a
+    /// chain of deleted slots or colliding keys is charged as it is
+    /// walked. Out of visits, or with [`PY_CHUNK`] keys reported, it stops
+    /// at a run's end with `Err(Hard::Py)` and its place in `at`, from
+    /// which a caller can go on (the prelude's `_sfind`); a place in `at`
+    /// on entry is where it starts.
+    #[allow(clippy::too_many_arguments, reason = "a lookup's state")]
     fn set_find_with(
         &self,
         s: Value,
@@ -318,15 +329,19 @@ impl Vm {
         depth: u32,
         left: &mut u32,
         undecided: &mut dyn FnMut(usize, Value),
+        at: &mut Option<(usize, u64)>,
     ) -> Result<Option<usize>, Hard> {
         let Some((_, k, h, size)) = self.set_parts(s) else {
             return Ok(None);
         };
-        let mut deferred = false;
+        let mut deferred = 0;
+        let mut runs = 0;
         let mask = size - 1;
         #[allow(clippy::cast_possible_truncation, reason = "masked")]
-        let mut i = hash as usize & mask;
-        let mut perturb = hash;
+        let (mut i, mut perturb) = match at.take() {
+            Some((i, p)) => (i & mask, p),
+            None => (hash as usize & mask, hash),
+        };
         loop {
             let probes = if i + LINEAR_PROBES <= mask {
                 LINEAR_PROBES
@@ -338,7 +353,11 @@ impl Vm {
                 let ek = self.slot_o(k, idx);
                 let eh = self.raw_o(h, idx);
                 if ek == Value::UNDEFINED && eh == 0 {
-                    return if deferred { Err(Hard::Py) } else { Ok(None) };
+                    return if deferred > 0 {
+                        Err(Hard::Py)
+                    } else {
+                        Ok(None)
+                    };
                 }
                 if eh == hash && ek != Value::UNDEFINED {
                     if ek == key {
@@ -349,7 +368,7 @@ impl Vm {
                         Ok(false) => {}
                         Err(Hard::Deep) => return Err(Hard::Deep),
                         Err(Hard::Py) => {
-                            deferred = true;
+                            deferred += 1;
                             undecided(i + j, ek);
                         }
                     }
@@ -363,6 +382,14 @@ impl Vm {
                     .wrapping_add(1)
                     .wrapping_add(perturb as usize))
                     & mask;
+            }
+            runs += 1;
+            if runs > FREE_RUNS {
+                if *left == 0 || deferred >= PY_CHUNK {
+                    *at = Some((i, perturb));
+                    return Err(Hard::Py);
+                }
+                *left -= 1;
             }
         }
     }
@@ -431,36 +458,80 @@ impl Vm {
     }
 
     /// For the prelude: the slot of `key` (hash `h`) if native comparison
-    /// finds it, else `[(slot, key), ...]` for Python to compare, else -1.
-    /// `depth` is the set's nesting in a comparison walk (see
-    /// [`crate::dict::walk_budget`]).
+    /// finds it, -1 if it is absent, else `[(slot, key), ...]` for Python
+    /// to compare, at most [`PY_CHUNK`] of them a run's worth more, as
+    /// `(list, at)` when the probe goes on from place `at` (the argument
+    /// of the next call, `None` the first). `depth` is the set's nesting
+    /// in a comparison walk (see [`crate::dict::walk_budget`]).
     pub(crate) fn set_probe_py(
         &mut self,
         s: Value,
         key: Value,
         h: u64,
         depth: u32,
+        at: Value,
     ) -> Result<Value, Raised> {
         let mut cands: Vec<(usize, Value)> = Vec::new();
         let budget = crate::dict::walk_budget(depth);
         let mut left = budget;
-        let found = self.set_find_with(s, key, h, depth, &mut left, &mut |i, k| {
-            cands.push((i, k));
-        });
+        let mut at = self.probe_place(at).map(|(i, p, _)| (i, p));
+        let found = self.set_find_with(
+            s,
+            key,
+            h,
+            depth,
+            &mut left,
+            &mut |i, k| cands.push((i, k)),
+            &mut at,
+        );
         self.walked_of(budget, left);
         match found {
             Ok(Some(i)) => self.new_int(i64::try_from(i).unwrap_or(0)),
             Ok(None) => Ok(Value::int(-1).unwrap_or(Value::NONE)),
             Err(Hard::Deep) => Err(self.set_hard(Hard::Deep)),
             Err(Hard::Py) => {
-                let mut items = Vec::with_capacity(cands.len());
-                for (i, k) in cands {
-                    let iv = self.new_int(i64::try_from(i).unwrap_or(0))?;
-                    items.push(self.alloc_tuple(&[iv, k])?);
-                }
-                self.new_list(&items)
+                let cands = cands.into_iter().map(|(i, k)| (i as u64, k));
+                self.probe_chunk(cands, at.map(|(i, p)| (i, p, 0)))
             }
         }
+    }
+
+    /// A place a probe goes on from (`set_probe_py`, `dict_probe_py`):
+    /// `(i, perturb, steps)` from a tuple of three ints, `None` otherwise.
+    pub(crate) fn probe_place(&self, at: Value) -> Option<(usize, u64, u64)> {
+        if !at.is_obj_kind(ty::TUPLE as u8) {
+            return None;
+        }
+        let w = self.tuple_items(at);
+        let int = |i: usize| w.get(i).and_then(|&v| self.int_of_o(v));
+        Some((
+            usize::try_from(int(0)?).ok()?,
+            int(1)?.cast_unsigned(),
+            int(2)?.cast_unsigned(),
+        ))
+    }
+
+    /// A probe's keys for Python to compare, `[(slot, key), ...]`, and
+    /// with a place to go on from, `(list, (i, perturb, steps))`.
+    pub(crate) fn probe_chunk(
+        &mut self,
+        cands: impl Iterator<Item = (u64, Value)>,
+        at: Option<(usize, u64, u64)>,
+    ) -> Result<Value, Raised> {
+        let mut items = Vec::new();
+        for (i, k) in cands {
+            let iv = self.new_int(i.cast_signed())?;
+            items.push(self.alloc_tuple(&[iv, k])?);
+        }
+        let list = self.new_list(&items)?;
+        let Some((i, p, n)) = at else {
+            return Ok(list);
+        };
+        let i = self.new_int(i64::try_from(i).unwrap_or(0))?;
+        let p = self.new_int(p.cast_signed())?;
+        let n = self.new_int(n.cast_signed())?;
+        let at = self.alloc_tuple(&[i, p, n])?;
+        self.alloc_tuple(&[list, at])
     }
 
     /// Adds `key` (hash `h`, known absent) without comparing, for a
@@ -546,14 +617,15 @@ impl Vm {
         let Some((idx, minused)) = self.set_put(s, key, hash, absent)? else {
             return Ok(());
         };
-        // A key known `absent` comes from the prelude twins (`_set_insert`):
-        // it may hash in Python, which the steps that grow a table cannot
-        // call (`bulk_grow_top`), so its table grows here; only a rebuild
-        // past a step goes on in steps (`set_resize`).
+        // A key known `absent` comes from the prelude twins (`_set_insert`).
+        // The steps that grow a table (`bulk_grow_top`) add it back by
+        // hashing it natively, so one whose hash needs Python (a user
+        // `__hash__`) grows its table here, a rebuild past a step going on
+        // in steps (`set_resize`).
         if top
-            && !absent
             && self.set_len(s) > GROW_STEPS
             && self.grow_in_steps(Self::set_grow_size(minused, self.set_len(s)) * 16)
+            && (!absent || self.hashes_natively(key, hash))
         {
             // Out again, and added back by the steps that grow the table.
             self.set_unput(s, idx);
@@ -567,6 +639,21 @@ impl Vm {
             return Err(error);
         }
         Ok(())
+    }
+
+    /// Whether `key` hashes natively to `hash`, as the steps that grow a
+    /// table hash it again (`bulk_grow_top`). Asked only when a big table
+    /// grows.
+    #[cold]
+    fn hashes_natively(&mut self, key: Value, hash: u64) -> bool {
+        if let Ok(x) = self.hash(key) {
+            x.cast_unsigned() == hash
+        } else {
+            // Its hash needs Python code: no exception is left for the
+            // caller.
+            self.slow = false;
+            false
+        }
     }
 
     /// Adds `key` (hash `hash`) to `s` unless present (`absent`: known
@@ -588,6 +675,7 @@ impl Vm {
         let mut i = hash as usize & mask;
         let mut perturb = hash;
         let mut freeslot = None;
+        let mut runs = 0;
         // One walk for the whole insertion, as `Vm::probe`'s: colliding
         // keys each compare for a unit past the first, and past `WALK`
         // visits Python compares the rest.
@@ -636,6 +724,18 @@ impl Vm {
                     self.walked(left);
                 }
                 break f;
+            }
+            // Each run past the free ones is a visit, deleted slots and
+            // all; a key known absent compares nothing, so it walks on
+            // charged.
+            runs += 1;
+            if runs > FREE_RUNS {
+                if left > 0 {
+                    left -= 1;
+                } else if !absent {
+                    self.walked(left);
+                    return Err(self.need_py());
+                }
             }
             perturb >>= PERTURB_SHIFT;
             #[allow(clippy::cast_possible_truncation, reason = "masked")]
