@@ -689,6 +689,12 @@ fn parse_diff() -> Result<(), String> {
     )
 }
 
+/// The line by which a later head's size gate knows this xtask's `size
+/// --head` builds its tree's shipped artifacts with its own recipe and
+/// writes `<artifact> <bytes> <path>` lines to `target/size/head.tsv`
+/// (`size.rs` greps a base's main.rs for it). Keep it while that holds.
+pub(crate) const SIZE_HEAD: &str = "size --head: own recipe, target/size/head.tsv, paths";
+
 /// Builds the shipped artifacts and checks their sizes against the base's
 /// and the release's (`size.rs`).
 ///
@@ -709,16 +715,14 @@ fn size(args: &[String]) -> Result<(), String> {
     let file = root.join("target/size/head.tsv");
     let head = match mode {
         "--references" => return size::gate(None, base, &shipped_sizes),
+        "--head" => return size::write(&file, &shipped_artifacts(&root, &root.join("target"))?),
         "--judge" => size::read(&file)?,
-        "" | "--head" => shipped_sizes(&root, &root.join("target"))?
+        "" => shipped_sizes(&root, &root.join("target"))?
             .into_iter()
             .map(|(a, b)| (a.to_owned(), b))
             .collect(),
         _ => return Err(USAGE.to_owned()),
     };
-    if mode == "--head" {
-        return size::write(&file, &head);
-    }
     size::gate(Some(&head), base, &shipped_sizes)
 }
 
@@ -726,12 +730,23 @@ fn size(args: &[String]) -> Result<(), String> {
 /// target directory `dir`: `hello` for `wasm32-unknown-unknown` and, on
 /// [`SIZE_TARGET_NATIVE`], natively, and both mm-wasm guests.
 pub(crate) fn shipped_sizes(src: &Path, dir: &Path) -> Result<Vec<(&'static str, u64)>, String> {
+    shipped_artifacts(src, dir)?
+        .into_iter()
+        .map(|(name, path)| Ok((name, wasm::file_size(&path)?)))
+        .collect()
+}
+
+/// [`shipped_sizes`]'s artifacts: each one's name and path.
+pub(crate) fn shipped_artifacts(
+    src: &Path,
+    dir: &Path,
+) -> Result<Vec<(&'static str, PathBuf)>, String> {
     let wasm = shipped_example_in(src, dir, SIZE_TARGET_WASM, "hello")?;
-    let mut measured = vec![("hello.wasm", wasm::file_size(&wasm)?)];
+    let mut measured = vec![("hello.wasm", wasm)];
     let native_target = host_target()?;
     let native = shipped_example_in(src, dir, &native_target, "hello")?;
     if native_target == SIZE_TARGET_NATIVE {
-        measured.push(("hello", wasm::file_size(&native)?));
+        measured.push(("hello", native));
     } else {
         println!(
             "size: native hello {} bytes on {native_target} (reported; the native gate applies to {SIZE_TARGET_NATIVE})",
@@ -739,13 +754,13 @@ pub(crate) fn shipped_sizes(src: &Path, dir: &Path) -> Result<Vec<(&'static str,
         );
     }
     let guest = shipped_guest_in(src, dir)?;
-    measured.push(("mm_wasm_guest.wasm", wasm::file_size(&guest)?));
+    measured.push(("mm_wasm_guest.wasm", guest));
     let bundle = if src == workspace_root() {
         wasm::shipped_bundle_guest(SIZE_TARGET_WASM)?
     } else {
         wasm::bundle_guest_in(src, &dir.join("mm-wasm-bundle"), SIZE_TARGET_WASM)?
     };
-    measured.push(("mm_wasm_guest_bundle.wasm", wasm::file_size(&bundle)?));
+    measured.push(("mm_wasm_guest_bundle.wasm", bundle));
     Ok(measured)
 }
 

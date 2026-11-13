@@ -982,10 +982,13 @@ opt 3 (`cargo rustc -- -Copt-level=3`), as an embedder's binary is.
 | Bundle guest | `wasm32-unknown-unknown` `mm_wasm_guest_bundle.wasm` (the guest built with `host-bundle`: its stdlib and prelude bytecode in the custom sections `mm.prelude` and `mm.stdlib`, served by the host through `mm_host.bundle_read`), after `wasm-opt -Oz`, sections included | `mm_wasm_guest_bundle.wasm` |
 
 `cargo xtask size [--base REV]` builds each artifact as shipped, and the
-same for two more revisions built on the same host with this checkout's
-recipe, each in a worktree under `target/size/` and cached per commit: the
-base (the merge base with `REV`, default `origin/main`) and the release
-(the latest `v*` tag the base descends from). Any rise past the base, one
+same for two more revisions built on the same host, each in a worktree
+under `target/size/` and cached per commit and recipe: the base (the merge
+base with `REV`, default `origin/main`) and the release (the latest `v*`
+tag the base descends from). A revision whose xtask has `size --head`
+builds itself with its own recipe, so a change to the recipe, such as the
+`wasm-opt` flags, is charged like any other rise; an older one (v0.0.1) is
+built with this checkout's recipe. Any rise past the base, one
 byte or more, needs a commit since the base with the trailer `Size:
 <artifact> +<bytes> <why>` whose bytes cover the rise; a rise with
 uncommitted changes always fails. A rise past the release must stay within

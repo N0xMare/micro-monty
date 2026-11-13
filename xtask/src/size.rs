@@ -3,17 +3,20 @@
 //!
 //! The base is the merge base of `HEAD` and `--base REV` (default
 //! `origin/main`); the release is the latest `v*` tag the base descends
-//! from. Each is checked out in a
-//! worktree under `target/size/` and got with the head's recipe
-//! ([`crate::shipped_sizes`]); a commit's sizes are cached in
-//! `target/size/cache/`, keyed by the recipe ([`cache_key`]: the
-//! toolchain, `wasm-opt` and the xtask code that builds them), so a
-//! revision is got once per machine and recipe. A clean committed head caches its
+//! from. Each is checked out in a worktree under `target/size/`. A
+//! revision whose xtask has `size --head` ([`crate::SIZE_HEAD`]) builds
+//! itself there with its own recipe, so a change to the recipe (the
+//! `wasm-opt` flags, `RUSTFLAGS`, cargo arguments) is charged like any
+//! other rise; an older one (v0.0.1) is got with the head's recipe
+//! ([`crate::shipped_sizes`]). A commit's sizes are cached in
+//! `target/size/cache/`, keyed by the recipe that built them
+//! ([`recipe_key`]: the toolchain, `wasm-opt` and the xtask code that
+//! picks the flags), so a revision is got once per machine and recipe. A clean committed head caches its
 //! own sizes, so after it lands it is the next change's base for free.
 //! Sizes are also cached under a hash of the build's inputs ([`inputs`]),
 //! so a base that changed nothing a shipped build reads (docs, tests,
 //! conformance results) reuses the sizes of one that had them; the
-//! recipe is the head's, so it is in the key, not in the inputs.
+//! recipe is in the key, not in the inputs.
 //!
 //! - Any growth past the base, one byte or more, needs a trailer
 //!   `Size: <artifact> +<bytes> <why>` in a commit since the base whose
@@ -31,6 +34,7 @@ use std::{
     fmt::Write as _,
     fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use crate::{
@@ -63,7 +67,7 @@ pub(crate) fn gate(
     let root = workspace_root();
     let dir = root.join("target/size");
     let cache = dir.join("cache");
-    let key = cache_key()?;
+    let key = recipe_key(&root)?;
     let committed = git(&root, &["status", "--porcelain", "--untracked-files=no"])?.is_empty();
     let base = git(&root, &["merge-base", base_rev, "HEAD"])
         .map_err(|e| format!("size: no merge base with {base_rev} to measure against: {e}"))?;
@@ -82,6 +86,18 @@ pub(crate) fn gate(
     }
     let mut sized = Vec::new();
     for (label, name, sha) in revisions {
+        let tree = dir.join(format!("{label}-src"));
+        let own = builds_itself(&root, &sha);
+        let key = if own {
+            checkout(&root, &tree, &sha)?;
+            println!("size: the {label}, {name}, with its own recipe");
+            recipe_key(&tree)?
+        } else {
+            println!(
+                "size: the {label}, {name}, with the head's recipe (its xtask has no `size --head`)"
+            );
+            key.clone()
+        };
         let same = inputs(&root, &sha)?;
         let cached = load(&cache, &sha, &key).or_else(|| load(&cache, &same, &key));
         let got = if let Some(cached) = cached {
@@ -89,12 +105,15 @@ pub(crate) fn gate(
             cached
         } else {
             println!("size: building the {label}, {name} (cached afterwards)");
-            let tree = dir.join(format!("{label}-src"));
             checkout(&root, &tree, &sha)?;
-            let got: Sizes = build(&tree, &dir.join(label))?
-                .into_iter()
-                .map(|(a, b)| (a.to_owned(), b))
-                .collect();
+            let got: Sizes = if own {
+                build_itself(&tree)?
+            } else {
+                build(&tree, &dir.join(label))?
+                    .into_iter()
+                    .map(|(a, b)| (a.to_owned(), b))
+                    .collect()
+            };
             save(&cache, &sha, &key, &got)?;
             save(&cache, &same, &key, &got)?;
             got
@@ -220,21 +239,30 @@ fn budgets(text: &str) -> Result<BTreeMap<(String, String), u64>, String> {
 /// file adds that file here.
 const RECIPE_FILES: [&str; 2] = ["xtask/src/main.rs", "xtask/src/wasm.rs"];
 
-/// The cache key: [`RECIPE`], the toolchain (`rustc -vV`), `wasm-opt`'s
-/// version and a hash of the head's [`RECIPE_FILES`] as they are in the
-/// working tree. Every revision is built with the head's recipe, so a
-/// size cached under another recipe (`wasm-opt` flags, `RUSTFLAGS`, cargo
-/// arguments) is never compared with one built under this one.
-fn cache_key() -> Result<String, String> {
-    let root = workspace_root();
+/// The cache key of sizes built with the recipe of the tree at `tree`:
+/// [`RECIPE`], its toolchain (`rustc -vV` there), `wasm-opt`'s version
+/// and a hash of its [`RECIPE_FILES`] as they are in the working tree. A
+/// size cached under another recipe is never compared with one built
+/// under this one, and a head that lands caches its sizes under the key
+/// it gets as the next change's base.
+fn recipe_key(tree: &Path) -> Result<String, String> {
     let mut code = Vec::new();
     for file in RECIPE_FILES {
-        let text = fs::read(root.join(file)).map_err(|e| format!("cannot read {file}: {e}"))?;
+        let text = fs::read(tree.join(file)).map_err(|e| format!("cannot read {file}: {e}"))?;
         code.extend_from_slice(&text);
     }
     let code = crate::wasm_ir::source_hash(&code);
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_owned());
-    let rustc = crate::command_output(Path::new(&rustc), &["-vV"])?;
+    let output = Command::new(&rustc)
+        .arg("-vV")
+        .current_dir(tree)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .output()
+        .map_err(|e| format!("cannot run {rustc}: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("{rustc} -vV failed in {}", tree.display()));
+    }
+    let rustc = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     let wasm_opt = crate::wasm::tool("WASM_OPT", "wasm-opt").ok_or(
         "wasm-opt (binaryen) not found ($WASM_OPT, ~/.local/bin, PATH); run .agents/setup",
     )?;
@@ -243,6 +271,48 @@ fn cache_key() -> Result<String, String> {
         "{RECIPE}; xtask {code}; {}; {wasm_opt}",
         rustc.replace('\n', "; ")
     ))
+}
+
+/// Whether commit `sha`'s xtask builds a tree's shipped sizes with its own
+/// recipe (`size --head`): its main.rs carries [`crate::SIZE_HEAD`].
+fn builds_itself(root: &Path, sha: &str) -> bool {
+    let args = [
+        "grep",
+        "-q",
+        "-F",
+        "-e",
+        crate::SIZE_HEAD,
+        sha,
+        "--",
+        "xtask/src/main.rs",
+    ];
+    git(root, &args).is_ok()
+}
+
+/// The tree at `tree` builds its shipped artifacts with its own xtask,
+/// into its own `target/`, and returns the sizes it wrote.
+fn build_itself(tree: &Path) -> Result<Sizes, String> {
+    let file = tree.join("target/size/head.tsv");
+    let _ = fs::remove_file(&file);
+    // rustup's `cargo`, not `$CARGO`, so the tree's rust-toolchain.toml
+    // picks its toolchain.
+    let status = Command::new("cargo")
+        .args(["xtask", "size", "--head"])
+        .current_dir(tree)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("CARGO_TARGET_DIR")
+        .env_remove("CARGO_BUILD_TARGET_DIR")
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .status()
+        .map_err(|e| format!("cannot run cargo: {e}"))?;
+    if !status.success() {
+        return Err(format!(
+            "`cargo xtask size --head` failed in {}",
+            tree.display()
+        ));
+    }
+    read(&file)
 }
 
 /// The paths a shipped build reads; under `crates/`, all but `tests/`.
@@ -275,13 +345,15 @@ fn inputs(root: &Path, rev: &str) -> Result<String, String> {
     ))
 }
 
-/// The head's sizes `size --head` wrote to `file`.
+/// The sizes in a `size --head` file ([`write`]).
 pub(crate) fn read(file: &Path) -> Result<Sizes, String> {
     let text = fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
     text.lines()
         .map(|l| {
-            let (a, b) = l
-                .split_once('\t')
+            let mut f = l.split('\t');
+            let (a, b) = f
+                .next()
+                .zip(f.next())
                 .ok_or(format!("{}: {l}", file.display()))?;
             Ok((
                 a.to_owned(),
@@ -291,14 +363,16 @@ pub(crate) fn read(file: &Path) -> Result<Sizes, String> {
         .collect()
 }
 
-/// Writes the head's sizes for `size --judge`.
-pub(crate) fn write(file: &Path, sizes: &Sizes) -> Result<(), String> {
+/// Writes `size --head`'s file: `<artifact> <bytes> <path>`, tab-separated,
+/// a line per artifact.
+pub(crate) fn write(file: &Path, artifacts: &[(&str, PathBuf)]) -> Result<(), String> {
     if let Some(dir) = file.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let mut text = String::new();
-    for (artifact, bytes) in sizes {
-        let _ = writeln!(text, "{artifact}\t{bytes}");
+    for (artifact, path) in artifacts {
+        let bytes = crate::wasm::file_size(path)?;
+        let _ = writeln!(text, "{artifact}\t{bytes}\t{}", path.display());
     }
     fs::write(file, text).map_err(|e| format!("{}: {e}", file.display()))
 }
