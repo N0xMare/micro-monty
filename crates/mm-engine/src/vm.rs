@@ -2476,7 +2476,7 @@ impl Vm {
             ty::CLASSMETHOD => T::classmethod,
             ty::SUPER => T::super_,
             ty::CALLITER => T::callable_iterator,
-            ty::VIEW => match v.as_obj().map_or(0, |r| self.raw(r, 1)) {
+            ty::VIEW => match v.as_obj().map_or(0, |r| self.raw(r, 1) & 3) {
                 0 => T::dict_keys,
                 1 => T::dict_values,
                 _ => T::dict_items,

@@ -123,14 +123,17 @@ enum Row {
     Open,
 }
 
+/// The row that must park with a mark held: [`gaps`]' third count.
+const HELD_MARK_ROW: &str = "k = d.items() - e";
+
 /// The longest wall time between two safepoints while `src` runs after
-/// `setup`, and the number of parks.
-fn gaps(engine: &Engine, setup: &str, src: &str) -> (Duration, usize) {
+/// `setup`, the number of parks, and how many of them held a mark.
+fn gaps(engine: &Engine, setup: &str, src: &str) -> (Duration, usize, usize) {
     let mut s = Session::new(engine).expect("session");
     let p = s.start(&engine.compile(setup, "setup.py").expect("setup compiles"));
     assert!(matches!(p, Progress::Complete(_)), "setup: {p:?}");
     let code = engine.compile(src, "step.py").expect("compiles");
-    let (mut worst, mut parks) = (Duration::ZERO, 0);
+    let (mut worst, mut parks, mut marked) = (Duration::ZERO, 0, 0);
     let mut t = Instant::now();
     s.set_deadline(Some(t));
     let mut p = s.start(&code);
@@ -142,12 +145,13 @@ fn gaps(engine: &Engine, setup: &str, src: &str) -> (Duration, usize) {
             break;
         }
         parks += 1;
+        marked += usize::from(s.gc_marking());
         t = Instant::now();
         s.set_deadline(Some(t));
         p = s.resume(Resume::Continue).expect("resumes");
     }
     assert!(matches!(p, Progress::Complete(_)), "{src}: {p:?}");
-    (worst, parks)
+    (worst, parks, marked)
 }
 
 /// The most fuel one run between two safepoints may charge past the budget
@@ -770,9 +774,11 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "k = d.items() | {(1, 1)}",
         1,
     ),
-    // Ends at 224 of 256 MiB live, where collections used to run in full
+    // Peaks near the limit (it completes from a 244 MiB one) and ends at
+    // about 195 MiB live [M], where collections used to run in full
     // (130-213 ms, 41-52 ms on f305b88); with too little room the mark is
-    // now held, a slice per step (spec §9.2). Under incremental marks it
+    // now held, a slice per step (spec §9.2), and the test asserts that a
+    // park held it ([`HELD_MARK_ROW`]). Under incremental marks it
     // raised `MemoryError` while a mark kept the mark stack at twice the
     // objects it had to hold. Its worst step was then the mark step after
     // the result's 32 MiB of hashes, paced to mark all of the heap
@@ -784,7 +790,28 @@ const SITES: &[(Row, &str, &str, usize)] = &[
     (
         Row::Bounded,
         "d = {i: i for i in range(2_000_000)}\ne = {(i, i) for i in range(500_000)}",
-        "k = d.items() - e",
+        HELD_MARK_ROW,
+        1,
+    ),
+    // A view with a set subclass's instance or a generator as the other
+    // operand (V5): the view was read in one native step, 79-291 ms at
+    // 1M entries [M, review]; the twin's steps park now.
+    (
+        Row::Bounded,
+        "d = dict.fromkeys(range(1_000_000))\nclass SS(set): pass\nss = SS(range(1_000_000))",
+        "k = d.keys() - ss",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "d = dict.fromkeys(range(1_000_000))\nclass SS(set): pass\nss = SS(range(1_000_000))",
+        "k = d.items() | ss",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "d = dict.fromkeys(range(1_000_000))",
+        "k = d.keys() | (i for i in range(3))",
         1,
     ),
     // GC: deepcopy's memo dict is one large table. Each insert dirties its
@@ -1209,6 +1236,23 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         Row::Bounded,
         "import math\nx = (1 << 67_108_800) - 12_345",
         "y = math.gcd(x, (1 << 64) + 1)",
+        1,
+    ),
+    // Many arguments at the cap (review H2): each was let through on its
+    // own estimate and all ran in one step, 659 ms for 40. Past the
+    // summed estimate the prelude goes pairwise, a step per pair. `lcm`
+    // divides the shorter operand by the gcd, not the product: 54 ms for
+    // `lcm(x, 3)` at the cap, about 33 now [M].
+    (
+        Row::Bounded,
+        "import math\nx = (1 << 67_108_800) - 12_345",
+        "y = math.gcd(3, *[x] * 40)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "import math\nx = (1 << 67_108_800) - 12_345",
+        "y = math.lcm(x, *[3, 5, 7] * 10)",
         1,
     ),
     // Bytes (P2): `nstep::op::BYTES`, a `bytes::Job` of each kind, its
@@ -2299,7 +2343,12 @@ impl<'a> Timed<'a> {
         engine: &Engine,
         (index, row, setup, src, shown): (usize, Row, &'a str, String, String),
     ) -> Self {
-        let (worst, parks) = gaps(engine, setup, &src);
+        let (worst, parks, marked) = gaps(engine, setup, &src);
+        // Near the limit, or it no longer tests a held mark.
+        assert!(
+            src.trim_end() != HELD_MARK_ROW || marked > 0,
+            "{src}: no park held a mark"
+        );
         Timed {
             row,
             index,
@@ -2334,7 +2383,7 @@ fn retry(engine: &Engine, runs: &mut [Timed<'_>]) {
         }
         for run in runs.iter_mut().filter(|run| run.over()) {
             let before = probe.unwrap_or_else(|| speed(engine).0);
-            let (worst, parks) = gaps(engine, run.setup, &run.src);
+            let (worst, parks, _) = gaps(engine, run.setup, &run.src);
             let after = speed(engine).0;
             probe = Some(after);
             let limit = LIMIT.mul_f64(before.min(after).clamp(0.5, 2.0));

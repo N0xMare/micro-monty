@@ -58,7 +58,12 @@ pub struct Native {
 /// the str it extends: `partition` and `rpartition` give the receiver
 /// back when the separator is not found, as CPython's do.
 pub(crate) fn keeps_instance(n: &Native) -> bool {
-    n.owner == Some(T::str) && matches!(n.name(), "partition" | "rpartition")
+    match n.owner {
+        Some(T::str) => matches!(n.name(), "partition" | "rpartition"),
+        // Its view records that it was made through a subclass.
+        Some(T::dict) => n.name() == "keys",
+        _ => false,
+    }
 }
 
 /// A string in [`BLOB`].
@@ -394,12 +399,20 @@ const DEFS: &[Def] = &[
     n!("__repr__", SE, 1, 1, NO, NO, slot_repr),
     n!("__eq__", SE, 2, 2, NO, NO, slot_eq),
     n!("__ne__", SE, 2, 2, NO, NO, slot_ne),
+    n!("__lt__", SE, 2, 2, NO, NO, slot_lt),
+    n!("__le__", SE, 2, 2, NO, NO, slot_le),
+    n!("__gt__", SE, 2, 2, NO, NO, slot_gt),
+    n!("__ge__", SE, 2, 2, NO, NO, slot_ge),
     n!("__len__", FS, 1, 1, NO, NO, slot_len),
     n!("__contains__", FS, 2, 2, NO, NO, slot_contains),
     n!("__iter__", FS, 1, 1, NO, NO, slot_iter),
     n!("__repr__", FS, 1, 1, NO, NO, slot_repr),
     n!("__eq__", FS, 2, 2, NO, NO, slot_eq),
     n!("__ne__", FS, 2, 2, NO, NO, slot_ne),
+    n!("__lt__", FS, 2, 2, NO, NO, slot_lt),
+    n!("__le__", FS, 2, 2, NO, NO, slot_le),
+    n!("__gt__", FS, 2, 2, NO, NO, slot_gt),
+    n!("__ge__", FS, 2, 2, NO, NO, slot_ge),
     n!("__hash__", FS, 1, 1, NO, NO, slot_hash),
     n!("__getitem__", BY, 2, 2, NO, NO, slot_getitem),
     n!("__len__", BY, 1, 1, NO, NO, slot_len),
@@ -7723,8 +7736,19 @@ fn dict_pop(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
 }
 
+/// A dict view's kind word (0 keys, 1 values, 2 items) with this bit: made
+/// through a dict subclass's instance, whose keys view does not presize a
+/// set as its dict (`dictviews_to_set` presizes for an exact dict only).
+pub(crate) const VIEW_SUB: u64 = 4;
+
 fn view(vm: &mut Vm, a: &CallArgs, kind: u64, name: &str) -> Result<Value, Raised> {
-    let d = vm.check_self(a, T::dict, name)?;
+    // `keys` gets a subclass's instance as itself (`keeps_instance`).
+    let s = vm.arg_o(a, 0);
+    let d = vm.unbx(s);
+    if vm.type_of(d) != T::dict {
+        vm.check_self(a, T::dict, name)?;
+    }
+    let kind = if s == d { kind } else { kind | VIEW_SUB };
     let r = {
         let res = vm.heap.alloc_init(ty::VIEW, 0, &[d], &[kind]);
         vm.hx_o(res)

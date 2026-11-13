@@ -936,7 +936,13 @@ impl Vm {
                     let tmp = self.new_set()?;
                     let (small, big) = if lb > la { (a, b) } else { (b, a) };
                     let regs = [a, small, big, tmp];
-                    let prog = phase(act::AND, 3, 1, 2) | phase(act::MOVE, 0, 3, 0) << 16;
+                    // `set_intersection` of a set with itself: a copy.
+                    let first = if a == b {
+                        phase(act::ADD, 3, 1, 0)
+                    } else {
+                        phase(act::AND, 3, 1, 2)
+                    };
+                    let prog = first | phase(act::MOVE, 0, 3, 0) << 16;
                     return self.bulk(&regs, prog, 0, top);
                 }
             };
@@ -945,9 +951,9 @@ impl Vm {
         let out = self.new_set_like(a)?;
         let regs = [out, a, b];
         let prog = match op {
-            // CPython's `set_or` and `set_union`: a copy, which `a` itself
-            // as the other operand leaves as it is.
-            BinOp::BitOr if a == b => phase(act::ADD, 0, 1, 0),
+            // CPython's `set_or`, `set_union` and `set_intersection`: of a
+            // set with itself, a copy.
+            BinOp::BitOr | BinOp::BitAnd if a == b => phase(act::ADD, 0, 1, 0),
             BinOp::BitOr => phase(act::ADD, 0, 1, 0) | phase(act::ADD, 0, 2, 0) << 16,
             BinOp::BitAnd if lb > la => phase(act::AND, 0, 1, 2),
             BinOp::BitAnd => phase(act::AND, 0, 2, 1),
@@ -1504,8 +1510,8 @@ impl Vm {
     /// it (a keys view as its dict): for the prelude twins of a bulk `ADD`
     /// phase and of `dictviews_to_set`.
     pub(crate) fn set_presize(&mut self, s: Value, src: Value) -> Result<(), Raised> {
-        // A keys view as its dict (`dictviews_to_set`).
-        let src = if src.is_obj_kind(ty::VIEW as u8) && self.type_of(src) == T::dict_keys {
+        // A keys view of an exact dict as its dict (`dictviews_to_set`).
+        let src = if self.type_of(src) == T::dict_keys && !self.view_sub(src) {
             self.vslot(src, 0)
         } else {
             src

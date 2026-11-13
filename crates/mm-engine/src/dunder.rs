@@ -228,14 +228,23 @@ impl Vm {
                     // list in place and returns the instance itself. A
                     // sequence subclass's instance repeated by one on the
                     // left goes as itself: only an exact sequence refuses.
-                    let keep = inplace && bop == BinOp::Mul && ua.is_obj_kind(ty::LIST as u8);
+                    // A dict subclass's instance beside a view goes as
+                    // itself too: it is iterated, not presized from
+                    // (`dictviews_to_set` presizes for an exact dict).
+                    let view = |t: T| matches!(t, T::dict_keys | T::dict_items);
+                    let setop = matches!(
+                        bop,
+                        BinOp::BitOr | BinOp::BitAnd | BinOp::Sub | BinOp::BitXor
+                    );
+                    let (ta, tb) = (self.type_of(ua), self.type_of(ub));
+                    let keep = inplace && bop == BinOp::Mul && ua.is_obj_kind(ty::LIST as u8)
+                        || setop && ta == T::dict && view(tb);
+                    let keep_b = bop == BinOp::Mul
+                        || bop == BinOp::Mod
+                        || setop && tb == T::dict && view(ta);
                     let args = alloc::vec![
                         if keep { a } else { ua },
-                        if bop == BinOp::Mul || bop == BinOp::Mod {
-                            b
-                        } else {
-                            ub
-                        },
+                        if keep_b { b } else { ub },
                         Value::int(i64::from(opb & 0x7f)).unwrap_or(Value::NONE),
                         Value::from_bool(inplace),
                     ];

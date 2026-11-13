@@ -110,6 +110,9 @@ fn add_into(acc: &mut [u32], b: &[u32], at: usize) {
 }
 
 fn mul_school(a: &[u32], b: &[u32]) -> Vec<u32> {
+    // The shorter operand drives the outer loop, so a long value times a
+    // small one is one tight pass, not a carry loop per limb.
+    let (a, b) = if a.len() > b.len() { (b, a) } else { (a, b) };
     let mut out = vec![0u32; a.len() + b.len()];
     for (i, &x) in a.iter().enumerate() {
         if x == 0 {
@@ -190,8 +193,8 @@ fn mag_mul(a: &[u32], b: &[u32]) -> Vec<u32> {
 /// precomputed reciprocal (Möller and Granlund, "Improved division by
 /// invariant integers", 2011, algorithm 4), multiplications only: the
 /// int cap by any such `d` in a few ms (algorithm D's estimate refused
-/// two limbs there).
-fn divmod_word(a: &[u32], d: u64) -> (Vec<u32>, u64) {
+/// two limbs there). Without `keep_q` the quotient is not kept (empty).
+fn divmod_word(a: &[u32], d: u64, keep_q: bool) -> (Vec<u32>, u64) {
     let word = |i: usize| {
         let lo = a.get(2 * i).copied().unwrap_or(0);
         let hi = a.get(2 * i + 1).copied().unwrap_or(0);
@@ -209,7 +212,7 @@ fn divmod_word(a: &[u32], d: u64) -> (Vec<u32>, u64) {
             word(i - 1) >> (64 - s)
         }
     };
-    let mut q = vec![0u32; 2 * n];
+    let mut q = vec![0u32; if keep_q { 2 * n } else { 0 }];
     // The bits the shift moves above the top word, under `dn`.
     let mut r = if s == 0 || n == 0 {
         0
@@ -231,8 +234,10 @@ fn divmod_word(a: &[u32], d: u64) -> (Vec<u32>, u64) {
             q1 += 1;
             rem -= dn;
         }
-        q[2 * i] = q1 as u32;
-        q[2 * i + 1] = (q1 >> 32) as u32;
+        if keep_q {
+            q[2 * i] = q1 as u32;
+            q[2 * i + 1] = (q1 >> 32) as u32;
+        }
         r = rem;
     }
     trim(&mut q);
@@ -243,7 +248,7 @@ fn divmod_word(a: &[u32], d: u64) -> (Vec<u32>, u64) {
 /// (`2^64 <= d < 2^128`): as [`divmod_word`], a quotient word at a time
 /// from three words of the remainder and dividend, by the reciprocal of
 /// `d` normalized (Möller and Granlund, algorithms 5 and 6).
-fn divmod_dword(a: &[u32], d: u128) -> (Vec<u32>, u128) {
+fn divmod_dword(a: &[u32], d: u128, keep_q: bool) -> (Vec<u32>, u128) {
     let word = |i: usize| {
         let lo = a.get(2 * i).copied().unwrap_or(0);
         let hi = a.get(2 * i + 1).copied().unwrap_or(0);
@@ -281,7 +286,7 @@ fn divmod_dword(a: &[u32], d: u128) -> (Vec<u32>, u128) {
             word(i - 1) >> (64 - s)
         }
     };
-    let mut q = vec![0u32; 2 * n];
+    let mut q = vec![0u32; if keep_q { 2 * n } else { 0 }];
     let mut r: u128 = if s == 0 || n == 0 {
         0
     } else {
@@ -307,8 +312,10 @@ fn divmod_dword(a: &[u32], d: u128) -> (Vec<u32>, u128) {
             q1 = q1.wrapping_add(1);
             rem -= dn;
         }
-        q[2 * i] = q1 as u32;
-        q[2 * i + 1] = (q1 >> 32) as u32;
+        if keep_q {
+            q[2 * i] = q1 as u32;
+            q[2 * i + 1] = (q1 >> 32) as u32;
+        }
         r = rem;
     }
     trim(&mut q);
@@ -335,6 +342,26 @@ fn shl_bits(a: &[u32], s: u32, extra: bool) -> Vec<u32> {
     out
 }
 
+/// `a / b` and `a % b` for a non-zero `b` of up to four limbs (128 bits):
+/// a short division ([`divmod_word`], [`divmod_dword`]); the quotient only
+/// with `keep_q`.
+fn short_divmod(a: &[u32], b: &[u32], keep_q: bool) -> (Vec<u32>, Vec<u32>) {
+    let d = b
+        .iter()
+        .rev()
+        .fold(0u128, |d, &x| (d << 32) | u128::from(x));
+    let (q, r) = match u64::try_from(d) {
+        Ok(d) => {
+            let (q, r) = divmod_word(a, d, keep_q);
+            (q, u128::from(r))
+        }
+        Err(_) => divmod_dword(a, d, keep_q),
+    };
+    let mut r = (0..4).map(|i| (r >> (32 * i)) as u32).collect();
+    trim(&mut r);
+    (q, r)
+}
+
 /// Truncating magnitude division (Knuth, TAOCP vol. 2, 4.3.1, algorithm D).
 /// `b` is non-empty.
 fn mag_divmod(a: &[u32], b: &[u32]) -> (Vec<u32>, Vec<u32>) {
@@ -342,21 +369,7 @@ fn mag_divmod(a: &[u32], b: &[u32]) -> (Vec<u32>, Vec<u32>) {
         return (Vec::new(), a.to_vec());
     }
     if b.len() <= 4 {
-        // A short division by a modulus of up to 128 bits.
-        let d = b
-            .iter()
-            .rev()
-            .fold(0u128, |d, &x| (d << 32) | u128::from(x));
-        let (q, r) = match u64::try_from(d) {
-            Ok(d) => {
-                let (q, r) = divmod_word(a, d);
-                (q, u128::from(r))
-            }
-            Err(_) => divmod_dword(a, d),
-        };
-        let mut r = (0..4).map(|i| (r >> (32 * i)) as u32).collect();
-        trim(&mut r);
-        return (q, r);
+        return short_divmod(a, b, true);
     }
     let n = b.len();
     let s = b[n - 1].leading_zeros();
@@ -994,6 +1007,18 @@ impl Big {
 
     /// Greatest common divisor of the magnitudes.
     pub fn gcd(&self, o: &Big) -> Big {
+        // A long value and one of up to 128 bits: the first remainder by a
+        // short division that keeps no quotient, and no copy of the long
+        // one (the int cap by 3 in about 3 ms, not a 8 MiB quotient).
+        let (long, short) = if self.mag.len() >= o.mag.len() {
+            (self, o)
+        } else {
+            (o, self)
+        };
+        if !short.is_zero() && short.mag.len() <= 4 && long.mag.len() > 4 {
+            let r = short_divmod(&long.mag, &short.mag, false).1;
+            return short.abs().gcd(&Big::from_mag(false, r));
+        }
         let (mut a, mut b) = (self.abs(), o.abs());
         while !b.is_zero() {
             let r = a.divmod_floor(&b).1;

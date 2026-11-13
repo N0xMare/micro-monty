@@ -726,17 +726,66 @@ pub(crate) fn m_isqrt(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn gcd_all(vm: &mut Vm, a: &CallArgs, lcm: bool) -> Result<Value, Raised> {
+    use crate::intops::{WORK_MAX, div_ns, gcd_ns, mul_ns};
+    // The estimate of one pair: `lcm(a, b)` is the longer times the
+    // shorter divided by the gcd, so only a short value is divided.
+    let pair_ns = |la: u64, lx: u64| {
+        let ns = gcd_ns(la, lx);
+        if lcm {
+            let short = la.min(lx);
+            ns.saturating_add(mul_ns(la, lx))
+                .saturating_add(div_ns(short, short))
+        } else {
+            ns
+        }
+    };
+    // The whole call's estimate, an upper bound from the arguments' sizes
+    // alone: past `WORK_MAX` with more than two arguments the prelude goes
+    // on pairwise, a native call and step per pair, before any work here,
+    // so one step never covers many large arguments (40 at the cap took
+    // 659 ms in one step [M, review H2]).
+    let limbs = |vm: &Vm, v: Value| {
+        if Vm::is_heap_int(v) {
+            vm.heap_int_parts(v).1.len().div_ceil(4) as u64
+        } else {
+            2
+        }
+    };
+    // Two ints whose lcm is more than a quarter of a step's work: the
+    // prelude runs the gcd, the short operand's division and the product,
+    // a native step each (one step took 28 to 31 ms at the cap [M]).
+    if lcm && a.n == 2 {
+        let (x, y) = (vm.arg_o(a, 0), vm.arg_o(a, 1));
+        if Vm::is_intlike(x)
+            && Vm::is_intlike(y)
+            && pair_ns(limbs(vm, x), limbs(vm, y)) > WORK_MAX / 4
+        {
+            return Err(vm.need_py());
+        }
+    }
+    if a.n > 2 {
+        // The accumulator's limbs: 1 starts an lcm, 0 a gcd.
+        let (mut acc, mut total) = (u64::from(lcm), 0u64);
+        for i in 0..a.n {
+            let lx = limbs(vm, vm.arg_o(a, i));
+            total = total.saturating_add(pair_ns(acc, lx));
+            acc = if lcm {
+                acc + lx
+            } else if i == 0 {
+                lx
+            } else {
+                acc.min(lx)
+            };
+        }
+        if total > WORK_MAX {
+            return Err(vm.need_py());
+        }
+    }
     let mut acc = if lcm { Big::from_i64(1) } else { Big::zero() };
     for i in 0..a.n {
         let x = vm.integer(vm.arg_o(a, i))?;
         let l = x.mag.len().max(acc.mag.len()) as u64;
-        let (la, lx) = (acc.mag.len() as u64, x.mag.len() as u64);
-        let mut ns = crate::intops::gcd_ns(la, lx);
-        if lcm {
-            ns = ns
-                .saturating_add(crate::intops::mul_ns(la, lx))
-                .saturating_add(crate::intops::div_ns(la + lx, la.min(lx)));
-        }
+        let ns = pair_ns(acc.mag.len() as u64, x.mag.len() as u64);
         vm.work_room(ns)?;
         // A unit for about 10 ns of the estimate: linear when one is small.
         vm.burn(ns / 10 + l / 8);
@@ -745,7 +794,14 @@ fn gcd_all(vm: &mut Vm, a: &CallArgs, lcm: bool) -> Result<Value, Raised> {
                 Big::zero()
             } else {
                 let g = acc.gcd(&x);
-                acc.mul(&x).abs().divmod_floor(&g).0
+                let (long, short) = if acc.mag.len() >= x.mag.len() {
+                    (&acc, &x)
+                } else {
+                    (&x, &acc)
+                };
+                let mut m = long.mul(&short.divmod_floor(&g).0);
+                m.neg = false;
+                m
             }
         } else {
             acc.gcd(&x)

@@ -279,6 +279,26 @@ impl Vm {
         }
     }
 
+    /// Whether dict view `v` was made through a dict subclass's instance.
+    pub(crate) fn view_sub(&self, v: Value) -> bool {
+        v.is_obj_kind(ty::VIEW as u8)
+            && v.as_obj()
+                .is_some_and(|r| self.raw(r, 1) & crate::builtins::VIEW_SUB != 0)
+    }
+
+    /// The items a set operation reads from `v`: a set's, a dict's or a
+    /// view's, a list's or a tuple's; 0 for anything else.
+    fn setop_len(&self, v: Value) -> usize {
+        match self.type_of(v) {
+            T::set | T::frozenset => self.set_len(v),
+            T::dict => self.dict_len(v),
+            T::dict_keys | T::dict_items => self.dict_len(self.vslot(v, 0)),
+            T::list => self.list_len(v),
+            T::tuple => self.tuple_len(v),
+            _ => 0,
+        }
+    }
+
     /// `len(v)`. A `u64`: a range can be longer than a wasm32 `usize`
     /// (`sys.maxsize` is 64-bit on every target).
     pub(crate) fn len_of(&mut self, v: Value) -> Result<u64, Raised> {
@@ -543,7 +563,7 @@ impl Vm {
             (BinOp::BitOr | BinOp::BitAnd | BinOp::Sub | BinOp::BitXor, _, _)
                 if (matches!(ta, T::dict_keys | T::dict_items)
                     || matches!(tb, T::dict_keys | T::dict_items))
-                    && !(inplace && ta == T::dict) =>
+                    && !(inplace && ta == T::dict && op == BinOp::BitOr) =>
             {
                 return self.view_setop(op, a, b, top, true);
             }
@@ -638,9 +658,13 @@ impl Vm {
         }
         // `dictviews_to_set(a)`, then `b` taken in, removed or toggled: a
         // set or a dict toggles as it is, anything else as the set of its
-        // items. Only a keys view's dict presizes the set, as a dict does.
+        // items. Only an exact dict's keys view presizes the set, as the dict does.
         let (x, fx) = self.view_src(a)?;
-        let fx = if ta == T::dict_keys { 0 } else { fx };
+        let fx = if ta == T::dict_keys && !self.view_sub(a) {
+            0
+        } else {
+            fx
+        };
         let fill = phase(act::ADD | fx, 0, 1, 0);
         if !matches!(
             b.obj_kind().map(u16::from),
@@ -648,7 +672,11 @@ impl Vm {
         ) && !view(tb)
         {
             // `set(a)` is made before `b` is read, as CPython's
-            // `dictviews_or` does (its errors come first).
+            // `dictviews_or` does (its errors come first), in one step:
+            // a long one in the twin, whose steps park.
+            if self.setop_len(a) > COLLECT_CHUNK {
+                return Err(self.need_py());
+            }
             self.bulk(&[out, x], fill, 0, false)?;
         }
         let (y, fy) = self.view_src(b)?;
@@ -711,10 +739,26 @@ impl Vm {
                 crate::percent::Pct::Need(..) => Err(self.need_py()),
             };
         }
-        if op == BinOp::BitAnd
-            && (matches!(self.type_of(x), T::dict_keys | T::dict_items)
-                || matches!(self.type_of(y), T::dict_keys | T::dict_items))
-        {
+        let (ta, tb) = (self.type_of(x), self.type_of(y));
+        let view = |t: T| matches!(t, T::dict_keys | T::dict_items);
+        let set = |t: T| matches!(t, T::set | T::frozenset);
+        if matches!(
+            op,
+            BinOp::BitOr | BinOp::BitAnd | BinOp::Sub | BinOp::BitXor
+        ) {
+            // The values' operation here runs in one step (it is not the
+            // instruction's own); a long one goes to the twin, which parks.
+            let long = self.setop_len(x) + self.setop_len(y) > COLLECT_CHUNK;
+            // A dict subclass's instance beside a view is iterated, not
+            // presized from (`dictviews_to_set`): the twin.
+            let sub_dict = (x != a && ta == T::dict) || (y != b && tb == T::dict);
+            let bulk = (set(ta) && set(tb))
+                || (ta == T::dict && op == BinOp::BitOr && (tb == T::dict || inplace));
+            if (view(ta) || view(tb)) && (long || sub_dict) || bulk && long {
+                return Err(self.need_py());
+            }
+        }
+        if op == BinOp::BitAnd && (view(ta) || view(tb)) {
             // A set subclass's value is not read as an exact set.
             return self.view_setop(op, x, y, false, false);
         }

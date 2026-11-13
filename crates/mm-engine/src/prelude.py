@@ -649,7 +649,7 @@ def _op_binop(a, b, op, inplace):
         return a
     view = ta is _KEYS or ta is _ITEMS
     if (op == 1 or 9 <= op <= 11) and (view or type(b) is _KEYS or type(b) is _ITEMS) and not (
-            inplace and ta is dict):
+            inplace and ta is dict and op == 10):
         # A set-like dict view with any iterable: plain sets, as CPython's
         # `dictviews_*` make them.
         if op == 9:
@@ -709,14 +709,15 @@ def _op_binop(a, b, op, inplace):
             if inplace and out is ua:
                 return a
             return frozenset(out) if tu is frozenset else out
-    if ta is dict and op == 10 and inplace and type(b) is not dict:
-        a.update(b)
+    # A dict subclass's instance as its dict (`dict_or`, `dict_ior`).
+    if tu is dict and op == 10 and inplace and type(ub) is not dict:
+        dict.update(ua, b)
         return a
-    if ta is dict and type(b) is dict and op == 10:
-        out = a if inplace else _dict((a,), _MISSING)
-        for k, v in b.items():
+    if tu is dict and type(ub) is dict and op == 10:
+        out = ua if inplace else _dict((ua,), _MISSING)
+        for k, v in ub.items():
             _dset(out, k, v)
-        return out
+        return a if inplace else out
     if op == 5 and (tu is str or tu is bytes):
         # The format's value; the right operand as given (a str subclass's
         # `__str__`, a mapping's `__getitem__`).
@@ -757,7 +758,10 @@ def _op_setop(a, b, op, inplace):
             set.update(out, b)
         return out
     out = set()
-    if op == 9:
+    if op == 9 and b is a:
+        # `set_intersection` of a set with itself: a copy.
+        out = set(a)
+    elif op == 9:
         so, other = (b, a) if len(a) > len(b) else (a, b)
         for x, h in _set_hashed(other):
             if _sfind(so, x, h) >= 0:
@@ -767,6 +771,19 @@ def _op_setop(a, b, op, inplace):
             if _sfind(b, x, h) < 0:
                 _sadd_h(out, x, h)
     elif op == 11:
+        if inplace:
+            # `set_symmetric_difference_update`: `a` itself, each item of
+            # `b` toggled.
+            if b is a:
+                a.clear()
+                return a
+            for x, h in _set_hashed(b):
+                i = _sfind(a, x, h)
+                if i >= 0:
+                    _set_table(a, i)
+                else:
+                    _set_insert(a, x, h)
+            return a
         for x, h in _set_hashed(a):
             if _sfind(b, x, h) < 0:
                 _sadd_h(out, x, h)
@@ -1212,6 +1229,23 @@ def _mcall(f, args, kw):
         return f(ps, qs) if total is _MISSING else total
     if name == 'math.dist':
         return f([_mreal(x) for x in args[0]], [_mreal(x) for x in args[1]])
+    if (name == 'math.gcd' or name == 'math.lcm') and len(args) > 2:
+        # Pairwise, as CPython's loop: each pair a native call, with its
+        # own estimate and step.
+        acc = 0 if name == 'math.gcd' else 1
+        for x in args:
+            acc = f(acc, x)
+        return acc
+    if name == 'math.lcm' and len(args) == 2 and type(args[0]) in (int, bool) and type(args[1]) in (int, bool):
+        # Two long ints: the gcd, the short operand's division and the
+        # product, each its own native step.
+        a = abs(args[0])
+        b = abs(args[1])
+        if a < b:
+            a, b = b, a
+        if not b:
+            return 0
+        return a * (b // __import__('math').gcd(a, b))
     real = name[:5] == 'math.' and name not in _MATH_INTS
     for a in args:
         if name == 'math.fsum':

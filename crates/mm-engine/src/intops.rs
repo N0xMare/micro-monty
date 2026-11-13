@@ -30,7 +30,7 @@ pub(crate) const MAX_BITS: u64 = 1 << 26;
 /// fitted to measured times [M]) past which a superlinear int operation
 /// fails with `MemoryError` instead of running as one step of more than
 /// about 50 ms (docs/spec.md §5, bounded native steps).
-const WORK_MAX: u64 = 45_000_000;
+pub(crate) const WORK_MAX: u64 = 45_000_000;
 
 /// Estimated nanoseconds of `bigint::mag_mul` on `la`- and `lb`-limb
 /// magnitudes: schoolbook below Karatsuba's 40 limbs, the longer in
