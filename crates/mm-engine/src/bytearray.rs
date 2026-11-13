@@ -281,6 +281,7 @@ impl Vm {
     /// A byte argument as CPython's `_getbytevalue` reads it.
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn byte_arg(&mut self, v: Value) -> Result<u8, Raised> {
+        let v = self.int_unbx(v);
         if !Vm::is_intlike(v) {
             if self.uflags(v) & crate::class::f::INDEX != 0 {
                 return Err(self.need_py());

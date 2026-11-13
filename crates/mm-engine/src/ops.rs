@@ -2289,6 +2289,16 @@ impl Vm {
         )
     }
 
+    /// A sequence subscript's instance key: an int subclass's is its value;
+    /// any other keeps itself (a float subclass's `__index__` goes to the
+    /// prelude). Out of line: inlined, `getitem` moves dispatch's register
+    /// allocation, +0.68% on bench/interp.py [M].
+    #[cold]
+    #[inline(never)]
+    fn index_key(&self, key: Value) -> Value {
+        self.int_unbx(key)
+    }
+
     /// `obj[key]`.
     pub(crate) fn getitem(&mut self, obj: Value, key: Value) -> Result<Value, Raised> {
         if obj.is_obj_kind(ty::DICT as u8) {
@@ -2298,8 +2308,8 @@ impl Vm {
             };
         }
         let t = self.type_of(obj);
-        let key = if Vm::is_sequence_type(t) {
-            self.unbx(key)
+        let key = if Vm::is_sequence_type(t) && key.is_obj_kind(ty::INST as u8) {
+            self.index_key(key)
         } else {
             key
         };
@@ -2486,6 +2496,7 @@ impl Vm {
         if obj.is_obj_kind(ty::DICT as u8) {
             return self.dict_set_top(obj, key, v);
         }
+        let key = self.int_unbx(key);
         if Vm::is_heap_int(key) && self.int_of(key).is_none() && self.type_of(obj) == T::list {
             return Err(self.index_overflow(T::IndexError));
         }
@@ -2584,6 +2595,11 @@ impl Vm {
 
     /// `del obj[key]`.
     pub(crate) fn delitem(&mut self, obj: Value, key: Value) -> Result<(), Raised> {
+        let key = if obj.is_obj_kind(ty::DICT as u8) {
+            key
+        } else {
+            self.int_unbx(key)
+        };
         if Vm::is_heap_int(key) && self.int_of(key).is_none() && self.type_of(obj) == T::list {
             return Err(self.index_overflow(T::IndexError));
         }

@@ -3,6 +3,8 @@
 # (PSF license, see THIRD_PARTY.md). Every iterator is lazy and pausable;
 # argument errors use CPython's messages.
 
+from _mm import backing as _backing
+
 _MAXSIZE = 9223372036854775807
 _MISSING = object()
 
@@ -79,8 +81,10 @@ def _unpack(name, args, lo, hi):
 
 
 def _ssize(x):
+    # An int subclass's value (`_backing`), never its own `__int__` or
+    # `__index__`, as CPython's `PyNumber_AsSsize_t`.
     if isinstance(x, int):
-        n = int(x)
+        n = int(_backing(x))
     elif hasattr(type(x), '__index__'):
         n = x.__index__()
     else:
@@ -103,11 +107,12 @@ class count:
             step = 1
         if not _is_number(start) or not _is_number(step):
             raise TypeError('a number is required')
-        if type(start) is bool:
-            start = int(start)
+        # An int subclass counts as its value (CPython's fast mode).
+        if isinstance(start, int):
+            start = int(_backing(start))
         self._step_given = not (type(step) is int and step == 1 or step is True)
-        if type(step) is bool:
-            step = int(step)
+        if isinstance(step, int):
+            step = int(_backing(step))
         self._n = start
         self._step = step
 

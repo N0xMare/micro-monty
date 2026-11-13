@@ -1408,6 +1408,19 @@ def _byte_item(x):
     return _index(x) if _has_index(x) else x
 
 
+def _str_splitlines(a):
+    # `keepends` with its own `__bool__` or `__len__`.
+    return str.splitlines(a[0], bool(a[1]))
+
+
+def _bytes_splitlines(a):
+    return bytes.splitlines(a[0], bool(a[1]))
+
+
+def _bytearray_splitlines(a):
+    return bytearray.splitlines(a[0], bool(a[1]))
+
+
 def _ints_index(src, to):
     # bytes or bytearray (`to` the type) of a list, tuple or set, or
     # `to.extend(src)`, with an item whose `__index__` gives its value:

@@ -412,6 +412,9 @@ fn round_int(vm: &mut Vm, a: &CallArgs, up: bool) -> Result<Value, Raised> {
     if let Some(r) = vm.dunder_call(v, hook, &[], Cont::None)? {
         return Ok(r);
     }
+    // An int or float subclass rounds as its value (its base's
+    // `__floor__`/`__ceil__`), never through its own `__float__`.
+    let v = if vm.num_backed(v) { vm.unbx(v) } else { v };
     if Vm::is_intlike(v) {
         let b = vm.big_of(v).unwrap_or_default();
         return vm.new_big(&b);

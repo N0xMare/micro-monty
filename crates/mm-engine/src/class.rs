@@ -1175,6 +1175,16 @@ impl Vm {
             .is_some_and(|b| Vm::is_intlike(b) || b.as_float().is_some())
     }
 
+    /// An int subclass's instance as its int, else `v`: CPython's
+    /// `PyLong_Check` paths read its value and never call its own
+    /// `__index__` or `__int__`.
+    pub(crate) fn int_unbx(&self, v: Value) -> Value {
+        match self.backing(v) {
+            Some(b) if Vm::is_intlike(b) => b,
+            _ => v,
+        }
+    }
+
     /// `v`, or the builtin value it extends.
     #[inline]
     pub(crate) fn unbx(&self, v: Value) -> Value {

@@ -7586,6 +7586,9 @@ fn bi_str(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         }
     } else if fl & crate::class::f::REPR != 0
         && !v.is_obj_kind(ty::EXC as u8)
+        // A bytes or bytearray subclass's `str` is its value's repr
+        // (CPython's `bytes_str`), not its own `__repr__`.
+        && !vm.backing(v).is_some_and(Vm::is_bytes_like)
         && let Some(r) = vm.dunder_call(v, Dn::Repr, &[], Cont::Check(check::REPR))?
     {
         return Ok(r);

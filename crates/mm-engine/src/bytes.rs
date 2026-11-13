@@ -601,6 +601,7 @@ impl Vm {
     #[inline(never)]
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn bytes_in(&mut self, b: Value, item: Value, neg: bool) -> Result<Value, Raised> {
+        let item = self.int_unbx(item);
         let n = self.bytes_data(b).len();
         let mut j = Job::new(job::FIND, b, 0, n, 0);
         j.w[W_A] = if neg { found::NOT_IN } else { found::IN };
@@ -970,10 +971,7 @@ impl Vm {
     /// gives its value.
     fn byte_needs_index(&self, x: Value) -> bool {
         // An int subclass (IntEnum) is its value.
-        let x = match self.backing(x) {
-            Some(b) if Vm::is_intlike(b) => b,
-            _ => x,
-        };
+        let x = self.int_unbx(x);
         !Vm::is_intlike(x) && self.uflags(x) & crate::class::f::INDEX != 0
     }
 
@@ -986,10 +984,7 @@ impl Vm {
             return Err(self.need_py());
         }
         // An int subclass (IntEnum) is its value.
-        let x = match self.backing(x) {
-            Some(b) if Vm::is_intlike(b) => b,
-            _ => x,
-        };
+        let x = self.int_unbx(x);
         if !Vm::is_intlike(x) {
             let msg = format!(
                 "'{}' object cannot be interpreted as an integer",
@@ -1170,6 +1165,7 @@ fn window(vm: &mut Vm, len: usize, start: Value, end: Value) -> Result<(i64, i64
 /// The needle of find/count/index: bytes or an int byte.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn needle(vm: &mut Vm, v: Value) -> Result<Value, Raised> {
+    let v = vm.int_unbx(v);
     if Vm::is_bytes_like(v) {
         return Ok(v);
     }
@@ -1810,7 +1806,12 @@ pub(crate) fn rpartition(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn splitlines(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let source = this_value(vm, &a, "splitlines")?;
-    let keep = opt(vm.arg_o(&a, 1)).is_some_and(|v| vm.truthy(v));
+    let keep = vm.arg_o(&a, 1);
+    if vm.uflags(keep) & (crate::class::f::BOOL | crate::class::f::LEN) != 0 {
+        // `keepends`'s own `__bool__` or `__len__`: the prelude twin.
+        return Err(vm.need_py());
+    }
+    let keep = opt(keep).is_some_and(|v| vm.truthy(v));
     let len = vm.bytes_data(source).len();
     let mut j = Job::new(job::SPLIT, source, 0, len, 0);
     (j.w[W_A], j.w[W_A + 2]) = (cut::LINES, u64::from(keep));
@@ -1871,6 +1872,7 @@ pub(crate) fn hex(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let per: i64 = match given(per) {
         None => 1,
         Some(v) => {
+            let v = vm.int_unbx(v);
             if !Vm::is_intlike(v) {
                 let msg = format!(
                     "'{}' object cannot be interpreted as an integer",

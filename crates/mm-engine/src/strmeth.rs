@@ -1996,7 +1996,12 @@ pub(crate) fn rjust(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 pub(crate) fn splitlines(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let sv = this_value(vm, &a, "splitlines")?;
     vm.burn_bytes(vm.str_bytes(sv).len());
-    let keep = opt(vm.arg_o(&a, 1)).is_some_and(|v| vm.truthy(v));
+    let keep = vm.arg_o(&a, 1);
+    if vm.uflags(keep) & (crate::class::f::BOOL | crate::class::f::LEN) != 0 {
+        // `keepends`'s own `__bool__` or `__len__`: the prelude twin.
+        return Err(vm.need_py());
+    }
+    let keep = opt(keep).is_some_and(|v| vm.truthy(v));
     let mode = if keep { sm::LINES_KEEP } else { sm::LINES };
     if big_text(vm, sv, CHAR_UNIT) {
         return split_big(vm, sv, Value::NONE, usize::MAX, mode);

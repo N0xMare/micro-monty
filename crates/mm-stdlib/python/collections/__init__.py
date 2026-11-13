@@ -151,7 +151,7 @@ def namedtuple(typename, field_names, *, rename=False, defaults=None, module=Non
 def _index_arg(x):
     # PyNumber_AsSsize_t: an int or __index__, clamped messages as CPython.
     if isinstance(x, int):
-        return int(x)
+        return int(_backing(x))
     if hasattr(type(x), '__index__'):
         return x.__index__()
     raise TypeError(f"'{type(x).__name__}' object cannot be interpreted as an integer")
@@ -166,7 +166,7 @@ def _ssize(x):
 
 def _seq_index(x):
     if isinstance(x, int):
-        n = int(x)
+        n = int(_backing(x))
     elif hasattr(type(x), '__index__'):
         n = x.__index__()
     else:
@@ -178,7 +178,7 @@ def _seq_index(x):
 
 def _slice_index(x):
     if isinstance(x, int):
-        return int(x)
+        return int(_backing(x))
     if x is not None and hasattr(type(x), '__index__'):
         return x.__index__()
     raise TypeError('slice indices must be integers or have an __index__ method')
