@@ -691,6 +691,40 @@ class OrderedDict(dict):
     def __init__(self, other=(), /, **kwds):
         self.update(other, **kwds)
 
+    def update(self, other=(), /, **kwds):
+        # CPython's `mutablemapping_update`: each key is stored through
+        # the class's `__setitem__`, a mapping is read through `keys()`
+        # and `[]`, and pairs unpack as `mutablemapping_add_pairs` does.
+        # An exact dict into a class that keeps dict's store stays native.
+        own = type(self).__setitem__ is not dict.__setitem__
+        if type(other) is dict:
+            if own:
+                for k, v in list(other.items()):
+                    self[k] = v
+            else:
+                dict.update(self, other)
+        elif hasattr(other, 'keys'):
+            for k in other.keys():
+                self[k] = other[k]
+        else:
+            for pair in other:
+                it = iter(pair)
+                k = next(it, _MISSING)
+                if k is _MISSING:
+                    raise ValueError('need more than 0 values to unpack')
+                v = next(it, _MISSING)
+                if v is _MISSING:
+                    raise ValueError('need more than 1 value to unpack')
+                if next(it, _MISSING) is not _MISSING:
+                    raise ValueError('too many values to unpack (expected 2)')
+                self[k] = v
+        if kwds:
+            if own:
+                for k, v in list(kwds.items()):
+                    self[k] = v
+            else:
+                dict.update(self, kwds)
+
     def popitem(self, last=True):
         b = _backing(self)
         if not b:
