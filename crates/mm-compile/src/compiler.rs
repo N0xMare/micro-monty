@@ -218,7 +218,11 @@ struct Unit<'a> {
     lay: crate::bytecode::Layout,
     at: usize,
     nops: usize,
-    regs: BTreeMap<(ScopeId, String), u8>,
+    /// Registers of locals, one map per scope: the unit's own first, then
+    /// the comprehensions inlined into it. Keyed by `String` alone, the maps
+    /// share `BTreeMap<String, usize>`'s code with the symbol tables and
+    /// the encoder.
+    regs: Vec<(ScopeId, BTreeMap<String, usize>)>,
     next_reg: u32,
     max_reg: u32,
     labels: Vec<Option<u32>>,
@@ -231,9 +235,9 @@ struct Unit<'a> {
     comps: Vec<ScopeId>,
     bound: Vec<u8>,
     block_depth: u32,
-    str_consts: BTreeMap<String, u16>,
+    str_consts: BTreeMap<String, usize>,
     int_consts: BTreeMap<i64, u16>,
-    name_idx: BTreeMap<String, u16>,
+    name_idx: BTreeMap<String, usize>,
     last_loc: Option<Loc>,
     cur: Loc,
     /// Instructions any path may have run since its last safepoint, at
@@ -242,6 +246,26 @@ struct Unit<'a> {
     run: u32,
     label_runs: Vec<u32>,
     carried: u32,
+}
+
+impl Unit<'_> {
+    /// The register of local `name` of `scope`.
+    fn reg(&self, scope: ScopeId, name: &str) -> Option<u8> {
+        let regs = match self.regs.first() {
+            Some((s, regs)) if *s == scope => regs,
+            _ => &self.regs.iter().rev().find(|(s, _)| *s == scope)?.1,
+        };
+        u8::try_from(*regs.get(name)?).ok()
+    }
+
+    fn set_reg(&mut self, scope: ScopeId, name: &str, r: u8) {
+        let i = self.regs.iter().rposition(|(s, _)| *s == scope);
+        let i = i.unwrap_or_else(|| {
+            self.regs.push((scope, BTreeMap::new()));
+            self.regs.len() - 1
+        });
+        self.regs[i].1.insert(name.into(), usize::from(r));
+    }
 }
 
 /// Straight-line instructions that may do native work in proportion to
@@ -320,7 +344,7 @@ impl<'a> Compiler<'a> {
             lay: crate::bytecode::layout(""),
             at: 0,
             nops: 0,
-            regs: BTreeMap::new(),
+            regs: Vec::new(),
             next_reg: 0,
             max_reg: 0,
             labels: Vec::new(),
@@ -357,7 +381,7 @@ impl<'a> Compiler<'a> {
                         .ok()
                         .filter(|&r| r < 250)
                         .ok_or_else(|| too_many("functions with more than 250 local variables"))?;
-                    unit.regs.insert((scope, n.clone()), r);
+                    unit.set_reg(scope, n, r);
                     unit.code.varnames.push(n.as_str().into());
                     if b == Binding::Free {
                         unit.code.freevars.push(r);
@@ -373,7 +397,7 @@ impl<'a> Compiler<'a> {
                     .ok()
                     .filter(|&r| r < 250)
                     .ok_or_else(|| too_many("functions with more than 250 local variables"))?;
-                unit.regs.insert((scope, n.clone()), r);
+                unit.set_reg(scope, n, r);
                 unit.code.varnames.push(n.as_str().into());
                 unit.code.freevars.push(r);
                 unit.code.freenames.push(n.as_str().into());
@@ -390,7 +414,7 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| sc.bindings[*i] == Binding::Cell)
-                .filter_map(|(_, n)| self.ur().regs.get(&(scope, n.clone())).copied())
+                .filter_map(|(_, n)| self.ur().reg(scope, n))
                 .collect();
             for r in cells {
                 self.emit_r(op::MAKE_CELL, r);
@@ -651,7 +675,7 @@ impl<'a> Compiler<'a> {
         match &k {
             Konst::Str(s) => {
                 if let Some(&i) = u.str_consts.get(s) {
-                    return Ok(i);
+                    return Ok(u16::try_from(i).unwrap_or(u16::MAX));
                 }
             }
             Konst::Int(n) => {
@@ -665,7 +689,7 @@ impl<'a> Compiler<'a> {
             .map_err(|_| too_many("functions with more than 65535 constants"))?;
         match &k {
             Konst::Str(s) => {
-                u.str_consts.insert(s.clone(), i);
+                u.str_consts.insert(s.clone(), usize::from(i));
             }
             Konst::Int(n) => {
                 u.int_consts.insert(*n, i);
@@ -683,11 +707,11 @@ impl<'a> Compiler<'a> {
         let n = &*symtable::mangle(&self.st.scopes[self.ur().scope].private, n);
         let u = self.u();
         if let Some(&i) = u.name_idx.get(n) {
-            return Ok(i);
+            return Ok(u16::try_from(i).unwrap_or(u16::MAX));
         }
         let i = u16::try_from(u.code.names.len())
             .map_err(|_| too_many("functions with more than 65535 names"))?;
-        u.name_idx.insert(n.to_string(), i);
+        u.name_idx.insert(n.to_string(), usize::from(i));
         u.code.names.push(n.into());
         Ok(i)
     }
@@ -757,7 +781,7 @@ impl<'a> Compiler<'a> {
         let mut sid = u.comps.last().copied().unwrap_or(u.scope);
         loop {
             let sc = &self.st.scopes[sid];
-            let reg = u.regs.get(&(sid, name.to_string())).copied();
+            let reg = u.reg(sid, name);
             let class = sc.kind == ScopeKind::Class;
             match sc.binding(name) {
                 Some(Binding::Local) if class && sc.position(name) >= Some(sc.nparams) => {
@@ -1819,12 +1843,7 @@ impl<'a> Compiler<'a> {
         self.at_pos(end);
         let sc = &self.st.scopes[scope];
         let cell = (sc.binding("__class__") == Some(Binding::Cell))
-            .then(|| {
-                self.ur()
-                    .regs
-                    .get(&(scope, "__class__".to_string()))
-                    .copied()
-            })
+            .then(|| self.ur().reg(scope, "__class__"))
             .flatten();
         match cell {
             Some(r) => self.emit_r(op::LDAR, r),
@@ -2107,7 +2126,7 @@ impl<'a> Compiler<'a> {
         for (k, fname) in freenames.iter().enumerate() {
             let u = self.ur();
             if u.is_class
-                && let Some(&r) = u.regs.get(&(u.scope, fname.to_string()))
+                && let Some(r) = u.reg(u.scope, fname)
             {
                 self.emit_rr(op::MOV, r, base + u8::try_from(k).unwrap_or(0));
                 continue;
@@ -2997,7 +3016,7 @@ impl<'a> Compiler<'a> {
         for (i, n) in sc.names.iter().enumerate() {
             if matches!(sc.bindings[i], Binding::Local | Binding::Cell) {
                 let r = self.temp()?;
-                self.u().regs.insert((scope, n.clone()), r);
+                self.u().set_reg(scope, n, r);
                 vars.push((r, n.clone(), sc.bindings[i] == Binding::Cell));
             }
         }
@@ -3152,12 +3171,7 @@ impl<'a> Compiler<'a> {
             argcount: 1,
             ..ParamSpec::default()
         };
-        let it0 = self
-            .ur()
-            .regs
-            .get(&(scope, ".0".to_string()))
-            .copied()
-            .unwrap_or(0);
+        let it0 = self.ur().reg(scope, ".0").unwrap_or(0);
         self.u().code.is_generator = true;
         self.u().code.is_coroutine = self.st.scopes[scope].coroutine;
         // The generator's own variables are its locals; run the loops directly.
