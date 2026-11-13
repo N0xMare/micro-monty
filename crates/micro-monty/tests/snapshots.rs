@@ -539,7 +539,10 @@ print('done')
 /// collection takes several steps, and the operation charges more than a
 /// slice, so the wait parks at once; the third needs the restored rerun
 /// mark. Every run must print the unparked run's output and charge its
-/// fuel.
+/// fuel (the third, only without a snapshot). In the first two, a later
+/// operation that runs out of memory at once is not retried, as unparked:
+/// the restored count is the waited collection's, not the one kept
+/// through it.
 #[test]
 #[allow(
     clippy::too_many_lines,
@@ -559,6 +562,7 @@ src = list(range(200000))
 keep = [bytearray(1 << 20) for _ in range(236)]
 ";
     let tail = "\
+parts = ['x' * 1000] * 30000
 gc.collect()
 t = [0] * 300000
 t = None
@@ -568,6 +572,10 @@ try:
 except MemoryError:
     st = 'ME'
 print(st, type(x).__name__, x is y, list.__len__(x), c)
+try:
+    z = ''.join(parts)
+except MemoryError:
+    pass
 ";
     // `f(*big, **kw)` (`CALL_EX`) builds its 1.6 MiB `*args` tuple before
     // the copy of `kw` fails, so the rerun allocates over 1 MiB before it
@@ -576,7 +584,8 @@ print(st, type(x).__name__, x is y, list.__len__(x), c)
     // after every park, with no snapshot [M]. A snapshot just before the
     // call frees the cell's garbage first, so the first attempt gets
     // further before it fails and charges 28,672 units more [M]: its fuel
-    // is not compared (a snapshot collects first).
+    // is compared only in the modes without a snapshot (spec §5.1,
+    // guarantee 4: a snapshot collects first).
     let callex = "\
 import gc
 def f(*a, **k): return len(a) + len(k)
@@ -674,7 +683,7 @@ print(st)
                 let (got, charged) = t.join().expect("run");
                 assert_eq!(got, want, "{op} {m:?}");
                 assert!(
-                    !same_fuel || charged == fuel,
+                    !same_fuel && (m.1 || m.2) || charged == fuel,
                     "{op} {m:?}: {charged} against {fuel}"
                 );
             }
