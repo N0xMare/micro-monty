@@ -157,7 +157,23 @@ impl Vm {
         let percent = fa.is_none()
             && BinOp::ALL.get((opb & 0x7f) as usize) == Some(&BinOp::Mod)
             && matches!(self.type_of(self.unbx(a)), T::str | T::bytes);
-        let fb = if ca == cb || percent && !self.subclass_of(cb, ca) {
+        // `x *= dq`: a deque repeats through its sequence slot, which
+        // CPython's in-place multiply reads only when `x`'s type has no
+        // sequence slots (a class defined in Python has them, empty).
+        let deque_repeat = opb == BinOp::Mul as u8 | 0x80
+            && self.type_name(b) == "collections.deque"
+            && (a.is_obj_kind(ty::INST as u8)
+                || matches!(
+                    self.type_of(a),
+                    T::range
+                        | T::dict
+                        | T::set
+                        | T::frozenset
+                        | T::dict_keys
+                        | T::dict_values
+                        | T::dict_items
+                ));
+        let fb = if ca == cb || percent && !self.subclass_of(cb, ca) || deque_repeat {
             None
         } else {
             self.dunder(b, names[1])

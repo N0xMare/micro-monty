@@ -549,6 +549,9 @@ class deque:
         items = self._list()
         if n <= 0 or not items:
             return []
+        if len(items) > 1 and len(items) > 9223372036854775807 // n:
+            # CPython's size check, before `maxlen` cuts the result.
+            raise MemoryError
         if self._maxlen is not None:
             if self._maxlen == 0:
                 return []
@@ -574,6 +577,11 @@ class deque:
 
     def __imul__(self, n):
         if not (isinstance(n, int) or hasattr(type(n), '__index__')):
+            # A count's `__rmul__` runs first, as CPython's number slots
+            # do before the sequence's in-place repeat.
+            if (hasattr(type(n), '__rmul__') and type(n).__module__ != 'builtins'
+                    and not isinstance(n, (str, bytes, list, tuple, deque))):
+                return NotImplemented
             _repeat_error(n)
         items = self._repeat(n)
         self._state += 1

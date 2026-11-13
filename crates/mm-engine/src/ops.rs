@@ -554,6 +554,29 @@ impl Vm {
                     } else {
                         (b, a)
                     };
+                // `n *= seq` repeats `seq` only when `n`'s type has no
+                // sequence slots (CPython's `PyNumber_InPlaceMultiply`):
+                // a range, dict, set or view on the left refuses.
+                if inplace
+                    && seq == b
+                    && matches!(
+                        ta,
+                        T::range
+                            | T::dict
+                            | T::set
+                            | T::frozenset
+                            | T::dict_keys
+                            | T::dict_values
+                            | T::dict_items
+                    )
+                {
+                    let msg = format!(
+                        "unsupported operand type(s) for *=: '{}' and '{}'",
+                        ta.name(),
+                        tb.name()
+                    );
+                    return Err(self.err(T::TypeError, &msg));
+                }
                 let Some(k) = self.int_of(n) else {
                     if Vm::is_heap_int(n) {
                         return Err(self.index_overflow(T::OverflowError));
@@ -739,14 +762,16 @@ impl Vm {
         // reads the left operand's sequence slots, which a class defined in
         // Python has (empty), so the right one repeats only through its
         // class's own `__mul__` or `__rmul__`.
+        // So does an exact deque, whose `__rmul__` stands for its slot.
         let seq = |t: T| matches!(t, T::list | T::tuple | T::str | T::bytes | T::bytearray);
         if inplace
             && op == BinOp::Mul
             && a.is_obj_kind(ty::INST as u8)
             && !seq(self.type_of(x))
-            && seq(self.type_of(y))
-            && self.dunder(b, Dn::Mul).is_none()
-            && self.dunder(b, Dn::Rmul).is_none()
+            && (seq(self.type_of(y))
+                && self.dunder(b, Dn::Mul).is_none()
+                && self.dunder(b, Dn::Rmul).is_none()
+                || self.type_name(b) == "collections.deque")
         {
             let msg = format!(
                 "unsupported operand type(s) for *=: '{}' and '{}'",
