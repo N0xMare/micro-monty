@@ -1106,54 +1106,63 @@ impl Vm {
         let tag = g.tag(h);
         let mut first_free = None;
         let val = |e: u32| kvs.get(2 * e as usize + 1).copied().unwrap_or(0);
-        while n <= u64::from(g.steps()) {
-            let w = islot(words, i);
-            if w == 0 {
-                if deferred > 0 {
-                    return Err(Hard::Py);
+        let r = 'walk: {
+            while n <= u64::from(g.steps()) {
+                let w = islot(words, i);
+                if w == 0 {
+                    if deferred > 0 {
+                        break 'walk Err(Hard::Py);
+                    }
+                    break 'walk Ok((first_free.unwrap_or(i), None, 0));
                 }
-                return Ok((first_free.unwrap_or(i), None, 0));
-            }
-            if w == DELETED {
-                if first_free.is_none() {
-                    first_free = Some(i);
-                }
-            } else if w & !g.emask == tag {
-                let e = (w & g.emask) - 1;
-                let kb = kvs.get(2 * e as usize).copied().unwrap_or(0);
-                if kb == k.to_bits() {
-                    return Ok((i, Some(e), val(e)));
-                }
-                if words.get((cap + e) as usize) == Some(&h) {
-                    let key = Value::from_bits(kb).unwrap_or(Value::UNDEFINED);
-                    match self.key_eq(key, k, depth + 1, left) {
-                        Ok(true) => return Ok((i, Some(e), val(e))),
-                        Ok(false) => {}
-                        Err(Hard::Deep) => return Err(Hard::Deep),
-                        Err(Hard::Py) => {
-                            deferred += 1;
-                            undecided(e, key);
+                if w == DELETED {
+                    if first_free.is_none() {
+                        first_free = Some(i);
+                    }
+                } else if w & !g.emask == tag {
+                    let e = (w & g.emask) - 1;
+                    let kb = kvs.get(2 * e as usize).copied().unwrap_or(0);
+                    if kb == k.to_bits() {
+                        break 'walk Ok((i, Some(e), val(e)));
+                    }
+                    if words.get((cap + e) as usize) == Some(&h) {
+                        let key = Value::from_bits(kb).unwrap_or(Value::UNDEFINED);
+                        match self.key_eq(key, k, depth + 1, left) {
+                            Ok(true) => break 'walk Ok((i, Some(e), val(e))),
+                            Ok(false) => {}
+                            Err(Hard::Deep) => break 'walk Err(Hard::Deep),
+                            Err(Hard::Py) => {
+                                deferred += 1;
+                                undecided(e, key);
+                            }
                         }
                     }
                 }
-            }
-            i = g.next(i, &mut perturb);
-            n += 1;
-            // Every 8 slots past the free runs' worth spend a visit.
-            if n % 8 == 0 && n > FREE_SLOTS {
-                if *left == 0 || RESUME && deferred >= crate::set::PY_CHUNK {
-                    if RESUME {
+                i = g.next(i, &mut perturb);
+                n += 1;
+                // Every 8 slots past the free runs' worth spend a visit. A
+                // native lookup (not `RESUME`) is charged them when it ends
+                // and never gives up on them: many of its callers have no
+                // Python twin to go on, and a long chain's answer is the
+                // walk's end, as before slots were counted.
+                if RESUME && n % 8 == 0 && n > FREE_SLOTS {
+                    if *left == 0 || deferred >= crate::set::PY_CHUNK {
                         *at = Some((i as usize, perturb, n));
+                        break 'walk Err(Hard::Py);
                     }
-                    return Err(Hard::Py);
+                    *left -= 1;
                 }
-                *left -= 1;
             }
+            if deferred > 0 {
+                break 'walk Err(Hard::Py);
+            }
+            Ok((first_free.unwrap_or(0), None, 0))
+        };
+        if !RESUME && n > FREE_SLOTS {
+            let slots = u32::try_from((n / 8).saturating_sub(FREE_SLOTS / 8)).unwrap_or(u32::MAX);
+            *left = left.saturating_sub(slots);
         }
-        if deferred > 0 {
-            return Err(Hard::Py);
-        }
-        Ok((first_free.unwrap_or(0), None, 0))
+        r
     }
 
     /// `probe_with` for a table without an index: a scan of the entries,
@@ -1248,7 +1257,8 @@ impl Vm {
         };
         let mut cands: Vec<(u32, Value)> = Vec::new();
         let mut left = WALK;
-        let from = self.probe_place(at);
+        let table = self.vslot(d, 1);
+        let from = self.probe_place(at, table);
         let mut at = None;
         let found = self.probe_from::<true>(
             dv,
@@ -1267,7 +1277,7 @@ impl Vm {
             Err(Hard::Deep) => Err(self.hard(Hard::Deep)),
             Err(Hard::Py) => {
                 let cands = cands.into_iter().map(|(e, key)| (u64::from(e), key));
-                self.probe_chunk(cands, at)
+                self.probe_chunk(cands, at, table)
             }
         }
     }

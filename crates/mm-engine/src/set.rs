@@ -475,7 +475,10 @@ impl Vm {
         let mut cands: Vec<(usize, Value)> = Vec::new();
         let budget = crate::dict::walk_budget(depth);
         let mut left = budget;
-        let mut at = self.probe_place(at).map(|(i, p, _)| (i, p));
+        let table = self
+            .set_parts(s)
+            .map_or(Value::NONE, |(r, ..)| self.slot_o(r, 0));
+        let mut at = self.probe_place(at, table).map(|(i, p, _)| (i, p));
         let found = self.set_find_with(
             s,
             key,
@@ -492,18 +495,24 @@ impl Vm {
             Err(Hard::Deep) => Err(self.set_hard(Hard::Deep)),
             Err(Hard::Py) => {
                 let cands = cands.into_iter().map(|(i, k)| (i as u64, k));
-                self.probe_chunk(cands, at.map(|(i, p)| (i, p, 0)))
+                self.probe_chunk(cands, at.map(|(i, p)| (i, p, 0)), table)
             }
         }
     }
 
     /// A place a probe goes on from (`set_probe_py`, `dict_probe_py`):
-    /// `(i, perturb, steps)` from a tuple of three ints, `None` otherwise.
-    pub(crate) fn probe_place(&self, at: Value) -> Option<(usize, u64, u64)> {
+    /// `(i, perturb, steps)` from a tuple of three ints and the table they
+    /// are in, `None` otherwise. A place in another table than `table` is
+    /// `None` too: an `__eq__` between two calls rebuilt the table, and the
+    /// probe starts again, as CPython's lookups do when the table changed.
+    pub(crate) fn probe_place(&self, at: Value, table: Value) -> Option<(usize, u64, u64)> {
         if !at.is_obj_kind(ty::TUPLE as u8) {
             return None;
         }
         let w = self.tuple_items(at);
+        if w.get(3) != Some(&table) {
+            return None;
+        }
         let int = |i: usize| w.get(i).and_then(|&v| self.int_of_o(v));
         Some((
             usize::try_from(int(0)?).ok()?,
@@ -513,11 +522,12 @@ impl Vm {
     }
 
     /// A probe's keys for Python to compare, `[(slot, key), ...]`, and
-    /// with a place to go on from, `(list, (i, perturb, steps))`.
+    /// with a place to go on from, `(list, (i, perturb, steps, table))`.
     pub(crate) fn probe_chunk(
         &mut self,
         cands: impl Iterator<Item = (u64, Value)>,
         at: Option<(usize, u64, u64)>,
+        table: Value,
     ) -> Result<Value, Raised> {
         let mut items = Vec::new();
         for (i, k) in cands {
@@ -531,7 +541,7 @@ impl Vm {
         let i = self.new_int(i64::try_from(i).unwrap_or(0))?;
         let p = self.new_int(p.cast_signed())?;
         let n = self.new_int(n.cast_signed())?;
-        let at = self.alloc_tuple(&[i, p, n])?;
+        let at = self.alloc_tuple(&[i, p, n, table])?;
         self.alloc_tuple(&[list, at])
     }
 

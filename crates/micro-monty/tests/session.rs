@@ -2665,6 +2665,79 @@ fn a_copy_beside_dropped_copies_waits_for_a_collection() {
     }
 }
 
+/// A key whose probe passes more native walk visits than a lookup has
+/// (about 131,000 slots: 131,400 str keys, or 262,136 int keys, on the
+/// path of `'zz'`) is found or stored where no Python twin goes on: the
+/// `**kw` merge, `json.loads`, `type()`, class and instance attribute
+/// stores and deletes. They raised `SystemError`, `ValueError` or a wrong
+/// `TypeError` (the correctness review's AA2) [M]; their answers are
+/// python3.14's.
+#[test]
+fn a_long_probe_needs_no_twin() {
+    let (p, out) = run(r#"import json, collections, types, copy
+LOG = 19
+M = 1 << LOG
+mask = M - 1
+NEED = 131400
+FILL = 60000
+def path(q, L):
+    q &= (1 << 64) - 1
+    i = (q ^ (q >> 32)) & 0xffffffff & mask
+    p = q
+    seen = set()
+    out = []
+    while len(out) < L:
+        if i not in seen:
+            seen.add(i)
+            out.append(i)
+        p >>= 5
+        i = (5 * i + 1 + p) & mask
+    return out
+p = path(hash('zz'), NEED)
+want = set(p)
+found = {}
+fill = {}
+n = 0
+while len(found) < NEED:
+    s = 'k%d' % n
+    n += 1
+    h = hash(s) & 0xffffffffffffffff
+    i = (h ^ (h >> 32)) & mask
+    if i in want:
+        if i not in found:
+            found[i] = s
+    elif len(fill) < FILL and i not in fill:
+        fill[i] = s
+keys = [found[i] for i in p] + list(fill.values())
+base = dict.fromkeys(keys, 0)
+def t(f):
+    try:
+        print(f())
+    except BaseException as e:
+        print(type(e).__name__)
+def f(**kw): return len(kw), kw.get('zz')
+t(lambda: len(dict(**base, zz=1)))
+t(lambda: f(**base, zz=1))
+js = json.dumps(base)
+t(lambda: json.loads(js[:-1] + ', "zz": 1, "zz": 2}')['zz'])
+t(lambda: type('C', (), {**base, 'zz': 1}).zz)
+def c2():
+    C = type('C', (), dict(base)); C.zz = 2; del C.zz; return hasattr(C, 'zz')
+t(c2)
+class O: pass
+def a1():
+    # 262,136 int keys on the path of 'zz' in an instance dict of 2^19 slots.
+    o = O()
+    dd = o.__dict__
+    for k in path(hash('zz'), (M >> 1) - 8): dd[k] = None
+    o.zz = 1; setattr(o, 'zz', 2); object.__setattr__(o, 'zz', 3)
+    r = o.zz; del o.zz; return r, hasattr(o, 'zz')
+t(a1)
+"#);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    assert_eq!(out, "191401\n(191401, 1)\n2\n1\nFalse\n(3, False)\n");
+}
+
 /// The same beside a dropped 3M-element set, for keys with a user
 /// `__hash__`: their prelude twins insert each key with its hash
 /// (`_set_insert`, `_dict_insert`), and a table that did not grow raised
