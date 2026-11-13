@@ -304,6 +304,7 @@ impl Heap {
             .map(|m| m.count_ones() as usize)
             .sum();
         heap.reserve_marks(heap.objects)?;
+        heap.objects_at_gc = heap.objects;
         heap.stats = GcStats {
             collections: st[0],
             live_bytes: st[1],

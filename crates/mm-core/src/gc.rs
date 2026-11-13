@@ -570,6 +570,7 @@ impl Heap {
             // mark, which goes on a slice per step.
             let held = self.mark_room() < limit / 64
                 || (!self.inc.verify && self.mark_room() < self.stats.allocated_since_gc / 2)
+                || (!self.inc.verify && self.marks_short())
                 || (self.inc.backoff > 0 && !self.inc.verify);
             self.inc.backoff = self.inc.backoff.saturating_sub(1);
             for s in &mut self.words.segs {
@@ -600,7 +601,9 @@ impl Heap {
         // [M]. If the room runs out first, the mark is held.
         let now = self.stats.allocated_since_gc;
         let during = now - self.inc.began;
-        if self.mark_room() < limit / 128 || (!self.inc.verify && self.mark_room() <= during) {
+        if self.mark_room() < limit / 128
+            || (!self.inc.verify && (self.mark_room() <= during || self.marks_short()))
+        {
             self.inc.mark = Mark::Held;
         }
         let mut budget = if self.inc.mark == Mark::Held || self.inc.verify {
@@ -854,6 +857,7 @@ impl Heap {
         self.bytes.lazily_freed = 0;
         let freed = (w.freed_units + b.freed_units) * 8;
         self.stats.collections += 1;
+        self.objects_at_gc = self.objects;
         self.stats.live_bytes = (w.live_units + b.live_units) * 8;
         self.stats.freed_bytes = freed;
         self.stats.total_freed_bytes += freed;
@@ -876,7 +880,7 @@ impl Heap {
     /// which cannot collect.
     #[must_use]
     pub fn should_collect(&self) -> bool {
-        if self.inc.forced {
+        if self.inc.forced || self.marks_tight() {
             return true;
         }
         let since = u128::from(self.stats.allocated_since_gc);
@@ -911,6 +915,29 @@ impl Heap {
         (available < limit / 8 && self.stats.allocated_since_gc >= available / 2)
             || (available < self.words.fresh_cost(1) && self.words.free_bytes() < limit / 8)
             || (available < self.bytes.fresh_cost(1) && self.bytes.free_bytes() < limit / 8)
+    }
+
+    /// The object count nears the mark stack's capacity, whose doubling
+    /// (4 bytes a slot, 16 MiB at 2^22 objects) would not fit: every
+    /// object allocation would fail there, an `except MemoryError`
+    /// handler's too, though the count may be mostly garbage, which
+    /// dropping makes without allocating. Due ([`Heap::marks_short`]) once
+    /// the count has come half way from the last collection's to the
+    /// capacity, so a count that stays near it collects a logarithmic
+    /// number of times, not at every safepoint.
+    fn marks_tight(&self) -> bool {
+        let cap = self.mark_stack.capacity();
+        let at = self.objects_at_gc.min(cap);
+        self.objects > at && self.objects - at >= (cap - at).div_ceil(2) && self.marks_short()
+    }
+
+    /// The object count is in the top quarter of the mark stack's
+    /// capacity and its doubling would not fit: a mark then holds the
+    /// guest until it ends (as with little room left), so the count stops
+    /// short of the capacity while the garbage is found.
+    fn marks_short(&self) -> bool {
+        let cap = self.mark_stack.capacity();
+        self.objects >= cap - cap / 4 && cap as u64 * 4 > self.available_bytes()
     }
 
     /// Counts object `r`, which the caller has just unlinked, as allocated

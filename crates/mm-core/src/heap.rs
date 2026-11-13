@@ -279,6 +279,11 @@ pub struct Heap {
     pub(crate) mark_stack: Vec<u32>,
     /// Allocated word objects: an upper bound on the next mark stack.
     pub(crate) objects: usize,
+    /// `objects` after the last collection (live then): how far the count
+    /// has come toward the mark stack's capacity since
+    /// ([`Heap::should_collect`]). A snapshot collects, so a restore sets
+    /// it to `objects`.
+    pub(crate) objects_at_gc: usize,
     external_bytes: u64,
     /// Scratch charges, shared with their reservations.
     scratch: Arc<AtomicUsize>,
@@ -359,6 +364,7 @@ impl Heap {
             intern_table: None,
             mark_stack: Vec::new(),
             objects: 0,
+            objects_at_gc: 0,
             external_bytes: 0,
             scratch: Arc::new(AtomicUsize::new(0)),
             scratch_live: AtomicBool::new(false),

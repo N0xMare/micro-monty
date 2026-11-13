@@ -546,6 +546,25 @@ fn a_rerun_never_gathers_a_drained_iterator_again() {
     }
 }
 
+/// The mark stack's doubling at 2^22 objects (16 MiB) fits whenever the
+/// count reaches it: with about 10 MiB left and 2.15M objects dropped
+/// without allocating, `(i,)` failed at the 43,739th round, and `[i]` and
+/// `{i: i}` in its handlers too [M].
+#[test]
+fn the_mark_stacks_doubling_leaves_handlers_room() {
+    let (p, out) = run(
+        "import gc\nlive = [(i,) for i in range(2_000_000)]\ngc.collect()\n\
+         junk = [(i,) for i in range(2_150_000)]\npads = []\n\
+         try:\n    while True:\n        pads.append(bytes(1 << 20))\nexcept MemoryError:\n    pass\n\
+         del pads[-10:]\ngc.collect()\njunk = None\nfails = 0\n\
+         for i in range(300_000):\n    try:\n        t = (i,)\n    except MemoryError:\n        fails += 1\n\
+         \x20       try:\n            u = [i]\n        except MemoryError:\n            fails += 1\n\
+         print(fails)\n",
+    );
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    assert_eq!(out, "0\n");
+}
+
 /// `+=` and the other in-place operators on an instance of a list, dict or
 /// set subclass change its backing object before they can fail, as on the
 /// builtin type, so they do not run again after a collection: `x += c` on
