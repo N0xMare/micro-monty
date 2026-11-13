@@ -285,27 +285,35 @@ fn check(args: &[String]) -> Result<(), String> {
     let release_cargo = |args: &[&str]| command(cargo, args, None);
     let host = host_target()?;
     let shipped_mm = root.join(format!("target/{host}/release/mm"));
+    // The step-time oracle times the shipped native code: built as
+    // `shipped_build` builds (std rebuilt, `-Cpanic=immediate-abort`, no
+    // unwind tables, `--cfg mm_shipped` and its `#[optimize(size)]`;
+    // docs/spec.md §6), with libtest rebuilt too and each test in its own
+    // process (`-Zpanic-abort-tests`), in its own target directory. A
+    // failing test aborts without its panic message; its output, which
+    // marks each row over the limit `OVER`, is still shown. With the stock
+    // std, `repr([S])` read 8.7 ms against 32-36 ms as shipped [M, size
+    // review].
     let steps = [
         "test",
         "--release",
         "--locked",
+        "-Zbuild-std=std,panic_abort,test",
+        "-Zpanic-abort-tests",
+        "--target",
+        &host,
         "--package",
         "micro-monty",
         "--features=mod-unicodedata,mod-ast",
         "--test",
         "steps",
     ];
-    // The step-time oracle times shipped codegen: `--cfg mm_shipped` turns
-    // on the `#[optimize(size)]` the shipped builds carry (docs/spec.md
-    // §6), in its own target directory so the flag does not rebuild
-    // `target/release`. Its panics keep their messages (unwinding, std as
-    // installed): they report the failing rows.
     let steps_dir = root.join("target/check/steps");
     let steps_cargo = |args: &[&str]| {
         let mut command = command(cargo, args, Some(&steps_dir));
         command
             .env("RUSTC_BOOTSTRAP", "1")
-            .env("RUSTFLAGS", "--cfg mm_shipped")
+            .env("RUSTFLAGS", SHIPPED_RUSTFLAGS)
             .env_remove("CARGO_ENCODED_RUSTFLAGS");
         command
     };
@@ -455,17 +463,17 @@ fn check(args: &[String]) -> Result<(), String> {
             "--engines",
             "cpython,micro-monty",
         ])),
-        // The own cases against CPython on `mm` built natively as shipped
-        // (`shipped_build`: `-Cpanic=immediate-abort`, `#[optimize(size)]`
-        // under `mm_shipped`); the step-time oracle runs on `mm_shipped`
-        // codegen too (`steps_cargo`), every other native gate on
-        // plain-stable builds.
+        // The own cases against CPython and the corpus against its results,
+        // on `mm` built natively as shipped (`shipped_build`:
+        // `-Cpanic=immediate-abort`, `#[optimize(size)]` under
+        // `mm_shipped`); the step-time oracle runs on shipped codegen too
+        // (`steps_cargo`), every other native gate on plain-stable builds.
         Stage::new("shipped-mm").after(&["mm"]).run({
             let mut build = shipped_build(&host);
             build.args(["--package", "mm-cli", "--bin", "mm"]);
             build
         }),
-        Stage::new("shipped-own-cases")
+        Stage::new("shipped-cases")
             .after(&["shipped-mm", "test"])
             .run({
                 let mut test = debug_cargo(&[
@@ -480,6 +488,11 @@ fn check(args: &[String]) -> Result<(), String> {
                 ]);
                 test.env("MM", &shipped_mm);
                 test
+            })
+            .run({
+                let mut corpus = task(&["conformance", "--engine", "micro-monty", "--check"]);
+                corpus.env("MM", &shipped_mm);
+                corpus
             }),
         Stage::new("embedding-bench")
             .after(&["mm"])
@@ -812,16 +825,17 @@ pub(crate) fn shipped_build(target: &str) -> Command {
     shipped_cargo("build", target)
 }
 
+/// The `RUSTFLAGS` of shipped builds ([`shipped_build`]).
+const SHIPPED_RUSTFLAGS: &str =
+    "-Zunstable-options -Cpanic=immediate-abort -Cforce-unwind-tables=no --cfg mm_shipped";
+
 /// [`shipped_build`] with another cargo `subcommand` (`rustc`).
 fn shipped_cargo(subcommand: &str, target: &str) -> Command {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut command = Command::new(cargo);
     command
         .env("RUSTC_BOOTSTRAP", "1")
-        .env(
-            "RUSTFLAGS",
-            "-Zunstable-options -Cpanic=immediate-abort -Cforce-unwind-tables=no --cfg mm_shipped",
-        )
+        .env("RUSTFLAGS", SHIPPED_RUSTFLAGS)
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .args([
             subcommand,

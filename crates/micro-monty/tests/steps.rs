@@ -3,8 +3,9 @@
 //! steps"). Each row runs with a deadline already past, set again after
 //! every park, so every safepoint that reads the clock parks; the longest
 //! wall time between two parks is the row's longest step. Release builds
-//! only: `cargo xtask check` runs it with `--release` and `--cfg
-//! mm_shipped` (the shipped builds' `#[optimize(size)]`) on one test thread.
+//! only: `cargo xtask check` builds it as shipped (std rebuilt,
+//! `-Cpanic=immediate-abort`, `--cfg mm_shipped`) and runs it on one test
+//! thread.
 //!
 //! Each row also runs on fuel slices of [`SLICE`] units, set again after
 //! every fuel park: no slice may charge more than [`OVERDRAFT`] units past

@@ -944,9 +944,11 @@ message. Shipped builds also pass `--cfg mm_shipped`, which turns on
 `cfg_attr(mm_shipped, …)`; the attribute is unstable (rustc 1.100.0
 rejects it, `E0658` [M]), so only `RUSTC_BOOTSTRAP=1` builds enable it.
 Shipped codegen has two native gates in `cargo xtask check`: the own
-cases run on a natively built shipped `mm` (`cargo xtask shipped-mm`), and the step-time oracle (§5.1) is built with
-`--cfg mm_shipped` (keeping unwinding and the installed std, so a failing
-row panics with its name). Bench Ir (§12) measures the shipped `mm` too:
+cases and the corpus run on a natively built shipped `mm` (`cargo xtask
+shipped-mm`), and the step-time oracle (§5.1) is built fully as shipped,
+std and libtest rebuilt, each test in its own process
+(`-Zpanic-abort-tests`), so a failing row aborts without its panic
+message but its `OVER` line is printed. Bench Ir (§12) measures the shipped `mm` too:
 an `optimize(size)` set can pass Ir and still slow shipped steps past the
 bound (647 functions: Ir within 0.22%, `steps` failed as shipped [M]). Tests,
 clippy and every other build stay on plain stable; `cargo xtask wasm`
@@ -2592,8 +2594,8 @@ opens a draft release.
   `conformance/codemode/run.py --check` (release gate) runs the synthetic
   code-mode tasks on CPython and mm.
 - **Memory and steps:** the memory probes (§11) and the step-time oracle
-  (`crates/micro-monty/tests/steps.rs`, §5.1, release with `--cfg
-  mm_shipped`, built in `target/check/steps`: its fuel half beside the
+  (`crates/micro-monty/tests/steps.rs`, §5.1, built fully as shipped in
+  `target/check/steps`: its fuel half beside the
   other stages, its wall-time half last, alone).
 - **GC stress** (not in `check`): `cargo xtask gc-stress` reruns the own
   cases, the corpus and durability collecting at every safepoint
