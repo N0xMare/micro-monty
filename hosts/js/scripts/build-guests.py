@@ -8,8 +8,7 @@
   (target/mm-wasm-bundle/.../mm_wasm_guest_bundle.wasm): its prelude and stdlib
   bytecode in custom sections, served through `mm_host.bundle_read`.
 - `core35` and `nostdlib`: the same build with the facade's `default` feature list
-  replaced by docs/sdk.md's code-mode list (34 features; "core35" in
-  docs/research/stdlib-profile.md) or by nothing. Each builds in its own git
+  replaced by docs/user-guide.md's code-mode list (34 features, "core35") or by nothing. Each builds in its own git
   worktree of HEAD at /home/user/workspace/wtc5 or wtns, the checkout's path
   length, as bench/evidence/stdlib_profile/removals.py does, so nothing
   path-dependent moves; only the worktree's crates/micro-monty/Cargo.toml changes.
@@ -34,7 +33,7 @@ WASM_FEATURES = ['--enable-bulk-memory', '--enable-bulk-memory-opt',
                  '--enable-reference-types', '--enable-sign-ext']
 WASM_OPT = os.environ.get('WASM_OPT') or str(Path.home() / '.local/bin/wasm-opt')
 
-# docs/sdk.md, "Smaller module sets for code-mode agents", the code-mode list.
+# docs/user-guide.md, "Smaller module sets for code-mode agents", the code-mode list.
 CORE35 = ['json', 're', 'collections', 'itertools', 'functools', 'datetime', 'random',
           'asyncio', 'typing', 'base64', 'hashlib', 'operator', 'heapq', 'bisect',
           'textwrap', 'abc', 'binascii', 'time', 'os', 'pathlib', 'fnmatch', 'csv', 'io',

@@ -1,4 +1,4 @@
-"""Native time per fuel unit of the bench programs, for docs/research/workers-v8.md §8.
+"""Native time per fuel unit of the bench programs (docs/user-guide.md, "Embedding guarantees").
 
     python3.14 -I hosts/js/bench/native_fuel.py OUT.json
 

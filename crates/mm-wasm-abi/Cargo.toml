@@ -8,8 +8,7 @@ license.workspace = true
 repository.workspace = true
 readme.workspace = true
 exclude.workspace = true
-# Published together with `mm-wasm-host`, not before (docs/HANDOFF.md scope
-# decision 55).
+# Published together with `mm-wasm-host`, not before.
 publish = false
 
 [dependencies]

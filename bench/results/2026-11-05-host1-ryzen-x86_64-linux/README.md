@@ -9,7 +9,7 @@ in `bench/results/*.txt` (2026-11-04, Xeon VM) are left as they were.
   governor, boost on. Idle during the run (load average < 0.2 before it).
 - micro-monty at `origin/main` 06f1fbc (`target/release/mm`; the engine is
   the same at 5568b27). CPython 3.14.7 (uv). QuickJS: dquickts `f9a3efa`,
-  `make qjs` (version 2026-06-04), as in docs/history/handoff-0.0.1.md. Monty:
+  `make qjs` (version 2026-06-04). Monty:
   `pydantic-monty-runtime` 1.4.0 (`monty` CLI).
 - Monty fails `generators` and `exceptions` (its parser lacks `yield` and
   class inheritance), as on the orb; the run therefore exits nonzero with

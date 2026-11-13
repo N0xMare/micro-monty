@@ -205,7 +205,7 @@ fn the_guest_matches_the_native_facade() {
     );
 
     // The hint reaches the uncaught exception's report, which the 40-byte
-    // text limit cuts as it cuts a completion (HANDOFF decision 61): the
+    // text limit cuts as it cuts a completion (docs/spec.md §11): the
     // traceback keeps the hint's last bytes.
     let image_before = w.snapshot(None).unwrap();
     let hinted = n.start(&engine.compile("import requests", "h.py").unwrap());

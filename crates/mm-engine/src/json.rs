@@ -2618,7 +2618,7 @@ fn escape(b: &[u8], at: usize, q: usize) -> Result<(char, usize), Fail> {
             end += 6;
         }
     }
-    // A str is UTF-8 and cannot hold a lone surrogate (docs/sdk.md).
+    // A str is UTF-8 and cannot hold a lone surrogate (docs/user-guide.md).
     match char::from_u32(c) {
         Some(ch) => Ok((ch, end)),
         None => Err((LONE_SURROGATE, at)),

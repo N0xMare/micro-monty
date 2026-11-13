@@ -680,10 +680,9 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "t = repr(st)",
         1,
     ),
-    // GC over millions of live objects: reported only, until the GC
-    // decision (scope decision (d)).
-    // `gc.collect()` waits for a collection that starts after it, a
-    // slice of the mark per pass of its loop (70 ms in one step before).
+    // GC over millions of live objects: `gc.collect()` waits for a
+    // collection that starts after it, a slice of the mark per pass of its
+    // loop (70 ms in one step before).
     (
         Row::Bounded,
         "import gc\nxs = [[i] for i in range(4_000_000)]",
@@ -1119,7 +1118,7 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "s = hex(x)",
         1,
     ),
-    // Superlinear int operations (P3, scope decision 65 (b1)): one whose
+    // Superlinear int operations (P3): one whose
     // estimated time is past about 50 ms fails with `MemoryError` before
     // it starts (`intops::WORK_MAX`). Fuzz finding C5: these ran for
     // seconds with no safepoint.

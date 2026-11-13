@@ -188,7 +188,7 @@ fn compile_module(path: &Path) -> Result<Program, String> {
 }
 
 /// The strings three or more of `programs` use, stored once, most used
-/// first (docs/history/handoff-0.0.1.md, "Size pass 2: bundled data").
+/// first (docs/spec.md §6).
 fn shared_strings(programs: &[Program]) -> Vec<String> {
     let mut users: BTreeMap<String, usize> = BTreeMap::new();
     for p in programs {
@@ -210,7 +210,7 @@ fn shared_strings(programs: &[Program]) -> Vec<String> {
 /// is in a function body, under `if TYPE_CHECKING:` or `if False:`, or in
 /// a `try` body with an `except ImportError`/`ModuleNotFoundError`
 /// handler (an optional import). Imports inside functions are not checked
-/// (docs/research/stdlib-profile.md lists them).
+/// (docs/spec.md §12 lists them).
 fn check_feature_graph(found: &[(String, PathBuf)]) -> Result<(), String> {
     println!("cargo:rerun-if-changed=Cargo.toml");
     let manifest = fs::read_to_string("Cargo.toml").map_err(|e| format!("Cargo.toml: {e}"))?;

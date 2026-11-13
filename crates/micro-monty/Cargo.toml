@@ -22,9 +22,8 @@ mm-stdlib.workspace = true
 # The prelude and bundled modules' bytecode read from the host
 # (`set_bundle_reader`) instead of linked in: the mm-wasm bundle guest.
 host-bundle = ["mm-stdlib/host-bundle"]
-# The default module set (docs/sdk.md, "Optional stdlib modules"); since
-# the codemode census (owner decisions D2 and S1, docs/HANDOFF.md) it
-# includes fractions, statistics, tomllib, decimal, numbers, contextvars,
+# The default module set (docs/user-guide.md, "Optional stdlib modules"); since
+# the codemode census it includes fractions, statistics, tomllib, decimal, numbers, contextvars,
 # calendar, hmac, zlib and zoneinfo. To leave modules out, turn off default
 # features and list the ones you want. `mod-ast`, `mod-uuid`,
 # `mod-unicodedata` and `mod-html-entities` are opt-in. A module brings the

@@ -128,10 +128,10 @@ pub(crate) fn serve(
 ///
 /// plak has no micro-monty `EngineConfig` variant yet, so the worker takes
 /// the Monty one as a stand-in: both declare the same soft memory limit.
-/// SDK stubs ask for a pre-run type check. That check is plak's (HANDOFF
-/// scope decision 34) and micro-monty has no checker, so the worker accepts
-/// the stubs and runs SDK cells unchecked: a cell a checker would refuse
-/// runs, and fails at run time if it fails at all.
+/// SDK stubs ask for a pre-run type check. That check is the host's and
+/// micro-monty has no checker, so the worker accepts the stubs and runs
+/// SDK cells unchecked: a cell a checker would refuse runs, and fails at
+/// run time if it fails at all.
 fn configure(reader: &mut impl Read) -> Result<(), Lost> {
     match read(reader)? {
         Some(HostFrame::Configure {

@@ -1,4 +1,4 @@
-"""Runs the Workers / V8 measurements (docs/research/workers-v8.md).
+"""Runs the Workers / V8 measurements (hosts/js/README.md).
 
     python3.14 -I hosts/js/bench/run.py [--rounds N] [--only node,k,workerd,hib] [--out DIR]
 

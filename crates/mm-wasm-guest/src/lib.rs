@@ -1,5 +1,5 @@
 //! micro-monty as a wasm module speaking `mm-wasm` (`mm_wasm_abi`,
-//! docs/research/wasm-embedding.md). The same source builds for
+//! docs/spec.md §10.3). The same source builds for
 //! `wasm32-unknown-unknown` and `wasm32-wasip1`: the guest reads no WASI
 //! clock, randomness or files, only its `mm_host` imports.
 //!
@@ -27,7 +27,7 @@ use micro_monty::{
 use mm_wasm_abi::{ARMED, Bad, Reader, SessionOptions, get_options, put_progress, put_str, status};
 
 // std's allocator without its per-site checks (crates/mm-wasm-alloc,
-// docs/sdk.md); optional for embedders.
+// docs/user-guide.md); optional for embedders.
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 #[global_allocator]
 static ALLOCATOR: mm_wasm_alloc::Allocator = mm_wasm_alloc::Allocator::new();
@@ -59,7 +59,7 @@ mod host {
         ) -> i64;
     }
 
-    // The bundle guest's one extra import (docs/research/wasm-embedding.md).
+    // The bundle guest's one extra import (docs/spec.md §10.3).
     #[cfg(feature = "host-bundle")]
     #[link(wasm_import_module = "mm_host")]
     unsafe extern "C" {
@@ -168,9 +168,9 @@ fn py_status(result: Result<(), micro_monty::PyException>) -> u32 {
 
 /// One engine per session: it shares decoded modules within the session,
 /// but not unpacked prelude chunks, which would stay in the instance's
-/// memory for its whole life (docs/HANDOFF.md, scope decision 48). Its
+/// memory for its whole life (192 KiB for five modules [M]). Its
 /// images store their host-module code, since each restore lands on a new
-/// instance's engine, which would compile it again (scope decision 60).
+/// instance's engine, which would compile it again.
 fn engine(o: &SessionOptions) -> Engine {
     // The bundle guest: the bytecode is in the module's `mm.prelude` and
     // `mm.stdlib` custom sections, which wasm never copies into linear

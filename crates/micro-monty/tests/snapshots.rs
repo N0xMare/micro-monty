@@ -576,7 +576,7 @@ print(st, type(x).__name__, x is y, list.__len__(x), c)
     // after every park, with no snapshot [M]. A snapshot just before the
     // call frees the cell's garbage first, so the first attempt gets
     // further before it fails and charges 28,672 units more [M]: its fuel
-    // is not compared (HANDOFF 0.0.2, a snapshot collects first).
+    // is not compared (a snapshot collects first).
     let callex = "\
 import gc
 def f(*a, **k): return len(a) + len(k)

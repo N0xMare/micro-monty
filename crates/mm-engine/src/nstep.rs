@@ -6,7 +6,7 @@
 //! step trusts nothing it reads from the state: a mismatch is a
 //! `SystemError`, never a panic.
 //!
-//! - Native continuations (`docs/spikes/native-continuations.md`): a
+//! - Native continuations: a
 //!   builtin whose loop calls Python code (a sort's `key=`) returns
 //!   [`Next::Invoke`] with a [`Cont::Native`] to be resumed with the call's
 //!   result, or [`Next::Acc`] with the operation's value.

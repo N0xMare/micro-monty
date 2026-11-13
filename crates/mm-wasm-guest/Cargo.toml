@@ -21,7 +21,7 @@ host-bundle = ["micro-monty/host-bundle"]
 # `mm_test_panic`: arms `micro_monty::test_hooks::panic_next` (the isolation
 # fault matrix). Not in shipped modules.
 test-hooks = ["micro-monty/test-hooks"]
-# The opt-in stdlib modules (docs/sdk.md, "Optional stdlib modules"). They
+# The opt-in stdlib modules (docs/user-guide.md, "Optional stdlib modules"). They
 # are part of the build id, so a guest built with one restores only its own
 # snapshots; `cargo xtask wasm-host` builds one with `mod-uuid` as the
 # second build of the upgrade test (crates/mm-wasm-host/tests/upgrade.rs).

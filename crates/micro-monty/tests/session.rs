@@ -247,7 +247,7 @@ for f in (lambda: u == v, lambda: {u: 1} == {v: 1}, lambda: u in {v}, lambda: [u
     );
 }
 
-/// Runs `f` on a 256 KiB thread, the smallest host stack docs/sdk.md
+/// Runs `f` on a 256 KiB thread, the smallest host stack docs/user-guide.md
 /// promises: comparison walks keep their nesting in the arena, not on the
 /// Rust stack.
 fn on_small_stack<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
@@ -1244,7 +1244,7 @@ fn repr_escapes_what_isprintable_rejects() {
 #[test]
 fn surrogates_are_refused_not_replaced() {
     // A `str` is UTF-8: CPython's lone surrogates are errors, never U+FFFD
-    // or '?' (docs/sdk.md, "Surrogates").
+    // or '?' (docs/user-guide.md, "Surrogates").
     let (p, _) = run(
         "r = []\nfor f in (lambda: chr(0xd800), lambda: '%c' % 0xdbff, lambda: format(0xdfff, 'c'), lambda: chr(0x110000)):\n    try:\n        f()\n    except ValueError as e:\n        r.append(str(e))\nr",
     );
@@ -2340,7 +2340,7 @@ fn ast_parse_and_tokenize_take_sources_up_to_their_caps() {
 fn unicodedata_normalizes_runs_up_to_their_cap() {
     // A run with no normalization slice boundary is normalized in one
     // native step, so it is capped at 65,536 chars after decomposition
-    // (docs/sdk.md): at the cap it runs, one char past it raises
+    // (docs/user-guide.md): at the cap it runs, one char past it raises
     // MemoryError, in every form and in `is_normalized`.
     if !cfg!(feature = "mod-unicodedata") {
         return;

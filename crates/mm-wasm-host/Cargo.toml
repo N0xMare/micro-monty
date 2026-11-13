@@ -8,8 +8,7 @@ license = "MIT AND PSF-2.0 AND Unicode-3.0"
 publish = false
 
 # Its own workspace and lockfile, so wasmtime (about 187 crates) stays out
-# of the root lockfile, the engine crates and `cargo xtask size` (owner
-# decision, 2026-11-05; docs/research/wasm-embedding.md).
+# of the root lockfile, the engine crates and `cargo xtask size`.
 [workspace]
 
 [dependencies]

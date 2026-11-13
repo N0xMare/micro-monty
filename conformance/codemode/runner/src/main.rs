@@ -25,10 +25,10 @@
 //! host objects, `{"$u": text}` unconverted pieces.
 //!
 //! With `MM_CODEMODE_TEMPLATE` naming a snapshot image (a session template
-//! of this build, docs/sdk.md "Session templates"), setup restores it
+//! of this build, docs/user-guide.md "Session templates"), setup restores it
 //! instead of `Session::new`, then sets the fuel budget and the host-side
-//! settings again (docs/research/session-templates.md). The template must
-//! not have imported `random`, whose state every instance would share.
+//! settings again. The template must not have imported `random`, whose
+//! state every instance would share.
 //! `MM_CODEMODE_WARM` runs one discarded setup before the timed one.
 
 use micro_monty::{

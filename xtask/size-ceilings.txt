@@ -994,3 +994,4 @@ hello.wasm +400 "A restore inside a retry wait reruns the instruction once", mea
 mm_wasm_guest.wasm +300 "A restore inside a retry wait reruns the instruction once", measured 2,358,676 [M]; record above
 mm_wasm_guest_bundle.wasm +400 "A restore inside a retry wait reruns the instruction once", measured 2,357,103 [M]; record above
 hello +300 "A restore inside a retry wait reruns the instruction once", measured 2,489,880 [M]; record above
+# 2026-11-13: the docs these entries cite (docs/HANDOFF.md, docs/research, docs/history) were removed when the docs became README.md, docs/spec.md and docs/user-guide.md; they are in git history before that change.

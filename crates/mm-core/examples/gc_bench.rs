@@ -1,5 +1,5 @@
-//! Allocation and collection timings for the M1 gate (docs/spec.md §14:
-//! 1M small allocations in under 50 ms). Run in release:
+//! Allocation and collection timings against the heap's first target
+//! (1M small allocations in under 50 ms). Run in release:
 //!
 //! ```bash
 //! cargo run --release -p mm-core --example gc_bench

@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 readme.workspace = true
 exclude.workspace = true
-# A local integration-test harness (docs/HANDOFF.md scope decision 44).
+# A local integration-test harness (AGENTS.md).
 publish = false
 
 # The protocol loop, codec and session driving; no FFI, no seccomp.

@@ -4,8 +4,8 @@ A JavaScript host for the `mm-wasm` guest (`crates/mm-wasm-guest`, as
 `cargo xtask size` ships it), for V8 runtimes: Node, and Cloudflare Workers
 and Durable Objects (workerd). It follows the reference wasmtime host
 (`crates/mm-wasm-host`) call for call, and its tests run that host's scenarios
-on the shipped guest. The measurements built on it are in
-[docs/research/workers-v8.md](../../docs/research/workers-v8.md).
+on the shipped guest. docs/user-guide.md covers embedding the guest in
+general.
 
 No build step: the sources are TypeScript with erasable syntax only, so Node
 (≥ 23.6) runs them as they are and any bundler (Wrangler's esbuild) strips
@@ -17,7 +17,7 @@ the types. Nothing here is published; `package.json` is private.
 | `src/host.ts` | `Runtime` (loaded builds, keyed by build id) and `Session` (one instance each, or K per instance as an opt-in), mirroring `mm_wasm_host`. |
 | `src/driver.ts` | The async code-mode loop: async tools as futures, fan-outs answered in batches, fuel slices with yields and a budget. |
 | `test/host.test.ts` | The reference host's scenarios (`parity.rs`, `upgrade.rs`) with absolute checks. |
-| `scripts/build-guests.py` | The shipped guest plus the `core35` and no-stdlib builds (docs/sdk.md's lists). |
+| `scripts/build-guests.py` | The shipped guest plus the `core35` and no-stdlib builds (docs/user-guide.md's lists). |
 | `bench/` | Measurements in Node and workerd against pi's codemode on quickjs-wasi; `bench/results/<date>/` holds the data. |
 
 ## Use
@@ -73,15 +73,14 @@ const rt = await Runtime.create(bytes, { sessionsPerInstance: 16 });
 What it buys: the instance's fixed part (the 832 KiB shadow stack, the data
 segments, the allocator's slack) is paid once per K sessions. An idle session
 costs about 1.57 MB of linear memory alone in an instance and about 0.1 MB as
-one more session in a shared one (docs/research/workers-v8.md, "K sessions per
-instance"). What it costs:
+one more session in a shared one [M]. What it costs:
 
 - **A trap loses all K sessions.** A host callback that throws, a guest
   bug or a stack overflow ends the instance; every session in it then reports
   `isDead` and throws `MmError` `trap`. Sessions in other instances go on.
 - **The instance's memory must hold the sum of its sessions' bounds**, and it
   never shrinks while any of them lives. Per session that is about
-  3 × `limits.memory` + 16 MiB at worst (docs/sdk.md), so K × that must fit
+  3 × `limits.memory` + 16 MiB at worst (docs/user-guide.md), so K × that must fit
   under wasm32's 4 GiB, and under the isolate's 128 MB on Workers: K sessions
   of 16 MiB need up to K × 64 MiB in the worst case, against about K × 0.2 MB
   idle.
@@ -97,8 +96,7 @@ JSON-like data.
 
 ### Which guest
 
-Two guest modules are shipped (docs/research/wasm-embedding.md, "Two
-guests"): the default `mm_wasm_guest.wasm` and the bundle guest
+Two guest modules are shipped (docs/spec.md §10.3): the default `mm_wasm_guest.wasm` and the bundle guest
 `mm_wasm_guest_bundle.wasm`. This host runs both. The bundle guest keeps the
 stdlib and prelude bytecode out of its data segments, in the custom sections
 `mm.prelude` and `mm.stdlib`, which this host reads once per module

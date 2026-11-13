@@ -18,7 +18,8 @@
   reason; deterministic) and `summary.md`, both written by the runner; and
   `micro-monty.jsonl` (the same, plus each non-pass's first-cause `category`)
   and `micro-monty.md`.
-- `own/` (to come): cases for features Monty lacks.
+- `own/`: micro-monty's own cases, in the same format, for behaviour the Monty
+  corpus does not cover.
 
 ## Running
 

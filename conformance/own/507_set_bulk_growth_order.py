@@ -40,6 +40,6 @@ print(at(s), at(frozenset(m)), at(set(s)))
 # Under `cargo xtask gc-stress --incremental` a mark is always in
 # progress, so the line above's temporaries stay until it ends, and
 # `frozenset(m)` below, which is not rerun after a collection, would meet
-# the 256 MiB limit (HANDOFF 0.0.2, near-limit retry coverage).
+# the 256 MiB limit (docs/user-guide.md, near-limit retries).
 gc.collect()
 print(at(d.keys() & s), at(s & d.keys()), at(s - {1}), at(d.keys() & frozenset(m)))

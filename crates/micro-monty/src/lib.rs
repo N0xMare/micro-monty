@@ -1,4 +1,4 @@
-#![doc = include_str!("../sdk.md")]
+#![doc = include_str!("../user-guide.md")]
 #![allow(clippy::doc_markdown, reason = "the docs name CPython in prose")]
 
 use core::fmt::{self, Write as _};
@@ -62,7 +62,7 @@ pub const MAX_SOURCE_BYTES: u64 = 256 * 1024;
 
 /// The default [`Session::set_text_limit`]: 1 MiB, or the memory limit if
 /// that is less. Code-mode hosts cap a cell's result at about that, and a
-/// model cannot use more (owner decision, docs/HANDOFF.md "Scope decisions").
+/// model cannot use more.
 const DEFAULT_TEXT_LIMIT: usize = 1 << 20;
 
 /// The least a [`TextCut::HeadTail`] completion `repr` or `str` of a
@@ -943,7 +943,7 @@ mod test_hooks {
 
 /// Asks a running session to park at its next safepoint, from any thread.
 /// A request stays until the park it causes takes it, across
-/// [`Session::start`] and [`Session::cancel`] (HANDOFF scope decision 54),
+/// [`Session::start`] and [`Session::cancel`],
 /// so a host's "stop this session" cannot be lost to a cell that was
 /// starting or ending.
 #[derive(Clone, Debug)]
@@ -1087,9 +1087,8 @@ impl Engine {
     /// prelude chunks (asyncio's classes, for one) its sessions unpack.
     /// For an engine with one session for its whole life, such as the
     /// mm-wasm guest's, where the chunks would stay in memory for little
-    /// gain (scope decision 48). Sessions behave the same. The mm-wasm
-    /// guest's knob, hidden and outside the semver guarantees (scope
-    /// decision 59): native engines keep the chunk cache.
+    /// gain. Sessions behave the same. The mm-wasm guest's knob, hidden and
+    /// outside the semver guarantees: native engines keep the chunk cache.
     #[doc(hidden)]
     #[must_use]
     pub fn without_prelude_chunk_cache(config: EngineConfig) -> Engine {

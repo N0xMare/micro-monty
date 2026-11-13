@@ -329,7 +329,7 @@ pub(crate) fn mm_tzif(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         return Ok(Value::FALSE);
     };
     // `zoneinfo` validates keys first, but guests can import `_mm`: the
-    // host sees only relative, normalized keys (docs/sdk.md).
+    // host sees only relative, normalized keys (docs/user-guide.md).
     if key.contains('\0') || key.split('/').any(|p| matches!(p, "" | "." | "..")) {
         return Ok(Value::NONE);
     }

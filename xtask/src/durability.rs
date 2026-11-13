@@ -22,11 +22,11 @@
 //! `--cross-target` instead runs the own cases at `COARSE` with every
 //! snapshot restored on the other target: the parked chain alternates
 //! between the native `mm` and `mm` built for `wasm32-wasip1` under
-//! wasmtime, once starting native and once starting on wasm (docs/sdk.md,
+//! wasmtime, once starting native and once starting on wasm (docs/user-guide.md,
 //! "Cross-target restore"). Both builds have the same build id.
 //!
 //! `--fuel` also compares the fuel each parked chain spent with the
-//! unparked run's (docs/spec.md §5, guarantee 4), prints every case's
+//! unparked run's (docs/spec.md §5.1, clause 4), prints every case's
 //! delta and fails on a case that differs unless `FUEL_ALLOWLIST` names
 //! it (one case and the reason per line). Not in `cargo xtask check` until
 //! the allowlist holds only the guarantee's documented exceptions.

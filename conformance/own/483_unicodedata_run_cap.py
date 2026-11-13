@@ -1,7 +1,7 @@
 # A run of characters with no normalization boundary (a starter and the
 # combining marks after it, or Hangul vowels after a leading jamo) is
 # normalized in one native step, so micro-monty caps it at 65,536 chars
-# after decomposition (docs/sdk.md; past it, MemoryError, where CPython
+# after decomposition (docs/user-guide.md; past it, MemoryError, where CPython
 # has no limit). Runs exactly at the cap normalize as CPython's, in every
 # form, among other text and with marks that reorder or decompose.
 import unicodedata

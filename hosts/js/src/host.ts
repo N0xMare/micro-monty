@@ -123,7 +123,7 @@ export interface RuntimeConfig {
 	 * - The instance's linear memory must hold the sum of its sessions' bounds, and
 	 *   it never shrinks while any of them lives. A wasm32 memory ends at 4 GiB, so
 	 *   K × the per-session bound (about 3 × `limits.memory` + 16 MiB,
-	 *   docs/sdk.md) must fit under it, and under the platform's limit (128 MB per
+	 *   docs/user-guide.md) must fit under it, and under the platform's limit (128 MB per
 	 *   isolate on Workers).
 	 * - One session's long synchronous call blocks the others; it would anyway,
 	 *   since JavaScript runs one call at a time.
@@ -160,7 +160,7 @@ const u32 = (v: number): number => v >>> 0;
  * The loaded guest modules, keyed by build id; shared by all sessions. New sessions
  * run on the current (last loaded) module; {@link Runtime.restore} picks the module
  * whose build wrote the image, so an upgrading host keeps the old module loaded
- * until its parked snapshots drained (docs/sdk.md, "Upgrading: drain old builds").
+ * until its parked snapshots drained (docs/user-guide.md, "Upgrading: drain old builds").
  */
 export class Runtime {
 	readonly config: RuntimeConfig;

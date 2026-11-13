@@ -1,4 +1,4 @@
-//! The `mm-wasm` codec (`crates/mm-wasm-abi`, docs/research/wasm-embedding.md):
+//! The `mm-wasm` codec (`crates/mm-wasm-abi`, docs/spec.md §10.3):
 //! every decoder on arbitrary bytes must return a value or a `Bad`, never
 //! panic, overflow the stack or allocate beyond its input, and what decodes
 //! must survive its own encoding: encode, decode the whole encoding, encode

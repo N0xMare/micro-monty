@@ -13,7 +13,7 @@ sha256_check() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum -c -; else shasum -a 256 -c -; fi
 }
 
-# Release-asset names and digests per host: wasmtime's and binaryen's own
+# Release-asset names and digests per host: wasmtime's, binaryen's and just's own
 # spellings of the platform.
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)
@@ -21,18 +21,24 @@ case "$(uname -s)-$(uname -m)" in
     wasmtime_digest=77c19ee0437991f9ac7837b9c269d9c7076744f85dad263fea5214cc2723c7ff
     binaryen_platform=x86_64-linux
     binaryen_digest=2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489
+    just_platform=x86_64-unknown-linux-musl
+    just_digest=409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e
     ;;
   Linux-aarch64)
     wasmtime_platform=aarch64-linux
     wasmtime_digest=10f9ad1f8539d2e04e041cc622de6a270109ab1e43a6be1f69843c2082166832
     binaryen_platform=aarch64-linux
     binaryen_digest=89c07ea56faf38d0fbecf36ca8ec0721756716185f265b568e133d427f299bf8
+    just_platform=aarch64-unknown-linux-musl
+    just_digest=23871b1702bfd550fb5f901778fd4290ecf2ee034a45a889fbe96d89b188086d
     ;;
   Darwin-arm64)
     wasmtime_platform=aarch64-macos
     wasmtime_digest=323dc098dc0455d60f396c404627e967b7033ffcfa29abfffb243126cf82c9d6
     binaryen_platform=arm64-macos
     binaryen_digest=ad66da82ac13f163e424b1643f16c6dfcccc98b5966296b43e52d3cab04f84a8
+    just_platform=aarch64-apple-darwin
+    just_digest=6574cea774ed4cae12e24b6aa11857de33e80dab4667cf628fd5840df96a2a9d
     ;;
   *) printf 'Unsupported host: %s %s\n' "$(uname -s)" "$(uname -m)" >&2; exit 1 ;;
 esac
@@ -54,7 +60,7 @@ step "cargo fetch"
 time cargo fetch --locked
 
 step "CPython 3.14 (conformance oracle)"
-# Pinned: CI checks committed oracle results, and patch releases change error text.
+# Pinned: the gates check committed oracle results, and patch releases change error text.
 time uv python install 3.14.7
 
 step "native profiling (software instruction counts)"
@@ -111,6 +117,21 @@ if ! "$HOME/.local/bin/wasm-opt" --version 2>/dev/null | grep -q '^wasm-opt vers
     mkdir -p "$HOME/.local/lib"
     install -m644 "$temp/binaryen-version_133/lib/libbinaryen.dylib" "$HOME/.local/lib/libbinaryen.dylib"
   fi
+  rm -rf "$temp"
+  trap - EXIT
+fi
+
+step "just (the justfile's recipes)"
+if ! "$HOME/.local/bin/just" --version 2>/dev/null | grep -Fxq 'just 1.59.0'; then
+  temp=$(mktemp -d)
+  trap 'rm -rf "$temp"' EXIT
+  curl --fail --location --silent --show-error \
+    "https://github.com/casey/just/releases/download/1.59.0/just-1.59.0-$just_platform.tar.gz" \
+    -o "$temp/just.tar.gz"
+  printf '%s  %s\n' "$just_digest" "$temp/just.tar.gz" | sha256_check
+  tar -xzf "$temp/just.tar.gz" -C "$temp" just
+  mkdir -p "$HOME/.local/bin"
+  install -m755 "$temp/just" "$HOME/.local/bin/just"
   rm -rf "$temp"
   trap - EXIT
 fi

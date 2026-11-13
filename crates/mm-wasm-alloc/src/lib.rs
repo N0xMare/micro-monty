@@ -8,7 +8,7 @@
 //! `GlobalAlloc`; it is only not re-checked.
 //!
 //! Binaries register it (the guest, the facade's `hello` and `roundtrip`
-//! examples; optional for embedders, docs/sdk.md), never the facade. On
+//! examples; optional for embedders, docs/user-guide.md), never the facade. On
 //! every other target this crate is empty. Temporary (docs/spec.md §5):
 //! delete it once a pinned stable std ships dlmalloc with the check as a
 //! debug assertion.

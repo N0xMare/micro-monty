@@ -3,13 +3,12 @@
 micro-monty's releases. Versions are `0.0.x` until 0.1: Cargo treats every
 `0.0.x` as incompatible with the next, so each release may change any API,
 and a snapshot restores only on a build with the build id that wrote it
-(docs/sdk.md, "Upgrading: drain old builds"); each release lists its
-build ids. Numbers are labelled [M] measured, as in
-the rest of the repository; docs/HANDOFF.md holds the owner decisions in
-force, and docs/history/handoff-0.0.1.md the evidence and the decisions
-behind 0.0.1. The commit hashes in the 0.0.1 entry are pre-release history,
-kept in the private archive `N0xMare/micro-monty-archive` (branch
-`history-0.0.1`; docs/history/README.md maps them).
+(docs/user-guide.md, "Upgrading: drain old builds"); each release lists its
+build ids. Numbers are labelled [M] measured, as in the rest of the
+repository. The 0.0.1 entry stays as published: the docs it cites
+(docs/sdk.md, docs/research) are those of the `v0.0.1` tag, and its commit
+hashes are pre-release history, kept in the private archive
+`N0xMare/micro-monty-archive` (branch `history-0.0.1`).
 
 ## 0.0.2 (unreleased)
 

@@ -215,7 +215,7 @@ impl std::error::Error for ServeError {}
 /// on one session from `engine` until the input ends, `Shutdown`, a loss or
 /// a kill. Blocks the calling thread. Every cell is compiled on it, so
 /// give it at least 1 MiB of stack in release builds, 4 MiB in debug
-/// (docs/sdk.md, "A bounded Rust stack"); Rust's 2 MiB thread default is
+/// (docs/user-guide.md, "A bounded Rust stack"); Rust's 2 MiB thread default is
 /// enough in release. The binary reserves 16 MiB as headroom.
 ///
 /// # Errors

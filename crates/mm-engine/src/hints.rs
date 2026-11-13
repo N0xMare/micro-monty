@@ -1,6 +1,6 @@
 //! Redirect hints: a sentence after CPython's message for code that reaches
 //! past the sandbox, such as `import numpy` or `asyncio.create_task`, that
-//! names the alternative (docs/sdk.md, "Redirect messages"). The engine
+//! names the alternative (docs/user-guide.md, "Redirect messages"). The engine
 //! ships one default per group; the host replaces or blanks it per group
 //! ([`Vm::set_hint`]). Overrides live in the prelude's globals, so they
 //! survive `reset` and snapshots.

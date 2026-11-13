@@ -69,7 +69,7 @@ def _clinic(fname, args, kwargs, names, maxpos, minpos):
 
 def _unavailable(op, kind):
     # The second sentence is the host's to replace (`HintGroup::OsHooks`);
-    # the host-facing reason, a missing host function, is in docs/sdk.md.
+    # the host-facing reason, a missing host function, is in docs/user-guide.md.
     hint = _mm.hint("os")
     raise kind(f"{op} is not available: this sandbox has no ambient "
                f"{'filesystem' if kind is PermissionError else 'operating system'}"

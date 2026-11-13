@@ -295,7 +295,7 @@ impl Vm {
     /// Ends the running or stopped cell without running any more of it
     /// (no `finally` blocks run). Globals keep what the cell assigned.
     /// Returns whether a cell was active. A pending park request stays:
-    /// only the park it causes takes it (HANDOFF scope decision 54).
+    /// only the park it causes takes it.
     pub fn cancel(&mut self) -> bool {
         let active = !self.tasks.is_empty();
         self.end_cell();

@@ -1,5 +1,5 @@
 //! The reference wasmtime host for the `mm-wasm` guest
-//! (`crates/mm-wasm-guest`, docs/research/wasm-embedding.md), with an API
+//! (`crates/mm-wasm-guest`, docs/spec.md §10.3), with an API
 //! close to `micro_monty::Session`: one [`Session`] owns one wasmtime store
 //! and instance, so a trap loses that session only (one session per
 //! instance, owner decision 2026-11-05). It is synchronous; an async host
@@ -81,7 +81,7 @@ pub enum Error {
     Abi(String),
     /// `restore`: the image was written by a build this runtime has not
     /// loaded ([`Runtime::load`] its guest module to drain it). Under the
-    /// upgrade policy (docs/sdk.md, "Upgrading: drain old builds"), a cell
+    /// upgrade policy (docs/user-guide.md, "Upgrading: drain old builds"), a cell
     /// no loaded build can resume is treated like a crash.
     UnknownBuild(BuildId),
 }
@@ -126,7 +126,7 @@ fn abi(e: impl std::fmt::Display) -> Error {
     Error::Abi(e.to_string())
 }
 
-/// How the runtime configures wasmtime (docs/research/isolation-modes.md).
+/// How the runtime configures wasmtime.
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
     /// `Config::max_wasm_stack` (wasmtime's default, 512 KiB, is too small
@@ -337,7 +337,7 @@ struct Guest {
 /// shared by all sessions. New sessions run on the current (last loaded)
 /// module; [`Runtime::restore`] picks the module whose build wrote the
 /// image, so a host that upgrades keeps the old module loaded until the
-/// old build's parked snapshots have drained (docs/sdk.md, "Upgrading:
+/// old build's parked snapshots have drained (docs/user-guide.md, "Upgrading:
 /// drain old builds").
 pub struct Runtime {
     engine: Engine,
@@ -656,8 +656,7 @@ impl Runtime {
             // file and builds each instance's linear memory copy-on-write
             // from it. From bytes, macOS has no copy-on-write source (no
             // memfd), so every instance copied the 600 KB data segment
-            // eagerly (+470 KiB idle RSS per instance, docs/research/
-            // isolation-modes.md).
+            // eagerly (+470 KiB idle RSS per instance [M]).
             // SAFETY: trust model: the cache directory (the module's) must be
             // writable only by this host, so every `.cwasm` there is what
             // `precompile_module` wrote, and files are replaced only by

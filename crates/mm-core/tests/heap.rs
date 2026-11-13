@@ -389,7 +389,7 @@ fn char_positions_never_outlive_their_string() {
 
 #[test]
 fn hash_is_fixed_and_spreads() {
-    // Pinned: the hash is part of the snapshot/dict contract (spec §16).
+    // Pinned: the hash is part of the snapshot/dict contract (spec §5).
     assert_eq!(hash_bytes(b""), 0);
     assert_eq!(hash_bytes(b"abc"), 0x9408_f1c6_2bed_b2f1);
     assert_ne!(hash_bytes(b"a"), hash_bytes(b"a\0"));

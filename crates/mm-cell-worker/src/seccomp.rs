@@ -3,8 +3,7 @@
 //! loop, the engine's allocator and Rust's runtime need. The engine makes no
 //! system calls of its own, so an engine bug can at worst kill the worker.
 //!
-//! Allowed (measured with strace over plak's worker suites, see
-//! docs/research/plak-integration.md):
+//! Allowed (measured with strace over the protocol host's worker suites):
 //!
 //! - `read` on stdin; `write` on stdout and stderr (and a test hook's file);
 //!   `pread64` on the `/proc/self/status` descriptor opened before the

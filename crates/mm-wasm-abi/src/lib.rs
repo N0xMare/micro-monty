@@ -1,30 +1,27 @@
 //! The micro-monty wasm guest interface, `mm-wasm`
-//! (docs/research/wasm-embedding.md): the names and codes both sides agree
+//! (docs/spec.md §10.3): the names and codes both sides agree
 //! on, and the hand-written binary encoding of what crosses the boundary.
 //! `mm-wasm-guest` implements the guest side; a wasm host (the reference
 //! one is `crates/mm-wasm-host`, outside the workspace) depends on this
 //! crate for the same encoding.
 //!
-//! **The interface is frozen with micro-monty 0.0.1.** A host checks
-//! [`ABI_VERSION`] and the export list ([`export::REQUIRED`]) before it
-//! runs anything, and refuses a guest of another version. Two kinds of
-//! change keep the version:
+//! A host checks [`ABI_VERSION`] and the export list ([`export::REQUIRED`])
+//! before it runs anything, and refuses a guest of another version.
+//! micro-monty is 0.0.x with no compatibility layers: a change to the
+//! interface (an import, a signature or meaning, a required export, a code
+//! or an encoding) bumps [`ABI_VERSION`], with `crates/mm-wasm-host` and
+//! `hosts/js` updated in the same change.
 //!
-//! - A new session option: a new tag in the options record
-//!   ([`put_options`], [`option`]) whose default keeps the behaviour
-//!   without it. Its tag says whether a guest that does not know it may
+//! - Session options travel in a tagged record ([`put_options`],
+//!   [`option`]). A tag says whether a guest that does not know it may
 //!   skip it ([`option::IGNORABLE`]) or must refuse the record. Only an
-//!   option a guest can safely run without, a hint or a diagnostic, may
-//!   take an ignorable tag; one that limits or changes behaviour (a limit,
-//!   the clock, entropy, output, the text cut) takes a strict tag, so a
-//!   guest that predates it refuses the record rather than run without
-//!   it.
-//! - A new optional export: one a host looks for and works without, as
+//!   option a guest can safely run without, a hint or a diagnostic, takes
+//!   an ignorable tag; one that limits or changes behaviour (a limit, the
+//!   clock, entropy, output, the text cut) takes a strict tag.
+//! - Optional exports are ones a host looks for and works without, as
 //!   [`export::SET_GC_YIELD`] and [`export::TEST_PANIC`].
 //!
-//! Anything else (a new or changed import, a changed signature or meaning,
-//! a new required export, a changed code or encoding) bumps
-//! [`ABI_VERSION`]. The snapshot format is separate: images carry the
+//! The snapshot format is separate: images carry the
 //! engine's build id, and `mm_build_id` tells a host which images a guest
 //! restores.
 //!

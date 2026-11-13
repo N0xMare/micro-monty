@@ -1,7 +1,7 @@
 # A missing module attribute gets CPython 3.14's "Did you mean" in the
 # report (not in str(e)), and a missing module keeps CPython's message;
 # micro-monty's redirect sentence after it is only in the report too
-# (docs/sdk.md "Redirect messages"), so the caught text matches CPython.
+# (docs/user-guide.md "Redirect messages"), so the caught text matches CPython.
 import json
 import math
 import os

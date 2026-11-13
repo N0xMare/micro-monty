@@ -1,5 +1,5 @@
 //! Source run end to end on a shared, cached `Engine` (the decoded-module
-//! cache, scope decision 45) and on an uncached one: parse, compile and
+//! cache) and on an uncached one: parse, compile and
 //! run in fuel slices, imports and asyncio included. Neither may panic or
 //! overflow the stack, and both must give the same transcript (stdout,
 //! each stop, the end). A difference is the cache's doing, unless it can

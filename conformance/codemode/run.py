@@ -39,15 +39,15 @@ FUEL = 500_000_000
 TIMEOUT = 60
 # `a`, `b`, `s`: the first census (one model family, prompt template version 1).
 # `luna-*`, `sol-*`: GPT models (`openai/gpt-6-luna`, `openai/gpt-6.1-sol`), template version 2
-# (README "Second model family"); the letter after the dash is the prompt style.
-# `p`: hand-written probes of error messages (README "Probes"), outside the census.
+# (README "How the solutions were written"); the letter after the dash is the prompt style.
+# `p`: hand-written probes of error messages, outside the census.
 SETS = {'a': 'string', 'b': 'string', 's': 'structured',
         'luna-a': 'string', 'luna-b': 'string', 'luna-s': 'structured',
         'sol-a': 'string', 'sol-b': 'string', 'sol-s': 'structured', 'p': 'string'}
 CONFIGS = ('default', 'full')
 PYTHON = os.environ.get('PYTHON') or str(Path.home() / '.local/bin/python3.14')
 
-# Module tiers (README "Import census").
+# Module tiers.
 DEFAULT_MODULES = {
     'json', 'math', 're', 'collections', 'itertools', 'functools', 'datetime', 'random',
     'asyncio', 'typing', 'base64', 'hashlib', 'dataclasses', 'operator', 'copy', 'heapq',

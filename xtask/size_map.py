@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Size map of the shipped builds (docs/research/size-map.md).
+"""Size map of the shipped builds (docs/spec.md §6).
 
 Builds `hello` (wasm32-unknown-unknown, wasm32-wasip1, native) and the
 mm-wasm guest exactly as `cargo xtask size` does (xtask/src/main.rs
@@ -33,7 +33,7 @@ unicodedata on, the facade without `test-hooks`) in a git worktree under target/
 as shipped (stripped). `--markdown` only re-renders size-map.md from the
 JSON files. Needs `twiggy` (`cargo install twiggy`; optional), `wasm-opt`
 (as `cargo xtask size`), binutils `nm` and `c++filt` (Rust v0 demangling),
-and pyelftools. Results: docs/research/size-map.md.
+and pyelftools. Results: target/size-map/report/size-map.md and size-map.json.
 """
 
 import argparse

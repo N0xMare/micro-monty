@@ -5,10 +5,10 @@ from __future__ import annotations
 import collections
 
 ENGINES = ('cpython', 'mm-default', 'mm-full')
-# Modules the survey (docs/research/codemode-survey.md §7 R-T) asks about by name.
+# Modules the stdlib-tier survey asked about by name (its list R-T).
 WATCH = ('statistics', 'tomllib', 'uuid', 'decimal', 'unicodedata', 'fractions', 'struct', 'html', 'platform',
          'difflib', 'pprint', 'logging', 'codecs', 'traceback', 'warnings', 'gc', 'zoneinfo', 'typing_extensions')
-# Solution authors by set (README "How the solutions were written", "Second model family").
+# Solution authors by set (README "How the solutions were written").
 FAMILIES = ('claude', 'gpt-6-luna', 'gpt-6.1-sol')
 
 

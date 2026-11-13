@@ -31,7 +31,7 @@ and the unsnapped values they recorded are pairwise equal or 1 ulp apart.
 Exact operations (arithmetic, `sqrt`, `fabs`, int `**`, `round`, parsing
 and formatting) are never wrapped, so they must still agree exactly.
 
-Sorting is a merge sort in mm and timsort in CPython (docs/sdk.md
+Sorting is a merge sort in mm and timsort in CPython (docs/user-guide.md
 "Limitations"), so a list that cannot be sorted may fail on another pair.
 A program is counted `sort`, not divergent, when its outputs agree once
 each `not supported between instances of 'A' and 'B'` names its two types
@@ -916,7 +916,7 @@ def pairs_unordered(text):
 def sort_order_only(args, source, py, mm):
     """Is the difference only which pair an unsortable list fails on?
 
-    mm's sort is a stable merge sort, CPython's is timsort (docs/sdk.md
+    mm's sort is a stable merge sort, CPython's is timsort (docs/user-guide.md
     "Limitations"), so sorting a mixed-type list can report `'int' and
     'str'` where CPython reports `'str' and 'int'`. Both outputs must agree
     once each message's type pair is put in one order, and also when the

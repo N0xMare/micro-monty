@@ -1,4 +1,4 @@
-//! The snapshot upgrade policy (U1, docs/sdk.md "Upgrading: drain old
+//! The snapshot upgrade policy (U1, docs/user-guide.md "Upgrading: drain old
 //! builds"): one `Runtime` keeps the old build's guest loaded while new
 //! sessions run on the new build, and each image restores on the module of
 //! the build that wrote it. An image of a build that is not loaded is

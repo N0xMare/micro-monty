@@ -26,7 +26,7 @@ import harness  # noqa: E402
 PASS = ("pass", "xfail")
 
 DELIBERATE_NAMES = {"eval", "exec", "compile", "globals"}
-# Left out by design per docs/spec.md §1/§4 and docs/sdk.md "Limitations":
+# Left out by design per docs/spec.md §1/§4 and docs/user-guide.md "Known differences from CPython":
 # no ambient I/O, no threads/weakref, no exec/eval, no __slots__/__del__,
 # inspect, difflib.HtmlDiff and struct.pack_into not bundled. CPython C-API
 # test modules count here too.

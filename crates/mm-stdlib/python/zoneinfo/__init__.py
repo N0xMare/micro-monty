@@ -1,6 +1,6 @@
 # zoneinfo: CPython 3.14's Lib/zoneinfo (PSF; THIRD_PARTY.md), the
 # pure-Python reader. The sandbox has no time zone files: the host hands the
-# engine a zone's TZif bytes (Session::set_zone_source, docs/sdk.md), and
+# engine a zone's TZif bytes (Session::set_zone_source, docs/user-guide.md), and
 # loaded zones are engine state, so snapshots keep their rules. Without a
 # source only ZoneInfo('UTC') loads; other keys raise ZoneInfoNotFoundError.
 

@@ -1,7 +1,7 @@
 //! String literal bodies: escape decoding for `str`, `bytes` and f-string
 //! literal text, as ruff 0.0.14 decodes them (unknown escapes keep their
 //! backslash), except that a surrogate escape (`\ud800`) is an error,
-//! where ruff makes it U+FFFD: a `str` is UTF-8 (docs/sdk.md).
+//! where ruff makes it U+FFFD: a `str` is UTF-8 (docs/user-guide.md).
 //!
 //! A line break in a body (`\r\n` or a lone `\r`) reads as `\n`, raw
 //! bodies included, as CPython's tokenizer translates newlines before it

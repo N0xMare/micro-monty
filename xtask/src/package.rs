@@ -2,7 +2,7 @@
 //! verify (`cargo package`, each built from its own `.crate` against the
 //! others), every package carries LICENSE, THIRD_PARTY.md and the README,
 //! and a build from the packages has the workspace build's snapshot build
-//! id (docs/spec.md §9.3, HANDOFF scope decision 55).
+//! id (docs/spec.md §9.3).
 
 use crate::{run_gate, workspace_root};
 use std::{env, fs, path::Path, process::Command};

@@ -1,4 +1,4 @@
-# Coroutine objects' send(), throw() and close() (docs/sdk.md "Limitations"):
+# Coroutine objects' send(), throw() and close() (docs/user-guide.md "Known differences from CPython"):
 # send(None) runs a coroutine to its end and raises StopIteration with its
 # value; errors for reuse, running coroutines and bad arguments follow
 # CPython. No case suspends inside send(), where mm runs on instead of

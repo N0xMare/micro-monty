@@ -86,7 +86,7 @@ tasks:
   size                       build `hello` as shipped (wasm-opt -Oz on wasm) for
                              wasm32-unknown-unknown and natively; check both
                              size budgets
-  docs                       docs/sdk.md's examples run as micro-monty's doctests;
+  docs                       docs/user-guide.md's examples run as micro-monty's doctests;
                              the published crates' rustdoc has no warnings
   package                    `cargo package` the published crates; each carries
                              LICENSE, THIRD_PARTY.md and README.md, and a build

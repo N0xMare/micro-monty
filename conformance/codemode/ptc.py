@@ -5,7 +5,7 @@ Tools are plain Python functions over a deterministic world (fixture data
 built from fixed seeds); `ToolHost` answers one run's calls for either
 engine, so CPython and micro-monty see byte-identical tool behaviour.
 
-Two result modes follow docs/... (README "Result modes"):
+Two result modes:
 
 - `string`: the programmatic tool calling convention. Every tool returns a
   `str` (JSON text, or raw text for text tools) that code parses with

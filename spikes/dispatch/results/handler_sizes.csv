@@ -1,8 +1,0 @@
-variant,bytes,functions,detail
-stack/match,6123,1,run_match
-stack/fntable,6823,26,run_fntable 128 + 25 handler fns (incl. merged/shared: acc::jump_loop vm::bad_op)
-accumulator/match,6291,1,run_match
-accumulator/fntable,7632,26,run_fntable 128 + 25 handler fns (incl. merged/shared: vm::bad_op)
-register3/match,6532,1,run_match
-register3/fntable,7706,23,run_fntable 128 + 22 handler fns (incl. merged/shared: acc::jump_loop acc::make_cell vm::bad_op)
-shared-runtime,7640,20,alloc_slow=272 add_slow=176 attr_slow=430 dict_get=472 dict_set=1718 getitem_slow=387 list_append=1022 load_global_slow=152 load_method_slow=409 lt_slow=146 native_append=96 native_range=387 new_cell=231 new_dict=388 new_function=338 new_list=359 new_table=293 safepoint=26 sub_slow=176 truthy_slow=162

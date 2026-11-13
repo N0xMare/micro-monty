@@ -4,7 +4,7 @@
 use micro_monty::{Engine, EngineConfig, Progress, Session};
 
 // std's allocator without its per-site checks (crates/mm-wasm-alloc,
-// docs/sdk.md); optional for embedders.
+// docs/user-guide.md); optional for embedders.
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 #[global_allocator]
 static ALLOCATOR: mm_wasm_alloc::Allocator = mm_wasm_alloc::Allocator::new();

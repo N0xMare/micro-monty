@@ -1,7 +1,7 @@
 # zlib: only the checksums, crc32 and adler32 (native, in mm-engine's
 # binascii.rs), with CPython's argument handling and messages. There is no
 # deflate: compress, decompress and the rest raise AttributeError
-# (docs/sdk.md Limitations).
+# (docs/user-guide.md Limitations).
 
 from binascii import _crc32, _adler32, _buffer, _uint
 

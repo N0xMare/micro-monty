@@ -449,8 +449,9 @@ impl Vm {
             let script = self.new_str("")?;
             let argv = self.new_list(&[script])?;
             self.module_set(m, "argv", argv)?;
-            // Imports never search a path (docs/sdk.md "Limitations"): an
-            // empty list that code may read and edit without effect.
+            // Imports never search a path (docs/user-guide.md "Known
+            // differences from CPython"): an empty list that code may read
+            // and edit without effect.
             let path = self.new_list(&[])?;
             self.module_set(m, "path", path)?;
             for (attr, id) in [("stdout", 1), ("stderr", 2)] {

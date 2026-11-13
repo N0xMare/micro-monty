@@ -17,7 +17,7 @@ members = [
 ]
 # cargo-fuzz keeps its own workspace so fuzz-only dependencies stay out of the lockfile.
 # The wasmtime reference host keeps its own workspace and lockfile.
-exclude = ["fuzz", "spikes", "crates/mm-wasm-host"]
+exclude = ["fuzz", "crates/mm-wasm-host"]
 
 [workspace.package]
 version = "0.0.1"

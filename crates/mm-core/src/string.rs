@@ -24,7 +24,7 @@ const SLOT_HASH: u32 = 2;
 const INTERN_MIN_CAP: u32 = 64;
 
 /// The string hash, Fx-style: one multiply per 8 bytes with a fixed seed,
-/// deterministic across runs, processes and platforms (docs/spec.md §16).
+/// deterministic across runs, processes and platforms (docs/spec.md §5).
 /// Each step is a folded multiply (the high and low halves of a 64x64-bit
 /// product xor-ed together, as `rustc-hash` 2 does for byte strings), so every input bit
 /// reaches the low bits that power-of-two tables index by; a plain Fx multiply

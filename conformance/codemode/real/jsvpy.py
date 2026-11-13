@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compares Python on micro-monty (py-ptc, mm-cell-worker) with JavaScript on
 plak's QuickJS worker (js-ptc, plakous-js-host) per model, from the census
-records of the JS-vs-Python study (docs/research/js-vs-python-models.md).
+records of the JS-vs-Python study.
 
     python3 jsvpy.py results/js-vs-python   # reads cells, sessions, grade.jsonl
 

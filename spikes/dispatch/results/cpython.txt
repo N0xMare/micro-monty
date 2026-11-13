@@ -1,9 +1,0 @@
-# CPython 3.12.14 kernels.py reps=15 (+1 untimed warm-up/verification run)
-engine,kernel,reps,min_ms,median_ms,max_ms,result,expected,ok
-cpython,fib,15,25.37,28.10,31.71,196418,196418,True
-cpython,loop,15,97.46,100.13,127.76,4499998500000,4499998500000,True
-cpython,closure,15,54.04,55.31,101.93,3000000,3000000,True
-cpython,attr,15,55.26,56.02,78.39,500000500002,500000500002,True
-cpython,method,15,54.62,55.14,59.17,2000000,2000000,True
-cpython,list,15,76.15,78.12,81.13,499999500000,499999500000,True
-cpython,dict,15,20.96,23.77,29.80,19999900000,19999900000,True

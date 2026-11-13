@@ -421,7 +421,7 @@ fn null_bytes_are_refused_where_the_oracle_differs() {
 /// Long flat chains are one level of nesting in both front ends, and
 /// nesting around them is counted the same: the same trees, or the same
 /// error, on either side of the limits. Source at the
-/// nesting limit needs 3.7 MiB of stack in a debug build (docs/sdk.md),
+/// nesting limit needs 3.7 MiB of stack in a debug build (docs/user-guide.md),
 /// more than a test thread has.
 #[test]
 fn chains_and_nesting_parse_identically() {

@@ -9,7 +9,7 @@ use micro_monty::{Engine, EngineConfig, Limits, ParkReason, Progress, Resume, Se
 use std::process::ExitCode;
 
 // std's allocator without its per-site checks (crates/mm-wasm-alloc,
-// docs/sdk.md); optional for embedders.
+// docs/user-guide.md); optional for embedders.
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 #[global_allocator]
 static ALLOCATOR: mm_wasm_alloc::Allocator = mm_wasm_alloc::Allocator::new();
@@ -130,7 +130,7 @@ fn main() -> ExitCode {
 /// Runs [`DEEP`] in a session of its own.
 fn deep_comparisons(engine: &Engine) -> Result<(), &'static str> {
     // Source at the parser's nesting limit, the deepest Rust recursion
-    // left (docs/sdk.md, Embedding guarantees): 199 parentheses compile,
+    // left (docs/user-guide.md, Embedding guarantees): 199 parentheses compile,
     // 199 nested conditional expressions raise `RecursionError`.
     let n = 199;
     let parens = format!("x = {}1{}\n", "(".repeat(n), ")".repeat(n));

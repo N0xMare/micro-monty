@@ -1,7 +1,7 @@
 # Cases whose parked chain may spend other fuel than an unparked run
 # (`cargo xtask durability --fuel`): FILE<TAB>reason. The flag stays out
 # of `cargo xtask check` until every line is a documented exception of
-# docs/spec.md §5, guarantee 4. Each line says which it is.
+# docs/spec.md §5.1, clause 4. Each line says which it is.
 #
 # Documented: the char-position cache (spec §5 guarantee 4, §9.2 "Char
 # positions"). A snapshot's collection clears it (restored or not), and

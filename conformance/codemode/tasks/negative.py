@@ -1,4 +1,4 @@
-"""Tasks whose natural answer reaches past a small sandbox (docs/research/codemode-survey.md §8):
+"""Tasks whose natural answer reaches past a small sandbox:
 dataframe, HTTP-client, subprocess and timezone-database habits, more than 16 concurrent calls, and output
 past an observation bound. Their checkers accept any correct answer; the census records what was used."""
 
