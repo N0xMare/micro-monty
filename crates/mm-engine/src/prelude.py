@@ -1162,10 +1162,6 @@ def _invoke(f, args, kw):
     return f(*args, **kw)
 
 
-def _materialize(it):
-    return list(it) if _lazy(it) else it
-
-
 def _mreal(x):
     t = type(x)
     if t is float or t is int or t is bool:
@@ -1669,10 +1665,11 @@ def _list_remove(a):
 
 
 def _list___init__(a):
+    # CPython's `list___init___impl`: emptied, then extended.
     l = a[0]
-    items = list(a[1]) if len(a) > 1 else []
-    l.clear()
-    l.extend(items)
+    list.clear(l)
+    if len(a) > 1:
+        list.extend(l, a[1])
 
 
 def _set___init__(a):
@@ -1829,9 +1826,17 @@ def _bx_call(cls, args, kw):
 
 
 def _list_extend(a):
-    l = a[0]
-    for x in _materialize(a[1]):
-        l.append(x)
+    # CPython's `list_extend`: an iterator's items appended as it yields
+    # them, a chunk per loop step (`_more`), so code it runs sees the list
+    # grow and an error keeps the items before it; the list itself as the
+    # source is read as it was.
+    l = _bx_value(a[0])
+    src = a[1]
+    if src is a[0]:
+        src = list(l)
+    it = iter(src)
+    while _more(l, it):
+        pass
 
 
 def _str_join(a):

@@ -1434,9 +1434,8 @@ differs:
   bounds must fit in 64 bits: `range(2**63)` raises `OverflowError`.
 - **Objects.** One object holds at most 64 MiB whatever the memory limit.
   `namedtuple` and dataclasses take at most 126 fields.
-- **Iteration.** `list.extend` and list `+=` read their whole iterable
-  before the list grows. A `dict` subclass's `__missing__` is not called
-  through `d.__getitem__(k)`.
+- **Iteration.** A `dict` subclass's `__missing__` is not called through
+  `d.__getitem__(k)`.
 - **`json.loads` with hooks** parses the whole document before calling any
   hook, and nesting deeper than CPython's recursion limit parses.
 - **`dir()`** of a builtin type lists its method table plus a fixed set of

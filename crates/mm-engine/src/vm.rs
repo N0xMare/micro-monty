@@ -2586,7 +2586,11 @@ impl Vm {
     /// exact length if it has less: an extend's only allocation, so one
     /// that fails leaves `l` as it was and the op can run again. `l`'s
     /// object, the buffer and `l`'s length; None for a non-list.
-    fn list_room(&mut self, l: Value, m: usize) -> Result<Option<(Ref, Ref, usize)>, Raised> {
+    pub(crate) fn list_room(
+        &mut self,
+        l: Value,
+        m: usize,
+    ) -> Result<Option<(Ref, Ref, usize)>, Raised> {
         let (Some((buf, len)), Some(r)) = (self.list_parts(l), l.as_obj()) else {
             return Ok(None);
         };

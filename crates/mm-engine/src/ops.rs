@@ -493,8 +493,7 @@ impl Vm {
                 return self.new_list(&items);
             }
             (BinOp::Add, T::list, _) if inplace => {
-                let items = self.collect(b)?;
-                self.list_extend_values(a, &items)?;
+                self.list_extend_from(a, b)?;
                 return Ok(a);
             }
             (BinOp::Add, T::tuple, T::tuple) => {
@@ -1227,6 +1226,16 @@ impl Vm {
             T::bytes | T::bytearray => self.bytes_contains(container, item),
             T::range => {
                 let Some(i) = self.int_of(item) else {
+                    // An int past `i64` is past every item (bounds fit
+                    // `i64`). Anything else is compared with each item, as
+                    // CPython's `_PySequence_IterSearch` does; a long range
+                    // in the prelude twin, item by item, not collected.
+                    if Vm::is_heap_int(item) {
+                        return Ok(false);
+                    }
+                    if self.range_len(container) >= COLLECT_CHUNK as u64 {
+                        return Err(self.need_py());
+                    }
                     let items = self.collect(container)?;
                     return Ok(self.find_eq(&items, item)?.is_some());
                 };
@@ -1668,6 +1677,64 @@ impl Vm {
         }
         let segs = [Seg::of(3, 0, 1, n as u64), Seg::of(4, 0, 1, m as u64)];
         Some(self.list_rebuild(l, Value::NONE, &[l, src], &segs, n + m))
+    }
+
+    /// Appends up to `COLLECT_CHUNK` items of iterator `it` to list `l` as
+    /// `it` yields them, one fuel unit each: true if `it` may have more.
+    pub(crate) fn list_more(&mut self, l: Value, it: Value) -> Result<bool, Raised> {
+        let mut n = 0;
+        let more = loop {
+            if n == COLLECT_CHUNK {
+                break true;
+            }
+            let x = match self.iter_next(it) {
+                Ok(Some(x)) => x,
+                Ok(None) => break false,
+                Err(e) => {
+                    self.burn(n as u64);
+                    return Err(e);
+                }
+            };
+            self.list_push(l, x)?;
+            n += 1;
+        };
+        self.burn(n as u64);
+        Ok(more)
+    }
+
+    /// `l.extend(src)` and list `+=` for a `src` that is not a list or a
+    /// tuple. A builtin iterator's items are appended as it yields them,
+    /// as CPython's `list_extend_iter` does: code it runs sees the list
+    /// grow, and an error keeps the items before it. Past a chunk, or at an
+    /// item that needs Python code, the prelude twin goes on with the
+    /// iterator. Any other iterable's items, which cannot see the list,
+    /// at once.
+    pub(crate) fn list_extend_from(&mut self, l: Value, src: Value) -> Result<(), Raised> {
+        if Self::one_shot(src) {
+            // A list or tuple iterator's items left are its length hint:
+            // the buffer grows once to hold them first, so running out of
+            // memory leaves the list as it was, as in CPython.
+            if let (Some(r), true) = (src.as_obj(), src.is_obj_kind(ty::ITER as u8)) {
+                let (seq, kind, at) = (self.vslot(src, 0), self.raw_o(r, 1), self.raw_o(r, 2));
+                let n = match kind {
+                    it::LIST => self.list_len(seq),
+                    it::TUPLE => self.tuple_len(seq),
+                    _ => 0,
+                };
+                let left = n.saturating_sub(usize::try_from(at).unwrap_or(usize::MAX));
+                if left > 0 {
+                    self.list_room(l, left)?;
+                }
+            }
+            // What it yields is gone: not run again after a collection.
+            self.oom_rerun = self.op_stamp();
+            if self.list_more(l, src)? {
+                return Err(self.need_py());
+            }
+            return Ok(());
+        }
+        let items = self.collect(src)?;
+        self.list_extend_values(l, &items)
     }
 
     /// `LIST_EXTEND`'s items of `src`, or none when a long list or tuple
@@ -2633,6 +2700,12 @@ impl Vm {
         }
     }
 
+    /// An exhausted builtin iterator `r` drops its sequence, as CPython's
+    /// do: it holds no memory, and one that grows later is not read again.
+    fn iter_drop(&mut self, r: Ref) {
+        self.set_slot_o(r, 0, Value::NONE);
+    }
+
     /// `next(it)`: `None` when exhausted.
     pub(crate) fn iter_next(&mut self, itv: Value) -> Result<Option<Value>, Raised> {
         if itv.is_obj_kind(ty::ITER as u8) {
@@ -2661,6 +2734,9 @@ impl Vm {
                     if let Ok([_, pos, ..]) = self.heap.raw_words_mut(r) {
                         *pos = next;
                     }
+                    if item.is_none() {
+                        self.iter_drop(r);
+                    }
                     return Ok(item);
                 }
                 it::TUPLE => {
@@ -2668,12 +2744,15 @@ impl Vm {
                         self.set_raw(r, 2, a + 1);
                         return Ok(Some(self.vslot(seq, u32::try_from(a).unwrap_or(0))));
                     }
+                    self.iter_drop(r);
                     return Ok(None);
                 }
                 it::BYTES | it::BYTEARRAY => {
                     let data = self.bytes_data(seq);
                     let i = usize::try_from(a).unwrap_or(usize::MAX);
                     let Some(&c) = data.get(i) else {
+                        // A bytearray that grows later is not read again.
+                        self.iter_drop(r);
                         return Ok(None);
                     };
                     self.set_raw(r, 2, a + 1);
@@ -2683,6 +2762,7 @@ impl Vm {
                     let bytes = self.str_bytes(seq);
                     let i = usize::try_from(a).unwrap_or(usize::MAX);
                     if i >= bytes.len() {
+                        self.iter_drop(r);
                         return Ok(None);
                     }
                     let lead = bytes[i];
@@ -2755,6 +2835,7 @@ impl Vm {
                     self.burn((i.saturating_sub(a as usize)) as u64 / 8);
                     // Exhausted iterators stay exhausted.
                     self.set_raw(r, 2, DEAD);
+                    self.iter_drop(r);
                     return Ok(None);
                 }
                 _ => {
@@ -2779,6 +2860,7 @@ impl Vm {
                     }
                     self.burn(i.saturating_sub(a) / 8);
                     self.set_raw(r, 2, DEAD);
+                    self.iter_drop(r);
                     return Ok(None);
                 }
             }
@@ -2829,6 +2911,7 @@ impl Vm {
                 let i = self.raw(r, 1).cast_signed();
                 let n = self.seq_words(seq).len();
                 if i < 0 || usize::try_from(i).unwrap_or(usize::MAX) >= n {
+                    self.iter_drop(r);
                     return Ok(None);
                 }
                 self.set_raw(r, 1, (i - 1).cast_unsigned());

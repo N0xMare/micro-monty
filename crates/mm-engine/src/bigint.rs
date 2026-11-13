@@ -168,18 +168,134 @@ fn mag_mul(a: &[u32], b: &[u32]) -> Vec<u32> {
     out
 }
 
-/// `a / d` and `a % d` for a one-limb divisor.
-fn divmod_small(a: &[u32], d: u32) -> (Vec<u32>, u32) {
-    let mut q = vec![0u32; a.len()];
-    let mut r = 0u64;
-    let d = u64::from(d);
-    for i in (0..a.len()).rev() {
-        let cur = (r << 32) | u64::from(a[i]);
-        q[i] = (cur / d) as u32;
-        r = cur % d;
+/// `a / d` and `a % d` for a divisor `d > 0` of one or two limbs: a short
+/// division of 64-bit words by `d` normalized, each quotient word by the
+/// precomputed reciprocal (Möller and Granlund, "Improved division by
+/// invariant integers", 2011, algorithm 4), multiplications only: the
+/// int cap by any such `d` in a few ms (algorithm D's estimate refused
+/// two limbs there).
+fn divmod_word(a: &[u32], d: u64) -> (Vec<u32>, u64) {
+    let word = |i: usize| {
+        let lo = a.get(2 * i).copied().unwrap_or(0);
+        let hi = a.get(2 * i + 1).copied().unwrap_or(0);
+        u64::from(lo) | (u64::from(hi) << 32)
+    };
+    let n = a.len().div_ceil(2);
+    let s = d.leading_zeros();
+    let dn = d << s;
+    // floor((2^128 - 1) / dn) - 2^64; `dn`'s top bit is set.
+    let v = (((u128::from(!dn) << 64) | u128::from(u64::MAX)) / u128::from(dn)) as u64;
+    let below = |i: usize| {
+        if s == 0 || i == 0 {
+            0
+        } else {
+            word(i - 1) >> (64 - s)
+        }
+    };
+    let mut q = vec![0u32; 2 * n];
+    // The bits the shift moves above the top word, under `dn`.
+    let mut r = if s == 0 || n == 0 {
+        0
+    } else {
+        word(n - 1) >> (64 - s)
+    };
+    for i in (0..n).rev() {
+        let u0 = (word(i) << s) | below(i);
+        // `v * r + (r, u0)`, modulo 2^128.
+        let p =
+            (u128::from(v) * u128::from(r)).wrapping_add((u128::from(r) << 64) | u128::from(u0));
+        let mut q1 = ((p >> 64) as u64).wrapping_add(1);
+        let mut rem = u0.wrapping_sub(q1.wrapping_mul(dn));
+        if rem > p as u64 {
+            q1 = q1.wrapping_sub(1);
+            rem = rem.wrapping_add(dn);
+        }
+        if rem >= dn {
+            q1 += 1;
+            rem -= dn;
+        }
+        q[2 * i] = q1 as u32;
+        q[2 * i + 1] = (q1 >> 32) as u32;
+        r = rem;
     }
     trim(&mut q);
-    (q, r as u32)
+    (q, r >> s)
+}
+
+/// `a / d` and `a % d` for a divisor `d` of three or four limbs
+/// (`2^64 <= d < 2^128`): as [`divmod_word`], a quotient word at a time
+/// from three words of the remainder and dividend, by the reciprocal of
+/// `d` normalized (Möller and Granlund, algorithms 5 and 6).
+fn divmod_dword(a: &[u32], d: u128) -> (Vec<u32>, u128) {
+    let word = |i: usize| {
+        let lo = a.get(2 * i).copied().unwrap_or(0);
+        let hi = a.get(2 * i + 1).copied().unwrap_or(0);
+        u64::from(lo) | (u64::from(hi) << 32)
+    };
+    let n = a.len().div_ceil(2);
+    // `d >= 2^64`: under 64 bits of shift.
+    let s = d.leading_zeros();
+    let dn = d << s;
+    let (d1, d0) = ((dn >> 64) as u64, dn as u64);
+    // Algorithm 6: the reciprocal of `(d1, d0)` from `d1`'s.
+    let mut v = (((u128::from(!d1) << 64) | u128::from(u64::MAX)) / u128::from(d1)) as u64;
+    let mut p = d1.wrapping_mul(v).wrapping_add(d0);
+    if p < d0 {
+        v = v.wrapping_sub(1);
+        if p >= d1 {
+            v = v.wrapping_sub(1);
+            p = p.wrapping_sub(d1);
+        }
+        p = p.wrapping_sub(d1);
+    }
+    let t = u128::from(v) * u128::from(d0);
+    let (t1, t0) = ((t >> 64) as u64, t as u64);
+    p = p.wrapping_add(t1);
+    if p < t1 {
+        v = v.wrapping_sub(1);
+        if ((u128::from(p) << 64) | u128::from(t0)) >= dn {
+            v = v.wrapping_sub(1);
+        }
+    }
+    let below = |i: usize| {
+        if s == 0 || i == 0 {
+            0
+        } else {
+            word(i - 1) >> (64 - s)
+        }
+    };
+    let mut q = vec![0u32; 2 * n];
+    let mut r: u128 = if s == 0 || n == 0 {
+        0
+    } else {
+        u128::from(word(n - 1) >> (64 - s))
+    };
+    for i in (0..n).rev() {
+        // Algorithm 5: `(u2, u1, u0) / (d1, d0)`, `(u2, u1) = r < dn`.
+        let u0 = (word(i) << s) | below(i);
+        let (u2, u1) = ((r >> 64) as u64, r as u64);
+        let qq = (u128::from(v) * u128::from(u2)).wrapping_add(r);
+        let (mut q1, q0) = ((qq >> 64) as u64, qq as u64);
+        let r1 = u1.wrapping_sub(q1.wrapping_mul(d1));
+        let t = u128::from(d0) * u128::from(q1);
+        let mut rem = ((u128::from(r1) << 64) | u128::from(u0))
+            .wrapping_sub(t)
+            .wrapping_sub(dn);
+        q1 = q1.wrapping_add(1);
+        if (rem >> 64) as u64 >= q0 {
+            q1 = q1.wrapping_sub(1);
+            rem = rem.wrapping_add(dn);
+        }
+        if rem >= dn {
+            q1 = q1.wrapping_add(1);
+            rem -= dn;
+        }
+        q[2 * i] = q1 as u32;
+        q[2 * i + 1] = (q1 >> 32) as u32;
+        r = rem;
+    }
+    trim(&mut q);
+    (q, r >> s)
 }
 
 fn shl_bits(a: &[u32], s: u32, extra: bool) -> Vec<u32> {
@@ -208,9 +324,22 @@ fn mag_divmod(a: &[u32], b: &[u32]) -> (Vec<u32>, Vec<u32>) {
     if mag_cmp(a, b) == Ordering::Less {
         return (Vec::new(), a.to_vec());
     }
-    if b.len() == 1 {
-        let (q, r) = divmod_small(a, b[0]);
-        return (q, if r == 0 { Vec::new() } else { vec![r] });
+    if b.len() <= 4 {
+        // A short division by a modulus of up to 128 bits.
+        let d = b
+            .iter()
+            .rev()
+            .fold(0u128, |d, &x| (d << 32) | u128::from(x));
+        let (q, r) = match u64::try_from(d) {
+            Ok(d) => {
+                let (q, r) = divmod_word(a, d);
+                (q, u128::from(r))
+            }
+            Err(_) => divmod_dword(a, d),
+        };
+        let mut r = (0..4).map(|i| (r >> (32 * i)) as u32).collect();
+        trim(&mut r);
+        return (q, r);
     }
     let n = b.len();
     let s = b[n - 1].leading_zeros();

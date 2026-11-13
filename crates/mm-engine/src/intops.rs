@@ -59,14 +59,15 @@ pub(crate) fn mul_ns(la: u64, lb: u64) -> u64 {
 }
 
 /// Estimated nanoseconds of `bigint::mag_divmod` of an `la`-limb by an
-/// `lb`-limb magnitude: by one limb about 14 ns a limb; else 0.9 ns a
-/// step of algorithm D, a quotient limb costing about 24 more (56 ms for
-/// 2^19 by 2^18 bits [M], 60 estimated; a 2^26-bit value by two limbs
-/// 46-49 ms [M], 57 estimated, where 16 more estimated 42).
+/// `lb`-limb magnitude: by up to four limbs (128 bits) a short division,
+/// about 3 ns a limb (at the 2^26-bit cap 1.4-6.7 ms more than a linear
+/// `a + 1`'s 12.3 ms [M]), counted as 4; else 0.9 ns a step of algorithm
+/// D, a quotient limb costing about 24 more (56 ms for 2^19 by 2^18 bits
+/// [M], 60 estimated).
 #[inline(never)]
 pub(crate) fn div_ns(la: u64, lb: u64) -> u64 {
-    if lb <= 1 {
-        return la.saturating_mul(14);
+    if lb <= 4 {
+        return la.saturating_mul(4);
     }
     let q = (la + 1).saturating_sub(lb);
     q.saturating_mul(lb + 24).saturating_mul(9) / 10 + 4 * la
@@ -82,10 +83,15 @@ pub(crate) fn div_units(la: u64, lb: u64) -> u64 {
 }
 
 /// Estimated nanoseconds of Euclid's algorithm on `la`- and `lb`-limb
-/// values (134 ms for two 2^16-bit ones [M]).
+/// values: its first division takes the longer to the shorter's size,
+/// then each step of two such values (134 ms for two 2^16-bit ones [M]).
 #[inline(never)]
 pub(crate) fn gcd_ns(la: u64, lb: u64) -> u64 {
-    la.saturating_mul(lb).saturating_mul(32)
+    let (x, y) = (la.max(lb), la.min(lb));
+    if y == 0 {
+        return 0;
+    }
+    div_ns(x, y).saturating_add(y.saturating_mul(y).saturating_mul(32))
 }
 
 /// Estimated nanoseconds of `Big::pow` of an `abits`-bit base to `e`, by

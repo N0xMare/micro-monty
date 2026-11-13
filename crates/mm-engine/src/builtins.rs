@@ -5669,6 +5669,13 @@ fn slot_ge(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 fn list_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let l = vm.check_self(&a, T::list, "__init__")?;
     let src = vm.arg_o(&a, 1);
+    // CPython's `list___init___impl`: emptied, then extended, so the list
+    // read as its own source is empty. A builtin iterator or a generator,
+    // which can see the list grow, is read by the prelude twin.
+    if Vm::one_shot(src) || src.is_obj_kind(ty::GEN as u8) {
+        return Err(vm.need_py());
+    }
+    vm.list_set_items(l, &[])?;
     let items = if src == Value::UNDEFINED {
         NativeValues::default()
     } else {
@@ -6560,24 +6567,7 @@ fn pl_more(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             Sorted::Fail(e) => Err(vm.order_error(e, "<")),
         };
     }
-    let (xs, it) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
-    let mut n = 0;
-    let more = loop {
-        if n == crate::ops::COLLECT_CHUNK {
-            break true;
-        }
-        let x = match vm.iter_next(it) {
-            Ok(Some(x)) => x,
-            Ok(None) => break false,
-            Err(e) => {
-                vm.burn(n as u64);
-                return Err(e);
-            }
-        };
-        vm.list_push(xs, x)?;
-        n += 1;
-    };
-    vm.burn(n as u64);
+    let more = vm.list_more(vm.arg_o(&a, 0), vm.arg_o(&a, 1))?;
     Ok(Value::from_bool(more))
 }
 
@@ -7454,9 +7444,7 @@ fn list_extend(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         vm.list_extend_values(l, &items)?;
         return Ok(Value::NONE);
     }
-    let items = vm.collect(src)?;
-    // Grown once before any item is written, as `+=`.
-    vm.list_extend_values(l, &items)?;
+    vm.list_extend_from(l, src)?;
     Ok(Value::NONE)
 }
 

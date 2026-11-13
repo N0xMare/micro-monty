@@ -1179,6 +1179,36 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "try:\n    y = math.isqrt(R)\nexcept MemoryError:\n    pass",
         1,
     ),
+    // HANDOFF #9: a modulus of up to 128 bits is a short division by
+    // reciprocals (`bigint::divmod_word`, `divmod_dword`), so the int cap
+    // divides by any such one, as CPython does; algorithm D's estimate
+    // refused every one from 2^32 there. `gcd` estimates its first
+    // division and then Euclid on the reduced pair (it refused `m = 3` at
+    // 3 * 2^24 bits).
+    (
+        Row::Bounded,
+        "x = (1 << 67_108_800) - 12_345\nm = (1 << 64) - 1",
+        "q, r = divmod(x, m)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "x = (1 << 67_108_800) - 12_345\nm = (1 << 127) - 1",
+        "r = -x % m",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "x = (1 << 67_108_800) - 12_345",
+        "y = pow(x, 2, 1 << 64)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "import math\nx = (1 << 67_108_800) - 12_345",
+        "y = math.gcd(x, (1 << 64) + 1)",
+        1,
+    ),
     // Bytes (P2): `nstep::op::BYTES`, a `bytes::Job` of each kind, its
     // result built in place in an arena block of its final size; each at
     // the 64 MiB object cap (operand or result).

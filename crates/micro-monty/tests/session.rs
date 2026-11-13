@@ -405,6 +405,30 @@ fn python_recursion_is_limited_without_rust_recursion() {
     assert_eq!(p, Progress::Complete(None));
 }
 
+/// An exhausted builtin iterator drops its sequence, as python3.14's do:
+/// three exhausted iterators over 8 MB lists kept the lists, so the next
+/// three raised `MemoryError` under a 32 MiB limit. Each kind of iterator
+/// that holds a sequence, `reversed` included.
+#[test]
+fn exhausted_iterators_drop_their_sequences() {
+    for make in [
+        "iter([0] * 1_000_000)",
+        "reversed([0] * 1_000_000)",
+        "iter(tuple([0] * 1_000_000))",
+        "iter(bytearray(8_000_000))",
+        "iter(dict.fromkeys(range(250_000)))",
+        "iter(set(range(250_000)))",
+    ] {
+        let src = format!(
+            "its = []\nfor _ in range(3):\n    it = {make}\n    min(it)\n    its.append(it)\n\
+             it = None\nkeep = [[0] * 1_000_000 for _ in range(3)]\nprint(len(keep))\n"
+        );
+        let (p, out) = run_with(Limits::new().with_memory(32 << 20), &src);
+        assert!(matches!(p, Progress::Complete(_)), "{make}: {p:?}");
+        assert_eq!(out, "3\n", "{make}");
+    }
+}
+
 /// Small native charges add up to a safepoint check: a straight-line
 /// body of 300 slices of a 3,840-char str (59 fuel units each, under the
 /// 64 of one long charge) reached the collection trigger only once per 256

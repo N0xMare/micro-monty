@@ -1,6 +1,6 @@
 # Native-to-Python hand-off sites (`need_py()` calls): file, enclosing
 # function, count. Written by `cargo xtask handoffs`; checked in
-# `cargo xtask check`. 93 sites in 70 functions in 14 files.
+# `cargo xtask check`. 96 sites in 72 functions in 14 files.
 crates/mm-engine/src/builtins.rs	any_all	1
 crates/mm-engine/src/builtins.rs	bi_ascii	1
 crates/mm-engine/src/builtins.rs	bi_dir	1
@@ -13,6 +13,7 @@ crates/mm-engine/src/builtins.rs	dict_fill_phase	1
 crates/mm-engine/src/builtins.rs	dict_fromkeys	1
 crates/mm-engine/src/builtins.rs	early_src	1
 crates/mm-engine/src/builtins.rs	int_arg	1
+crates/mm-engine/src/builtins.rs	list_init	1
 crates/mm-engine/src/builtins.rs	min_max	1
 crates/mm-engine/src/builtins.rs	object_repr	1
 crates/mm-engine/src/builtins.rs	to_module_twin	1
@@ -45,12 +46,13 @@ crates/mm-engine/src/ops.rs	binop_bx	1
 crates/mm-engine/src/ops.rs	binop_in	5
 crates/mm-engine/src/ops.rs	collect	1
 crates/mm-engine/src/ops.rs	compare	1
-crates/mm-engine/src/ops.rs	contains	2
+crates/mm-engine/src/ops.rs	contains	3
 crates/mm-engine/src/ops.rs	delitem	2
 crates/mm-engine/src/ops.rs	get_iter	1
 crates/mm-engine/src/ops.rs	getitem	5
 crates/mm-engine/src/ops.rs	iter_next	1
 crates/mm-engine/src/ops.rs	len_of	1
+crates/mm-engine/src/ops.rs	list_extend_from	1
 crates/mm-engine/src/ops.rs	order_error	1
 crates/mm-engine/src/ops.rs	range_slice	1
 crates/mm-engine/src/ops.rs	setitem	2

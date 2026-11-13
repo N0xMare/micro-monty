@@ -90,6 +90,11 @@ const SPLIT: usize = 1 << 22;
 /// Old table slots or entries a rebuild moves per slice.
 const REBUILD_SLICE: u64 = 1 << 12;
 
+// A bulk step allocates a new table only in its first quarter
+// (`bulk_phases`): below 4 units that quarter is empty and a table that
+// must grow waits for ever (112 own cases hung at 1 to 3 [M, reviewer]).
+const _: () = assert!(crate::nstep::STEP_WORK >= 4);
+
 /// Raw words of builtin iterators, as [`Vm::iter_pos`] records them: up
 /// to 8 in the first half; in the second, value slot 1 of each
 /// `enumerate` whose count is past `i64` (index `u32::MAX`, the slot's
@@ -1591,7 +1596,7 @@ impl Vm {
 
     /// The source register of `b`'s current phase.
     /// Whether `v` is a builtin iterator a bulk source may read in place.
-    fn one_shot(v: Value) -> bool {
+    pub(crate) fn one_shot(v: Value) -> bool {
         matches!(
             v.obj_kind().map(u16::from),
             Some(ty::ITER | ty::ZIP | ty::ENUMERATE | ty::REVERSED)
