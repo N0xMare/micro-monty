@@ -649,7 +649,7 @@ def _op_binop(a, b, op, inplace):
         return a
     view = ta is _KEYS or ta is _ITEMS
     if (op == 1 or 9 <= op <= 11) and (view or type(b) is _KEYS or type(b) is _ITEMS) and not (
-            inplace and ta is dict and op == 10):
+            inplace and op == 10 and isinstance(a, dict)):
         # A set-like dict view with any iterable: plain sets, as CPython's
         # `dictviews_*` make them.
         if op == 9:
@@ -1365,6 +1365,18 @@ def _frozenset(a):
     return _set_table(_set(a), None)
 
 
+def _pair_list(item):
+    # CPython 3.14's `PySequence_Fast(item, "object is not iterable")`: a
+    # TypeError from `iter` is replaced, with no context.
+    try:
+        it = iter(item)
+    except TypeError:
+        it = None
+    if it is None:
+        raise TypeError('object is not iterable')
+    return list(it)
+
+
 def _dict_fill(d, src):
     if type(src) is dict:
         for k, v in src.items():
@@ -1376,7 +1388,7 @@ def _dict_fill(d, src):
         return
     i = 0
     for item in src:
-        pair = list(item)
+        pair = _pair_list(item)
         if len(pair) != 2:
             raise ValueError(f"dictionary update sequence element #{i} has length {len(pair)}; 2 is required")
         _dset(d, pair[0], pair[1])
@@ -5707,7 +5719,7 @@ def _bulk(r, prog, pc, i, res):
             i = at + 1
             if a <= 2:
                 if a == 1:
-                    pair = list(x)
+                    pair = _pair_list(x)
                     if len(pair) != 2:
                         raise ValueError(f"dictionary update sequence element #{at} has length {len(pair)}; 2 is required")
                     x, v = pair

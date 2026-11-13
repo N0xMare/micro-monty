@@ -1734,9 +1734,9 @@ impl Vm {
                 Err(_) if !self.slow && self.exc_type(self.exc) == T::TypeError => {
                     return Err(self.err(
                         T::TypeError,
-                        &alloc::format!(
-                            "cannot convert dictionary update sequence element #{i} to a sequence"
-                        ),
+                        // CPython 3.14's `PySequence_Fast(item, "object is not
+                        // iterable")`: no element number.
+                        "object is not iterable",
                     ));
                 }
                 Err(e) => return Err(e),
