@@ -247,7 +247,7 @@ pub(crate) fn mt_bits(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `_mt_below(state, n)`: `_randbelow_with_getrandbits(n)` for
-/// `0 < n < 2**64`.
+/// `0 < n < 2**63`.
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn mt_below(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let n = vm.int_arg(vm.arg_o(&a, 1), "")?;

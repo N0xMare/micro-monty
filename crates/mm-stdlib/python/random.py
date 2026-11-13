@@ -91,6 +91,8 @@ class _BaseRandom:
                 raise OverflowError('Python int too large to convert to C unsigned long')
             words.append(x & 4294967295)
         index = _index(state[624])
+        if index >= 9223372036854775808 or index < -9223372036854775808:
+            raise OverflowError('Python int too large to convert to C long')
         if index < 0 or index > 624:
             raise ValueError('invalid state')
         words.append(index)
@@ -104,6 +106,9 @@ class _BaseRandom:
         if len(args) != 1:
             raise TypeError(f'getrandbits() takes exactly one argument ({len(args)} given)')
         k = _u64(args[0])
+        if k >= 9223372036854775808:
+            # CPython's allocation of k bits fails.
+            raise MemoryError
         r = _mt_bits(self._mt, k)
         if type(r) is bytes:
             return int.from_bytes(r, 'little')
@@ -177,7 +182,7 @@ class Random(_BaseRandom):
                     break
                 if 'random' in c.__dict__:
                     return self._randbelow_without_getrandbits(n)
-        if n < 18446744073709551616 and type(self).getrandbits is _BaseRandom.getrandbits:
+        if n < 9223372036854775808 and type(self).getrandbits is _BaseRandom.getrandbits:
             return _mt_below(self._mt, n)
         return self._randbelow_with_getrandbits(n)
 
