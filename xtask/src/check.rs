@@ -7,8 +7,9 @@
 //! stage has passed, with the machine to itself. The first failure stops
 //! every running stage (each process the gate started), prints the end of
 //! the failing stage's log and fails the gate. Stages run at `nice` 10
-//! unless marked `urgent`: the one on the critical path keeps its speed
-//! and the others take the cores it leaves.
+//! unless marked `urgent`: the ones on the critical path keep their speed
+//! and the others take the cores they leave. The debug tests are urgent
+//! too, so their wall bounds do not starve.
 //!
 //! `--serial` runs one stage at a time, in list order, with the output on
 //! the terminal.

@@ -310,7 +310,11 @@ fn check(args: &[String]) -> Result<(), String> {
             "micro-monty",
             "--check",
         ])),
-        Stage::new("test").run(debug_cargo(&[
+        // Normal priority too: tests with wall bounds (parking.rs's 5 s on
+        // an endless iterator's three fuel slices) must not starve behind
+        // durability. At `nice` 10 a 0.3 s op took 5.4 to 6.4 s in three
+        // release-gate runs of three [M].
+        Stage::new("test").urgent().run(debug_cargo(&[
             "test",
             "--workspace",
             "--locked",
