@@ -1564,9 +1564,15 @@ impl Vm {
     }
 
     /// Whether a step deferred its new table ([`Vm::oom_defer`]) and the
-    /// collection it waits for has not ended: the step ends.
+    /// collection it waits for has not ended: the step ends. The wait ends
+    /// as the guest's does (`Vm::gc_held`), also when that collection's
+    /// count is not reached: a result's collection asked for during a mark
+    /// waits for the next count but one (`Vm::collect_in_steps`), and the
+    /// retry abandons that mark, so one collection ends the wait. Compared
+    /// by count alone, the step deferred for ever with nothing left to
+    /// collect [M, reviewer: 565M units, heap unchanged].
     pub(crate) fn oom_deferred(&self) -> bool {
-        self.oom_defer_at > self.heap.stats().collections
+        self.oom_defer_at > self.heap.stats().collections && self.gc_held()
     }
 
     /// What an operation pays for a full collection it asks for out of

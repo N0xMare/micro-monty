@@ -2987,6 +2987,34 @@ except MemoryError:
     assert_eq!(unparked, restored);
 }
 
+/// A set copy whose table defers for a collection ends when the guest's
+/// wait for it ends: `x + y` during a mark asks for the collection after
+/// the next, the copy's retry abandons that mark, and one collection ends
+/// the wait. The step kept deferring for ever with nothing to collect
+/// [M, reviewer: 565M units at 256 MiB]. A fuel budget turns that into a
+/// park, not a hang.
+#[test]
+fn a_deferred_table_ends_with_its_collection_wait() {
+    for op in ["{*s}", "{*s, *t}", "s.copy()"] {
+        let src = format!(
+            "import gc\nkeep = [bytearray(7_500_000), bytearray(7_500_000)]\nw = list(range(1_000_000))\ns = set(range(500_000))\nt = {{1}}\nx = 'a' * 40000\ny = 'b' * 40000\nd = dict.fromkeys(range(250_000))\ngc.collect()\ng = [bytearray(1_000_000) for _ in range(12)]\ng = None\nb = x + y\nu = {op}\nprint('done', len(u))\n"
+        );
+        let engine =
+            Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(64 << 20)));
+        let code = engine.compile(&src, "test.py").expect("compiles");
+        let mut session = Session::new(&engine).expect("session");
+        let out = Arc::new(Mutex::new(String::new()));
+        let sink = Arc::clone(&out);
+        session.set_output(Box::new(move |t: &str| {
+            sink.lock().expect("output lock").push_str(t);
+        }));
+        session.set_fuel(Some(50_000_000));
+        let p = session.start(&code);
+        assert!(matches!(p, Progress::Complete(_)), "{op}: {p:?}");
+        assert_eq!(*out.lock().expect("output lock"), "done 500000\n", "{op}");
+    }
+}
+
 /// A result whose size the heap refused before the native allocated
 /// (`Heap::would_fit`) raises a `MemoryError` of its own, and only the
 /// heap's shared one was retried, so `list(range(8_000_000))` beside
