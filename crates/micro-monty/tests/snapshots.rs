@@ -2095,3 +2095,173 @@ fn a_live_step_state_forged_finished_raises() {
     }
     assert!(runs >= 8, "{runs} runs");
 }
+
+/// Runs `cells` (split at `#---`) in one session with host function `fut`,
+/// each call answered with its argument (`Resume::Future`, then a batch of
+/// every call a `Waiting` lists), under a fuel total that a cell polling
+/// for an answer it is never given exhausts. With `restore`, a snapshot and
+/// restore at every stop. Its stdout, and whether any cell reported
+/// `Waiting`.
+fn run_futs(e: &Engine, cells: &str, restore: bool) -> (String, bool) {
+    let out = Arc::new(Mutex::new(String::new()));
+    let attach_stdout = |s: &mut Session| {
+        let sink = Arc::clone(&out);
+        s.set_output_streams(Box::new(move |stream, text: &str| {
+            if stream != Stream::Stderr {
+                sink.lock().expect("output lock").push_str(text);
+            }
+        }));
+    };
+    let mut s = Session::new(e).expect("session");
+    s.define(&HostModule::untyped("", &["fut"]))
+        .expect("defines");
+    attach_stdout(&mut s);
+    s.set_fuel_total(Some(5_000_000));
+    let mut waited = false;
+    for (n, cell) in cells.split("#---\n").enumerate() {
+        let code = e.compile(cell, "cell.py").expect("compiles");
+        let mut answers = Vec::new();
+        let mut p = s.start(&code);
+        loop {
+            if restore && !matches!(p, Progress::Complete(_) | Progress::Error(_)) {
+                s = e
+                    .restore(&s.snapshot().expect("snapshot"))
+                    .expect("restores");
+                attach_stdout(&mut s);
+            }
+            let resume = match &p {
+                Progress::HostCall { call, args, .. } => {
+                    answers.push((*call, Ok(args[0].clone())));
+                    Resume::Future
+                }
+                Progress::Waiting { calls } => {
+                    waited = true;
+                    Resume::Batch(
+                        answers
+                            .iter()
+                            .filter(|(c, _)| calls.contains(c))
+                            .cloned()
+                            .collect(),
+                    )
+                }
+                Progress::Complete(_) | Progress::Error(_) => break,
+                other => panic!("cell {n}: {other:?} (restore {restore}):\n{cells}"),
+            };
+            p = s.resume(resume).expect("resumes");
+        }
+        if let Progress::Error(err) = &p {
+            panic!("cell {n} (restore {restore}):\n{cells}\n{}", err.traceback);
+        }
+    }
+    let text = out.lock().expect("output lock").clone();
+    (text, waited)
+}
+
+/// A sleep waits for the cell's pending host calls, as a deadline does
+/// (host calls take no virtual time), and every unsettled host future of
+/// the cell is pending, awaited or not. So a loop polling with
+/// `sleep(t)` gets its answer, and a sleep or deadline beside a host call
+/// fires after it, as on `CPython` (each expected output is python3.14's,
+/// with `fut` a loop future answered soon after). Before, the polls ran
+/// until the fuel was gone and the sleeps fired first. A host future from
+/// an earlier cell is not asked for again: awaiting it raises the
+/// scheduler's `RuntimeError` instead of a `Waiting` the host cannot
+/// answer, and the session goes on (`CPython` answers it: host calls do not
+/// outlive their cell). A future nothing needs is not waited for when the
+/// cell ends, nor by `sleep(0)`.
+#[test]
+fn sleeps_wait_for_pending_host_calls() {
+    let e = engine();
+    let task =
+        "import asyncio\nasync def w(f): return await f\nt = asyncio.create_task(w(fut(19)))\n";
+    let callback = "import asyncio\ngot = []\nf = fut(19)\nf.add_done_callback(lambda f: got.append(f.result()))\n";
+    let deadline = "try:\n    await asyncio.wait_for(asyncio.sleep(3), 1)\n    r = 'slept'\n\
+                    except TimeoutError:\n    r = 'timeout'\n";
+    let shapes: Vec<(String, &str, bool)> = vec![
+        // Polling a task under `asyncio.timeout`, and without it.
+        (
+            format!("{task}async with asyncio.timeout(5):\n    while not t.done():\n        await asyncio.sleep(0.001)\nprint(t.result())\n"),
+            "19\n",
+            true,
+        ),
+        (
+            format!("{task}n = 0\nwhile not t.done() and n < 5000:\n    await asyncio.sleep(0.001)\n    n += 1\nprint(t.done() and t.result())\n"),
+            "19\n",
+            true,
+        ),
+        // Polling for a done callback, with and without the timeout.
+        (
+            format!("{callback}async with asyncio.timeout(5):\n    while not got:\n        await asyncio.sleep(0.001)\nprint(got)\n"),
+            "[19]\n",
+            true,
+        ),
+        (
+            format!("{callback}n = 0\nwhile not got and n < 2000:\n    await asyncio.sleep(0.001)\n    n += 1\nprint(got)\n"),
+            "[19]\n",
+            true,
+        ),
+        // A deadline beside a done callback, and beside a task.
+        (format!("{callback}{deadline}print((r, got))\n"), "('timeout', [19])\n", true),
+        (format!("{task}{deadline}print((r, t.done()))\n"), "('timeout', True)\n", true),
+        // Sleeps of 2 s and 3 s and a 1 s deadline beside a task.
+        (
+            format!("{task}order = []\nasync def s(d):\n    await asyncio.sleep(d)\n    order.append(d)\n\
+                     async def dl():\n    try:\n        await asyncio.wait_for(asyncio.sleep(10), 1)\n    \
+                     except TimeoutError:\n        order.append('deadline')\n\
+                     await asyncio.gather(s(2), s(3), dl())\nprint(order, await t)\n"),
+            "['deadline', 2, 3] 19\n",
+            true,
+        ),
+        // A future nothing waits on: polled, and beside a deadline.
+        (
+            "import asyncio\nf = fut(1)\nwhile not f.done():\n    await asyncio.sleep(0.001)\nprint(f.result())\n".to_owned(),
+            "1\n",
+            true,
+        ),
+        (format!("import asyncio\nf = fut(1)\n{deadline}print(f.done())\n"), "True\n", true),
+        (
+            "import asyncio\nf = fut(5)\nawait asyncio.sleep(1)\nprint('end', f.done())\n".to_owned(),
+            "end True\n",
+            true,
+        ),
+        // Not waited for: the cell ends, or only yields.
+        ("f = fut(5)\nprint('end')\n".to_owned(), "end\n", false),
+        (
+            "import asyncio\nasync def w(f): return await f\nt = asyncio.create_task(w(fut(5)))\n\
+             await asyncio.sleep(0)\nprint('end', t.done())\n"
+                .to_owned(),
+            "end False\n",
+            false,
+        ),
+        (
+            "import asyncio\nf = fut(5)\nawait asyncio.sleep(0)\nprint('end', f.done())\n".to_owned(),
+            "end False\n",
+            false,
+        ),
+        // A future of an earlier cell.
+        (
+            "f8 = fut(8)\n#---\nimport asyncio\ntry:\n    print(await f8)\nexcept RuntimeError as e:\n    \
+             print('RuntimeError', e)\n#---\nprint('next cell')\n"
+                .to_owned(),
+            "RuntimeError every task is waiting and no host call is pending\nnext cell\n",
+            false,
+        ),
+        (
+            "f8 = fut(8)\n#---\nimport asyncio\ntry:\n    print(await asyncio.gather(f8, fut(9)))\n\
+             except RuntimeError as e:\n    print('RuntimeError', e)\n"
+                .to_owned(),
+            "RuntimeError every task is waiting and no host call is pending\n",
+            true,
+        ),
+    ];
+    for (cells, want, waits) in &shapes {
+        for restore in [false, true] {
+            let (got, waited) = run_futs(&e, cells, restore);
+            assert_eq!(got, *want, "restore {restore}:\n{cells}");
+            assert_eq!(
+                waited, *waits,
+                "Waiting reported, restore {restore}:\n{cells}"
+            );
+        }
+    }
+}

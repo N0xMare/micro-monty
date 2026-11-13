@@ -1674,18 +1674,17 @@ impl Vm {
                 }
             }
             // Sleepers: advance virtual time to the earliest wake-up and
-            // queue those due then, earliest first.
-            // A deadline (`wait_for`, `as_completed`) waits for pending host
-            // calls first: host calls take no virtual time.
+            // queue those due then, earliest first. Every sleep and
+            // deadline waits for pending host calls first: host calls take
+            // no virtual time, so a loop polling with `sleep(t)` gets its
+            // answer, and a sleep cannot outrun a call made before it.
             let mut sleepers: Vec<(f64, usize)> = Vec::new();
             let mut hosts: Option<bool> = None;
             for (k, &t) in self.blocked.iter().enumerate() {
                 if let Some(Some(task)) = self.tasks.get(t) {
                     let a = task.awaiting;
                     if a.is_obj_kind(ty::SLEEP as u8) && self.raw_of(a, aw::STATE) == aw::ARMED {
-                        if self.raw_of(a, aw::LEFT) != 0
-                            && *hosts.get_or_insert_with(|| !self.pending_ids().is_empty())
-                        {
+                        if *hosts.get_or_insert_with(|| !self.pending_ids(true).is_empty()) {
                             continue;
                         }
                         sleepers.push((f64::from_bits(self.raw_of(a, aw::AUX)), k));
@@ -1703,7 +1702,9 @@ impl Vm {
                 self.ready.extend(due.into_iter().map(Ready::Task));
                 continue;
             }
-            let ids = self.pending_ids();
+            // A sleeper held back for host calls may be polling any of them
+            // (`f.done()`), so then every unsettled one is asked for.
+            let ids = self.pending_ids(hosts == Some(true));
             if !ids.is_empty() {
                 return Next::Wait(ids);
             }
@@ -1722,11 +1723,27 @@ impl Vm {
         }
     }
 
-    /// Ids of unsettled host futures that blocked tasks wait on, directly
-    /// or through gathers, or that something waits on through a done
-    /// callback (`shield`, `wait`, `add_done_callback`), in ascending order.
-    fn pending_ids(&self) -> Vec<u64> {
-        let mut ids = Vec::new();
+    /// Ids of the cell's unsettled host futures, in ascending order: with
+    /// `all`, every one, awaited or not (what a sleep waits for: its
+    /// answer may be what a polling loop looks for); else those a blocked
+    /// task waits on, directly or through gathers, or that a done callback
+    /// waits on (`shield`, `wait`, `add_done_callback`). Only futures in
+    /// the cell's table count: cell end clears `futures`, and the host
+    /// cannot answer a call of an earlier cell.
+    fn pending_ids(&self, all: bool) -> Vec<u64> {
+        let pending = |id: u64| {
+            matches!(self.futures.binary_search_by_key(&id, |&(id, _)| id),
+                Ok(i) if self.raw_of(self.futures[i].1, aw::STATE) == aw::PENDING)
+        };
+        let mut ids: Vec<u64> = self
+            .futures
+            .iter()
+            .filter(|&&(id, f)| pending(id) && (all || self.vslot(f, aw::WAITERS) != Value::NONE))
+            .map(|&(id, _)| id)
+            .collect();
+        if all {
+            return ids;
+        }
         let mut work: Vec<Value> = self
             .blocked
             .iter()
@@ -1745,17 +1762,12 @@ impl Vm {
                 continue;
             }
             if a.is_obj_kind(ty::FUTURE as u8) {
-                if self.raw_of(a, aw::AUX) < STOP_FUTURE {
-                    ids.push(self.raw_of(a, aw::AUX));
+                let id = self.raw_of(a, aw::AUX);
+                if id < STOP_FUTURE && pending(id) {
+                    ids.push(id);
                 }
             } else if a.is_obj_kind(ty::GATHER as u8) {
                 work.extend(self.tuple_items(self.vslot(a, aw::EXTRA)));
-            }
-        }
-        for &(id, f) in &self.futures {
-            if self.raw_of(f, aw::STATE) == aw::PENDING && self.vslot(f, aw::WAITERS) != Value::NONE
-            {
-                ids.push(id);
             }
         }
         crate::ops::heap_sort_by(&mut ids, |a, b| a < b);

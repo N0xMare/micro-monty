@@ -830,3 +830,29 @@ fn values_and_output_are_capped_at_one_mib_and_memory_errors_are_ordinary() {
     );
     assert_eq!(worker.shutdown(), Some(0));
 }
+
+#[test]
+fn a_host_future_from_an_earlier_cell_raises_instead_of_losing_the_worker() {
+    // The call is not asked for again: cell end forgot it, so the host
+    // could not answer it. Awaiting it raises, and the worker goes on.
+    let mut worker = Worker::configured();
+    worker.start(0, "f = _plakous_host_0({'q': 'later'})", Some(bootstrap()));
+    let (stale, _, _) = worker.nested_call(0);
+    assert_eq!(result(worker.finish(0).1), Ok("None".to_owned()));
+    let (_, failure) = worker.run(1, "await f");
+    let failure = failure.expect_err("nothing can answer f");
+    assert!(
+        failure.ends_with("RuntimeError: every task is waiting and no host call is pending"),
+        "{failure}"
+    );
+    worker.deliver(0, stale, Ok(CellValue::Null));
+    assert!(matches!(
+        worker.recv(),
+        WorkerFrame::Delivery {
+            verdict: DeliveryVerdict::NotObserved(_),
+            ..
+        }
+    ));
+    assert_eq!(worker.run(2, "1 + 1").1, Ok("2".to_owned()));
+    assert_eq!(worker.shutdown(), Some(0));
+}

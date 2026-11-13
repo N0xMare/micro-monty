@@ -1342,10 +1342,13 @@ state, so a cell parks and snapshots in the middle of a cancellation.
 `Semaphore`, `wait_for` (CPython 3.12+'s: the awaitable runs in the calling
 task and a timer task cancels it) and `as_completed` are prelude Python
 over a loop-settled `Future` and a first-done gather. Deadlines are
-virtual-time sleeps that wait for pending host calls first: host calls take
-no virtual time, so `wait_for(host_call(), t)` never times out on the
-engine's clock; real timeouts belong to the host (`HostError`
-`TimeoutError`).
+virtual-time sleeps, and every sleep waits first for the cell's pending
+host calls (each unsettled host future of the cell, awaited or not): host
+calls take no virtual time, so `wait_for(host_call(), t)` never times out
+on the engine's clock and a loop polling with `sleep(t)` gets its answer;
+real timeouts belong to the host (`HostError` `TimeoutError`). A host
+future does not outlive its cell: cell end forgets its call, and awaiting
+it in a later cell raises the scheduler's `RuntimeError`.
 
 The other primitives (`Lock`, `Event`, `Condition`, the queues,
 `TaskGroup`, `timeout`, `shield`, `wait`, the loop's `call_soon`/
