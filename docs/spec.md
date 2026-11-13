@@ -94,8 +94,8 @@ and speed.
    functions.
 5. **Speed:** at or near QuickJS-ng on calls, closures and loops; faster than
    Monty on every benchmark row (§12).
-6. **Size:** a small stripped binary under ceilings `cargo xtask check`
-   enforces (§6).
+6. **Size:** a small stripped binary whose every byte of growth `cargo
+   xtask check` gates (§6).
 7. **Portability:** the engine crates are `no_std` + `alloc`.
 
 ### Non-goals
@@ -972,22 +972,28 @@ Fat LTO optimizes the whole program at the root crate's level, so `cargo
 xtask size` builds `hello`, the facade's example, with its own crate at
 opt 3 (`cargo rustc -- -Copt-level=3`), as an embedder's binary is.
 
-| Budget | Artifact | In `xtask/size-ceilings.txt` |
+| Budget | Artifact | Name in the gate |
 |---|---|---|
 | Primary | `wasm32-unknown-unknown` `hello.wasm`, the in-process embedding, after `wasm-opt -Oz` | `hello.wasm` |
 | Secondary | native stripped `hello` (x86-64 Linux, PIE) | `hello` |
 | Guest | `wasm32-unknown-unknown` `mm_wasm_guest.wasm` (the mm-wasm guest, no `test-hooks`), after `wasm-opt -Oz` | `mm_wasm_guest.wasm` |
 | Bundle guest | `wasm32-unknown-unknown` `mm_wasm_guest_bundle.wasm` (the guest built with `host-bundle`: its stdlib and prelude bytecode in the custom sections `mm.prelude` and `mm.stdlib`, served by the host through `mm_host.bundle_read`), after `wasm-opt -Oz`, sections included | `mm_wasm_guest_bundle.wasm` |
 
-Each artifact's ceiling is the sum of its lines in
-`xtask/size-ceilings.txt`. The file is append-only: a ceiling moves by
-appending a line (signed bytes and why, with the measurement and the
-decision), never by editing one, and git merges it as a union
-(`.gitattributes`), so raises on two branches add up on a rebase without a
-conflict. `cargo xtask size` prints each artifact's size beside its
-ceiling. The secondary budget is enforced only on
-`x86_64-unknown-linux-gnu`; other hosts report the native size without a
-budget, because executable formats and code size differ per target.
+`cargo xtask size [--base REV]` builds each artifact as shipped, and the
+same for two more revisions built on the same host with this checkout's
+recipe, each in a worktree under `target/size/` and cached per commit: the
+base (the merge base with `REV`, default `origin/main`) and the release
+(the latest `v*` tag the base descends from). Any rise past the base, one
+byte or more, needs a commit since the base with the trailer `Size:
+<artifact> +<bytes> <why>` whose bytes cover the rise; a rise with
+uncommitted changes always fails. A rise past the release must stay within
+that release's budget in `xtask/size-budget.txt` (`<tag> <artifact> <bytes>
+<why>`, the last line holding, 0 without one), which only the owner
+extends, so small rises cannot add up over a release. The native artifact
+is gated only on `x86_64-unknown-linux-gnu`; other hosts report its size,
+because executable formats and code size differ per target. The ceilings
+until 2026-11-13 and the reasons for their raises stay in
+`xtask/size-ceilings.txt`, read-only (owner decision D2).
 
 **Sizes at v0.0.1** [M, 1cfcde3, Rust 1.99.0, binaryen 133,
 `cargo xtask size`]:
@@ -2594,7 +2600,7 @@ opens a draft release.
   (`--incremental`: an incremental mark in tiny slices at every safepoint,
   each checked against a full mark); output must not change.
 - **Size gate** (`cargo xtask size`, in `check`): the shipped builds against
-  their ceilings (§6).
+  the base's and the release's (§6).
 - **Bench gate:** `cargo xtask bench --quick --engines cpython,micro-monty`
   (in `check`) runs every bench program on both engines and requires every
   checksum, warm-up included; a Python exception is a regression. The full

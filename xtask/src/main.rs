@@ -2,9 +2,12 @@
 //!
 //! - `size`: builds the facade's `hello` example as shipped (build-std,
 //!   immediate abort, no unwind tables; `wasm-opt -Oz` on wasm) for
-//!   `wasm32-unknown-unknown`, the primary budget, and natively, the
-//!   secondary one; fails when either exceeds its budget (docs/spec.md §6).
-//!   The native budget applies on x86-64 Linux; other hosts report the size.
+//!   `wasm32-unknown-unknown` and natively, and the mm-wasm guests, and
+//!   the same for the base and the release they descend from; fails when
+//!   one grows past the base without a reason in a commit message, or past
+//!   the release's budget in `xtask/size-budget.txt` (`size.rs`,
+//!   docs/spec.md §6). The native size is gated on x86-64 Linux; other
+//!   hosts report it.
 //! - `conformance`: scores Monty's test corpus on an engine (CPython 3.14 or
 //!   micro-monty's `mm`) and writes or checks `conformance/results/`
 //!   (docs/spec.md §13).
@@ -39,7 +42,7 @@
 //!   durability (same-target, then native <-> wasm32-wasip1 on the own
 //!   cases), bench `--quick`, wasmtime's guest instructions) as stages
 //!   run at the same time where they can, then the step-time oracle alone
-//!   (`check.rs`). The size ceilings are in `xtask/size-ceilings.txt`.
+//!   (`check.rs`).
 
 #![allow(
     clippy::doc_markdown,
@@ -55,6 +58,7 @@ mod durability;
 mod gc_stress;
 mod handoffs;
 mod package;
+mod size;
 mod wasm;
 mod wasm_ir;
 mod wasm_wall;
@@ -83,9 +87,15 @@ tasks:
       --release-gate         the full gate: release builds, durability at
                              1:1000, also wasm-host and the codemode check
                              (default: the landing tier, AGENTS.md)
-  size                       build `hello` as shipped (wasm-opt -Oz on wasm) for
-                             wasm32-unknown-unknown and natively; check both
-                             size budgets
+  size [--base <rev>]        build `hello` and the mm-wasm guests as shipped
+                             (wasm-opt -Oz on wasm), and the base's (default
+                             origin/main) and the release's, in worktrees
+                             under target/size/ (cached per commit); a rise
+                             past the base needs a committed trailer `Size:
+                             <artifact> +<bytes> <why>` covering it, past the
+                             release a budget in xtask/size-budget.txt
+                             (`check` runs it as --references, --head and
+                             --judge, so the base builds beside the head)
   docs                       docs/user-guide.md's examples run as micro-monty's doctests;
                              the published crates' rustdoc has no warnings
   package                    `cargo package` the published crates; each carries
@@ -170,7 +180,7 @@ fn main() -> ExitCode {
     let rest: Vec<String> = args.collect();
     let result = match task.as_deref() {
         Some("check") => check(&rest),
-        Some("size") if rest.is_empty() => size(),
+        Some("size") => size(&rest),
         Some("parse-diff") if rest.is_empty() => parse_diff(),
         Some("conformance") => conformance::run(&rest),
         Some("durability") => durability::run(&rest),
@@ -377,8 +387,19 @@ fn check(args: &[String]) -> Result<(), String> {
             "--bin",
             "memory_probes",
         ])),
-        Stage::new("size").after(&["mm"]).run(task(&["size"])),
-        Stage::new("wasm").after(&["size"]).run(task(&["wasm"])),
+        // The size gate in three stages: the base's and the release's
+        // builds, each in its own target directory under target/size/,
+        // beside the head's.
+        Stage::new("size-references").run(task(&["size", "--references"])),
+        Stage::new("size-head")
+            .after(&["mm"])
+            .run(task(&["size", "--head"])),
+        Stage::new("size")
+            .after(&["size-head", "size-references"])
+            .run(task(&["size", "--judge"])),
+        Stage::new("wasm")
+            .after(&["size-head"])
+            .run(task(&["wasm"])),
         // The corpus on mm for wasm32-wasip1 under wasmtime, scored against
         // the native results.
         Stage::new("conformance-wasip1")
@@ -570,93 +591,64 @@ fn parse_diff() -> Result<(), String> {
     )
 }
 
-fn size() -> Result<(), String> {
-    let ceilings = size_ceilings()?;
-    let ceiling = |artifact: &str| {
-        ceilings
-            .get(artifact)
-            .copied()
-            .ok_or_else(|| format!("{CEILINGS} has no ceiling for {artifact}"))
+/// Builds the shipped artifacts and checks their sizes against the base's
+/// and the release's (`size.rs`).
+///
+/// `check` runs it in three stages, so the base's and the release's builds
+/// (`--references`) run beside the head's (`--head`, which writes the
+/// head's sizes to `target/size/head.tsv`) and `--judge` compares them.
+fn size(args: &[String]) -> Result<(), String> {
+    let (mode, args) = match args {
+        [flag, rest @ ..] if flag.starts_with("--") && flag != "--base" => (flag.as_str(), rest),
+        _ => ("", args),
     };
-    let wasm = shipped_example(SIZE_TARGET_WASM, "hello")?;
+    let base = match args {
+        [] => "origin/main",
+        [flag, rev] if flag == "--base" => rev,
+        _ => return Err(USAGE.to_owned()),
+    };
+    let root = workspace_root();
+    let file = root.join("target/size/head.tsv");
+    let head = match mode {
+        "--references" => return size::gate(None, base, &shipped_sizes),
+        "--judge" => size::read(&file)?,
+        "" | "--head" => shipped_sizes(&root, &root.join("target"))?
+            .into_iter()
+            .map(|(a, b)| (a.to_owned(), b))
+            .collect(),
+        _ => return Err(USAGE.to_owned()),
+    };
+    if mode == "--head" {
+        return size::write(&file, &head);
+    }
+    size::gate(Some(&head), base, &shipped_sizes)
+}
+
+/// The shipped artifacts' sizes, built from the tree at `src` into the
+/// target directory `dir`: `hello` for `wasm32-unknown-unknown` and, on
+/// [`SIZE_TARGET_NATIVE`], natively, and both mm-wasm guests.
+pub(crate) fn shipped_sizes(src: &Path, dir: &Path) -> Result<Vec<(&'static str, u64)>, String> {
+    let wasm = shipped_example_in(src, dir, SIZE_TARGET_WASM, "hello")?;
+    let mut measured = vec![("hello.wasm", wasm::file_size(&wasm)?)];
     let native_target = host_target()?;
-    let native = shipped_example(&native_target, "hello")?;
-    let mut over = Vec::new();
-    let mut budgets = vec![(
-        "wasm32-unknown-unknown hello.wasm",
-        &wasm,
-        ceiling("hello.wasm")?,
-    )];
+    let native = shipped_example_in(src, dir, &native_target, "hello")?;
     if native_target == SIZE_TARGET_NATIVE {
-        budgets.push(("native hello", &native, ceiling("hello")?));
+        measured.push(("hello", wasm::file_size(&native)?));
     } else {
         println!(
-            "size: native hello {} bytes on {native_target} (reported; the native budget applies to {SIZE_TARGET_NATIVE})",
+            "size: native hello {} bytes on {native_target} (reported; the native gate applies to {SIZE_TARGET_NATIVE})",
             wasm::file_size(&native)?
         );
     }
-    let guest = shipped_guest()?;
-    budgets.push((
-        "wasm32-unknown-unknown mm_wasm_guest.wasm",
-        &guest,
-        ceiling("mm_wasm_guest.wasm")?,
-    ));
-    let bundle = wasm::shipped_bundle_guest(SIZE_TARGET_WASM)?;
-    budgets.push((
-        "wasm32-unknown-unknown mm_wasm_guest_bundle.wasm",
-        &bundle,
-        ceiling("mm_wasm_guest_bundle.wasm")?,
-    ));
-    for (what, path, budget) in budgets {
-        let bytes = wasm::file_size(path)?;
-        println!("size: {what} {bytes} bytes (budget {budget})");
-        if bytes > budget {
-            over.push(format!(
-                "{what} is {bytes} bytes, over the {budget}-byte budget"
-            ));
-        }
-    }
-    if over.is_empty() {
-        Ok(())
+    let guest = shipped_guest_in(src, dir)?;
+    measured.push(("mm_wasm_guest.wasm", wasm::file_size(&guest)?));
+    let bundle = if src == workspace_root() {
+        wasm::shipped_bundle_guest(SIZE_TARGET_WASM)?
     } else {
-        Err(over.join("; "))
-    }
-}
-
-/// The size ceilings, one per artifact, and their history.
-const CEILINGS: &str = "xtask/size-ceilings.txt";
-
-/// Each artifact's ceiling in [`CEILINGS`]: the sum of its lines (`<artifact>
-/// <bytes> <why>`, bytes signed after the first), `#` lines being comments.
-fn size_ceilings() -> Result<std::collections::BTreeMap<String, u64>, String> {
-    let text = fs::read_to_string(workspace_root().join(CEILINGS))
-        .map_err(|error| format!("cannot read {CEILINGS}: {error}"))?;
-    let mut sums = std::collections::BTreeMap::<String, i64>::new();
-    for (n, line) in text.lines().enumerate() {
-        if line.trim().is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let mut fields = line.split_whitespace();
-        let (Some(artifact), Some(bytes), Some(_why)) =
-            (fields.next(), fields.next(), fields.next())
-        else {
-            return Err(format!(
-                "{CEILINGS}:{}: not `<artifact> <bytes> <why>`",
-                n + 1
-            ));
-        };
-        let bytes: i64 = bytes
-            .parse()
-            .map_err(|_| format!("{CEILINGS}:{}: `{bytes}` is not a number of bytes", n + 1))?;
-        *sums.entry(artifact.to_owned()).or_default() += bytes;
-    }
-    sums.into_iter()
-        .map(|(artifact, sum)| {
-            u64::try_from(sum)
-                .map(|sum| (artifact.clone(), sum))
-                .map_err(|_| format!("{CEILINGS}: the ceiling of {artifact} is negative"))
-        })
-        .collect()
+        wasm::bundle_guest_in(src, &dir.join("mm-wasm-bundle"), SIZE_TARGET_WASM)?
+    };
+    measured.push(("mm_wasm_guest_bundle.wasm", wasm::file_size(&bundle)?));
+    Ok(measured)
 }
 
 /// The target of the primary size budget.
@@ -674,7 +666,15 @@ const SIZE_TARGET_NATIVE: &str = "x86_64-unknown-linux-gnu";
 /// and fat LTO optimizes the whole program at the root crate's level
 /// (Cargo.toml).
 pub(crate) fn shipped_example(target: &str, name: &str) -> Result<PathBuf, String> {
+    let root = workspace_root();
+    shipped_example_in(&root, &root.join("target"), target, name)
+}
+
+/// [`shipped_example`] for the tree at `src`, built into `dir`.
+fn shipped_example_in(src: &Path, dir: &Path, target: &str, name: &str) -> Result<PathBuf, String> {
     let status = shipped_cargo("rustc", target)
+        .current_dir(src)
+        .env("CARGO_TARGET_DIR", dir)
         .args(["--package", "micro-monty", "--example", name])
         .args(["--", "-Copt-level=3"])
         .status()
@@ -684,7 +684,7 @@ pub(crate) fn shipped_example(target: &str, name: &str) -> Result<PathBuf, Strin
             "shipped release build of {name} for {target} failed"
         ));
     }
-    let release = workspace_root().join(format!("target/{target}/release/examples"));
+    let release = dir.join(format!("{target}/release/examples"));
     if target.starts_with("wasm32") {
         wasm::optimize(&release.join(format!("{name}.wasm")))
     } else {
@@ -692,12 +692,14 @@ pub(crate) fn shipped_example(target: &str, name: &str) -> Result<PathBuf, Strin
     }
 }
 
-/// Builds the mm-wasm guest (`crates/mm-wasm-guest`) as shipped for
-/// `wasm32-unknown-unknown`, without `test-hooks`, and returns the module
-/// `wasm-opt -Oz` wrote.
-fn shipped_guest() -> Result<PathBuf, String> {
+/// Builds the mm-wasm guest (`crates/mm-wasm-guest`) of the tree at `src`
+/// as shipped for `wasm32-unknown-unknown` into `dir`, without
+/// `test-hooks`, and returns the module `wasm-opt -Oz` wrote.
+fn shipped_guest_in(src: &Path, dir: &Path) -> Result<PathBuf, String> {
     let target = SIZE_TARGET_WASM;
     let status = shipped_build(target)
+        .current_dir(src)
+        .env("CARGO_TARGET_DIR", dir)
         .args(["--package", "mm-wasm-guest"])
         .status()
         .map_err(|error| format!("cannot run cargo: {error}"))?;
@@ -706,7 +708,7 @@ fn shipped_guest() -> Result<PathBuf, String> {
             "shipped release build of mm-wasm-guest for {target} failed"
         ));
     }
-    wasm::optimize(&workspace_root().join(format!("target/{target}/release/mm_wasm_guest.wasm")))
+    wasm::optimize(&dir.join(format!("{target}/release/mm_wasm_guest.wasm")))
 }
 
 /// Builds `mm` natively as shipped, `target/<host>/release/mm`: the binary

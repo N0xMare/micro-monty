@@ -301,7 +301,7 @@ fn changed_since(root: &Path, anchor: &str, base: &str) -> Result<Vec<String>, S
 }
 
 /// FNV-1a of a bench program's source, which keys its cached counts.
-fn source_hash(bytes: &[u8]) -> String {
+pub(crate) fn source_hash(bytes: &[u8]) -> String {
     let h = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &b| {
         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     });
