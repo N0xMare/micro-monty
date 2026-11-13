@@ -23,7 +23,7 @@ Load further docs only when changing the normative behavior they describe.
 
 ## Dev
 
-`.agents/setup` installs everything: Rust 1.99.0 (pinned in
+`.agents/setup` installs everything: Rust 1.100.0 (pinned in
 `rust-toolchain.toml`, with both wasm targets and rust-src), CPython 3.14.7
 through uv (the oracle; `PYTHON` overrides `python3.14`), wasmtime 50.0.0,
 binaryen 133 (`wasm-opt`), valgrind, cargo-fuzz 0.13.2 with nightly-2026-11-01,
@@ -52,6 +52,13 @@ commands: `wasm-ir`, `wasm-host`, `wasm-wall`, `gc-stress`, `parse-diff`,
 (fuel totals parked against unparked, past
 `conformance/durability-fuel-allow.txt`; not in `check`) and `shipped-mm`
 (`mm` built natively as shipped, the binary bench Ir measures).
+
+"Shipped" means built as embedders ship it (spec §6): std rebuilt with
+`-Cpanic=immediate-abort` (`RUSTC_BOOTSTRAP=1` on the pinned stable) and
+`--cfg mm_shipped`, which turns on `#[optimize(size)]` through
+`cfg_attr(mm_shipped, …)`. `size`, `wasm`, `wasm-ir`, `wasm-host` and
+`shipped-mm` build that way, and the step-time oracle times
+`mm_shipped` codegen.
 
 `check` runs its stages at the same time (`xtask/src/check.rs`): `mm`,
 durability and the workspace tests at normal priority, the rest at `nice`

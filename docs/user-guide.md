@@ -960,7 +960,8 @@ it whatever fuel is then set. A host that enforces a budget stops the cell
 instead when the wanted fuel is more than the cell may still spend. Any
 other native operation runs in bounded steps: a slice is overdrawn by at
 most 2^21 + 2^17 units, and a park request or deadline waits at most about
-50 ms at the default limits \[M\] (`crates/micro-monty/tests/steps.rs`).
+50 ms at the default limits on every measured row \[M\]
+(`crates/micro-monty/tests/steps.rs`; known exceptions: spec §5.1 clause 2).
 Outside that bound are full garbage collections over a large heap, about
 0.4 ms per MiB live natively and 1.3–1.6 times that on wasm \[M\]. Count
 what a cell was charged from a fuel total (`set_fuel_total`; refuel with
@@ -971,9 +972,9 @@ and misses overdrafts; `hosts/js`'s driver does.
 full first and cannot park: about 1.4 ms per MiB of image natively, under
 wasmtime and on V8 (about 250 ms at 170 MiB) \[M\]. A restore costs about as
 much: 1.2–1.5 ms per MiB of small objects natively, 0.6–0.9 of large
-blocks, up to 1.7 for a process's first restore \[M\]. A park request or
-deadline stops neither; a host timeout must not cover them either: cutting
-one loses the image, and in wasm the instance.
+blocks, up to 1.7 for a process's first restore \[M\] (wasm: spec §9.3).
+A park request or deadline stops neither; a host timeout must not cover
+them either: cutting one loses the image, and in wasm the instance.
 
 **By target.** What bounds a cell's CPU and memory (spec §5.1, §11):
 
@@ -1050,9 +1051,8 @@ mm resume --json DIR
   (CPython's format) to stderr. It exits 0, 1 on an error, and 2 when the
   file cannot be read or the arguments are wrong. The value of a last
   expression is not printed.
-- **`mm version`** (or `--version`) prints `mm <version>` and
-  `build_id <hex>`: `mm resume` restores only snapshots written under the
-  same id.
+- **`mm version`** (or `--version`) prints `mm <version>` and `build_id
+  <hex>`: `mm resume` restores only snapshots written under the same id.
 - **`mm exec --json FILE`** prints one JSON object describing the run:
   `stdout` (stdout and stderr merged), `result` (`repr`, `str` and `type`
   of a final expression statement, or `null`), `error` (`type`, `message`,
@@ -1087,8 +1087,8 @@ buffer, calls exports such as `mm_session_new`, `mm_define`, `mm_start`,
 `mm_resume` and `mm_snapshot`, and answers the `mm_host` imports (clock,
 park poll, wall clock, entropy, output, time zones). The guest reads no
 WASI clock, randomness or files. micro-monty is 0.0.x with no compatibility
-layers: any change to the interface bumps `ABI_VERSION`, and a host and a
-guest must agree on it. A session's options (its limits, and the settings
+layers: any change to the interface, a new option tag or optional export
+included, bumps `ABI_VERSION`, and a host and a guest must agree on it. A session's options (its limits, and the settings
 an image does not carry) are a tagged record that `mm_session_new` and
 `mm_session_restore` both take. Snapshots move between native and wasm
 sessions of the same build id.
@@ -1273,13 +1273,12 @@ Two lists measured against 2,841 cells from real code-mode sessions
 tasks (`conformance/codemode`); copy the one that fits. Leaving modules out
 changes no speed \[M\].
 
-**Code mode** (34 features): every module that at least 2% of either
-corpus imports, every module a real cell that succeeds needs, and
-`textwrap`, `hmac` and `zlib`. It saves about 85 KB of `hello.wasm` (4%),
-89 KB of native `hello` and 85 KB of the guest \[M\]. No real cell that
-succeeds on the default build fails; 42 of the 1,782 synthetic solutions
-(2.4%) fail on an import (`zoneinfo` 21, `calendar` 9, `tomllib` 9,
-`shlex` 3).
+**Code mode** (34 features): every module that at least 2% of either corpus
+imports, every module a real cell that succeeds needs, and `textwrap`,
+`hmac` and `zlib`. It saves about 85 KB of `hello.wasm` (4%), 89 KB of
+native `hello` and 85 KB of the guest \[M\]. No real cell that succeeds on
+the default build fails; 42 of the 1,782 synthetic solutions (2.4%) fail on
+an import (`zoneinfo` 21, `calendar` 9, `tomllib` 9, `shlex` 3).
 
 ```toml
 micro-monty = { version = "0.0.1", default-features = false, features = [
@@ -1351,9 +1350,10 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
   undecodable byte, and `surrogatepass` decodes as `strict`. `json.loads`
   decodes an escaped pair to its character and raises `JSONDecodeError` at
   a lone surrogate escape.
-- **`unicodedata.normalize`** caps a run with no normalization boundary at
-  65,536 characters (`MemoryError` past it); UAX #15 text allows at most 30
-  non-starters in a row.
+- **`unicodedata.normalize`** and `is_normalized` cap a run with no
+  normalization boundary at 65,536 characters after decomposition
+  (`MemoryError` past it, where CPython's `is_normalized` returns `True`);
+  UAX #15 text allows at most 30 non-starters in a row.
 - **t-strings** (PEP 750) are rejected. Annotations are parsed and never
   evaluated. There is no type checker in the engine: host functions check
   their own arguments.
@@ -1372,12 +1372,11 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
   subclasses, `bytearray % args`, bytearray host values, or bytearray
   arguments to `hashlib`, `re` and `json`.
 - **Parts of bundled modules:** `logging.handlers`, `logging.config` and
-  file handlers; `difflib.HtmlDiff`; `zlib` beyond `crc32` and `adler32`
-  (no deflate; `gzip` and `zipfile` do not exist); `calendar` locales other
-  than C; incremental and stream codecs (and codecs from `codecs.register`
-  are not seen by `str.encode`); `zoneinfo.available_timezones()`;
-  caller locations in log records. `hmac.compare_digest` is not
-  constant-time.
+  file handlers; `difflib.HtmlDiff`; `zlib` beyond `crc32` and `adler32` (no
+  deflate; `gzip` and `zipfile` do not exist); `calendar` locales other than
+  C; incremental and stream codecs (and codecs from `codecs.register` are
+  not seen by `str.encode`); `zoneinfo.available_timezones()`; caller
+  locations in log records. `hmac.compare_digest` is not constant-time.
 - **Codecs** other than UTF-8 (and `utf-8-sig`), UTF-16, UTF-32, ASCII and
   Latin-1 raise `LookupError`.
 - **Missing names:** the builtins `input`, `breakpoint`, `exit`, `quit`,
@@ -1447,15 +1446,12 @@ differs:
 - **SyntaxError text** follows CPython 3.14, except that a misspelt keyword
   gets no "Did you mean", a missing comma gets no "Perhaps you forgot a
   comma?", and a few carets differ.
-- **`MemoryError` from uncollected garbage.** Some copy and bulk
-  operations, which the engine does not retry after a collection, can
-  raise `MemoryError` while garbage not yet collected still counts against
-  `Limits::memory`, where CPython succeeds: three `s.copy()` calls of a
-  2M-item set, each result dropped, raise it at 256 MiB with a quarter of
-  the limit live \[M\]. A snapshot collects first, so it can change the
-  outcome either way, and the fuel spent: one `f(*big, **kw)` charged
-  +0.64%; six of them, unparked `ok` ×6, gave `ok ME ok ME ok ME` and 11%
-  less fuel with a snapshot at every park \[M\]. Being fixed in 0.0.2.
+- **`MemoryError` from uncollected garbage.** Some copy and bulk operations
+  are not retried after a collection, so uncollected garbage can make them
+  raise where CPython succeeds: the third of three dropped `s.copy()` of a
+  2M-item set at 256 MiB \[M\]. A snapshot collects first, so it can flip
+  the outcome either way and move the fuel (six `f(*big, **kw)`: 11% less
+  with a snapshot at every park \[M\]). Being fixed in 0.0.2.
 - **Fuel after a snapshot, long non-ASCII strs.** A snapshot collects, and
   a collection forgets the positions that make indexing a long non-ASCII
   str cheap, so the next walk is charged again, restored or not:
@@ -1465,16 +1461,20 @@ differs:
 - **Address-derived values.** Which address a new object gets depends on
   when collections run, and that depends on slice boundaries, snapshots,
   GC stress and the session's limits. So `id()` values, default `repr`s
-  (`<... object at 0x...>`) and the order of sets and dicts keyed by
-  identity-hashed objects can differ between runs sliced differently
-  \[M\]. What holds: `id` is unique among live objects, `id(x)` is the
-  same for `x`'s whole life across parks and restores, `is` is
-  unaffected, and containers with value-hashed keys keep their order.
+  (`<... object at 0x...>`) and the order of sets of identity-hashed
+  objects can differ between runs sliced differently \[M\]. What holds:
+  `id` is unique among live objects, `id(x)` is the same for `x`'s whole
+  life across parks and restores, `is` is unaffected, and containers with
+  value-hashed keys keep their order.
 - **Smaller ones.** `io.StringIO.seek` accepts a float; `bytes.hex(None)`
   is accepted; a set display of constants whose hashes collide can iterate
   in another order; a dataclass's `__doc__` is `None`; `re`'s ignore-case
   matching misses a few case folds (`ﬅ`/`ﬆ`, the Kelvin sign in a class
-  range).
+  range); `copy.copy` and `deepcopy` of an exception lose its `args` or
+  raise `TypeError` (`ValueError('a')`), and of a set subclass lose its
+  items; `OSError(2, 'x')` is a plain `OSError`, not `FileNotFoundError`;
+  an int outside 64 bits tested `in` a long range raises `MemoryError`
+  (`(1 << 70) in range(10**7)`) \[M\].
 
 ### Code size limits
 

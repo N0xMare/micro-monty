@@ -458,28 +458,29 @@ messages; copy wording where behaviour matches.
   first unequal pair in one descent (`_ord`); a pair that needs Python
   code falls back to CPython's `==`-then-`<` steps.
 - **Membership scans charge per item.** `in` on a list, tuple or
-  `dict.values()` (or a range, for an item that is not an int), and
-  `count`/`index` on lists and tuples and `list.remove`, charge one fuel
-  unit per item compared. Over a long list or tuple they go in chunked
-  steps (`nstep::op::SEQ_IN`, `SEQ_SCAN`; "Bounded native steps", below);
-  `in` on `dict.values()`, or on a range for an item that is not an int,
-  collects the items and compares them in one native step
-  (`Vm::contains`), bounded only by the data. `in` on an iterator, which
+  `dict.values()` (or a range, for an item that is not an int that fits
+  64 bits), and `count`/`index` on lists and tuples and `list.remove`,
+  charge one fuel unit per item compared. Over a long list or tuple they
+  go in chunked steps (`nstep::op::SEQ_IN`, `SEQ_SCAN`; "Bounded native
+  steps", below); `in` on `dict.values()`, or on a range for such an item,
+  collects the items with `Vm::collect` (`Vm::contains`), which hands off
+  past `COLLECT_CHUNK` items as below. `in` on an iterator, which
   need not end, scans `WALK` items natively and then hands off to
   `_op_contains`, which goes on from the same position in bytecode and
   parks on fuel, deadlines and requests. `any` and `all` do the same
   (`_any_rest`, `_all_rest`) on an iterator or range, and at the first item
   with a user `__bool__` or `__len__`.
 - **Collecting an iterator parks between chunks.** `Vm::collect` copies a
-  list or tuple, and gathers the iterators of a container's data (lists,
-  tuples, dicts, sets, str, bytes and their views) in one native step, one
-  fuel unit per item: their data bounds them. A range (whose length is
-  checked against the memory limit first) can be long, and any other native
+  list or tuple whole in one native step, one fuel unit per item. Anything
+  else, containers and their views included, it gathers through the
+  iterator: a container's items can be many, a range (whose length is
+  checked against the memory limit first) long, and any other native
   iterator (zip, enumerate, itertools; a generator, `map` and `filter`
   always run in the twin) need not end, so after `COLLECT_CHUNK` (2^16)
-  items `collect` keeps what it took and hands off (an 8M range: 10–11 ms
-  a step [M]). A range object goes on from a new iterator at the items
-  taken, and a range's list is sized up front. `list` and `tuple` of a long
+  items `collect` keeps what it took and hands off, and every caller must
+  be able to continue in its twin (an 8M range: 10–11 ms a step [M]). A
+  range object goes on from a new iterator at the items taken, and a
+  range's list is sized up front. `list` and `tuple` of a long
   range of small ints build their result from the range in place, a slice
   per step (`Vm::range_seq`). `Vm::slow_call` replaces the iterator in the
   twin's arguments with a list of the items and calls
@@ -702,8 +703,14 @@ are the rules above. Where the code falls short, the clause says so under
    2^21 units, about 1 s at 0.48 µs).
 
    **Today:** the native bound is measured on every row of
-   `crates/micro-monty/tests/steps.rs`, and every row is `Bounded`. The
-   allocation floor is closed: a large list buffer, tuple or set key table
+   `crates/micro-monty/tests/steps.rs`, and every row is `Bounded`. Sites
+   that are not yet rows pass it on guest input [M, reviewer]: a set
+   insert of keys with equal hashes (`set(l)` of 4,000 ints that all hash
+   to 0: 1,194 ms in one step) and the table rebuild of such a set or dict
+   (232–650 ms at 20,000 keys); and view operations with a set-subclass,
+   generator or items operand (`d.keys() - ss`, 1M keys, `ss` a set
+   subclass: 158 ms; up to 291 ms). Both are being fixed in 0.0.2, with
+   rows. The allocation floor is closed: a large list buffer, tuple or set key table
    comes unfilled from a fresh zeroed segment (`Heap::alloc_unfilled`), so
    its pages fault in as the steps write it; a set's keys are marked empty
    a slice per step without the write barrier, then its hashes are written
@@ -754,14 +761,20 @@ are the rules above. Where the code falls short, the clause says so under
    the operation not started. **Today:** most natives charge after the
    work (`Vm::burn`), and the overdraft bound holds because each step is
    short; only the int operators, the big-int builtins and the sorts
-   estimate first (`Vm::native_short`, `Vm::fuel_short`). The bound is
+   estimate first (`Vm::native_short`, `Vm::fuel_short`). Not every unit
+   is charged yet: a set insert compares keys with equal hashes for free
+   (`set_put` charges a compare only past its first visit: `set(l)` of
+   4,000 colliding ints is charged 17,459 units for about 8 million
+   compares [M, reviewer]), and a set's or dict's table rebuild probes past
+   colliding keys uncharged; both are being fixed in 0.0.2. The bound is
    checked on every `Bounded` row; a sweep over every public method of
    the builtin types and native modules has not been rerun since the
    chunked steps landed.
 4. **Results do not depend on how the host slices the run.** Output,
-   exceptions, the values left and the fuel spent are the same whether
-   the cell runs unparked, in fuel slices of any size, past deadlines or
-   through snapshots restored in other processes and on the other target.
+   exceptions, the values left and the fuel spent are the same, with the
+   exceptions under Today, whether the cell runs unparked, in fuel slices
+   of any size, past deadlines or through snapshots restored in other
+   processes and on the other target.
    Budgets that pick a native or a twin path are constants, not the fuel
    left. **Today:** outputs and outcomes are checked by durability
    (parked every few units, and across targets) and the fuel spent by
@@ -792,9 +805,9 @@ are the rules above. Where the code falls short, the clause says so under
    Six such calls under `try` beside a 24 MB pad print `ok` six times
    unparked and `ok ME ok ME ok ME` with a snapshot at every park, and the
    fuel falls 11% (6,867,483 → 6,107,194 units) [M, reviewer]. Full retry
-   coverage (every operation retried after its collection) would close
-   both; it is not built. Fuel totals also depend on snapshots when a
-   cell indexes or searches a long non-ASCII str: every collection forgets
+   coverage (every operation retried after its collection), which closes
+   both, is being fixed in 0.0.2. Fuel totals also depend on snapshots
+   when a cell indexes or searches a long non-ASCII str: every collection forgets
    the char positions, a snapshot collects first, and a restore starts
    without them, so the next walk after any `Session::snapshot()`,
    restored or not, is charged again (`conformance/own/419`: +9,775 units
@@ -804,8 +817,8 @@ are the rules above. Where the code falls short, the clause says so under
    object gets depends on when collections run, and that depends on slice
    boundaries, snapshots, GC stress and the session's limits. So `id()`
    values, default `repr`s (`<... object at 0x...>`) and the order of sets
-   and dicts keyed by identity-hashed objects can differ between runs
-   sliced differently [M, reviewer]. What holds: `id` is unique among live
+   of identity-hashed objects can differ between runs sliced differently
+   [M, reviewer]. What holds: `id` is unique among live
    objects, `id(x)` is the same for `x`'s whole life across parks and
    restores, `is` is unaffected, and containers with value-hashed keys keep
    their order.
@@ -869,10 +882,12 @@ crates have no API of their own to keep.
 
 **The `mm-wasm` interface.** A host checks `ABI_VERSION` (`mm-wasm-abi`,
 currently 1) and the required export list before it runs anything, and
-refuses a guest of another version. A change to the interface bumps
-`ABI_VERSION`, with `crates/mm-wasm-host` and `hosts/js` updated in the
-same change. Session options travel in a tagged options record: a tag below
-`0x80` is strict (a guest that does not know it refuses the record), a tag
+refuses a guest of another version. A change to the interface, a new
+option tag or optional export included, bumps `ABI_VERSION`, with
+`crates/mm-wasm-host` and `hosts/js` updated in the same change; the tag
+classes and optional exports below describe the format, not a way to add
+without a bump. Session options travel in a tagged options record: a tag
+below `0x80` is strict (a guest that does not know it refuses the record), a tag
 from `0x80` (`option::IGNORABLE`) is skipped by a guest that does not know
 it. Only an option a guest can safely run without (a hint, a diagnostic)
 takes an ignorable tag; one that limits or changes behaviour (a limit, the
@@ -917,9 +932,10 @@ std's panic formatting, backtrace symbolization (gimli, addr2line, miniz,
 demangle) and `.eh_frame`; a panic in a shipped binary aborts without a
 message. Shipped builds also pass `--cfg mm_shipped`, which turns on
 `#[optimize(size)]` for part of the cold breadth through
-`cfg_attr(mm_shipped, …)`. Shipped codegen has two native gates in
-`cargo xtask check`: the own cases run on a natively built shipped `mm`
-(`cargo xtask shipped-mm`), and the step-time oracle (§5.1) is built with
+`cfg_attr(mm_shipped, …)`; the attribute is unstable (rustc 1.100.0
+rejects it, `E0658` [M]), so only `RUSTC_BOOTSTRAP=1` builds enable it.
+Shipped codegen has two native gates in `cargo xtask check`: the own
+cases run on a natively built shipped `mm` (`cargo xtask shipped-mm`), and the step-time oracle (§5.1) is built with
 `--cfg mm_shipped` (keeping unwinding and the installed std, so a failing
 row panics with its name). Bench Ir (§12) measures the shipped `mm` too:
 an `optimize(size)` set can pass Ir and still slow shipped steps past the
@@ -964,7 +980,7 @@ ceiling. The secondary budget is enforced only on
 `x86_64-unknown-linux-gnu`; other hosts report the native size without a
 budget, because executable formats and code size differ per target.
 
-**Current sizes** [M, 1cfcde3 (v0.0.1), Rust 1.99.0, binaryen 133,
+**Sizes at v0.0.1** [M, 1cfcde3, Rust 1.99.0, binaryen 133,
 `cargo xtask size`]:
 
 | Artifact | Bytes |
@@ -1186,7 +1202,7 @@ The table retains its high-water capacity inside the arena budget.
   place, not copied.
 - **Dispatch: one `match` loop** with pc, frame base and the accumulator in
   locals; handlers `#[inline(always)]`. Rust has no computed goto and `become`
-  is unstable (rustc 1.99.0 rejects it, `E0658` [M]).
+  is unstable (rustc 1.100.0 rejects it, `E0658` [M]).
 - **Why** [M]: a dispatch spike over fib, loop, closure, attribute, method,
   list and dict kernels, without GC, bigint or exceptions, measured the
   accumulator design fastest on all seven, 4–27% faster than a stack
@@ -1773,7 +1789,7 @@ header.
 
 | Session | Size | Write | Restore |
 |---|---|---|---|
-| empty | 94.6 KB | 0.06 ms | 0.20 ms |
+| empty | 41.3 KB [M, reviewer] | 0.06 ms | 0.20 ms |
 | 100k `(i, -i)` tuples | 3.5 MB | 1.9 ms | 1.5 ms |
 | 100k `str(i)` | 5.9 MB | 2.6 ms | 3.8 ms |
 | 100k `{'i': i, 's': str(i)}` | 10.7 MB | 7.8 ms | 7.7 ms |
@@ -1781,11 +1797,15 @@ header.
 
 Size tracks the live heap, so the remaining lever is object layout, not the
 snapshot format. Monty takes 10.63 MB / 17 ms / 89 ms and dquickts
-3.06 MB / 41 ms / 28 ms on 100k small objects [M]. Restore costs about a
-snapshot's per MiB of image: small objects 1.2–1.5 ms/MiB native, 1.0–1.8
-under wasmtime and 0.9–1.7 on V8; large blocks 0.3–0.9. A process's first
-restore takes up to 1.8 ms/MiB, and V8's first call into a new instance adds
-a warm-up (154 ms at 35 MiB) [M, one 16-core Amp orb].
+3.06 MB / 41 ms / 28 ms on 100k small objects [M]. On large heaps a
+snapshot, its full collection included, takes about 1.4 ms per MiB of
+image natively, under wasmtime and on V8 (about 250 ms at 170 MiB); the
+small images above write faster. A restore costs about as much per MiB:
+small objects 1.2–1.5 ms/MiB native, 1.0–1.8 under wasmtime and 0.9–1.7
+on V8; large blocks 0.6–0.9 native and 0.3–0.7 on wasm. A process's first
+restore takes up to 1.7 ms/MiB native and 1.8 on wasm, and V8's first call
+into a new instance adds a warm-up (154 ms at 35 MiB) [M, one 16-core Amp
+orb].
 `bench/evidence/restore-cost/run.sh` at `2bcbb8c` reruns these.
 
 ## 10. Host boundary
@@ -2447,8 +2467,8 @@ it trails CPython on generators, fmt and interp (about 2×).
 
 **Instruction counts.** `bench/callgrind.py` counts each program's Ir under
 callgrind twice, on the shipped native `mm` (`target/<host>/release/mm`,
-built by `cargo xtask shipped-mm`; the script stops if it is missing). The *gated* count runs from glibc's `__libc_start_main`
-onward and leaves out glibc's `pthread_getattr_np`; the *whole-process*
+built by `cargo xtask shipped-mm`; the script stops if it is missing). The
+*gated* count runs from glibc's `__libc_start_main` onward and leaves out glibc's `pthread_getattr_np`; the *whole-process*
 count includes everything. A change may move the gated count of each
 program by at most ±0.5%, and the whole-process count is reported beside
 it. The two parts left out depend on where the binary's segments land, not

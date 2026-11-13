@@ -8,9 +8,12 @@
 //! A host checks [`ABI_VERSION`] and the export list ([`export::REQUIRED`])
 //! before it runs anything, and refuses a guest of another version.
 //! micro-monty is 0.0.x with no compatibility layers: a change to the
-//! interface (an import, a signature or meaning, a required export, a code
-//! or an encoding) bumps [`ABI_VERSION`], with `crates/mm-wasm-host` and
-//! `hosts/js` updated in the same change.
+//! interface (an import, a signature or meaning, an export, required or
+//! optional, an option tag, ignorable or strict, a code or an encoding)
+//! bumps [`ABI_VERSION`], with `crates/mm-wasm-host` and `hosts/js` updated
+//! in the same change. The tag classes and optional exports below describe
+//! the record format and what a host may do without; they are not a way to
+//! add to the interface without a bump.
 //!
 //! - Session options travel in a tagged record ([`put_options`],
 //!   [`option`]). A tag says whether a guest that does not know it may

@@ -14,7 +14,7 @@ as part of its conformance gate.
 
 ## Size and specs
 
-Measured on 0.0.1 [M]:
+Measured on v0.0.1 (`1cfcde3`) [M]:
 
 - `hello.wasm` 2,271,969 B, native `hello` 2,490,336 B (stripped, the whole
   engine and its default stdlib).
