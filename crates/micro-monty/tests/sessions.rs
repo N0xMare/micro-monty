@@ -1060,45 +1060,6 @@ fn a_missed_module_attribute_charges_fuel_for_its_hint() {
 }
 
 #[test]
-fn mm_aio_natives_refuse_objects_of_other_kinds() {
-    // `_mm` is importable by the guest: its asyncio natives must not
-    // settle or read the slots of objects that are not loop futures.
-    let mut c = Cells::new();
-    let src = "\
-import _mm, asyncio
-def gen():
-    yield 1
-lst, tup, g, sl = [1, 2, 3], (1, 2), gen(), asyncio.sleep(0, 'slept')
-r = []
-for x in (lst, tup, g, sl):
-    try:
-        _mm.aio_set(x, 5)
-    except TypeError as e:
-        r.append(str(e))
-async def main():
-    spent = asyncio.sleep(0)
-    await spent
-    for x in ([[1]], [(1,)], [spent]):
-        try:
-            await _mm.aio_first(x)
-        except TypeError as e:
-            r.append(str(e))
-    return await sl
-fut = _mm.aio_future()
-_mm.aio_set(fut, 7)
-[r, lst, tup, list(g), asyncio.run(main()), fut.result()]
-";
-    let set = "'an asyncio.Future is required'";
-    let first = "'a task or future is required'";
-    assert_eq!(
-        c.value(src),
-        format!(
-            "[[{set}, {set}, {set}, {set}, {first}, {first}, {first}], [1, 2, 3], (1, 2), [1], 'slept', 7]"
-        )
-    );
-}
-
-#[test]
 fn never_awaited_coroutines_are_collected_and_reported_once() {
     // Coroutines that die unstarted are garbage (CPython warns as each
     // dies); the end of the cell still names each once, in creation order,
@@ -1174,6 +1135,23 @@ asyncio.run(main())
         panic!("{p:?}")
     };
     assert_eq!(v.repr, "499500");
+}
+
+#[test]
+fn the_schedulers_timers_end_cancelled_with_their_loop() {
+    // `call_later`'s timer is a task of the scheduler's own, which
+    // `asyncio.run`'s shutdown does not wait for: it ends cancelled with
+    // the loop, its coroutine closed, as CPython's closing loop drops the
+    // handle (which itself stays uncancelled).
+    let mut c = Cells::new();
+    let src = "import asyncio\nh = None\nasync def main():\n    global h\n\
+               \x20   h = asyncio.get_running_loop().call_later(100, print, 'never')\n\
+               \x20   await asyncio.sleep(0)\nasyncio.run(main())\n\
+               (h._task.done(), h._task.cancelled(), h.cancelled())";
+    assert_eq!(c.value(src), "(True, True, False)");
+    let again = "async def f():\n    return await asyncio.sleep(0, 'again')\nasyncio.run(f())";
+    assert_eq!(c.value(again), "'again'");
+    assert_eq!(c.take_out(), "");
 }
 
 #[test]

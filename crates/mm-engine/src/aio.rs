@@ -1070,9 +1070,26 @@ impl Vm {
     }
 
     /// Ends every task but the main one, which is running (when the
-    /// coroutine `asyncio.run` started returns or raises).
+    /// coroutine `asyncio.run` started returns or raises). The program's
+    /// tasks are done by then; the scheduler's own (timers: `call_later`'s,
+    /// `wait_for`'s, `as_completed`'s) end cancelled and their coroutines
+    /// closed, as CPython's closing loop drops its scheduled handles.
     fn drop_other_tasks(&mut self) {
         self.check_parked_bytes();
+        for k in 1..self.tasks.len() {
+            let Some(Some(t)) = self.tasks.get(k) else {
+                continue;
+            };
+            let h = t.handle;
+            if !h.is_obj_kind(ty::TASK as u8) || self.raw_of(h, aw::STATE) != aw::PENDING {
+                continue;
+            }
+            let c = self.vslot(h, aw::EXTRA);
+            if c.is_obj_kind(ty::CORO as u8) {
+                self.coro_finished(c);
+            }
+            self.settle_cancelled(h, Value::NONE, Value::NONE);
+        }
         for t in self.tasks.iter_mut().skip(1) {
             *t = None;
         }

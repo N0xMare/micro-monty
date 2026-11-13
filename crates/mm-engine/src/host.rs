@@ -109,7 +109,11 @@ pub enum HostValue {
     Tuple(Vec<HostValue>),
     /// A dict with `str` keys, in insertion order.
     Dict(Vec<(String, HostValue)>),
-    /// A named tuple: its type name and fields in order.
+    /// A named tuple: its type name and fields in order. The names follow
+    /// `collections.namedtuple`'s rule without `rename`: each an identifier
+    /// and not a keyword, field names not starting with `_` and not
+    /// repeated. Passed to Python with any other, it raises `TypeError`
+    /// with `namedtuple`'s message.
     Record {
         /// The type name.
         name: String,
@@ -1251,6 +1255,12 @@ impl Vm {
         if let Some(c) = self.dict_get(cache, key)? {
             return Ok(c);
         }
+        // Only valid names reach the cache: `namedtuple`'s rule, without
+        // renaming (a host bug is reported, not hidden).
+        let fields: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
+        if let Some(msg) = record_names_error(name, &fields) {
+            return Err(self.err(T::TypeError, &msg));
+        }
         let names = self.tuple_items(key);
         let field_names = self.alloc_tuple(names.get(1..).unwrap_or_default())?;
         let ns = self.new_dict()?;
@@ -1705,4 +1715,75 @@ pub(crate) fn mm_host_help(vm: &mut Vm, a: crate::vm::CallArgs) -> Result<Value,
         Some(t) => vm.new_str(&t),
         None => Ok(Value::NONE),
     }
+}
+
+/// Why `namedtuple(name, fields)` would refuse these names (CPython's
+/// messages, without `rename`): each an identifier and not a keyword, a
+/// field not starting with `_` and not repeated.
+fn record_names_error(name: &str, fields: &[&str]) -> Option<String> {
+    let keyword = |s: &str| {
+        matches!(
+            s,
+            "False"
+                | "None"
+                | "True"
+                | "and"
+                | "as"
+                | "assert"
+                | "async"
+                | "await"
+                | "break"
+                | "class"
+                | "continue"
+                | "def"
+                | "del"
+                | "elif"
+                | "else"
+                | "except"
+                | "finally"
+                | "for"
+                | "from"
+                | "global"
+                | "if"
+                | "import"
+                | "in"
+                | "is"
+                | "lambda"
+                | "nonlocal"
+                | "not"
+                | "or"
+                | "pass"
+                | "raise"
+                | "return"
+                | "try"
+                | "while"
+                | "with"
+                | "yield"
+        )
+    };
+    let repr = crate::text::str_repr;
+    for (k, n) in core::iter::once(&name).chain(fields).enumerate() {
+        if !crate::strmeth::is_identifier(n) {
+            return Some(format!(
+                "Type names and field names must be valid identifiers: {}",
+                repr(n)
+            ));
+        }
+        if keyword(n) {
+            return Some(format!(
+                "Type names and field names cannot be a keyword: {}",
+                repr(n)
+            ));
+        }
+        if k > 0 && n.starts_with('_') {
+            return Some(format!(
+                "Field names cannot start with an underscore: {}",
+                repr(n)
+            ));
+        }
+        if k > 0 && fields[..k - 1].contains(n) {
+            return Some(format!("Encountered duplicate field name: {}", repr(n)));
+        }
+    }
+    None
 }

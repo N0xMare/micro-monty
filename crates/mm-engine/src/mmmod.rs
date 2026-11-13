@@ -26,15 +26,19 @@ pub(crate) fn mm_signature(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (name, qualname) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     let (defaults, kwdefaults, imp) = (vm.arg_o(&a, 4), vm.arg_o(&a, 5), vm.arg_o(&a, 6));
     let mut names: Vec<String> = Vec::new();
+    // Each collected once: a one-shot iterator has nothing left the second
+    // time.
+    let mut kwonly = 0;
     for i in [2, 3] {
-        for &v in &vm.collect(vm.arg_o(&a, i))? {
+        let items = vm.collect(vm.arg_o(&a, i))?;
+        for &v in &items {
             if !Vm::is_str(v) {
                 return Err(vm.err(T::TypeError, "parameter names must be str"));
             }
             names.push(String::from(vm.str_ref_o(v)));
         }
+        kwonly = items.len();
     }
-    let kwonly = vm.collect(vm.arg_o(&a, 3))?.len();
     let argc = names.len() - kwonly;
     if !Vm::is_str(name) || !Vm::is_str(qualname) {
         return Err(vm.err(T::TypeError, "names must be str"));
@@ -365,15 +369,24 @@ pub(crate) fn mm_urandom(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `_mm.os_function(name)`: the host function the embedder registered to
 /// handle OS operation `name` (`os.getenv`, `Path.read_text`, ...), or
-/// `None` (docs/spec.md §10: OS operations are host calls).
+/// `None` (docs/spec.md §10: OS operations are host calls). Only a host
+/// function under a dotted name, the OS hooks' names: never another
+/// builtin.
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn mm_os_function(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let name = vm.arg_o(&a, 0);
     if !Vm::is_str(name) {
         return Err(vm.err(T::TypeError, "name must be str"));
     }
-    let k = vm.intern(&String::from(vm.str_ref_o(name)))?;
-    Ok(vm.dict_get_str(vm.builtins, k).unwrap_or(Value::NONE))
+    let name = String::from(vm.str_ref_o(name));
+    if !name.contains('.') {
+        return Ok(Value::NONE);
+    }
+    let k = vm.intern(&name)?;
+    Ok(vm
+        .dict_get_str(vm.builtins, k)
+        .filter(|f| f.is_obj_kind(ty::HOSTFN as u8))
+        .unwrap_or(Value::NONE))
 }
 
 /// `_mm.exc_same_meta(a, b)`: CPython's `is_same_exception_metadata` for
@@ -426,4 +439,111 @@ pub(crate) fn mm_exc_tb_here(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> 
         vm.add_tb(e, f.code, f.call_pc);
     }
     Ok(Value::NONE)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, reason = "tests")]
+    use super::*;
+    use crate::vm::VmConfig;
+
+    /// Native `f` on `args`, laid out as a call passes them.
+    fn try_call(
+        vm: &mut Vm,
+        f: fn(&mut Vm, CallArgs) -> Result<Value, Raised>,
+        args: &[Value],
+    ) -> Result<Value, (String, String)> {
+        let base = vm.stack.len();
+        vm.stack.extend_from_slice(args);
+        let a = CallArgs {
+            base: u32::try_from(base).expect("small"),
+            n: u32::try_from(args.len()).expect("small"),
+            kw: u32::MAX,
+        };
+        f(vm, a).map_err(|Raised| vm.exception_parts(vm.exc))
+    }
+
+    fn call(
+        vm: &mut Vm,
+        f: fn(&mut Vm, CallArgs) -> Result<Value, Raised>,
+        args: &[Value],
+    ) -> Value {
+        try_call(vm, f, args).expect("returns")
+    }
+
+    /// The asyncio natives the bundled modules call must not settle or
+    /// read the slots of objects that are not loop futures (they were
+    /// guest-reachable before the import gate).
+    #[cfg(feature = "asyncio")]
+    #[test]
+    fn aio_natives_refuse_objects_of_other_kinds() {
+        use crate::builtins::{aio_future, aio_set};
+        let mut vm = Vm::new(VmConfig::default()).expect("vm");
+        let (one, two) = (Value::int(1).expect("int"), Value::int(2).expect("int"));
+        let lst = vm.new_list(&[one, two]).expect("list");
+        let tup = vm.alloc_tuple(&[one, two]).expect("tuple");
+        let five = Value::int(5).expect("int");
+        let set = (
+            String::from("TypeError"),
+            String::from("an asyncio.Future is required"),
+        );
+        for x in [lst, tup] {
+            assert_eq!(try_call(&mut vm, aio_set, &[x, five]), Err(set.clone()));
+            let first = vm
+                .first_of(&[x])
+                .map_err(|Raised| vm.exception_parts(vm.exc));
+            assert_eq!(
+                first,
+                Err((
+                    String::from("TypeError"),
+                    String::from("a task or future is required")
+                ))
+            );
+        }
+        assert_eq!(vm.list_items(lst), [one, two]);
+        assert_eq!(vm.tuple_items(tup), [one, two]);
+        let fut = call(&mut vm, aio_future, &[]);
+        assert_eq!(call(&mut vm, aio_set, &[fut, five]), Value::NONE);
+        let again = try_call(&mut vm, aio_set, &[fut, five]).map_err(|e| e.0);
+        assert_eq!(
+            again,
+            Err(String::from("asyncio.exceptions.InvalidStateError"))
+        );
+    }
+
+    /// Keyword-only names stay keyword-only when they come from a one-shot
+    /// iterator, which a second collection would find empty.
+    #[test]
+    fn signature_reads_each_name_list_once() {
+        let mut vm = Vm::new(VmConfig::default()).expect("vm");
+        let name = vm.new_str("f").expect("str");
+        let (a, b) = (vm.new_str("a").expect("str"), vm.new_str("b").expect("str"));
+        let params = vm.new_list(&[a]).expect("list");
+        let params = vm.get_iter(params).expect("iter");
+        let kwonly = vm.new_list(&[b]).expect("list");
+        let kwonly = vm.get_iter(kwonly).expect("iter");
+        let args = [
+            name,
+            name,
+            params,
+            kwonly,
+            Value::NONE,
+            Value::NONE,
+            Value::NONE,
+        ];
+        call(&mut vm, mm_signature, &args);
+        let code = &vm.codes[vm.synth[0] as usize].code;
+        assert_eq!(code.params.argcount, 1);
+        assert_eq!(&*code.varnames[1], "b");
+    }
+
+    /// Only a host function under a dotted name: never another builtin.
+    #[test]
+    fn os_function_returns_no_other_builtin() {
+        let mut vm = Vm::new(VmConfig::default()).expect("vm");
+        for n in ["print", "len", "open"] {
+            let n = vm.new_str(n).expect("str");
+            assert_eq!(call(&mut vm, mm_os_function, &[n]), Value::NONE);
+        }
+    }
 }

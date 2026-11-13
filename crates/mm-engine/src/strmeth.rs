@@ -1178,11 +1178,14 @@ pub(crate) fn isidentifier(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         return v;
     }
     let s = this(vm, &a, "isidentifier")?;
+    Ok(Value::from_bool(is_identifier(&s)))
+}
+
+/// What `str.isidentifier()` says of `s`.
+pub(crate) fn is_identifier(s: &str) -> bool {
     let mut cs = s.chars();
     let start = cs.next().is_some_and(|c| c == '_' || ucd::xid_start(c));
-    Ok(Value::from_bool(
-        start && cs.all(|c| c == '_' || ucd::xid_continue(c)),
-    ))
+    start && cs.all(|c| c == '_' || ucd::xid_continue(c))
 }
 
 pub(crate) fn isalnum(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {

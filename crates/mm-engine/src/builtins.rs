@@ -3215,13 +3215,13 @@ fn aio_deadline(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[cfg(feature = "asyncio")]
-fn aio_future(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
+pub(crate) fn aio_future(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
     vm.loop_future()
 }
 
 /// `_aio_set(future, value)`: `future.set_result(value)`.
 #[cfg(feature = "asyncio")]
-fn aio_set(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+pub(crate) fn aio_set(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (f, v) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if !vm.is_loop_future(f) {
         return Err(vm.err(T::TypeError, "an asyncio.Future is required"));

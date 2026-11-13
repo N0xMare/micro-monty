@@ -294,6 +294,54 @@ for bad in ({1, 2}, {1: 'x'}, print):
     );
 }
 
+/// A host record's names follow `namedtuple`'s rule, without renaming:
+/// the cell gets a `TypeError` at the call for any other.
+#[test]
+fn host_record_names_must_be_namedtuple_names() {
+    let out = Arc::new(Mutex::new(String::new()));
+    let (engine, mut s) = session(&out);
+    s.define(&HostModule::untyped("", &["echo"]))
+        .expect("defined");
+    let rec = |name: &str, fields: &[&str]| HostValue::Record {
+        name: name.into(),
+        fields: fields
+            .iter()
+            .map(|f| ((*f).into(), HostValue::Int(1)))
+            .collect(),
+    };
+    let cases = [
+        rec("my-rec", &["a"]),
+        rec("R", &["a", "1b"]),
+        rec("R", &["a", ""]),
+        rec("class", &["a"]),
+        rec("R", &["a", "None"]),
+        rec("R", &["a", "_b"]),
+        rec("R", &["a", "b", "a"]),
+        rec("_R", &["a", "match", "été"]),
+    ];
+    for answer in cases {
+        let p = start(
+            &engine,
+            &mut s,
+            "try:\n    print(echo())\nexcept TypeError as e:\n    print(e)",
+        );
+        assert!(matches!(p, Progress::HostCall { .. }), "{p:?}");
+        let p = s.resume(Resume::Value(answer)).expect("resumes");
+        assert_eq!(p, Progress::Complete(None));
+    }
+    assert_eq!(
+        out.lock().expect("output lock").as_str(),
+        "Type names and field names must be valid identifiers: 'my-rec'\n\
+         Type names and field names must be valid identifiers: '1b'\n\
+         Type names and field names must be valid identifiers: ''\n\
+         Type names and field names cannot be a keyword: 'class'\n\
+         Type names and field names cannot be a keyword: 'None'\n\
+         Field names cannot start with an underscore: '_b'\n\
+         Encountered duplicate field name: 'a'\n\
+         _R(a=1, match=1, été=1)\n"
+    );
+}
+
 #[test]
 fn host_values_convert_both_ways() {
     let out = Arc::new(Mutex::new(String::new()));
