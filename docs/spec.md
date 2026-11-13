@@ -989,9 +989,9 @@ tag the base descends from). A revision whose xtask has `size --head`
 builds itself with its own recipe, so a change to the recipe, such as the
 `wasm-opt` flags, is charged like any other rise; an older one (v0.0.1) is
 built with this checkout's recipe. Any rise past the base, one
-byte or more, needs a commit since the base with the trailer `Size:
-<artifact> +<bytes> <why>` whose bytes cover the rise; a rise with
-uncommitted changes always fails. A rise past the release must stay within
+byte or more, needs trailers `Size: <artifact> +<bytes> <why>` in the
+commits since the base, each giving its own commit's rise, whose bytes
+summed cover the rise; a rise with uncommitted changes always fails. A rise past the release must stay within
 that release's budget in `xtask/size-budget.txt` (`<tag> <artifact> <bytes>
 <why>`, the last line holding, 0 without one), which only the owner
 extends, so small rises cannot add up over a release. The native artifact

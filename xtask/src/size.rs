@@ -18,9 +18,10 @@
 //! conformance results) reuses the sizes of one that had them; the
 //! recipe is in the key, not in the inputs.
 //!
-//! - Any growth past the base, one byte or more, needs a trailer
-//!   `Size: <artifact> +<bytes> <why>` in a commit since the base whose
-//!   `<bytes>` covers at least the measured rise. Growth in a tree with
+//! - Any growth past the base, one byte or more, needs trailers
+//!   `Size: <artifact> +<bytes> <why>` in the commits since the base, each
+//!   giving its own commit's rise, whose `<bytes>` summed cover at least
+//!   the measured rise. Growth in a tree with
 //!   uncommitted changes always fails: no commit message can cover it.
 //! - Growth past the release needs a budget: the last line
 //!   `<tag> <artifact> <bytes> <why>` for that release and artifact in
@@ -157,7 +158,11 @@ fn judge(
     budgets: &BTreeMap<(String, String), u64>,
     messages: &str,
 ) -> Vec<String> {
-    // The largest rise a `Size: <artifact> +<bytes> <why>` trailer records.
+    // The rises the `Size: <artifact> +<bytes> <why>` trailers since the
+    // base record, summed: each records its own commit's rise, and the
+    // measured rise is the net of every commit since the base, so a
+    // commit that shrinks the artifact without a trailer only leaves more
+    // of the sum unused.
     let covered = |artifact: &str| -> i128 {
         messages
             .lines()
@@ -166,8 +171,7 @@ fn judge(
                 let (a, b, _why) = (f.next()?, f.next()?, f.next()?);
                 (a == artifact).then(|| b.strip_prefix('+')?.parse::<i128>().ok())?
             })
-            .max()
-            .unwrap_or(0)
+            .sum()
     };
     let mut failed = Vec::new();
     for (artifact, &bytes) in head {
@@ -457,12 +461,23 @@ mod tests {
             judge(&head, &base, None, &none, "x\n\nSize: hello +1 a table\n"),
             ok
         );
-        // The trailer must cover the whole rise; the largest one counts.
+        // The trailers must cover the whole rise. Each records its own
+        // commit's rise, so they add up: two commits of +600 and +500
+        // cover +1,024 though neither alone does, and a third commit that
+        // shrinks it by 100 without a trailer still passes; +600 and +300
+        // do not cover it.
         let head = sizes(&[("hello.wasm", 2024), ("hello", 5000)]);
-        let short = "Size: hello.wasm +1000 a table\n";
-        assert_eq!(judge(&head, &base, None, &none, short).len(), 1);
-        let two = "Size: hello.wasm +1000 a table\nSize: hello.wasm +1024 the table\n";
-        assert_eq!(judge(&head, &base, None, &none, two), ok);
+        let first = "A\n\nSize: hello.wasm +600 a table\n";
+        assert_eq!(judge(&head, &base, None, &none, first).len(), 1);
+        let second = "B\n\nSize: hello.wasm +500 another table\n";
+        assert_eq!(judge(&head, &base, None, &none, second).len(), 1);
+        let both = format!("{first}{second}");
+        assert_eq!(judge(&head, &base, None, &none, &both), ok);
+        let shrunk = sizes(&[("hello.wasm", 1924), ("hello", 5000)]);
+        let with_shrink = format!("{first}Trim a table\n{second}");
+        assert_eq!(judge(&shrunk, &base, None, &none, &with_shrink), ok);
+        let short = format!("{first}C\n\nSize: hello.wasm +300 a third table\n");
+        assert_eq!(judge(&head, &base, None, &none, &short).len(), 1);
         // Past the release: over a missing (0) budget fails even with a
         // trailer, within the last budget line for that tag passes.
         let why = "Size: hello.wasm +50 a table\n";

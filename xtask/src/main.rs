@@ -101,8 +101,8 @@ tasks:
                              (wasm-opt -Oz on wasm), and the base's (default
                              origin/main) and the release's, in worktrees
                              under target/size/ (cached per commit); a rise
-                             past the base needs a committed trailer `Size:
-                             <artifact> +<bytes> <why>` covering it, past the
+                             past the base needs committed trailers `Size:
+                             <artifact> +<bytes> <why>` that sum to cover it, past the
                              release a budget in xtask/size-budget.txt
                              (`check` runs it as --references, --head and
                              --judge, so the base builds beside the head)
