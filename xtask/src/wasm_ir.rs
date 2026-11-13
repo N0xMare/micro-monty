@@ -18,12 +18,18 @@
 //!
 //! A committed revision's counts are cached in `target/wasm-ir/cache/`,
 //! keyed by the counting method and the wasmtime, `wasm-opt` and valgrind
-//! versions, so an unmoved base or anchor is neither built nor run again.
+//! versions, each program's count also by its source's hash (the programs
+//! are this checkout's `bench/`, whatever the revision), so an unmoved base
+//! or anchor is neither built nor run again, and an edited program is.
 //!
 //! The anchor is the latest `v*` tag the base descends from, or, when a
 //! commit since that tag accepted a rise (a `Wasm-IR-Accepted:` line in its
-//! message), the latest such commit; `--anchor REV` names another. Against
-//! both base and anchor, the gate fails when a program's count rises past
+//! message), the latest such commit; `--anchor REV` names another. A
+//! checkout without the tag fails rather than go without an anchor. The
+//! anchor's count of a program is the least of the anchor's, the base's
+//! and every first-parent commit's between them that changed the build's
+//! sources (`INPUTS`), so a gain moves the anchor down with it and later
+//! rises count from there. Against both base and anchor, the gate fails when a program's count rises past
 //! 1.0% (`PROGRAM_LIMIT`), the geometric mean of the ratios past 0.5%
 //! (`GEOMEAN_LIMIT`), or `startup`'s count, about 0.9M, by more than
 //! `STARTUP_LIMIT` instructions; `startup` is left out of the geomean.
@@ -72,6 +78,19 @@ const BULK: [&str; 2] = [
 ];
 /// The line that marks a commit whose rise was accepted; it re-anchors.
 const ACCEPTED: &str = "Wasm-IR-Accepted:";
+/// What a revision's `mm` is built from (the running xtask builds every
+/// revision, so its flags are this checkout's): a commit that changes none
+/// of it counts as its parent does.
+const INPUTS: [&str; 8] = [
+    "crates",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".cargo",
+    ":(exclude)crates/*/tests/*",
+    ":(exclude)crates/mm-wasm-host",
+    ":(exclude)*.md",
+];
 
 /// One program's instructions: in guest code, and under the bulk libcalls.
 #[derive(Clone, Copy, Default)]
@@ -89,9 +108,11 @@ impl Count {
 /// Counts per program name.
 type Counts = BTreeMap<String, Count>;
 
-/// A build to count: the working tree (`sha` none) or a commit.
+/// A build to count: the working tree (`sha` none) or a commit, built in
+/// `target/wasm-ir/<target>`; `label` names its files.
 struct Side {
-    label: &'static str,
+    label: String,
+    target: &'static str,
     name: String,
     sha: Option<String>,
 }
@@ -153,29 +174,28 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             Some(rev) => {
                 let s = sha(rev)?;
                 Side {
-                    label: "head",
+                    label: "head".to_owned(),
+                    target: "head",
                     name: format!("{rev} ({})", short(&s)),
                     sha: Some(s),
                 }
             }
             None => Side {
-                label: "head",
+                label: "head".to_owned(),
+                target: "head",
                 name: format!("working tree ({})", head_id(&root)?),
                 sha: None,
             },
         },
         Side {
-            label: "base",
+            label: "base".to_owned(),
+            target: "base",
             name: format!("{base} ({})", short(&base_sha)),
-            sha: Some(base_sha),
+            sha: Some(base_sha.clone()),
         },
     ];
-    if let Some((rev, a)) = anchor {
-        sides.push(Side {
-            label: "anchor",
-            name: format!("{rev} ({})", short(&a)),
-            sha: Some(a),
-        });
+    if let Some((rev, a)) = &anchor {
+        sides.extend(anchor_sides(&root, rev, a, &base_sha)?);
     }
     for side in &sides {
         println!("wasm-ir: {:<6} = {}", side.label, side.name);
@@ -188,7 +208,12 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         key,
     };
     let counts = measure(&root, &tools, &sides, &programs, head.is_some())?;
-    let anchor = sides.get(2).map(|side| (side.name.as_str(), &counts[2]));
+    // The anchor's counts: the least from the anchor to the base.
+    let least = (sides.len() > 2).then(|| least(&counts[1..]));
+    let anchor_name = sides
+        .get(2)
+        .map(|side| format!("{} to the base", side.name));
+    let anchor = anchor_name.as_deref().zip(least.as_ref());
     let failures = report(&programs, &counts[0], (&sides[1].name, &counts[1]), anchor);
     verdict(&failures)
 }
@@ -207,6 +232,80 @@ fn select(only: Option<&str>) -> Result<Vec<(&'static str, &'static str)>, Strin
                 .ok_or_else(|| format!("wasm-ir: no bench program `{n}`"))
         })
         .collect()
+}
+
+/// The anchor `rev` (commit `sha`) and the commits after it up to `base`
+/// that changed the build, as sides to count.
+fn anchor_sides(root: &Path, rev: &str, sha: &str, base: &str) -> Result<Vec<Side>, String> {
+    let short = |sha: &str| sha[..sha.len().min(10)].to_owned();
+    let mut sides = vec![Side {
+        label: "anchor".to_owned(),
+        target: "anchor",
+        name: format!("{rev} ({})", short(sha)),
+        sha: Some(sha.to_owned()),
+    }];
+    for c in changed_since(root, sha, base)? {
+        sides.push(Side {
+            label: format!("since-{}", short(&c)),
+            target: "anchor",
+            name: format!("{} since the anchor", short(&c)),
+            sha: Some(c),
+        });
+    }
+    Ok(sides)
+}
+
+/// Each program's least count over `counts`.
+fn least(counts: &[Counts]) -> Counts {
+    let mut out = Counts::new();
+    for c in counts {
+        for (name, &n) in c {
+            out.entry(name.clone())
+                .and_modify(|m: &mut Count| {
+                    if n.total() < m.total() {
+                        *m = n;
+                    }
+                })
+                .or_insert(n);
+        }
+    }
+    out
+}
+
+/// The first-parent commits after `anchor` up to `base`, `base` left out,
+/// whose `INPUTS` differ from the commit before them.
+fn changed_since(root: &Path, anchor: &str, base: &str) -> Result<Vec<String>, String> {
+    let list = git(
+        root,
+        &[
+            "rev-list",
+            "--first-parent",
+            "--reverse",
+            &format!("{anchor}..{base}"),
+        ],
+    )?;
+    let mut out = Vec::new();
+    let mut before = anchor.to_owned();
+    for sha in list.lines() {
+        let args = [
+            &["diff", "--name-only", before.as_str(), sha, "--"][..],
+            &INPUTS,
+        ]
+        .concat();
+        if sha != base && !git(root, &args)?.is_empty() {
+            out.push(sha.to_owned());
+        }
+        sha.clone_into(&mut before);
+    }
+    Ok(out)
+}
+
+/// FNV-1a of a bench program's source, which keys its cached counts.
+fn source_hash(bytes: &[u8]) -> String {
+    let h = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{h:016x}")
 }
 
 /// The tools a count runs, and the cache key they make.
@@ -233,13 +332,19 @@ fn measure(
     let expected = read_expected(&bench.join("expected.txt"))?;
     let scratch = dir.join("callgrind");
     fs::create_dir_all(&scratch).map_err(|error| format!("{}: {error}", scratch.display()))?;
+    let mut hashes = BTreeMap::new();
+    for &(name, stem) in programs {
+        let path = bench.join(format!("{stem}.py"));
+        let source = fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+        hashes.insert(name.to_owned(), source_hash(&source));
+    }
     let mut counts: Vec<Counts> = Vec::new();
     let mut jobs: Vec<(usize, &str, &str, PathBuf)> = Vec::new();
     for (i, side) in sides.iter().enumerate() {
         let cached = side
             .sha
             .as_deref()
-            .map(|s| load(&cache, s, &tools.key))
+            .map(|s| load(&cache, s, &tools.key, &hashes))
             .unwrap_or_default();
         let missing: Vec<(&str, &str)> = programs
             .iter()
@@ -250,19 +355,22 @@ fn measure(
             println!("wasm-ir: {} counts cached", side.label);
         } else {
             let tree = match &side.sha {
-                Some(s) if side.label != "head" || head_rev => {
-                    let tree = dir.join(format!("{}-src", side.label));
+                Some(s) if side.target != "head" || head_rev => {
+                    let tree = dir.join(format!("{}-src", side.target));
                     checkout(root, &tree, s)?;
                     tree
                 }
                 _ => root.to_path_buf(),
             };
-            let mm = build_mm(
+            let built = build_mm(
                 &tree,
-                &dir.join(side.label),
+                &dir.join(side.target),
                 &tools.wasmtime,
                 Some(&tools.isa),
             )?;
+            // Sides share a target directory: each keeps its own module.
+            let mm = dir.join(format!("{}.cwasm", side.label));
+            fs::copy(&built, &mm).map_err(|error| format!("{}: {error}", mm.display()))?;
             jobs.extend(missing.into_iter().map(|(n, s)| (i, n, s, mm.clone())));
         }
         counts.push(cached);
@@ -284,20 +392,23 @@ fn measure(
     }
     for (side, c) in sides.iter().zip(&counts) {
         if let Some(s) = &side.sha {
-            save(&cache, s, &tools.key, c)?;
+            save(&cache, s, &tools.key, &hashes, c)?;
         }
     }
     Ok(counts)
 }
 
 /// The latest `v*` tag `base` descends from, or the latest commit since it
-/// whose message accepts a rise; none before the first tag.
+/// whose message accepts a rise; an error without such a tag.
 fn default_anchor(root: &Path, base: &str) -> Result<Option<(String, String)>, String> {
     let Ok(tag) = git(
         root,
         &["describe", "--tags", "--abbrev=0", "--match", "v*", base],
     ) else {
-        return Ok(None);
+        return Err(format!(
+            "wasm-ir: no v* tag reachable from {base}, so no anchor: fetch the \
+             tags (`git fetch --tags origin`) or name one with --anchor REV"
+        ));
     };
     let accepted = git(
         root,
@@ -336,8 +447,9 @@ fn version(tool: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// The cached counts of commit `sha` under `key`; none when the key differs.
-fn load(cache: &Path, sha: &str, key: &str) -> Counts {
+/// The cached counts of commit `sha` under `key`; none when the key
+/// differs, and none for a program whose source hash is not `hashes`'.
+fn load(cache: &Path, sha: &str, key: &str, hashes: &BTreeMap<String, String>) -> Counts {
     let Ok(text) = fs::read_to_string(cache.join(format!("{sha}.tsv"))) else {
         return Counts::new();
     };
@@ -351,16 +463,24 @@ fn load(cache: &Path, sha: &str, key: &str) -> Counts {
             let name = f.next()?.to_owned();
             let guest = f.next()?.parse().ok()?;
             let bulk = f.next()?.parse().ok()?;
+            (hashes.get(&name).map(String::as_str) == f.next()).then_some(())?;
             Some((name, Count { guest, bulk }))
         })
         .collect()
 }
 
-fn save(cache: &Path, sha: &str, key: &str, counts: &Counts) -> Result<(), String> {
+fn save(
+    cache: &Path,
+    sha: &str,
+    key: &str,
+    hashes: &BTreeMap<String, String>,
+    counts: &Counts,
+) -> Result<(), String> {
     fs::create_dir_all(cache).map_err(|error| format!("{}: {error}", cache.display()))?;
     let mut text = format!("# {key}\n");
     for (name, c) in counts {
-        let _ = writeln!(text, "{name}\t{}\t{}", c.guest, c.bulk);
+        let hash = hashes.get(name).map_or("", String::as_str);
+        let _ = writeln!(text, "{name}\t{}\t{}\t{hash}", c.guest, c.bulk);
     }
     let path = cache.join(format!("{sha}.tsv"));
     fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))
@@ -681,5 +801,109 @@ fn position(s: &str, last: u64) -> Option<u64> {
         b'+' => last.checked_add(number(&s[1..])?),
         b'-' => last.checked_sub(number(&s[1..])?),
         _ => number(s),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        reason = "tests fail on a broken fixture"
+    )]
+
+    use super::*;
+
+    fn counts(fib: u64) -> Counts {
+        Counts::from([(
+            "fib".to_owned(),
+            Count {
+                guest: fib,
+                bulk: 0,
+            },
+        )])
+    }
+
+    /// A new git repository under the temporary directory.
+    fn repo(name: &str) -> PathBuf {
+        let dir = env::temp_dir().join(format!("wasm-ir-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "--quiet"]).unwrap();
+        dir
+    }
+
+    /// Writes `file` and commits it; the commit's id.
+    fn commit(dir: &Path, file: &str) -> String {
+        let path = dir.join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, git(dir, &["rev-list", "--all"]).unwrap_or_default()).unwrap();
+        git(dir, &["add", "--all"]).unwrap();
+        let who = [
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ];
+        git(
+            dir,
+            &[&who[..], &["commit", "--quiet", "-m", file]].concat(),
+        )
+        .unwrap();
+        git(dir, &["rev-parse", "HEAD"]).unwrap()
+    }
+
+    #[test]
+    fn an_edited_program_is_counted_again() {
+        let cache = env::temp_dir().join(format!("wasm-ir-cache-{}", std::process::id()));
+        let at = |h: &str| BTreeMap::from([("fib".to_owned(), h.to_owned())]);
+        save(&cache, "abc", "key", &at("1111"), &counts(100)).unwrap();
+        assert_eq!(load(&cache, "abc", "key", &at("1111"))["fib"].guest, 100);
+        assert!(load(&cache, "abc", "key", &at("2222")).is_empty());
+        assert!(load(&cache, "abc", "other key", &at("1111")).is_empty());
+        fs::remove_dir_all(&cache).unwrap();
+    }
+
+    #[test]
+    fn a_checkout_without_the_tag_has_no_anchor() {
+        let dir = repo("tags");
+        let first = commit(&dir, "crates/a.rs");
+        let error = default_anchor(&dir, &first).unwrap_err();
+        assert!(error.contains("no v* tag"), "{error}");
+        git(&dir, &["tag", "v0.0.1"]).unwrap();
+        let head = commit(&dir, "crates/b.rs");
+        assert_eq!(
+            default_anchor(&dir, &head).unwrap(),
+            Some(("v0.0.1".to_owned(), first))
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_anchor_counts_every_build_since_it() {
+        let dir = repo("chain");
+        let tag = commit(&dir, "crates/a.rs");
+        commit(&dir, "docs/a.md");
+        let changed = commit(&dir, "crates/b.rs");
+        commit(&dir, "crates/x/tests/t.rs");
+        commit(&dir, "crates/x/README.md");
+        let base = commit(&dir, "Cargo.lock");
+        assert_eq!(changed_since(&dir, &tag, &base).unwrap(), vec![changed]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn creep_after_a_gain_fails_against_the_anchor() {
+        let programs = [("fib", "fib")];
+        // The tag; a 6% gain; then base and head each rise under the limits.
+        let (tag, gain, base, head) = (counts(1000), counts(940), counts(948), counts(952));
+        let fails = |other: &Counts| !judge(&programs, &head, ("x", other), None).1.is_empty();
+        assert!(
+            !fails(&base) && !fails(&tag),
+            "each step is under the limits"
+        );
+        assert!(fails(&least(&[base, tag, gain])), "1.3% over the gain");
     }
 }
