@@ -11,9 +11,12 @@
 //! one (`restore`). Each parked mode's report (stdout, the result and the
 //! exception), fuel and final-state digest (the checksum of the session's
 //! image at the end) are compared with the unparked run's (docs/spec.md §5.1,
-//! clause 4). A difference fails unless `RESULTS` records it for that
-//! case and mode. A failure names the case, the mode and the columns, and
-//! for `restore` the first park after which the output diverges.
+//! clause 4), and `restore`'s with `snapshot`'s (`restore-vs-snapshot`: a
+//! restored session must go on as the one that took the same snapshots,
+//! whatever a snapshot still changes). A difference fails unless `RESULTS`
+//! records it for that case and mode. A failure names the case, the mode
+//! and the columns, and for `restore` the first park after which the output
+//! diverges.
 //!
 //! Policy (`N:M`: park every N fuel units, or every ceil(fuel / M) units
 //! for a case whose unparked run uses more than N * M, so no case parks
@@ -35,7 +38,10 @@
 //! compared with the native unparked run.
 //!
 //! `--record` only shrinks `RESULTS`: it rewrites it without the entries no
-//! run differed in (an unfiltered run at the default policy only). An entry
+//! run differed in. It runs the subset at both gates' policies (`1:100`
+//! and `1:1000`, beside `5:50`), takes no other policy or filter, and
+//! writes only when every job finished and differed only where `RESULTS`
+//! records. An entry
 //! is added only by hand, in the commit that makes the case differ, with
 //! its cause and closing step on the line and the reason in the commit
 //! message (the file's header). `--report-only` compares the
@@ -62,8 +68,11 @@ use crate::{micro_monty_binary, python, workspace_root};
 
 /// Parks for every case: every 5 units, at most about 50 parks.
 const COARSE: &str = "5:50";
-/// Parks for the subset: every unit, at most about 1,000 parks.
+/// Parks for the subset: every unit, at most about 1,000 parks (the
+/// release gate's policy).
 const FINE: &str = "1:1000";
+/// The landing tier's policy for the subset (`cargo xtask check`).
+pub(crate) const LANDING_FINE: &str = "1:100";
 /// Every this many corpus cases (in name order) is in the subset.
 const FINE_STRIDE: usize = 3;
 /// CPU seconds one `mm` process may take (the oracle's `--timeout`;
@@ -82,7 +91,9 @@ const CASE_TIMEOUT: Duration = Duration::from_mins(30);
 /// `digest`; `#` starts a comment.
 const RESULTS: &str = "conformance/durability-results.txt";
 /// The parked modes, and the columns each is compared in.
-const NATIVE_MODES: [&str; 3] = ["parks", "snapshot", "restore"];
+/// `restore-vs-snapshot` compares the restore chain with the session that
+/// took the same snapshots and went on, not with the unparked run.
+const NATIVE_MODES: [&str; 4] = ["parks", "snapshot", "restore", "restore-vs-snapshot"];
 const CROSS_MODES: [&str; 4] = ["cross", "wasm", "wasm-parks", "wasm-snapshot"];
 const COLUMNS: [&str; 3] = ["report", "fuel", "digest"];
 
@@ -220,11 +231,21 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             first: None,
         });
         if is_own || (k - own.len()).is_multiple_of(FINE_STRIDE) {
-            jobs.push(Job {
-                case: case.clone(),
-                spec: fine.clone(),
-                first: None,
-            });
+            // `--record` runs the subset at both gates' policies: which park
+            // differs depends on the policy (463's `parks` digest differs at
+            // 1:1000 only), so an entry goes only when no gate would see it.
+            let specs = if record {
+                &[LANDING_FINE, FINE][..]
+            } else {
+                &[fine.as_str()][..]
+            };
+            for spec in specs {
+                jobs.push(Job {
+                    case: case.clone(),
+                    spec: (*spec).to_owned(),
+                    first: None,
+                });
+            }
         }
     }
     if jobs.is_empty() {
@@ -254,8 +275,13 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         ),
         Some(n) => format!("at {n}"),
         None => format!(
-            "at {COARSE} (N:M = every N fuel units, at most ~M parks), and at {fine} for the \
-             own cases and one corpus case in {FINE_STRIDE}"
+            "at {COARSE} (N:M = every N fuel units, at most ~M parks), and at {} for the \
+             own cases and one corpus case in {FINE_STRIDE}",
+            if record {
+                format!("{LANDING_FINE} and {FINE}")
+            } else {
+                fine.clone()
+            }
         ),
     };
     println!(
@@ -362,7 +388,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         if runs.is_empty() {
             continue;
         }
-        let mut line = format!("  {mode:<14}");
+        let mut line = format!("  {mode:<19}");
         for column in columns {
             let equal = runs
                 .iter()
@@ -397,7 +423,15 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             );
         }
     }
-    if record {
+    // A run that crashed, timed out or differed unrecorded did not show
+    // what its case differs in, so its entries would look stale: write
+    // nothing then.
+    if record && !failed.is_empty() {
+        println!(
+            "{label}: --record left {RESULTS} as it was: a run removes entries only when every \
+             job finished and differed only where it records"
+        );
+    } else if record {
         write_results(&root.join(RESULTS), &recorded, &seen, modes)?;
         println!(
             "{label}: rewrote {RESULTS} without the {} stale entries",

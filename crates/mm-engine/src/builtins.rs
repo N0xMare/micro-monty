@@ -4229,7 +4229,10 @@ impl Vm {
             at = [0, 0, (1usize << pass).min(n), 0];
         }
         let mut b = b;
-        if b == Value::NONE && 1usize << pass < n {
+        // In u64: the finishing phases `FINISH_A` and `FINISH_B` are passes
+        // past 31, which overflow `1usize << pass` on wasm32 (a panic with
+        // overflow checks; a masked shift, by luck still `>= n`, without).
+        if b == Value::NONE && (1u64 << pass) < n as u64 {
             // The second array comes at the start of a step of its own:
             // at up to 32 MiB, the system allocator may zero it as it
             // allocates it, as long a step as `a`'s.
@@ -4249,7 +4252,7 @@ impl Vm {
                 self.hx_o(res)?;
             }
         }
-        while 1usize << pass < n {
+        while (1u64 << pass) < n as u64 {
             let width = 1usize << pass;
             let (src, dst) = if pass % 2 == 0 { (a, b) } else { (b, a) };
             let k0 = at[3];

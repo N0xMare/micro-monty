@@ -514,10 +514,11 @@ impl Vm {
         // resets the count, as that collection would have, unparked.
         let waited = self.gc_wait != 0 && self.heap.stats().collections < self.gc_wait;
         let since = self.heap.allocated_since_own_gc();
-        self.collect_garbage(&st);
+        // Swept at once, in the order a restore sweeps: the image is
+        // written from swept segments only, and the session that goes on
+        // must list its free blocks as the restored one does.
+        self.collect_swept(&st);
         self.gc_wait = 0;
-        // The image is written from swept segments only.
-        self.heap.finish_sweep();
         if !waited {
             self.heap.keep_allocated_since_gc(since);
         }
@@ -636,6 +637,12 @@ impl Vm {
             put_u32(out, c.gslot);
             put_values(out, &c.consts);
             put_values(out, &c.names);
+        }
+        // The signature index (`_mm.signature`): a restore reuses the same
+        // codes and counts toward `MAX_SYNTH` from where the session was.
+        put_len(out, self.synth.len());
+        for &ci in &self.synth {
+            put_u32(out, ci);
         }
 
         for v in [
@@ -1706,6 +1713,8 @@ impl Vm {
         if n_ics > (1 << 24) {
             return Err(SnapError::Corrupt("code table"));
         }
+        let synth = read_synth(r, &codes)?;
+        charge(&mut budget, (synth.capacity() * size_of::<u32>()) as u64)?;
 
         let mut fixed = [Value::NONE; 9];
         for v in &mut fixed {
@@ -2144,7 +2153,7 @@ impl Vm {
             module_cache,
             host_code_in_snapshots: false,
             unpackers: None,
-            synth: Vec::new(),
+            synth,
             call_log,
             fresh,
             known_modules: &[],
@@ -2163,6 +2172,43 @@ impl Vm {
         check_steps(&vm)?;
         Ok(vm)
     }
+}
+
+/// The signature index (`Vm::synth`): each entry a signature code exactly
+/// as `_mm.signature` builds it, in strictly ascending key order (its
+/// binary search), at most `MAX_SYNTH`.
+#[cfg_attr(mm_shipped, optimize(size))]
+fn read_synth(r: &mut Reader<'_>, codes: &[Arc<CodeObj>]) -> Res<Vec<u32>> {
+    let n = need(r.count(4), "signatures")?;
+    if n > crate::mmmod::MAX_SYNTH {
+        return Err(SnapError::Corrupt("signatures"));
+    }
+    let mut synth = Vec::with_capacity(n);
+    let mut prev: Option<(u32, &[Arc<str>])> = None;
+    for _ in 0..n {
+        let ci = need(r.u32(), "signatures")?;
+        let Some(c) = codes.get(ci as usize).map(|c| &c.code) else {
+            return Err(SnapError::Corrupt("signatures"));
+        };
+        let Some((_, names)) = c.varnames.split_last() else {
+            return Err(SnapError::Corrupt("signatures"));
+        };
+        let argc = c.params.argcount as usize;
+        let shown: Vec<String> = names.iter().map(|s| String::from(&**s)).collect();
+        if argc > names.len()
+            || names.len() > crate::mmmod::MAX_PARAMS
+            || **c != crate::mmmod::signature_code(&shown, argc)
+        {
+            return Err(SnapError::Corrupt("signatures"));
+        }
+        let key = (c.params.argcount, names);
+        if prev.is_some_and(|p| p >= key) {
+            return Err(SnapError::Corrupt("signatures"));
+        }
+        prev = Some(key);
+        synth.push(ci);
+    }
+    Ok(synth)
 }
 
 /// A chunked native's state (`NSTATE`, `nstep.rs`) holds the progress its

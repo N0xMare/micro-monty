@@ -315,7 +315,7 @@ fn check(args: &[String]) -> Result<(), String> {
             .run(mm_task(if release_gate {
                 &["durability"]
             } else {
-                &["durability", "--fine", "1:100"]
+                &["durability", "--fine", durability::LANDING_FINE]
             })),
         Stage::new("conformance").run(task(&["conformance", "--check"])),
         Stage::new("conformance-mm").after(&["mm"]).run(mm_task(&[

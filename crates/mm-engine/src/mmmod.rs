@@ -10,10 +10,10 @@ use mm_compile::bytecode::{Code, ParamSpec, op};
 use mm_core::Value;
 
 /// Signature codes one session may synthesize (each is outside the arena).
-const MAX_SYNTH: usize = 4096;
+pub(crate) const MAX_SYNTH: usize = 4096;
 
 /// Most parameters a synthesized signature takes (registers are bytes).
-const MAX_PARAMS: usize = 126;
+pub(crate) const MAX_PARAMS: usize = 126;
 
 /// `_mm.signature(name, qualname, params, kwonly, defaults, kwdefaults,
 /// impl)`: a Python function named `name`/`qualname` whose parameters are
@@ -105,7 +105,7 @@ pub(crate) fn mm_signature(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// The code of a signature function: parameters in registers `0..n`, the
 /// implementation's cell in `n`, then `impl(*params)`.
 #[cfg_attr(mm_shipped, optimize(size))]
-fn signature_code(names: &[String], argc: usize) -> Code {
+pub(crate) fn signature_code(names: &[String], argc: usize) -> Code {
     let n = names.len();
     // `n <= MAX_PARAMS`, so every register fits a byte.
     let reg = |i: usize| u8::try_from(i).unwrap_or(u8::MAX);

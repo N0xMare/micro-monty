@@ -170,6 +170,17 @@ struct Fault {
     reraise: bool,
 }
 
+/// What [`Vm::gc`] runs.
+#[derive(Clone, Copy)]
+enum Gc {
+    /// One step of an incremental collection, or a slice of a lazy sweep.
+    Step,
+    /// A full collection (its sweep lazy over 32 MiB live).
+    Full,
+    /// A full collection swept at once, as a restore sweeps (a snapshot's).
+    Swept,
+}
+
 impl Vm {
     /// Runs the module body `ci` (from [`Vm::load`]) until it completes,
     /// raises or parks.
@@ -607,11 +618,11 @@ impl Vm {
             // step; any other request collects in full.
             let step = self.gc_pending && self.gc_wait != 0;
             self.gc_requested_done();
-            self.gc(st, step);
+            self.gc(st, if step { Gc::Step } else { Gc::Full });
         } else if due {
             // One step of a collection (incremental over 32 MiB live,
             // or a slice of the last one's lazy sweep); a park can follow.
-            self.gc(st, true);
+            self.gc(st, Gc::Step);
         }
         let mut marked = before.is_some_and(|(marking, collections)| {
             marking || self.heap.marking() || self.heap.stats().collections != collections
@@ -631,7 +642,7 @@ impl Vm {
                 self.gc_owed = true;
                 return Some(ParkReason::Fuel);
             }
-            self.gc(st, true);
+            self.gc(st, Gc::Step);
             marked = yields;
         }
         // An owed step ran at a resume: its slice goes on.
@@ -661,11 +672,18 @@ impl Vm {
     }
 
     pub(crate) fn collect_garbage(&mut self, st: &State) {
-        self.gc(st, false);
+        self.gc(st, Gc::Full);
     }
 
-    /// A full collection, or one step of an incremental one (`step`).
-    fn gc(&mut self, st: &State, step: bool) {
+    /// A snapshot's collection: in full, its sweep done
+    /// (`Heap::collect_swept`).
+    pub(crate) fn collect_swept(&mut self, st: &State) {
+        self.gc(st, Gc::Swept);
+    }
+
+    /// A full collection, one step of an incremental one, or a full one
+    /// swept at once.
+    fn gc(&mut self, st: &State, kind: Gc) {
         let top = (st.base + self.codes[st.ci as usize].code.nregs as usize).min(self.stack.len());
         self.prune_fresh();
         let fresh = &mut self.fresh;
@@ -773,12 +791,18 @@ impl Vm {
             }
         };
         let mut weak = |t: &mut mm_core::Tracer<'_>| Vm::sweep_fresh(fresh, t);
-        if step {
-            if self.heap.collect_step(&mut roots, &mut weak).is_none() {
-                return;
+        match kind {
+            Gc::Step => {
+                if self.heap.collect_step(&mut roots, &mut weak).is_none() {
+                    return;
+                }
             }
-        } else {
-            self.heap.collect_weak(&mut roots, &mut weak);
+            Gc::Full => {
+                self.heap.collect_weak(&mut roots, &mut weak);
+            }
+            Gc::Swept => {
+                self.heap.collect_swept(&mut roots, &mut weak);
+            }
         }
         // Registers above a frame's top are dead (a callee's frame starts
         // at its caller's argument window, below the caller's dead

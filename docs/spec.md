@@ -2134,7 +2134,8 @@ bound owned capacities, not an allocator's transient peak or process RSS.
 - **Synthesized methods.** Namedtuple and dataclass signature code is hidden
   from tracebacks but is not permanent prelude code: only reachable
   functions retain it between cells and across reset. Its cache holds sorted
-  code indices, shares the budget, and starts empty after a restore.
+  code indices, shares the budget, and is in the image, so a restore keeps
+  it.
 - **Frames.** Register stacks, frame records and continuation tables,
   including suspended tasks' stacks. Task switches transfer rather than
   duplicate the charge. Cell completion, cancellation and reset release

@@ -739,7 +739,7 @@ impl Heap {
         if self.inc.verify {
             self.verify_mark(roots);
         }
-        Some(self.finish_collection(weak))
+        Some(self.finish_collection(weak, true))
     }
 
     /// Collects garbage. `roots` reports every root through the `Tracer`; the
@@ -758,6 +758,29 @@ impl Heap {
         roots: &mut dyn FnMut(&mut Tracer<'_>),
         weak: &mut dyn FnMut(&mut Tracer<'_>),
     ) -> GcStats {
+        self.collect_full(roots, weak, true)
+    }
+
+    /// [`Heap::collect_weak`] with its whole sweep done before it returns,
+    /// segment by segment in ascending order, as a restore's sweep lists
+    /// the free blocks (a snapshot's collection). A lazy sweep finished
+    /// later (`Heap::finish_sweep`) lists them in another order, so the
+    /// session that went on after the snapshot and the restored one would
+    /// allocate other blocks: other `id()`s and set orders.
+    pub fn collect_swept(
+        &mut self,
+        roots: &mut dyn FnMut(&mut Tracer<'_>),
+        weak: &mut dyn FnMut(&mut Tracer<'_>),
+    ) -> GcStats {
+        self.collect_full(roots, weak, false)
+    }
+
+    fn collect_full(
+        &mut self,
+        roots: &mut dyn FnMut(&mut Tracer<'_>),
+        weak: &mut dyn FnMut(&mut Tracer<'_>),
+        lazy: bool,
+    ) -> GcStats {
         self.abandon_mark();
         self.inc.forced = false;
         self.words.clear_pending_marks();
@@ -766,7 +789,7 @@ impl Heap {
         let mut stack = core::mem::take(&mut self.mark_stack);
         drain(&mut self.words, &mut self.bytes, &mut stack);
         self.mark_stack = stack;
-        self.finish_collection(weak)
+        self.finish_collection(weak, lazy)
     }
 
     /// Marks the roots (and the intern table itself, if `table`) and pushes
@@ -789,7 +812,7 @@ impl Heap {
 
     /// The end of every collection, once everything strongly reachable is
     /// marked: the weak pass, then the sweep.
-    fn finish_collection(&mut self, weak: &mut dyn FnMut(&mut Tracer<'_>)) -> GcStats {
+    fn finish_collection(&mut self, weak: &mut dyn FnMut(&mut Tracer<'_>), lazy: bool) -> GcStats {
         // Sweep may reuse the address of a string with a position.
         self.str_pos.clear();
         let mut stack = core::mem::take(&mut self.mark_stack);
@@ -824,7 +847,7 @@ impl Heap {
 
         // Sweep lazily only where marks are incremental: a sweep must not
         // fill one step there, and smaller heaps sweep as before.
-        let lazy = self.inc.slice != 0 && self.live_now() >= self.inc.min_live;
+        let lazy = lazy && self.inc.slice != 0 && self.live_now() >= self.inc.min_live;
         let w = self.words.sweep(lazy);
         let b = self.bytes.sweep(lazy);
         self.words.lazily_freed = 0;

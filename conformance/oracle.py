@@ -36,7 +36,9 @@ more than N * M fuel parks every ceil(fuel / M) units instead, so no case
 parks much more than M times. Each parked mode's report (stdout, result,
 exception), fuel (every `mm` prints the fuel spent, counted exactly) and
 final-state digest (the checksum of the session's image at the end) are
-compared with the unparked run's (docs/spec.md §5.1, clause 4). With
+compared with the unparked run's (docs/spec.md §5.1, clause 4), and the
+"restore" chain's with "snapshot"'s ("restore-vs-snapshot": a restored
+session must continue as the session that took the same snapshots). With
 `--alternate MODULE` (mm built for wasm32-wasip1, a `.wasm` or a
 wasmtime-precompiled `.cwasm`), the parked chain alternates between the
 native mm and MODULE under wasmtime, starting with `--alternate-first`
@@ -994,10 +996,16 @@ def run_durability_case(path, mm, every, max_parks, timeout, alternate=None):
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     want = report_of(plain)
-    diffs = {m: d for m, run in runs.items() if (d := durability_diffs(plain, run))}
-    fuel = {m: (run.get('fuel') or 0) - (plain.get('fuel') or 0) for m, run in runs.items()}
+    # Each mode against the unparked run, and the restore chain against the
+    # session that took the same snapshots and went on (restore fidelity).
+    pairs = {m: (plain, run) for m, run in runs.items()}
+    if 'restore' in runs and 'snapshot' in runs:
+        pairs['restore-vs-snapshot'] = (runs['snapshot'], runs['restore'])
+    diffs = {m: d for m, (ref, run) in pairs.items() if (d := durability_diffs(ref, run))}
+    fuel = {m: (run.get('fuel') or 0) - (ref.get('fuel') or 0) for m, (ref, run) in pairs.items()}
     reasons = []
     for m, d in diffs.items():
+        ref, run = pairs[m]
         detail = ', '.join(d)
         if 'fuel' in d:
             detail += f' (fuel {fuel[m]:+})'
@@ -1006,7 +1014,7 @@ def run_durability_case(path, mm, every, max_parks, timeout, alternate=None):
                 # The first park whose output so far is not a prefix of the unparked run's.
                 diverged = next((p['park'] for p in parks if not (want['stdout'] or '').startswith(p['stdout'])), None)
                 detail += f'; output diverges by park {diverged}' if diverged else f'; after park {len(parks)}'
-            detail += f': {first_difference(want, report_of(runs[m]))}'
+            detail += f': {first_difference(report_of(ref), report_of(run))}'
         reasons.append(f'{m}: {detail}')
     return {'file': name, 'status': 'differs' if diffs else 'pass', 'parks': len(parks), 'every': every,
             'diffs': diffs, 'fuel': fuel, 'reason': '; '.join(reasons)}
