@@ -1600,9 +1600,11 @@ fn a_cell_spends_the_same_fuel_however_it_parks() {
     // stretch's fuel and overdraft) does not depend on where it parks:
     // at safepoints mid-period, before int operations it cannot pay,
     // around collections that big results request, inside calls and
-    // generators. Each slice size parks at different points.
+    // generators, and in `re`, whose slices end at a step budget that
+    // does not follow the fuel left. Each slice size parks at different
+    // points.
     let engine = Engine::new(EngineConfig::default());
-    let setup = "x = 3 ** 40_000\n";
+    let setup = "import re\nx = 3 ** 40_000\n";
     let src = "\
 def f(i):
     return [i] * 3
@@ -1615,6 +1617,7 @@ for k in range(40):
     t += len(s) + sum(len(v) for v in g(20))
     if k % 10 == 0:
         t += (x * x).bit_length() + (x ** 2 % 7)
+        t += len(re.findall(r'b(a)', s)) + len(re.split(r'(?<=a)b', s[:9_000]))
 print(t)
 ";
     let total = u64::MAX / 2;
@@ -1633,7 +1636,7 @@ print(t)
             p = s.resume(Resume::Continue).expect("resumes");
         }
         assert!(matches!(p, Progress::Complete(_)), "{p:?}");
-        assert_eq!(out.lock().expect("output lock").as_str(), "6109600\n");
+        assert_eq!(out.lock().expect("output lock").as_str(), "6407600\n");
         (total - s.fuel_total().expect("total"), parks)
     };
     let (want, _) = spent(None);

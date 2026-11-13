@@ -1299,10 +1299,6 @@ fn exec_slice(
     }
     let ascii = !text || vm.str_ascii(subj_v);
     let nchars = if text { vm.str_len(subj_v) } else { blen };
-    // Steps this call may take: a slice, less when little fuel is left.
-    let fuel_steps = vm.fuel().map_or(u64::MAX, |f| {
-        f.saturating_mul(STEPS_PER_FUEL).saturating_add(1024)
-    });
     let mut steps = 0u64;
     let clamp = |v: i64| usize::try_from(v.max(0)).unwrap_or(usize::MAX).min(nchars);
     let (pos_c, endpos_c) = (clamp(span.0), clamp(span.1));
@@ -1388,11 +1384,14 @@ fn exec_slice(
         let mut segs: Vec<(usize, usize)> = Vec::new();
         // A slice grows with the subject only so far that one stays well
         // under 50 ms at the default limits (`subj.len() / 8` made 49 ms
-        // slices over 60M chars [M]; tests/steps.rs).
+        // slices over 60M chars [M]; tests/steps.rs). It never follows the
+        // fuel left: where slices end, and so what their steps and `_more`
+        // safepoints charge, must not depend on where the host's fuel
+        // slices end (docs/spec.md §5, guarantee 4); a slice past the fuel
+        // is overdraft, as any native step's is.
         let budget = SLICE
             .max(run.stack.len() as u64 * 4)
-            .max(subj.len() as u64 / 64)
-            .min(fuel_steps);
+            .max(subj.len() as u64 / 64);
         // The items a match can start with let a search skip ahead: to a
         // literal with `find_char`, else char by char.
         let firsts: Vec<(Item, usize)> = if mode == 1 {

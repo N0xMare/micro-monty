@@ -12,15 +12,6 @@
 486_str_search_in_steps.py	documented: char-position cache cleared by the snapshot's collection (+87,498)
 498_long_needles.py	documented: char-position cache cleared by the snapshot's collection (+8,281) and absent after a restore (+8,281 more)
 #
-# Not documented: `re` takes a step budget from the fuel left
-# (crates/mm-engine/src/re.rs `fuel_steps`), and each step charges
-# steps / 32 and a `_more` safepoint, so the total depends on the slice
-# size with no snapshot at all.
-118_operator_abc_string_textwrap.py	NOT documented: re step budget follows the fuel left (textwrap's wordsep_re split, +21 a call at 10-unit slices; +63)
-300_re_differential.py	NOT documented: re step budget follows the fuel left (+25 at 1:1000)
-456_numeric_edges_and_attribute_hints.py	NOT documented: re step budget follows the fuel left (re.match over 40,001 chars, +5)
-os_path__pure.py	NOT documented: re step budget follows the fuel left (os.path.expandvars, +6 at 5:50)
-#
 # Not documented: the snapshot's collection changes where later
 # collections run and what they free (identity-hashed keys, caches), the
 # DUR-2 family; MM_GC_STRESS moves 206, 421 and 422 unparked as well.
