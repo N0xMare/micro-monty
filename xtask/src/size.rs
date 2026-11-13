@@ -236,8 +236,10 @@ fn budgets(text: &str) -> Result<BTreeMap<(String, String), u64>, String> {
 /// The xtask files that hold the shipped recipe: `SHIPPED_RUSTFLAGS`, the
 /// cargo arguments of each artifact, the `wasm-opt` arguments and the
 /// bundle guest's sections. Code that moves part of the recipe to another
-/// file adds that file here.
-const RECIPE_FILES: [&str; 2] = ["xtask/src/main.rs", "xtask/src/wasm.rs"];
+/// file adds that file here. A tree from before shipped.rs (v0.0.1 to the
+/// commit that added it) kept the recipe in main.rs: [`OLD_RECIPE_FILES`].
+const RECIPE_FILES: [&str; 2] = ["xtask/src/shipped.rs", "xtask/src/wasm.rs"];
+const OLD_RECIPE_FILES: [&str; 2] = ["xtask/src/main.rs", "xtask/src/wasm.rs"];
 
 /// The cache key of sizes built with the recipe of the tree at `tree`:
 /// [`RECIPE`], its toolchain (`rustc -vV` there), `wasm-opt`'s version
@@ -246,8 +248,13 @@ const RECIPE_FILES: [&str; 2] = ["xtask/src/main.rs", "xtask/src/wasm.rs"];
 /// under this one, and a head that lands caches its sizes under the key
 /// it gets as the next change's base.
 pub(crate) fn recipe_key(tree: &Path) -> Result<String, String> {
+    let files = if tree.join(RECIPE_FILES[0]).exists() {
+        RECIPE_FILES
+    } else {
+        OLD_RECIPE_FILES
+    };
     let mut code = Vec::new();
-    for file in RECIPE_FILES {
+    for file in files {
         let text = fs::read(tree.join(file)).map_err(|e| format!("cannot read {file}: {e}"))?;
         code.extend_from_slice(&text);
     }
