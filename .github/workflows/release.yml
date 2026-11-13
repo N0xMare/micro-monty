@@ -173,7 +173,7 @@ jobs:
             echo "## Snapshot build ids"
             echo
             echo "A snapshot restores only into a build with the same build_id"
-            echo "(docs/sdk.md, Snapshots). The id covers the engine version, the"
+            echo "(docs/user-guide.md, \"Snapshots\"). The id covers the engine version, the"
             echo "enabled stdlib modules and the engine's tables, not the target, so"
             echo "builds with the same modules share it across targets: \`mm\` adds"
             echo "optional modules, the worker and the wasm examples use the defaults."

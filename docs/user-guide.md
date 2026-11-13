@@ -158,7 +158,7 @@ entropy, so the driving loop above is the whole integration.
 | One object | 64 MiB of a `str`'s or `bytes`' data, or of a list's, tuple's, dict's or set's slots, whatever `Limits::memory` is: at most 8,388,608 list items, 2,097,152 dict entries, 5,033,164 set items \[M\] | catchable `MemoryError` |
 | `json.dumps` result | min(0.48 × `Limits::memory`, 64 MiB) of text \[M\]: the old and new buffers coexist while it grows. At a 16 MiB limit, about 7.7 MiB | catchable `MemoryError` |
 | Starred displays, calls and f-strings | the largest result beside inputs as large as itself, as a fraction of `Limits::memory` (at most 64 MiB) \[M\]: `[*a, *b]` 0.35; `(*a, *b)`, unpacking and `f(*a, *b)` 0.25; an f-string 0.30 | catchable `MemoryError` |
-| Int size and int work | 2^26 bits per int; a superlinear int operation (`*`, `//`, `%`, `divmod`, `**`, `pow(a, e, m)`, `math.factorial`/`comb`/`perm`/`isqrt`/`gcd`/`lcm`, ...) estimated to take more than about 45 ms | `MemoryError` before it starts (`integer operation too large` for the work cap), whatever the fuel |
+| Int size and int work | 2^26 bits per int; a superlinear int operation (`*`, `//`, `%`, `divmod`, `**`, `pow(a, e, m)`, `math.factorial`/`comb`/`perm`/`isqrt`/`gcd`/`lcm`, ...) estimated to take more than about 45 ms; reducing an int of any size by a modulus of up to 128 bits (`%`, `//`, `divmod`, `pow(a, e, m)`'s base, `gcd`) is not refused | `MemoryError` before it starts (`integer operation too large` for the work cap), whatever the fuel |
 | `ast.parse` / `tokenize` source | 32 KiB / 64 KiB | `MemoryError` |
 | Snapshot output | `snapshot_with_limit(max_bytes)` (default: the memory limit) | `SnapshotError::TooLarge` |
 
@@ -257,7 +257,8 @@ session.define(&HostModule::untyped("fs.meta", &["stat"]))?;      // also the at
   every image on a new Engine (one session per process or wasm instance)
   should use `engine.with_host_code_in_snapshots(true)`, which stores the
   code in the image (restoring 100 typed functions: 0.87 ms stored, 6.6 ms
-  recompiled \[M\]). The mm-wasm guest and `mm-cell-worker` do.
+  recompiled \[M\]). The mm-wasm guest and `mm-cell-worker` (a worker
+  process for the cell protocol of the plak agent harness, spec §10.2) do.
 
 A call from any frame (a loop, a comprehension, a sort key, a dunder, a
 generator) converts its arguments to `HostValue`s and stops the cell with
@@ -289,9 +290,9 @@ engine supports both for every function. A refused answer
 
 **Return structured values, not JSON strings.** A tool whose result is a
 `HostValue::Dict` or `List` saves the model a `json.loads` and a class of
-parse errors: in the codemode census, 311 of the 396 solutions written
-against string results parsed them with `json.loads` first \[M\]
-(`conformance/codemode`). Raw text (a file, a log) stays a `Str`.
+parse errors: of 396 model-written code-mode solutions against string
+results (`conformance/codemode`), 311 parsed them with `json.loads` first
+\[M\]. Raw text (a file, a log) stays a `Str`.
 
 **Timeouts.** Time a host call out on the host side and answer
 `Resume::Error(HostError::new(HostErrorKind::TimeoutError, "fetch timed out
@@ -452,7 +453,7 @@ than they catch an exception \[E\].
 | `int` | `Int(i64)`, or `BigInt(String)` in decimal past `i64` | |
 | `list`, `tuple` | `List`, `Tuple` | a value that goes host → guest → host comes back unchanged |
 | `dict` with `str` keys | `Dict(Vec<(String, HostValue)>)` | insertion order kept |
-| named tuple | `Record { name, fields }` | a `Record` from the host becomes a named tuple instance |
+| named tuple | `Record { name, fields }` | a `Record` from the host becomes a named tuple instance; its name and field names must be ones `collections.namedtuple` accepts without renaming (identifiers, not keywords; fields not starting with `_`, none repeated), else `TypeError` in the guest with namedtuple's message |
 | host class instance | `Object { class, fields }` | see [Host classes](#host-classes) |
 | anything else (sets, functions, instances, non-`str` keys) | none: strict mode raises `TypeError` in Python before the call | with `HostArgs { lenient: true }` it arrives as `Unconverted::{Opaque, KeyNotStr, TooDeep, TooLarge}` |
 
@@ -722,7 +723,7 @@ written natively restores on both wasm targets of the same build id.
 imported json, asyncio, re, collections and datetime takes about 1.1 ms,
 and one with decimal, statistics, zoneinfo, html.parser and tomllib about
 2.7 ms \[M\]. Use one when most cells import its modules, especially heavy
-ones: a broad template made the codemode suite's median cell slower (2.1
+ones: a broad template made the code-mode suite's median cell slower (2.1
 → 4.6 ms), because most cells import only `json` \[M\]. There is no pool:
 instantiate on demand, or keep spares on your own executor.
 
@@ -791,13 +792,13 @@ them small where you store them:
    libzstd, `zstd -1 --check --patch-from=base.mmsnap` on the command line.
    Decompress with the same base. zstd-1 alone shrinks parked sessions about
    3.6× and large heaps of small dicts 17–19× \[M\]; the base prefix makes
-   small parked sessions another 1.3–1.4× smaller (codemode median
+   small parked sessions another 1.3–1.4× smaller (code-mode parks' median
    102.8 KB → 19.7 KB) \[M\].
 3. **Store with each blob:** the build id (`micro_monty::build_id()`,
    `mm_build_id`), which names the base, and how it was compressed. A
    raw-prefix frame does not record its prefix.
 4. **Optional:** a zstd dictionary trained on your own parks, used together
-   with the base, reached 8.1× against the full image on held-out codemode
+   with the base, reached 8.1× against the full image on held-out code-mode
    parks, against 4.0× for zstd-1 alone \[M\]. Version it per build like
    the base.
 
@@ -830,9 +831,11 @@ source is never re-run to rebuild state.
   together with `mm` gets mm's modules and mm's id.
 - `mm version`, `mm-cell-worker --version` and the wasip1 `roundtrip`
   example print the id. Release notes list it for every shipped binary.
-- Corruption and truncation are `SnapshotError::Corrupt`, never a panic.
-  An engine panic while restoring is `SnapshotError::Internal`: the image
-  may be sound, so keep it.
+- Corruption and truncation are `SnapshotError::Corrupt`, never a panic. The
+  stop the header names (idle, a host call, a wait, a park) must match the
+  VM (`Corrupt { what: "stop" }`), and a waiting image must answer every
+  pending call (a cancelled future counts). An engine panic while restoring
+  is `SnapshotError::Internal`: the image may be sound, so keep it.
 
 ### Upgrading: drain old builds
 
@@ -889,8 +892,7 @@ one target restores on another with the same id:
 
 ## Embedding guarantees
 
-What a host running sessions in its own process can rely on, each backed by
-a test.
+What a host running sessions in its own process can rely on, each tested.
 
 **Panics: build with `panic = "unwind"`.** No guest input should panic:
 clippy denies `unwrap`, `expect`, `panic!` and `todo!` in engine crates,
@@ -938,18 +940,14 @@ limit + 16 MiB of linear memory, which covers both; a guest that runs out
 of linear memory aborts instead of raising `MemoryError`.
 
 **The module cache is the Engine's.** The first session of an `Engine` that
-imports or restores a bundled module decodes its bytecode, and the Engine
-keeps it for every later session of that Engine and its clones, on any
-thread. A session is charged the same whether the cache is cold, warm or
-off, so its results do not change (`tests/sessions.rs`). The cache lives
-outside every session's limit, up to `Engine::with_module_cache(config,
-max_bytes)` (`Engine::new`: `DEFAULT_MODULE_CACHE`, 8 MiB; every bundled
-module decoded is about 2.9 MB \[M\]); past it a session keeps its own copy,
-and `max_bytes = 0` turns it off. `Engine::module_cache_bytes()` reports its
-size, host-module code included (about 0.67 MB per 100 typed functions
-\[M\]). On json, asyncio, re, collections and datetime, a warm restore takes
-9.95M instructions against 23.75M uncached, and RSS per session with 40
-held is 1.2 MB against 1.85 MB \[M\].
+imports or restores a bundled module decodes its bytecode, which the Engine
+keeps for every later session of it and its clones, on any thread. A
+session is charged the same with the cache cold, warm or off, so its
+results do not change (`tests/sessions.rs`). The cache lives outside every
+session's limit, up to `Engine::with_module_cache(config, max_bytes)`
+(`Engine::new`: `DEFAULT_MODULE_CACHE`, 8 MiB; 0 turns it off; past it a
+session keeps its own copy). `Engine::module_cache_bytes()` reports its
+size, host code included; sizes and savings are in spec §10.3.
 
 **Bound CPU with fuel slices.** Run cells with a fuel budget and resume them
 slice by slice. On `Parked { reason: Fuel }`, read `Session::fuel_wanted()`
@@ -961,7 +959,7 @@ instead when the wanted fuel is more than the cell may still spend. Any
 other native operation runs in bounded steps: a slice is overdrawn by at
 most 2^21 + 2^17 units, and a park request or deadline waits at most about
 50 ms at the default limits on every measured row \[M\]
-(`crates/micro-monty/tests/steps.rs`; known exceptions: spec §5.1 clause 2).
+(`crates/micro-monty/tests/steps.rs`).
 Outside that bound are full garbage collections over a large heap, about
 0.4 ms per MiB live natively and 1.3–1.6 times that on wasm \[M\]. Count
 what a cell was charged from a fuel total (`set_fuel_total`; refuel with
@@ -986,15 +984,15 @@ them either: cutting one loses the image, and in wasm the instance.
 | Memory, `Limits::memory` = L | Rust heap at most 2.5 × L + 16 MiB | linear memory about 3 × L + 16 MiB; it never shrinks | as wasmtime | as wasmtime |
 | Time per fuel unit, bench programs | 0.014–0.25 µs \[M\] | 0.032–0.47 µs \[M\] | 0.024–0.38 µs \[M\] | 0.029–0.45 µs in workerd \[M\] |
 
-So CPU per cell on V8 is at most about a fixed part (compiling, imports:
-up to 8 ms for the 22 code-mode tasks) + 0.5 µs × the fuel budget (the
-dearest native, `str.upper`, takes 0.48 µs a unit in workerd \[M\]) + one
-native step + a collection (5 ms at 16 MiB, 85 ms at 256 MiB) \[E\].
-Results do not depend on how a host slices the run: output, exceptions and
-values are the same unparked, in fuel slices of any size and across
-restores on either target (`cargo xtask durability`), except for a
-`MemoryError` a snapshot moves and for address-derived values such as `id()`
-([Other differences from CPython](#other-differences-from-cpython)).
+So CPU per cell on V8 is at most about a fixed part (compiling, imports: up
+to 8 ms for the 22 code-mode tasks) + 0.5 µs × the fuel budget (the dearest
+native, `str.upper`, takes 0.48 µs a unit in workerd \[M\]) + one native
+step + a collection (5 ms at 16 MiB, 85 ms at 256 MiB) \[E\]. Results do not
+depend on how a host slices the run: output, exceptions and values are the
+same unparked, in fuel slices of any size and across restores on either
+target (`cargo xtask durability`), except for a `MemoryError` a snapshot
+moves in an operation not retried and for address-derived values such as
+`id()` ([Other differences from CPython](#other-differences-from-cpython)).
 
 ### Many sessions in one process
 
@@ -1234,7 +1232,8 @@ The default build bundles `json`, `re`, `collections`, `itertools`,
 `html.parser`), `warnings`, `codecs`, `platform`, `tempfile`, `decimal`,
 `numbers`, `contextvars`, `fractions`, `statistics`, `tomllib`, `calendar`,
 `hmac`, `zlib` (checksums only), `zoneinfo`, `tokenize` and `token`, plus
-`sys`, `math`, `cmath` and the builtins, which are always built.
+`sys`, `math`, `cmath` and the builtins, which are always built. The
+engine's internal `_mm` is hidden: importing it raises `ModuleNotFoundError`.
 
 Every bundled module has a `mod-*` feature on `micro-monty` (dots and
 underscores become `-`: `mod-html-entities`; `urllib.parse` is
@@ -1410,10 +1409,10 @@ differs:
   `as_completed(timeout=)` fire only on `asyncio.sleep`s. Time out slow host
   calls on the host side.
 - `create_task` outside a running loop does not raise; the task runs in the
-  next `asyncio.run`. Tasks left at the end of `asyncio.run` are cancelled
-  in creation order, "Task exception was never retrieved" is reported when
-  it ends, and task reprs and reports have no `coro=<...>` or source
-  locations.
+  next `asyncio.run`. Tasks left at the end of `asyncio.run`, the timers
+  behind `call_later` and `wait_for` included, are cancelled in creation
+  order, "Task exception was never retrieved" is reported when it ends, and
+  task reprs and reports have no `coro=<...>` or source locations.
 - An unfinished async generator is never finalized; use
   `contextlib.aclosing`. Coroutines have no `cr_frame`, `cr_await` or
   `cr_code`.
@@ -1445,35 +1444,38 @@ differs:
 - **SyntaxError text** follows CPython 3.14, except that a misspelt keyword
   gets no "Did you mean", a missing comma gets no "Perhaps you forgot a
   comma?", and a few carets differ.
-- **`MemoryError` from uncollected garbage.** Some copy and bulk operations
-  are not retried after a collection, so uncollected garbage can make them
-  raise where CPython succeeds: the third of three dropped `s.copy()` of a
-  2M-item set at 256 MiB \[M\]. A snapshot collects first, so it can flip
-  the outcome either way and move the fuel (six `f(*big, **kw)`: 11% less
-  with a snapshot at every park \[M\]). Being fixed in 0.0.2.
-- **Fuel after a snapshot, long non-ASCII strs.** A snapshot collects, and
-  a collection forgets the positions that make indexing a long non-ASCII
-  str cheap, so the next walk is charged again, restored or not:
-  `for k in range(1, 1_600_000, 997): W[k]` costs 43,313 units unparked
-  and 8,687,009 with a snapshot and restore at every 20,011-unit park
-  \[M\]. Hosts that snapshot at every park should use larger slices.
+- **`MemoryError` beside uncollected garbage.** Most operations whose
+  allocation fails wait for a full collection and run once more: copies,
+  constructors over a container, slices and list comprehensions succeed
+  where the result fits (three dropped `s.copy()` of a 2M-item set at 256
+  MiB, as in CPython \[M\]). Not yet retried, being fixed in 0.0.2, so they
+  can raise where CPython succeeds \[M\]: set and dict comprehensions and
+  `add`/`append` loops (on their own outgrown tables), `bytes(n)`,
+  `bytearray(n)`, a wide f-string field, `sorted` and `list.extend`. A
+  call's `**kw` is never run again (its merge raises on a duplicate key). A
+  retry's collection is charged, a unit per 64 bytes of `Limits::memory` up
+  to 2^20, so a loop that catches `MemoryError` pays for each. A snapshot
+  collects first, so it can flip an unretried outcome either way, and it
+  moves fuel totals (six `f(*big, **kw)`: 11% less with a snapshot at every
+  park \[M\]).
+- **Fuel after a snapshot, long non-ASCII strs.** A snapshot's collection
+  forgets the positions that make indexing a long non-ASCII str cheap, so
+  the next walk is charged again, restored or not: `W[k]` for every 997th
+  `k` below 1,600,000 costs 43,313 units unparked and 8,687,009 with a
+  snapshot and restore at every 20,011-unit park \[M\]: use larger slices.
 - **Address-derived values.** Which address a new object gets depends on
-  when collections run, and that depends on slice boundaries, snapshots,
-  GC stress and the session's limits. So `id()` values, default `repr`s
-  (`<... object at 0x...>`) and the order of sets of identity-hashed
-  objects can differ between runs sliced differently \[M\]. What holds:
-  `id` is unique among live objects, `id(x)` is the same for `x`'s whole
-  life across parks and restores, `is` is unaffected, and containers with
-  value-hashed keys keep their order.
-- **Smaller ones.** `io.StringIO.seek` accepts a float; `bytes.hex(None)`
-  is accepted; a set display of constants whose hashes collide can iterate
-  in another order; a dataclass's `__doc__` is `None`; `re`'s ignore-case
+  when collections run (slice boundaries, snapshots, GC stress, the
+  session's limits), so `id()`, default `repr`s and the order of sets of
+  identity-hashed objects can differ between runs sliced differently \[M\].
+  `id` stays unique among live objects and fixed for an object's life across
+  parks and restores; `is` and value-hashed containers are unaffected.
+- **Smaller ones.** `io.StringIO.seek` accepts a float; `bytes.hex(None)` is
+  accepted; a set display of constants whose hashes collide can iterate in
+  another order; a dataclass's `__doc__` is `None`; `re`'s ignore-case
   matching misses a few case folds (`ﬅ`/`ﬆ`, the Kelvin sign in a class
   range); `copy.copy` and `deepcopy` of an exception lose its `args` or
-  raise `TypeError` (`ValueError('a')`), and of a set subclass lose its
-  items; `OSError(2, 'x')` is a plain `OSError`, not `FileNotFoundError`;
-  an int outside 64 bits tested `in` a long range raises `MemoryError`
-  (`(1 << 70) in range(10**7)`) \[M\].
+  raise `TypeError` (`ValueError('a')`), and of a set subclass its items;
+  `OSError(2, 'x')` is not a `FileNotFoundError` \[M\].
 
 ### Code size limits
 
@@ -1487,13 +1489,12 @@ limits, always with a `CompileError`, never a crash:
   subscript and call chains (`x.f(1)[0].g()`), conditional expressions
   chained in their `else`, `elif` arms, f-string fields and string
   concatenation, up to 100,000 chain operators per expression.
-- **255 registers per function** (`SyntaxError: micro-monty does not
-  support expressions needing more than 255 registers`). Every value an
-  expression holds while computing another takes one: unpacking into more
-  than about 250 targets, more than about 250 decorators on one
-  definition, nested calls more than 85 deep or nested dicts more than 127
-  deep. Lists, tuples, dicts, sets, call arguments and f-strings of any
-  length do not.
+- **255 registers per function** (`SyntaxError: micro-monty does not support
+  expressions needing more than 255 registers`). Every value an expression
+  holds while computing another takes one: unpacking into more than about
+  250 targets, more than about 250 decorators on one definition, nested
+  calls more than 85 deep or nested dicts more than 127 deep. Lists, tuples,
+  dicts, sets, call arguments and f-strings of any length do not.
 - **250 local variables per function** (`SyntaxError: micro-monty does not
   support functions with more than 250 local variables`). Module and class
   bodies are not limited.

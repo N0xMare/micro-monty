@@ -1,23 +1,29 @@
 //! A micro-monty worker for one external cell protocol,
-//! `plakous-cell-protocol.v2`, as a library. It is an embedding example
-//! used in local integration testing against the agent harness that
-//! defines the protocol (plak), not part of micro-monty's published API.
+//! `plakous-cell-protocol.v2`, as a library. The protocol is plak's
+//! (<https://github.com/N0xMare/plak>, MIT), an open-source local agent
+//! harness by micro-monty's author that runs code cells in worker
+//! processes; this crate is an embedding example used in local
+//! integration testing against plak, not part of micro-monty's published
+//! API.
 //!
 //! [`serve`] runs one cell worker over any byte transport: a child's stdin
 //! and stdout (the `mm-cell-worker` binary) or an in-process pipe (a host
 //! that runs the worker on a thread of its own process). It speaks the
-//! py-ptc presentation the way the protocol's Monty worker (`plakous-py-host`) does:
-//! the session bootstrap's private functions are host functions answered as
-//! futures, prints stream as `Output`, nested results resume the cell in
-//! batches with proved `Delivery` verdicts. On top of that, `StartCell {
-//! window }` parks the engine for engine-parked yields and `Cancel` ends a
-//! cell without losing the worker.
+//! py-ptc presentation (programmatic tool calling: globals persist across
+//! cells, tools are async functions, no type checking) the way plak's
+//! Monty-based Python worker (`plakous-py-host`) does: the session
+//! bootstrap's private functions are host functions answered as futures,
+//! prints stream as `Output`, nested results resume the cell in batches
+//! with proved `Delivery` verdicts. On top of that, `StartCell { window }`
+//! parks the engine for engine-parked yields and `Cancel` ends a cell
+//! without losing the worker.
 //!
 //! The library holds the protocol loop, the value codec and the session
 //! driving. It has no seccomp filter and no FFI (`unsafe` is forbidden
 //! here); the binary adds those (docs/spec.md §5, §10.2). Policy values
-//! live in [`Config`], whose defaults are the harness's; the library adds no policy
-//! of its own (no queueing of nested calls past the outstanding limit).
+//! live in [`Config`], whose defaults are plak's; the library adds no
+//! policy of its own (no queueing of nested calls past the outstanding
+//! limit).
 //!
 //! It uses std I/O and threads, not an async runtime: [`serve`] blocks the
 //! calling thread, and starts one reader thread (and, while a `Cancel` is

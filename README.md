@@ -43,7 +43,9 @@ micro-monty = "0.0.1"
 The [user guide](docs/user-guide.md) is the crate's documentation: embedding,
 host functions, limits, snapshots, the `mm` CLI and wasm hosts.
 
-The `mm` CLI and the `mm-cell-worker` binary are attached to each
+The `mm` CLI and the `mm-cell-worker` binary (a worker process for the cell
+protocol of [plak](https://github.com/N0xMare/plak), an open-source agent
+harness; [spec §10.2](docs/spec.md)) are attached to each
 [GitHub release](https://github.com/N0xMare/micro-monty/releases) for Linux
 and macOS, x86_64 and arm64 each (only the two platforms above are tested),
 with SHA256SUMS; releases after v0.0.1 also attach the two mm-wasm guests. From source, with the toolchain pinned in

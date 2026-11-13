@@ -12,6 +12,8 @@ Labels on every number:
 - **[M]** measured (machine and toolchain named where it matters)
 - **[S]** sourced from code or docs (linked)
 - **[E]** estimate or target, not measured
+- **[M, reviewer]** measured by an independent review of the code, not by
+  the change's author
 
 ## 0. Summary
 
@@ -56,28 +58,27 @@ hashed item changed; images restore only on a build with the same build id
 
 Code-mode harnesses run agents whose action language is code: the model
 writes a cell, the harness runs it in a sandbox engine, and every tool is a
-host function the cell calls. The local agent harness micro-monty is tested
-against (plak, §14) shows the usual shape [S]. Its runtimes speak one
-engine-neutral protocol, `plakous-cell-protocol.v2`: length-prefixed JSON
-frames between the host and a worker process. One worker runs JavaScript on
-QuickJS; another runs Python on Monty in process. Python cells come in two
-presentations [S]:
+host function the cell calls. micro-monty's integration target is plak
+(<https://github.com/N0xMare/plak>, MIT), an open-source local agent harness
+by micro-monty's author; it shows the usual shape [S]. plak runs cells in
+worker processes and talks to them over a cell protocol of length-prefixed
+JSON frames; one worker runs JavaScript on QuickJS, another Python on Monty.
+Python cells come in two presentations [S]:
 
-- **py-ptc** (programmatic tool calling): globals persist across cells, no
-  type checking. Its bootstrap is only `async def f(arguments): return await
-  private(arguments)` wrappers over host callbacks.
-- **SDK**: a reset before every cell, type checking against generated stubs
-  ("type errors; nothing ran"), namedtuple records and namespace classes.
+- **py-ptc**, after Anthropic's programmatic tool calling (PTC): globals
+  persist across cells, tools are async functions the cell awaits, and
+  nothing is type-checked.
+- **SDK**: every cell starts from a fresh session and is type-checked
+  against generated stubs before it runs ("type errors; nothing ran").
 
-The runtime contract shows the gap micro-monty closes [S]: the JS worker can
-yield a running cell and resume it on the next wait; the Monty worker cannot,
-because Monty cannot park a running cell, so a Python cell keeps running
-between observations, cancelling it costs the worker, and the compute bound
-is enforced by killing the worker. Monty's architecture (a refcounted heap,
-serde dumps, dunder calls that run to completion synchronously) would need
-preemption retrofitted, the way dquickts retrofitted QuickJS, with the same
-limits (§9.1). micro-monty's reason to exist is pause-anywhere, safety, size
-and speed.
+The JavaScript worker can stop a running cell and resume it later. Monty
+cannot: a Python cell, once started, runs until it ends, so the harness
+cannot pause it between observations, cancelling it costs the worker, and
+the compute bound is enforced by killing the worker process [S]. Monty's
+architecture (a refcounted heap, serde dumps, dunder calls that run to
+completion synchronously) would need preemption retrofitted, the way
+dquickts retrofitted QuickJS, with the same limits (§9.1). micro-monty's
+reason to exist is pause-anywhere, safety, size and speed.
 
 ### Goals, in priority order
 
@@ -124,8 +125,10 @@ and speed.
 |---|---|
 | Monty | pydantic's Rust Python-subset interpreter, MIT. Source of the conformance corpus and error wording |
 | Harness | The host program that runs an agent's cells and owns its tools; it embeds micro-monty |
-| Cell protocol | `plakous-cell-protocol.v2`: `HostFrame`/`WorkerFrame` JSON frames between a harness and a worker (`mm-cell-worker`, §10.2) |
-| py-ptc / SDK | The two Python presentations of code mode (§1) |
+| plak | An open-source (MIT) local agent harness by micro-monty's author; the integration target (§1, §14) |
+| Cell protocol | Frames a harness and a worker process exchange to run cells. `mm-cell-worker` implements plak's, `plakous-cell-protocol.v2` (`HostFrame`/`WorkerFrame` JSON frames, §10.2) |
+| py-ptc | Programmatic tool calling in Python: globals persist across cells, tools are async functions, no type checking (§1) |
+| SDK | A code-mode presentation in which every cell starts fresh and is type-checked against generated stubs before it runs (§1). Not the Rust SDK, which is the facade |
 | dquickts | A QuickJS fork with suspension and full/delta snapshots; the comparison point for §9.1 |
 | Safepoint | A bytecode boundary where GC, parking and snapshots may happen: backward jumps, calls and the `CHECK`s the compiler puts in straight-line code; returns charge no tick and check nothing (§8.6) |
 | Pause-anywhere | Any safepoint at any depth can stop execution with all state in the arena (§9.1) |
@@ -435,10 +438,15 @@ messages; copy wording where behaviour matches.
   (a mixed-type list may fail on another pair first). A last pass reverses
   the merged array (`reverse=True`) or maps indexes to items (`key=`), a
   slice per step. Keys that are all small ints, all strs or all floats
-  compare directly (CPython's pre-checked compares), and two runs already
-  in order take one comparison while that pays. 1M items, best of 5 [M]:
-  strs 676 ms (CPython 270), sorted strs 130, ints 112, tuples 812,
-  `key=len` 247.
+  compare directly (CPython's pre-checked compares), and two runs already in
+  order take one comparison while that pays. 1M items, best of 5 [M]: strs
+  676 ms (CPython 270), sorted strs 130, ints 112, tuples 812, `key=len`
+  247. A short sort, or a long sort's runs in one step, spends at most
+  `SORT_CAP` (2^20) visits comparing str and other keys; past it the
+  prelude's `_sort_keys` sorts the rest, a comparison per safepoint, so keys
+  that compare long cannot hold a step. json's `sort_keys` is not capped: it
+  sorts up to 4,096 keys natively, bounded by its 64 MiB text cap (21 ms at
+  4,000 keys of 12 KB [M]), and leaves more to `list.sort`.
 - **Comparison walks are budgeted.** Native `==`, ordering and key probes
   over builtin data visit at most `WALK` (2^14) pairs per call and charge
   one fuel unit per visit. Past the budget they hand off to the prelude
@@ -447,7 +455,11 @@ messages; copy wording where behaviour matches.
   `_seq_scan`/`_dict_scan` comparing long sequences and dicts in native
   slices. Shared data with exponentially many paths (`x = [x, 1, x]`, slow
   on CPython too) therefore parks on fuel, deadlines and requests. The
-  budget is a constant, so parked and unparked runs take the same path.
+  budget is a constant, so parked and unparked runs take the same path. A
+  set insert spends one walk for all its compares, as a lookup does. A set's
+  or dict's table rebuild charges the probes past each key's first run of
+  slots, beyond one a key, and ends a step when the slots read and those
+  probes pass its budget, so a table of colliding keys rebuilds in steps.
   Depth carries through set and dict probes, so nested frozensets and keys
   raise `RecursionError`. It also carries across the levels a twin runs in
   bytecode: the twins compare items with `_walk_eq`/`_walk_ord` at their
@@ -458,13 +470,16 @@ messages; copy wording where behaviour matches.
   first unequal pair in one descent (`_ord`); a pair that needs Python
   code falls back to CPython's `==`-then-`<` steps.
 - **Membership scans charge per item.** `in` on a list, tuple or
-  `dict.values()` (or a range, for an item that is not an int that fits
-  64 bits), and `count`/`index` on lists and tuples and `list.remove`,
-  charge one fuel unit per item compared. Over a long list or tuple they
-  go in chunked steps (`nstep::op::SEQ_IN`, `SEQ_SCAN`; "Bounded native
-  steps", below); `in` on `dict.values()`, or on a range for such an item,
-  collects the items with `Vm::collect` (`Vm::contains`), which hands off
-  past `COLLECT_CHUNK` items as below. `in` on an iterator, which
+  `dict.values()` (or a range, for an item that is not an int), and
+  `count`/`index` on lists and tuples and `list.remove`, charge one fuel
+  unit per item compared. Over a long list or tuple they go in chunked
+  steps (`nstep::op::SEQ_IN`, `SEQ_SCAN`; "Bounded native steps", below).
+  `in` on `dict.values()` collects the items with `Vm::collect`
+  (`Vm::contains`), which hands off past `COLLECT_CHUNK` items as below;
+  a range of fewer than `COLLECT_CHUNK` items does the same for an item
+  that is not an int, and a longer one hands off to the twin at once,
+  which compares item by item. An int past 64 bits is in no range (a
+  range's bounds fit 64 bits). `in` on an iterator, which
   need not end, scans `WALK` items natively and then hands off to
   `_op_contains`, which goes on from the same position in bytecode and
   parks on fuel, deadlines and requests. `any` and `all` do the same
@@ -622,16 +637,19 @@ messages; copy wording where behaviour matches.
 - **Results and byte work are charged where they are built.** The arena
   constructors charge one unit per 64 bytes of a str, bytes or big-int
   result and one per 8 slots of a tuple, list, dict or set table
-  (`Vm::burn_result`), so every native that builds something large pays
-  for it, whatever path got there. Scans over text (str and bytes methods,
-  `in`, hashing bytes, `re`'s literal skip-ahead, comparing long texts
-  inside a walk, where one visit covers 64 bytes and any excess over the
-  budget is charged with the walk) charge one unit per 64 bytes they read.
-  Collecting a list or tuple into a native charges one unit per item, as
-  collecting an iterator does; set and dict algebra and equality charge one
-  visit per entry, identity hits included. `hash` of a tuple visits at
-  most `WALK` tuples natively, then hands off to `_hash`, which hashes each
-  tuple once, so shared nesting (`t = (t, t)`) is linear.
+  (`Vm::burn_result`), so every native that builds something large pays for
+  it, whatever path got there. Scans over text (str and bytes methods, `in`,
+  hashing bytes, `re`'s literal skip-ahead, comparing long texts or big ints
+  inside a walk (a heap int compares in place: sign, length, then from the
+  top; as long a pair spends one visit and unit per 64 bytes), where one
+  visit covers 64 bytes and any excess over the budget is charged with the
+  walk) charge one unit per 64 bytes they read. Collecting a list or tuple
+  into a native charges one unit per item, as collecting an iterator does;
+  set and dict algebra and equality charge one visit per entry, identity
+  hits included. `hash` of a tuple visits at most `WALK` tuples natively,
+  its big ints spending a visit (and a unit) per 32 bytes they hash, then
+  hands off to `_hash`, which hashes each tuple once, so shared nesting (`t
+  = (t, t)`) is linear.
 - **One native step stays linear.** A class's subclasses are revisited
   once (version stamps, not a `seen` list), a single-base class takes its
   base's dunder flags and its own, the C3 merge counts tail occurrences, a
@@ -651,7 +669,7 @@ messages; copy wording where behaviour matches.
   decoder frames and renderer work items alongside `Value`, sharing
   allocation and charge lifetimes.
 - **No serde in the engine crates.** Snapshot and host-value encodings are
-  hand-written. (`mm-cell-worker` uses serde through its protocol crate,
+  hand-written. (`mm-cell-worker` uses serde through plak's protocol crate,
   `plakous-cell`.)
 - **Features gate size.** Each stdlib module is a cargo feature that removes its
   types, not just its import (§12).
@@ -703,38 +721,35 @@ are the rules above. Where the code falls short, the clause says so under
    2^21 units, about 1 s at 0.48 µs).
 
    **Today:** the native bound is measured on every row of
-   `crates/micro-monty/tests/steps.rs`, and every row is `Bounded`. Sites
-   that are not yet rows pass it on guest input [M, reviewer]: a set
-   insert of keys with equal hashes (`set(l)` of 4,000 ints that all hash
-   to 0: 1,194 ms in one step) and the table rebuild of such a set or dict
-   (232–650 ms at 20,000 keys); and view operations with a set-subclass,
-   generator or items operand (`d.keys() - ss`, 1M keys, `ss` a set
-   subclass: 158 ms; up to 291 ms). Both are being fixed in 0.0.2, with
-   rows. The allocation floor is closed: a large list buffer, tuple or set key table
+   `crates/micro-monty/tests/steps.rs`, and every row is `Bounded`. The
+   allocation floor is closed: a large list buffer, tuple or set key table
    comes unfilled from a fresh zeroed segment (`Heap::alloc_unfilled`), so
-   its pages fault in as the steps write it; a set's keys are marked empty
-   a slice per step without the write barrier, and its hashes stay
-   unfilled and fault in at random as the first inserts probe them (24–26
-   ms for 32 MiB [M]; writing them first in steps of their own delayed the
-   rebuild, so the old 32 MiB table stayed live through a collection and
-   two rounds of 656k-item `a |= b` raised `MemoryError` at 256 MiB [M]);
-   a sort's second merge array comes in a step
-   of its own; and a full list of 1M items or more grows a slice per step
-   on `append` and `insert`. The 50 ms is on a reference machine (an Amp
-   orb, 16 cores under gVisor); the oracle scales it by the machine it runs
-   on, so a row's verdict means the same on every orb and on a developer's
-   Mac. Three probes, timed before and after the rows (the faster run
-   counts, as load only slows a probe): allocating and filling a fresh
-   64 MiB block, the cost of a step that allocates an object at the cap;
-   four chunked `STEP_WORK` steps of `x in list`, the cost of native work;
-   and a million dependent loads from random slots of a 64 MiB table, the
-   memory latency that bounds a mark or a probe over a big table (rows took
-   twice as long on an orb with 144 ns loads as on one with 64 ns [M]).
-   The limit is 50 ms times the largest ratio of a probe's time to the
-   reference's (28.1 ms, 11.6 ms and 144 ms [M]), clamped to 0.5–2; a
-   machine past 2 fails the oracle as unable to judge it. A `Bounded` row
-   over that limit runs twice more and its least counts, as a probe's
-   does: a load spike only lengthens a step.
+   its pages fault in as the steps write it; a set's keys are marked empty a
+   slice per step without the write barrier, and its hashes stay unfilled
+   and fault in at random as the first inserts probe them (24–26 ms for 32
+   MiB [M]; writing them first in steps of their own delayed the rebuild, so
+   the old 32 MiB table stayed live through a collection and two rounds of
+   656k-item `a |= b` raised `MemoryError` at 256 MiB [M]); a sort's second
+   merge array comes in a step of its own; and a full list of 1M items or
+   more grows a slice per step on `append` and `insert`. The 50 ms is on a
+   reference machine (16 cores under gVisor); the oracle scales it by the
+   machine it runs on, so a row's verdict means the same on every Linux
+   machine and on a developer's Mac. Three probes, timed before and after
+   the rows (the faster run counts, as load only slows a probe): allocating
+   and filling a fresh 64 MiB block, the cost of a step that allocates an
+   object at the cap; four chunked `STEP_WORK` steps of `x in list`, the
+   cost of native work; and a million dependent loads from random slots of a
+   64 MiB table, the memory latency that bounds a mark or a probe over a big
+   table (rows took twice as long on a machine with 144 ns loads as on one
+   with 64 ns [M]). The limit is 50 ms times the largest ratio of a probe's
+   time to the reference's (28.1 ms, 11.6 ms and 144 ms [M]), clamped to
+   0.5–2; a machine past 2 fails the oracle as unable to judge it. A
+   `Bounded` row over that limit runs again after every other row has run,
+   once a round for up to six rounds, so its retries spread over the host's
+   slow phases (1.6–2 times, outlasting three runs back to back [M]). A
+   probe runs between retries, each retry is judged against the limit from
+   the faster probe beside it, and the row passes if any run is under its
+   limit: a load spike only lengthens a step.
 
    A collection the heap starts itself is not a native step: over 32 MiB
    live it marks a slice per safepoint, and under it it runs in full over
@@ -767,31 +782,31 @@ are the rules above. Where the code falls short, the clause says so under
    the operation not started. **Today:** most natives charge after the
    work (`Vm::burn`), and the overdraft bound holds because each step is
    short; only the int operators, the big-int builtins and the sorts
-   estimate first (`Vm::native_short`, `Vm::fuel_short`). Not every unit
-   is charged yet: a set insert compares keys with equal hashes for free
-   (`set_put` charges a compare only past its first visit: `set(l)` of
-   4,000 colliding ints is charged 17,459 units for about 8 million
-   compares [M, reviewer]), and a set's or dict's table rebuild probes past
-   colliding keys uncharged; both are being fixed in 0.0.2. The bound is
-   checked on every `Bounded` row; a sweep over every public method of
-   the builtin types and native modules has not been rerun since the
-   chunked steps landed.
+   estimate first (`Vm::native_short`, `Vm::fuel_short`). The bound is
+   checked on every `Bounded` row; a sweep over every public method of the
+   builtin types and native modules has not been rerun since the chunked
+   steps landed.
 4. **Results do not depend on how the host slices the run.** Output,
    exceptions, the values left and the fuel spent are the same, with the
    exceptions under Today, whether the cell runs unparked, in fuel slices
    of any size, past deadlines or through snapshots restored in other
    processes and on the other target.
    Budgets that pick a native or a twin path are constants, not the fuel
-   left. **Today:** outputs and outcomes are checked by durability
+   left (`re`'s matcher included: its budget per slice follows the
+   subject and the backtrack stack). **Today:** outputs and outcomes are
+   checked by durability
    (parked every few units, and across targets) and the fuel spent by
    `Vm::charge_ticks` (within 0.2% across slices of 1 to 30,000 [M]); a
    container `repr` walks `REPR_SLICE` visits natively whatever the fuel
-   left. `cargo xtask durability` (in `check`) compares the report, the
-   fuel total and a final-state digest (the image's checksum at the end)
-   of each case unparked, parked in one process, parked with a snapshot
-   at every stop and parked with every park restored in a new process
-   (and, with `--cross-target`, on and across both targets), and fails on
-   a difference `conformance/durability-results.txt` does not record.
+   left. `cargo xtask durability` (in `check`) compares the report, the fuel
+   total and a final-state digest (the image's checksum at the end) of each
+   case unparked, parked in one process, parked with a snapshot at every
+   stop and parked with every park restored in a new process (and, with
+   `--cross-target`, on and across both targets), and the restore chain also
+   against the session that took the same snapshots and went on
+   (`restore-vs-snapshot`, whose only recorded differences are the char
+   cache's fuel in own cases 419, 472 and 498, and 419's digest), and fails
+   on a difference `conformance/durability-results.txt` does not record.
    `--record` only removes entries; a change that makes a case differ for
    a known cause adds its line by hand, naming the cause and the step
    that closes it. Its first full run (1,416 runs) gave
@@ -803,23 +818,27 @@ are the rules above. Where the code falls short, the clause says so under
    collects garbage before it writes the image, which also moves when the
    next collection falls due [E], so such an operation can come out either
    way: raise `MemoryError` unparked and succeed after a restore, or
-   succeed unparked and raise after one. The snapshot need not be at the park just before the
-   operation: one kept snapshot at an earlier park moved it [M, reviewer].
+   succeed unparked and raise after one. The snapshot need not be at the
+   park just before the operation: one kept snapshot at an earlier park
+   moved it [M, reviewer].
    Operations that do run again wait for a full collection before they
    raise, so a snapshot's collection does not decide their outcome; free
    space fragmentation and the bytes counted outside the arena, which
    differ after a restore and between targets, still can. An
    operation that fails partway for memory is charged for the work it
    did, so such a snapshot, restored or not, can raise or lower the fuel
-   total. The reviewer's `f(*big, **kw)` charged +28,672 units (+0.64%).
+   total. A reviewed `f(*big, **kw)` charged +28,672 units (+0.64%).
    Six such calls under `try` beside a 24 MB pad print `ok` six times
    unparked and `ok ME ok ME ok ME` with a snapshot at every park, and the
-   fuel falls 11% (6,867,483 → 6,107,194 units) [M, reviewer]. Retrying
-   these too would close both; it is not built. Fuel totals also depend on snapshots when a
-   cell indexes or searches a long non-ASCII str: every collection forgets
-   the char positions, a snapshot collects first, and a restore starts
-   without them, so the next walk after any `Session::snapshot()`,
-   restored or not, is charged again (`conformance/own/419`: +9,775 units
+   fuel falls 11% (6,867,483 → 6,107,194 units) [M, reviewer]. The
+   operations §9.2 lists as not yet retried behave the same way until
+   their fix (being fixed in 0.0.2), and even retried ones are charged per
+   collection asked for, which a snapshot can move (§9.2). Fuel totals also
+   depend on snapshots when a cell indexes or searches a long non-ASCII str:
+   every collection forgets the char positions, a snapshot collects first,
+   and a restore starts without them, so the next walk after any
+   `Session::snapshot()`, restored or not, is charged again
+   (`conformance/own/419`: +9,775 units
    with snapshots and no restore, +826 more with restores [M];
    `docs/user-guide.md`, "Other differences from CPython").
    Address-derived values are an exception today: which address a new
@@ -907,7 +926,7 @@ a tag it does not know. The snapshot format is separate: images carry the
 engine's build id, and `mm_build_id` tells a host which images a guest
 restores (§9.3).
 
-`plakous-cell`, the protocol crate, comes from a pinned git revision because
+`plakous-cell`, plak's protocol crate, comes from a pinned git revision because
 it is not on crates.io. It brings tokio and nix (the host-side client; nix is
 used for `getrusage` in the worker's resource report). Only the unpublished
 worker depends on it.
@@ -1536,7 +1555,10 @@ timer deadlines.
   `LIST_APPEND` (a comprehension's list grows into a new buffer before it
   changes) and `CALL` of a builtin type whose constructor copies its
   argument (`list(l)`), the last three read at the fault exit
-  (`Vm::oom_retry_fault`).
+  (`Vm::oom_retry_fault`). Not yet retried, being fixed in 0.0.2 [M,
+  reviewer]: set and dict comprehensions and `add`/`append` calls, which
+  fail on their own outgrown tables; `bytes(n)`, `bytearray(n)`, a wide
+  f-string field, `sorted` and `list.extend`.
   User code never runs inside those natives (a dunder runs as a request),
   so it never runs twice. Nothing that drew items from a one-shot iterator
   runs again: `Vm::collect` marks the failure as a rerun's (`oom_rerun`)
@@ -1579,10 +1601,14 @@ timer deadlines.
   garbage made during a mark [M].) The sweep that follows is lazy
   (`Space::pending`): allocation sweeps a few segments before committing
   memory, each check sweeps 8 segments per space, and everything that walks
-  the heap (`write_snapshot`, the code-liveness scan) finishes it first.
-  Mark state lives outside the arena and is never snapshotted: a snapshot,
-  code reclamation and a native's collection request abandon a mark for a
-  full collection, and a restored heap starts with none.
+  the heap (`write_snapshot`, the code-liveness scan) finishes it first. A
+  snapshot's own collection sweeps at once, segment by segment in ascending
+  order, as a restore lists its free blocks, so the session that goes on and
+  the restored one allocate the same blocks (`Heap::collect_swept`,
+  `conformance/own/533`). Mark state lives outside the arena and is never
+  snapshotted: a snapshot, code reclamation and a native's collection
+  request abandon a mark for a full collection, and a restored heap starts
+  with none.
 - **Headroom.** Nothing is freed until the remark, and natives cannot
   collect, so a native that allocates more than the room left during a
   mark raises `MemoryError` where a full collection at the mark's start
@@ -1653,14 +1679,17 @@ timer deadlines.
 - **Also unbounded:** every collection under 32 MiB live (30 ms native
   at worst) runs in full, as do a snapshot's, code reclamation's, and one
   a native or the engine requests (`Vm::request_gc`): after a
-  `MemoryError` is raised, after a result of 64 KiB or more once
-  allocation since the last collection reaches half the memory left, and
-  after a byte job fails for memory.
+  `MemoryError` is raised and after a byte job fails for memory.
 - **`gc.collect()`** asks for a collection that starts after the call
   (`Heap::force_collection`) and waits for it as a held mark does
   (`Vm::gc_held`): a step per safepoint check, no guest code and no fuel
   between steps, a park check after each, so over 32 MiB live it can park
-  between slices (4M live lists: steps of at most 1.4–1.8 ms [M]).
+  between slices (4M live lists: steps of at most 1.4–1.8 ms [M]). The
+  collection after a result of 64 KiB or more, once allocation since the
+  last collection reaches half the memory left (`Vm::collect_for_result`),
+  runs the same way (`Vm::collect_in_steps`), so its garbage goes before
+  guest code or the next growth allocates (`json.dumps` of 1M small dicts:
+  worst step 7.2–10.9 ms [M]).
   The collection is not charged to fuel, so fuel alone does not bound a
   cell's CPU time: 4,000 calls with 100,000 live lists took 5 s for
   120,076 units [M]; a deadline does.
@@ -1722,13 +1751,13 @@ trailer  xxh64 of everything above
 - **Persistence: FULL images, compressed by the host.** The engine writes
   FULL, uncompressed images. Hosts compress with zstd level 1, using the
   build's fresh-session image (`Session::new` then `snapshot`) as a raw
-  prefix (`--patch-from`), with the frame checksum on, and key each blob
-  by build id; a dictionary trained on the host's own parks is optional
+  prefix (`--patch-from`), with the frame checksum on, and key each blob by
+  build id; a dictionary trained on the host's own parks is optional
   (`docs/user-guide.md`, "Storing snapshots"). Measured [M]: plain zstd-1
   gives 3.6× on small parked sessions and about 19× on 100k retained rows;
-  the base prefix adds 1.3–1.4× on small parks (codemode median 102.8 KB →
-  19.7 KB), and base plus a trained dictionary reaches 8.1× against FULL on
-  held-out codemode parks.
+  the base prefix adds 1.3–1.4× on small parks (code-mode parks' median
+  102.8 KB → 19.7 KB), and base plus a trained dictionary reaches 8.1×
+  against FULL on held-out code-mode parks.
 
 **Compatibility: the build id is a layout descriptor.** Two builds with the
 same id restore each other's images; the id hashes what an image's meaning
@@ -1815,25 +1844,32 @@ and, for stored code, every `YIELD_FROM` right after its `SEND`), frame and
 generator pcs, frame bounds, code indices, tasks and host-call state, every
 dict's index (entry bits, duplicates, tags, probe reachability, length),
 continuation targets and registers, shape transitions, class size hints and
-bundled-module entries. A generator's code is its function's in every
-state; a frame that runs for a generator or coroutine runs that object's
-code while it is running (`Corrupt("frame owner")`). Each continuation slot
-is held by one frame at most, and the free list names each empty slot once.
-A dict without an index uses no more entries than it holds. A chunked
-native's state (`NSTATE`) keeps the words its next step trusts as an index,
-a stride, a count or a slice's bounds in range (`Corrupt("native step")`);
-the bytes a str build has written are UTF-8 holding the chars it counts,
-and each step checks the seam it copies onto. A chunked native's last step
-can change its data in place without saving its words, and `_steps` holds
-its state until the step's fuel is charged, which may park; so a finished
-state is marked done (`nstep::op::DONE`), which no step runs and restore
-does not check. Other words are checked by the steps, with checked
-arithmetic (`SystemError`) in every build profile. Every reference, in the
-VM part and in every arena value slot, must name an object of its kind
-(`check_refs`, `Corrupt("references")`); the intern table's untagged string
-references are checked by mm-core. Free lists, bitmaps and size classes are
-rebuilt by a sweep. Every arena access is also bounds- and
-start-bitmap-checked and fails with an error.
+bundled-module entries. A generator's code is its function's in every state;
+a frame that runs for a generator or coroutine runs that object's code while
+it is running (`Corrupt("frame owner")`). Each continuation slot is held by
+one frame at most, and the free list names each empty slot once. A dict
+without an index uses no more entries than it holds. A chunked native's
+state (`NSTATE`) keeps the words its next step trusts as an index, a stride,
+a count or a slice's bounds in range (`Corrupt("native step")`); a set's or
+dict's rebuild into new tables (a bulk operation's, or json's growth of an
+object) holds in them exactly the live entries of the old table it has
+moved; the bytes a str build has written are UTF-8 holding the chars it
+counts, and each step checks the seam it copies onto. A chunked native's
+last step can change its data in place without saving its words, and
+`_steps` holds its state until the step's fuel is charged, which may park;
+so a finished state is marked done (`nstep::op::DONE`), which no step runs
+and restore does not check. Other words are checked by the steps, with
+checked arithmetic (`SystemError`) in every build profile; a long sort's
+positions must follow from its pass, and its two arrays differ from each
+other and from the list sorted. Every reference, in the VM part and in every
+arena value slot, must name an object of its kind (`check_refs`,
+`Corrupt("references")`). The stop the facade's header names (idle, a host
+call and its id, a wait on host futures, a park) must match the state the VM
+holds (`Corrupt("stop")`), and a waiting image must hold an answer or a
+future status, a cancelled one included, for every pending call; the intern
+table's untagged string references are checked by mm-core. Free lists,
+bitmaps and size classes are rebuilt by a sweep. Every arena access is also
+bounds- and start-bitmap-checked and fails with an error.
 
 Not saved: what `SessionSettings` gives a new or restored session (the
 output callback, the wall clock, entropy, the zone source, the text cut,
@@ -1846,27 +1882,28 @@ Host-call ids survive a restore: the restored session accepts the same
 arguments, the calls a wait is on, a park's reason) from the facade's
 header.
 
-**Cost** [M, release, `taskset -c 2`, median of 21]:
+**Cost** [M, release, `taskset -c 2`, median of 21; the range over five
+runs; 5a926cf7, 16 cores under gVisor, Xeon at 2.60 GHz]:
 
 | Session | Size | Write | Restore |
 |---|---|---|---|
-| empty | 41.3 KB [M, reviewer] | 0.06 ms | 0.20 ms |
-| 100k `(i, -i)` tuples | 3.5 MB | 1.9 ms | 1.5 ms |
-| 100k `str(i)` | 5.9 MB | 2.6 ms | 3.8 ms |
-| 100k `{'i': i, 's': str(i)}` | 10.7 MB | 7.8 ms | 7.7 ms |
-| parked in 150 nested generator + method frames | 127 KB | 0.08 ms | 0.32 ms |
+| empty | 41.3 KB | 0.03–0.06 ms | 0.03–0.06 ms |
+| 100k `(i, -i)` tuples | 3.5 MB | 3.8–4.2 ms | 4.5–4.9 ms |
+| 100k `str(i)` | 5.9 MB | 6.5–7.1 ms | 8.4–8.8 ms |
+| 100k `{'i': i, 's': str(i)}` | 10.7 MB | 13.9–14.7 ms | 17.1–18.5 ms |
+| parked 151 generator frames deep (methods `yield from` each other) | 78.2 KB | 0.08 ms | 0.08–0.09 ms |
 
 Size tracks the live heap, so the remaining lever is object layout, not the
 snapshot format. Monty takes 10.63 MB / 17 ms / 89 ms and dquickts
-3.06 MB / 41 ms / 28 ms on 100k small objects [M]. On large heaps a
-snapshot, its full collection included, takes about 1.4 ms per MiB of
-image natively, under wasmtime and on V8 (about 250 ms at 170 MiB); the
-small images above write faster. A restore costs about as much per MiB:
-small objects 1.2–1.5 ms/MiB native, 1.0–1.8 under wasmtime and 0.9–1.7
-on V8; large blocks 0.6–0.9 native and 0.3–0.7 on wasm. A process's first
-restore takes up to 1.7 ms/MiB native and 1.8 on wasm, and V8's first call
-into a new instance adds a warm-up (154 ms at 35 MiB) [M, one 16-core Amp
-orb].
+3.06 MB / 41 ms / 28 ms on 100k small objects [M]. A snapshot, its full
+collection included, takes about 1.4 ms per MiB of image natively, under
+wasmtime and on V8 (about 250 ms at 170 MiB; the table's rows 1.1–1.4). A
+restore costs about as much per MiB or a little more: small objects
+1.2–1.5 ms/MiB native (the table's rows 1.3–1.8), 1.0–1.8 under wasmtime
+and 0.9–1.7 on V8; large blocks 0.6–0.9 native and 0.3–0.7 on wasm. A
+process's first restore takes up to 1.7 ms/MiB native and 1.8 on wasm, and
+V8's first call into a new instance adds a warm-up (154 ms at 35 MiB) [M,
+eb78933, 16 cores under gVisor].
 `bench/evidence/restore-cost/run.sh` at `2bcbb8c` reruns these.
 
 ## 10. Host boundary
@@ -1982,10 +2019,9 @@ taken after setup that instantiates by restore.
 ### 10.2 An embedding example: the cell-protocol worker (`mm-cell-worker`)
 
 `mm-cell-worker` runs micro-monty behind one external, engine-neutral cell
-protocol, `plakous-cell-protocol.v2` (length-prefixed JSON frames), and is
-used in local integration testing against the harness that defines it
-(`publish = false`). It shows how a host maps a frame protocol onto the
-facade:
+protocol, plak's `plakous-cell-protocol.v2` (length-prefixed JSON frames),
+and is used in local integration testing against plak (`publish = false`).
+It shows how a host maps a frame protocol onto the facade:
 
 | Cell protocol | Engine |
 |---|---|
@@ -2001,17 +2037,17 @@ facade:
 | `Shutdown` | `ResourceReport` |
 
 The worker runs the py-ptc presentation: bootstrap, nested calls with the
-protocol's Monty worker's argument bounds and messages, Waiting batches and
-Delivery verdicts, ordered output with the 1 MiB cap, yields (`window` sets
-an engine deadline; a cell waiting on the host also yields when its window
-ends), and Cancel, which ends the cell with `Failed{"cell cancelled by the
-host", generation_lost: false}` and keeps the worker. For the SDK
-presentation it accepts `sdk_stubs` and runs the cells (the harness sends
-`Reset` and the SDK bootstrap as a Monty prelude) without a pre-run type
-check, which is the harness's. Against a local checkout of the harness it
-passes 46 of 48 worker-driven protocol tests [M]; the two failures are
-Monty-only behaviour (the allocator ceiling) and the SDK test's type-error
-cell, which expects a checker.
+argument bounds and messages of plak's Monty-based Python worker, Waiting
+batches and Delivery verdicts, ordered output with the 1 MiB cap, yields
+(`window` sets an engine deadline; a cell waiting on the host also yields
+when its window ends), and Cancel, which ends the cell with `Failed{"cell
+cancelled by the host", generation_lost: false}` and keeps the worker. For
+the SDK presentation it accepts `sdk_stubs` and runs the cells (the harness
+sends `Reset` and the SDK bootstrap as a Monty prelude) without a pre-run
+type check, which is the harness's. Against a local checkout of plak it
+passes 46 of 48 of plak's worker-driven protocol tests [M]; the two failures
+are Monty-only behaviour (the allocator ceiling) and the SDK test's
+type-error cell, which expects a checker.
 
 `mm-cell-worker` is a library a Rust host can run in process, plus a thin
 binary:
@@ -2032,16 +2068,16 @@ binary:
   mapping, and exit. The engine makes no syscalls, so this costs nothing
   and turns any engine bug into, at worst, a dead worker.
 - **Policy.** The library adds no policy features (no queueing). Its policy
-  values are `Config` with the protocol's Monty worker's values as
-  defaults: 16 outstanding nested calls and their `RuntimeError` text, the
-  1 MiB print and result caps and their notices, the script name
-  `plak-py-ptc.py`, value nesting depth 128 and the 16 KiB nested-error
-  bound. The engine and facade impose no outstanding-call limit (pending
-  host futures are bounded only by the memory budget, §11).
+  values are `Config` with plak's Python worker's values as defaults: 16
+  outstanding nested calls and their `RuntimeError` text, the 1 MiB print
+  and result caps and their notices, the script name `plak-py-ptc.py`, value
+  nesting depth 128 and the 16 KiB nested-error bound. The engine and facade
+  impose no outstanding-call limit (pending host futures are bounded only by
+  the memory budget, §11).
 
 Registering the worker with a harness (its identity, config and discovery)
 is the harness's work, not this repository's; integration tests run against
-a local checkout of it.
+a local checkout of plak.
 
 ### 10.3 Embedding
 
@@ -2082,7 +2118,11 @@ prelude's unpacked chunks and compiled host-module programs, filled on first
 use and capped at `DEFAULT_MODULE_CACHE` (8 MiB) unless
 `Engine::with_module_cache` sets another cap. It is charged once to the
 Engine, not to any session, and a session is charged and behaves the same
-with or without it. For fully hostile code, process or wasm isolation
+with or without it. Every bundled module decoded is about 2.9 MB, host
+code about 0.67 MB per 100 typed functions; on json, asyncio, re,
+collections and datetime a warm restore takes 9.95M instructions against
+23.75M uncached, and RSS per session with 40 held is 1.2 MB against
+1.85 MB [M]. For fully hostile code, process or wasm isolation
 remains the stronger boundary.
 
 Durability guarantees are pause-anywhere and same-build snapshots. Work after
@@ -2102,7 +2142,7 @@ One limit per resource the engine can exhaust:
 | Python stack | frame depth | `RecursionError` | 1000 |
 | Rust stack | native nesting depth | parser and compiler depth-counted (`MAX_NESTING`); run-time nesting on arena stacks (§5) | 256 KiB host thread to run, about 650 KiB to compile [M] |
 | CPU in one native call | int ↔ str digits; fuel charged by natives | CPython's 4300-digit limit; proportional fuel; an operation estimated at 65,536 units or more parks before starting when the fuel left cannot pay (`Session::fuel_wanted`): the int operators `*`, `**`, `/`, `//`, `%` and, called straight from Python code, `pow`, `divmod`, `sum` and `math.prod` of a list or tuple, `math.factorial`/`perm`/`comb`/`isqrt`/`gcd`/`lcm`, `sorted` and `list.sort`; other long natives run in steps of at most 2^17 units (§5) | 4300 |
-| Int size and superlinear int work | bits; estimated native time | an int past 2^26 bits (`intops::MAX_BITS`; linear operations on it take at most about 21 ms [M]) and a superlinear operation (`*`, `//`, `%`, `divmod`, `**`, `pow(a, e, m)`, `str()` and `int()` with the digit limit off, `math.factorial`/`comb`/`perm`/`isqrt`/`gcd`/`lcm`, `round(x, -k)`) whose time, estimated from its algorithm (Karatsuba's products, the squarings of `**`), is past 45 ms (`intops::WORK_MAX`) raise `MemoryError` before starting (the latter with "integer operation too large"), so no such step runs past 50 ms. CPython computes these: `3 ** (2 ** 22)` in 0.61 s, `math.factorial(50_000)` | 2^26 bits; 45 ms |
+| Int size and superlinear int work | bits; estimated native time | an int past 2^26 bits (`intops::MAX_BITS`; linear operations on it take at most about 21 ms [M]) and a superlinear operation (`*`, `//`, `%`, `divmod`, `**`, `pow(a, e, m)`, `str()` and `int()` with the digit limit off, `math.factorial`/`comb`/`perm`/`isqrt`/`gcd`/`lcm`, `round(x, -k)`) whose time, estimated from its algorithm (Karatsuba's products, the squarings of `**`), is past 45 ms (`intops::WORK_MAX`) raise `MemoryError` before starting (the latter with "integer operation too large"), so no such step runs past 50 ms. Reducing an int at the cap by a modulus of up to 128 bits (`%`, `//`, `divmod`, `pow(a, e, m)`'s base, `math.gcd`) takes short division and is not refused [M]. CPython computes these: `3 ** (2 ** 22)` in 0.61 s, `math.factorial(50_000)` | 2^26 bits; 45 ms |
 | Output | byte cap | host callback | host-set |
 | Completion text | `repr`/`str` of a cell's result | cut by the facade (`Session::set_text_limit`, `set_text_cut`) | 1 MiB, or the memory limit if less |
 | Source | size and nesting | checked before and during parsing | 256 KiB (`MAX_SOURCE_BYTES`) |
@@ -2163,8 +2203,9 @@ bound owned capacities, not an allocator's transient peak or process RSS.
 - **Synthesized methods.** Namedtuple and dataclass signature code is hidden
   from tracebacks but is not permanent prelude code: only reachable
   functions retain it between cells and across reset. Its cache holds sorted
-  code indices, shares the budget, and is in the image, so a restore keeps
-  it.
+  code indices, shares the budget, and is in the image, validated on read,
+  so a restore keeps the same signature codes and counts toward the 4,096
+  limit (`MAX_SYNTH`) from where it was (`conformance/own/532`).
 - **Frames.** Register stacks, frame records and continuation tables,
   including suspended tasks' stacks. Task switches transfer rather than
   duplicate the charge. Cell completion, cancellation and reset release
@@ -2585,20 +2626,24 @@ opens a draft release.
   corpus case `micro-monty.jsonl` records as passing through `oracle.py
   --durability`: once unparked, and once parked every few fuel units and at
   every host call, each park saved to a FULL snapshot by one `mm` process
-  and continued by a new one; stdout, the result and the exception must be
-  identical. Every case parks at `5:50` (every 5 units, or every ⌈fuel /
-  50⌉ for a long case); the own cases and every third corpus case also park
-  at `1:100` in the landing tier and `1:1000` in the release gate.
+  and continued by a new one. It compares each mode's report (stdout, the
+  result, the exception), fuel total and final-state digest with the
+  unparked run's, and the restore chain's with the session's that took the
+  same snapshots and went on (§5.1 clause 4); a difference
+  `conformance/durability-results.txt` does not record fails. Every case
+  parks at `5:50` (every 5 units, or every ⌈fuel / 50⌉ for a long case); the
+  own cases and every third corpus case also park at `1:100` in the landing
+  tier and `1:1000` in the release gate.
   `--cross-target` runs the own cases with every snapshot restored on the
   other target: the chain alternates between the native `mm` and `mm` for
   `wasm32-wasip1` under wasmtime, once starting on each.
 - **Golden images:** images an earlier build wrote restore and continue
   exactly (§9.3).
-- **Real sessions:** `conformance/codemode/real/gate.py --check` replays
-  160 recorded agent-harness sessions (2,841 cells) through
-  `mm_cell_worker::serve`, answering each nested call with its recorded
-  result, and fails if any cell's outcome, output, exception, value or
-  nested-call sequence moves from `results/gate.jsonl`.
+- **Real sessions:** `conformance/codemode/real/gate.py --check` replays 160
+  recorded plak sessions (2,841 cells) through `mm_cell_worker::serve`,
+  answering each nested call with its recorded result, and fails if any
+  cell's outcome, output, exception, value or nested-call sequence moves
+  from `results/gate.jsonl`.
   `conformance/codemode/run.py --check` (release gate) runs the synthetic
   code-mode tasks on CPython and mm.
 - **Memory and steps:** the memory probes (§11) and the step-time oracle
@@ -2701,10 +2746,13 @@ opens a draft release.
   Python-written stdlib, under the PSF license; PEP 659 (inline caches),
   the compact ordered dict and C3 MRO
   (<https://www.python.org/download/releases/2.3/mro/>) shaped the VM.
-- **plak** (<https://github.com/N0xMare/plak>): the local agent harness
-  behind `plakous-cell-protocol.v2` (protocol in
-  `crates/runtimes/cell/src/protocol.rs`, Monty worker in
-  `crates/runtimes/py-worker/`), which `mm-cell-worker` is tested against.
+- **plak** (<https://github.com/N0xMare/plak>, MIT): an open-source local
+  agent harness by micro-monty's author, whose worker processes run
+  code-mode cells in JavaScript on QuickJS and in Python on Monty. It is
+  micro-monty's integration target: `mm-cell-worker` speaks its cell
+  protocol, takes its Python worker's limits and messages as defaults and
+  is tested against its worker tests, and its recorded sessions are the
+  real-session corpus (§13).
 - **QuickJS** (<https://bellard.org/quickjs/>), quickjs-ng and rquickjs:
   the size philosophy (builtins as `JSCFunctionListEntry` tables, own
   regex, unicode and bignum); libregexp's ideas behind `re`.

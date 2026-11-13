@@ -2,7 +2,12 @@
 
 198 tool-orchestration tasks with mocked tools, and 1,782 solutions written cold by models of two
 families (sets `a`, `b`, `s` by Claude subagents; `luna-*` and `sol-*` by `openai/gpt-6-luna` and
-`openai/gpt-6.1-sol`), one per task in each of three prompt styles. `run.py` runs every solution on
+`openai/gpt-6.1-sol`), one per task in each of three prompt styles. Programmatic tool calling (PTC,
+Anthropic's name for it) means the model writes code that calls its tools as functions, rather than
+calling one tool per turn. One prompt style follows py-ptc, the Python PTC presentation of plak
+(<https://github.com/N0xMare/plak>, MIT), an open-source local agent harness by micro-monty's author
+and its integration target: globals persist across cells, tools are async functions, and nothing is
+type-checked. `run.py` runs every solution on
 CPython 3.14.7 and on micro-monty through its real host-call path; `--check` fails if any outcome moves
 from `results/runs.jsonl`. Numbers are [M] unless labelled.
 

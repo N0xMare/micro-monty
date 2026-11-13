@@ -1,10 +1,14 @@
 # Real transcripts: recorded sessions from a local agent harness
 
-Recorded sessions from a local agent harness (plak, which defines the cell protocol `mm-cell-worker`
-speaks): real agents review this repository through its two Python presentations, py-ptc and py-sdk,
-and every cell they write is recorded with its imports, host calls, outcome, time and memory. Each
-session ran once with the harness's own Monty worker (`plakous-py-host`) and once with
-`mm-cell-worker` in its place, then (Phase 2) with micro-monty in the harness's process. `gate.py`
+Recorded sessions from plak (<https://github.com/N0xMare/plak>, MIT), an open-source local agent
+harness by micro-monty's author and micro-monty's integration target. plak runs code cells in worker
+processes and talks to them over its cell protocol, `plakous-cell-protocol.v2`, which
+`mm-cell-worker` speaks. Real agents review this repository through plak's two Python presentations:
+py-ptc (programmatic tool calling, after Anthropic's PTC: globals persist across cells, tools are
+async functions, no type checking) and py-sdk (each cell starts fresh and is type-checked against
+generated stubs). Every cell they write is recorded with its imports, host calls, outcome, time and
+memory. Each session ran once with plak's own Python worker, which runs Monty (`plakous-py-host`),
+and once with `mm-cell-worker` in its place, then (Phase 2) with micro-monty in plak's process. `gate.py`
 replays them on current mm as a gate of `cargo xtask check` ("Regression gate"). Numbers are [M] on
 host1 (AMD Ryzen, 16 threads, Linux 7.0) unless labelled; the per-arm tables are in
 `results/*/summary.md` and `results/modes.md`.
@@ -48,7 +52,7 @@ host1 (AMD Ryzen, 16 threads, Linux 7.0) unless labelled; the per-arm tables are
 | `results/phase2/` | 96 in-process sessions (native, wasm, native + decoded-stdlib cache), 1,694 cells, replayed on the mm child |
 | `results/phase2-357e003/` | refresh on main 357e003: 12 Codex sessions in process (native, wasm), 70 cells, all replayed identically on the mm child |
 | `results/modes.md` | success, failures, engine time and memory per mode |
-| `results/js-vs-python/` | the JS-vs-Python study, first sample (an Amp orb): 32 sessions, 550 cells, {codex, grok} × {py-ptc on mm, js-ptc on QuickJS} |
+| `results/js-vs-python/` | the JS-vs-Python study, first sample (a 16-core cloud sandbox under gVisor): 32 sessions, 550 cells, {codex, grok} × {py-ptc on mm, js-ptc on QuickJS} |
 | `results/js-vs-python-host1/` | the same study, second sample (host1, bare metal): 32 sessions, 491 cells, redacted as the Phase 1 records |
 | `results/load/` | Phase 2 load sweep (`sweep.jsonl`), warm sweep (`warm.jsonl`) and the refresh on 357e003 (`sweep-357e003.jsonl`) |
 | `traces.tar.xz` | the raw traces of Phase 1 and 2 (160 sessions, every frame), as recorded on host1, redacted ("Regression gate") |
@@ -122,5 +126,5 @@ order, holding only the fields where current mm differs from the recording, with
 value; each such cell of a micro-monty session carries a `why`. `--check` fails, with a diff, on any
 cell that differs from that file; without `--check` the file is rewritten, keeping each `why` whose
 cell still differs the same way. Commit it to record an intended change, as with
-`conformance/results/`. A run takes 8.6 s on 16 cores and 16.7 s on one (the orb, [M]), most of it
+`conformance/results/`. A run takes 8.6 s on 16 cores and 16.7 s on one (the 16-core gVisor sandbox, [M]), most of it
 one 4 s `dict-review` cell.
