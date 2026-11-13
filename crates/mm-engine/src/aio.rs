@@ -1723,7 +1723,8 @@ impl Vm {
     }
 
     /// Ids of unsettled host futures that blocked tasks wait on, directly
-    /// or through gathers, in ascending order.
+    /// or through gathers, or that something waits on through a done
+    /// callback (`shield`, `wait`, `add_done_callback`), in ascending order.
     fn pending_ids(&self) -> Vec<u64> {
         let mut ids = Vec::new();
         let mut work: Vec<Value> = self
@@ -1749,6 +1750,12 @@ impl Vm {
                 }
             } else if a.is_obj_kind(ty::GATHER as u8) {
                 work.extend(self.tuple_items(self.vslot(a, aw::EXTRA)));
+            }
+        }
+        for &(id, f) in &self.futures {
+            if self.raw_of(f, aw::STATE) == aw::PENDING && self.vslot(f, aw::WAITERS) != Value::NONE
+            {
+                ids.push(id);
             }
         }
         crate::ops::heap_sort_by(&mut ids, |a, b| a < b);

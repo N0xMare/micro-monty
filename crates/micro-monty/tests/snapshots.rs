@@ -1533,6 +1533,88 @@ print(ZoneInfo('UTC').utcoffset(None))
     );
 }
 
+/// A host future that only a done callback waits on is pending, as one a
+/// task awaits is: `shield`, `wait` (with and without a timeout),
+/// `wait_for` over `shield` and an `Event` set from `add_done_callback`
+/// wait for the host to answer, as `CPython` waits, instead of raising
+/// "every task is waiting" or timing out at once. Each shape runs plain
+/// and with a snapshot and restore at every stop, with the same output.
+#[test]
+fn host_futures_waited_on_through_callbacks_are_pending() {
+    let e = engine();
+    let shapes = [
+        ("print(await asyncio.shield(fut(1)))", "10\n"),
+        (
+            "done, pend = await asyncio.wait([fut(3), fut(4)])\n    \
+             print(sorted(f.result() for f in done), len(pend))",
+            "[30, 40] 0\n",
+        ),
+        (
+            "done, pend = await asyncio.wait([fut(3), fut(4)], timeout=5)\n    \
+             print(sorted(f.result() for f in done), len(pend))",
+            "[30, 40] 0\n",
+        ),
+        (
+            "print(await asyncio.wait_for(asyncio.shield(fut(13)), 5))",
+            "130\n",
+        ),
+        (
+            "ev = asyncio.Event()\n    f = fut(2)\n    \
+             f.add_done_callback(lambda _: ev.set())\n    await ev.wait()\n    print(f.result())",
+            "20\n",
+        ),
+    ];
+    for (body, want) in shapes {
+        let src = format!("import asyncio\nasync def main():\n    {body}\nasyncio.run(main())\n");
+        let code = e.compile(&src, "futs.py").expect("compiles");
+        for restore in [false, true] {
+            let out = Arc::new(Mutex::new(String::new()));
+            let mut s = Session::new(&e).expect("session");
+            s.define(&HostModule::untyped("", &["fut"]))
+                .expect("defines");
+            attach(&mut s, &out);
+            let mut answers = Vec::new();
+            let mut p = s.start(&code);
+            loop {
+                if restore && !matches!(p, Progress::Complete(_) | Progress::Error(_)) {
+                    s = e
+                        .restore(&s.snapshot().expect("snapshot"))
+                        .expect("restores");
+                    attach(&mut s, &out);
+                }
+                let resume = match &p {
+                    Progress::HostCall { call, args, .. } => {
+                        let HostValue::Int(n) = args[0] else {
+                            panic!("{args:?}")
+                        };
+                        answers.push((*call, Ok(HostValue::Int(n * 10))));
+                        Resume::Future
+                    }
+                    Progress::Waiting { calls } => Resume::Batch(
+                        answers
+                            .iter()
+                            .filter(|(c, _)| calls.contains(c))
+                            .cloned()
+                            .collect(),
+                    ),
+                    _ => break,
+                };
+                p = s.resume(resume).expect("resumes");
+            }
+            assert_eq!(
+                outcome(&p),
+                "complete Some(\"None\")",
+                "{body} (restore {restore})"
+            );
+            assert_eq!(
+                *out.lock().expect("output lock"),
+                want,
+                "{body} (restore {restore})"
+            );
+        }
+    }
+}
+
 #[path = "../../../fuzz/fuzz_targets/snapshot_restore_input.rs"]
 mod fuzz_input;
 
