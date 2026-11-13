@@ -1610,7 +1610,10 @@ impl Vm {
             };
             let (text, is_str) = self.number_text(v);
             let (m, spent) = int_digits(text, is_str, &mut at, end, &mut buf[..want]);
-            work += spent * CONV_WORK / CONV_DIGITS;
+            // The ratio first: `spent * CONV_WORK` passes `u32::MAX` on
+            // wasm32 at 1,024 digits, which made the charge depend on the
+            // target.
+            work += spent * (CONV_WORK / CONV_DIGITS);
             let Ok(mag) = self.heap.bytes_mut(block) else {
                 return Err(self.bad_step());
             };
