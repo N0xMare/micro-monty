@@ -121,7 +121,7 @@ pub use host::{
     CallStatus, HostArgs, HostCall, HostError, HostErrorKind, HostProgram, HostValue,
     MAX_HOST_DEPTH, Unconverted,
 };
-pub use prelude::{PRELUDE_CHUNKS, prelude_programs};
+pub use prelude::{PRELUDE_CHUNKS, PRELUDE_UNITS, prelude_programs};
 pub use snapshot::{
     HostCode, NotAtSafepoint, SnapError, build_fingerprint, put_host_value, read_host_value,
 };

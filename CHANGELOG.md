@@ -53,6 +53,15 @@ hashes are pre-release history, kept in the private archive
   functions, `json`, `asyncio`) instantiates in 77.8 µs instead of
   175.1 µs, and restore Ir falls 49–66% [M]. `Engine::restore` stays fully
   checked. The build id moves.
+- Images refer to the code of the prelude's units (the json and asyncio
+  classes and functions, for one) by the unit's place in the packed
+  prelude, as they refer to bundled modules' code, instead of storing it:
+  a tools template's image is 85,313 → 78,972 B. A restore takes the
+  unit's decoded program from the engine's module cache, or decodes it
+  once and offers it there, and charges the session the same either way.
+  A tools template's checked restore falls from 1.75M to 0.96M Ir
+  (175.1 to 80.2 µs), a trusted instantiation to 0.43M Ir (39.5 µs) [M].
+  The build id moves.
 
 ## 0.0.1 (2026-11-12)
 

@@ -7,7 +7,7 @@
 
 use crate::types::T;
 use crate::types::ty;
-use crate::vm::{GSLOT_PRELUDE, ModuleCache, PreludeChunk, Raised, Vm};
+use crate::vm::{DecodedModule, GSLOT_PRELUDE, ModuleCache, PreludeChunk, Raised, Vm};
 use alloc::{sync::Arc, vec::Vec};
 use mm_compile::bytecode::Program;
 use mm_compile::section::COUNT;
@@ -38,6 +38,9 @@ pub(crate) const AS_BUILTINS: [&str; 8] = [
 
 /// How many chunks the prelude's units are packed in.
 pub const PRELUDE_CHUNKS: usize = CHUNK_END.len();
+
+/// How many units the prelude has.
+pub const PRELUDE_UNITS: usize = UNITS.len();
 
 /// Parts per chunk: the nine program sections of its units, then their
 /// records.
@@ -162,6 +165,62 @@ pub fn prelude_programs() -> Option<Vec<Program>> {
         }
     }
     Some(out)
+}
+
+/// The program of the function or class unit whose record is at offset
+/// `unit[1]` of chunk `unit[0]`'s records, for a restored image's
+/// `CODE_PRELUDE` codes; `Invalid` unless such a unit's record starts
+/// there. From `cache` when it holds it; else decoded from its chunk (the
+/// cache's, or unpacked), and both offered to it. Its workspace is the
+/// most the unpacking or the decode held, the same either way; `TooLarge`
+/// if that is over `budget`.
+pub(crate) fn unit_program(
+    unit: [u16; 2],
+    cache: Option<&dyn ModuleCache>,
+    budget: u64,
+) -> Result<Arc<DecodedModule>, DecodeError> {
+    let [chunk, at] = unit;
+    let (i, len) = UNITS
+        .iter()
+        .enumerate()
+        .find(|(_, u)| u[1] == chunk && u[2] == at && matches!(u[4], FUNC | CLASS))
+        .map(|(i, u)| (i, usize::from(u[3])))
+        .ok_or(DecodeError::Invalid)?;
+    if let Some(p) = cache.and_then(|c| c.prelude_unit(i)) {
+        return if p.workspace > budget {
+            Err(DecodeError::TooLarge)
+        } else {
+            Ok(p)
+        };
+    }
+    let c = match cache.and_then(|c| c.prelude_chunk(chunk.into())) {
+        Some(c) if c.workspace > budget => return Err(DecodeError::TooLarge),
+        Some(c) => c,
+        None => {
+            let mut remaining = budget;
+            let parts = unpack_parts(chunk.into(), cache, &mut remaining)?;
+            let c = Arc::new(PreludeChunk {
+                parts,
+                workspace: budget - remaining,
+            });
+            if let Some(cache) = cache {
+                cache.offer_prelude_chunk(chunk.into(), &c);
+            }
+            c
+        }
+    };
+    let (sections, _) = locate(&parts_of(&c), at.into(), len).ok_or(DecodeError::Invalid)?;
+    let mut remaining = budget;
+    let program =
+        Program::decode_sections(&sections, SharedStrings::new(TEXT, ENDS), &mut remaining)?;
+    let p = Arc::new(DecodedModule {
+        program,
+        workspace: c.workspace.max(budget - remaining),
+    });
+    if let Some(cache) = cache {
+        cache.offer_prelude_unit(i, &p);
+    }
+    Ok(p)
 }
 
 /// The name of unit `i`.
@@ -307,7 +366,9 @@ impl Vm {
         } else {
             let c = self.unpack_chunk(chunk)?;
             let built = match locate(&parts_of(&c), at.into(), len.into()) {
-                Some((sections, mut r)) => self.build_unit(name, kind, &sections, &mut r)?,
+                Some((sections, mut r)) => {
+                    self.build_unit(name, kind, [chunk, at], &sections, &mut r)?
+                }
                 None => None,
             };
             match built {
@@ -350,6 +411,8 @@ impl Vm {
         // Each unit copied out as its sections, then its record, with
         // where each part ends.
         let mut records: Vec<Option<(Vec<u8>, [usize; PARTS])>> = alloc::vec![None; names.len()];
+        // Each unit's chunk and record offset, which its code is named by.
+        let mut places = alloc::vec![[0u16; 2]; names.len()];
         let mut copied = 0u64;
         let mut held: Option<(u16, Arc<PreludeChunk>)> = None;
         for &(chunk, at, len, i) in &todo {
@@ -358,6 +421,7 @@ impl Vm {
                 _ => self.unpack_chunk_with(chunk, copied)?,
             };
             let parts = parts_of(&c);
+            places[i] = [chunk, at];
             let (at, len) = (usize::from(at), usize::from(len));
             if let Some((sections, _)) = locate(&parts, at, len)
                 && let Some(record) = parts[RECORDS].get(at..at + len)
@@ -391,7 +455,9 @@ impl Vm {
                 flat.get(start..ends[k]).unwrap_or(&[])
             });
             let built = match locate(&parts, 0, parts[RECORDS].len()) {
-                Some((sections, mut r)) => self.build_unit(k, kind, &sections, &mut r)?,
+                Some((sections, mut r)) => {
+                    self.build_unit(k, kind, places[i], &sections, &mut r)?
+                }
                 None => None,
             };
             let Some(v) = built else {
@@ -452,13 +518,14 @@ impl Vm {
         }
     }
 
-    /// The value of the unit record `r` of kind `kind`; `None` if the record
-    /// is malformed.
+    /// The value of the unit record `r` of kind `kind`, the unit at `unit`
+    /// (its chunk and record offset); `None` if the record is malformed.
     #[cfg_attr(mm_shipped, optimize(size))]
     fn build_unit(
         &mut self,
         name: Value,
         kind: u16,
+        unit: [u16; 2],
         sections: &[&[u8]; COUNT],
         r: &mut Rd<'_>,
     ) -> Result<Option<Value>, Raised> {
@@ -477,6 +544,10 @@ impl Vm {
                 self.std_scratch = old_scratch;
                 self.reserve_code(0)?;
                 return Err(e);
+            }
+            // Images name its code by the unit (`CODE_PRELUDE`).
+            if let Some(s) = self.sources.last_mut() {
+                s.unit = Some(unit);
             }
             first
         };

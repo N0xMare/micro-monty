@@ -1290,6 +1290,48 @@ fn prelude_chunks_from_the_cache_are_charged_as_unpacked() {
 }
 
 #[test]
+fn prelude_code_in_images_restores_the_same_from_every_cache_state() {
+    // An image names prelude units' code by reference: a restore decodes
+    // it from the unit's chunk, or takes it from the engine's cache, and
+    // is charged the same way, so it fits or is TooLarge under the same
+    // limits on a cold, warm or chunk-less engine.
+    let mut session = Session::new(&Engine::new(EngineConfig::default())).expect("session");
+    let code = Engine::new(EngineConfig::default())
+        .compile(
+            "import json, asyncio\nx = json.loads(json.dumps({'a': [1, 2]}))\n\
+             y = asyncio.run(asyncio.wait_for(asyncio.sleep(0), 1))",
+            "p.py",
+        )
+        .expect("compiles");
+    assert_eq!(session.start(&code), Progress::Complete(None));
+    let image = session.snapshot().expect("snapshot");
+    let restore = |engine: &Engine| {
+        engine
+            .restore(&image)
+            .map(|mut s| s.snapshot().expect("snapshot"))
+            .map_err(|e| format!("{e:?}"))
+    };
+    let mut outcomes = Vec::new();
+    for kb in (200..1400).step_by(8) {
+        let limits = Limits::new().with_memory(kb << 10);
+        let config = || EngineConfig::new().with_limits(limits);
+        let cold = restore(&Engine::with_module_cache(config(), 0));
+        // Its cache filled by a restore under the default limit.
+        let warm = Engine::new(config());
+        drop(warm.with_limits(Limits::new()).restore(&image));
+        assert!(warm.module_cache_bytes() > 0);
+        assert!(restore(&warm) == cold, "{kb} KB");
+        let unshared = Engine::without_prelude_chunk_cache(config());
+        assert!(restore(&unshared) == cold, "{kb} KB");
+        outcomes.push(cold.is_ok());
+    }
+    assert!(
+        outcomes.contains(&true) && outcomes.contains(&false),
+        "{outcomes:?}"
+    );
+}
+
+#[test]
 fn the_module_cache_stops_at_its_limit_and_sessions_decode_past_it() {
     let probe = Engine::new(EngineConfig::default());
     let mut session = Session::new(&probe).expect("session");

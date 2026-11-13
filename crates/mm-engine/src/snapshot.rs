@@ -59,6 +59,7 @@ const CODE_TRAMPOLINE: u8 = 0;
 const CODE_ENCODED: u8 = 2;
 const CODE_STDLIB: u8 = 3;
 const CODE_HOST: u8 = 4;
+const CODE_PRELUDE: u8 = 5;
 
 /// Stack slots kept above the live registers of a restored stack, at most.
 const STACK_SLACK: usize = 1 << 16;
@@ -627,6 +628,15 @@ impl Vm {
                 put_u8(out, CODE_STDLIB);
                 put_u32(out, u32::try_from(k).unwrap_or(u32::MAX));
                 put_u32(out, at);
+            } else if let Some([chunk, at]) =
+                self.sources.get(c.source as usize).and_then(|s| s.unit)
+            {
+                // A prelude unit's code, by the unit's place in the
+                // packed prelude the build id covers.
+                put_u8(out, CODE_PRELUDE);
+                put_u32(out, chunk.into());
+                put_u32(out, at.into());
+                put_u32(out, i - c.module_base);
             } else {
                 put_u8(out, CODE_ENCODED);
                 c.code.encode_to(out);
@@ -1481,6 +1491,7 @@ impl Vm {
                 name: name.into(),
                 text: text.into(),
                 host: None,
+                unit: None,
                 reclaim_index: 0,
             });
         }
@@ -1568,6 +1579,7 @@ impl Vm {
         let mut std_codes = Vec::with_capacity(nstd);
         let mut std_globals = Vec::with_capacity(nstd);
         let mut std_prog: Option<(usize, Arc<crate::vm::DecodedModule>)> = None;
+        let mut unit_prog: Option<([u16; 2], Arc<crate::vm::DecodedModule>)> = None;
         let mut unpackers = None;
         for _ in 0..nstd {
             let first = need(r.u32(), "bundled modules")?;
@@ -1595,6 +1607,7 @@ impl Vm {
             let ci = u32::try_from(i).map_err(|_| SnapError::Corrupt("code table"))?;
             let kind = need(r.u8(), "code")?;
             let mut host_at = None;
+            let mut unit_at = None;
             let code = match kind {
                 CODE_TRAMPOLINE if ci == tramp => {
                     let c = CodeObj::trampoline(ci, 0).code;
@@ -1660,6 +1673,39 @@ impl Vm {
                     host_at = Some((m, at));
                     c.clone()
                 }
+                CODE_PRELUDE => {
+                    let mut half = || need(r.u32().and_then(|v| u16::try_from(v).ok()), "code");
+                    let unit = [half()?, half()?];
+                    let at = need(r.u32(), "code")?;
+                    if unit_prog.as_ref().is_none_or(|(u, _)| *u != unit) {
+                        // One unit's program at a time; its codes are
+                        // consecutive.
+                        drop(unit_prog.take());
+                        let allowance = budget.saturating_add(std_scratch);
+                        let p =
+                            crate::prelude::unit_program(unit, module_cache.as_deref(), allowance)
+                                .map_err(|e| match e {
+                                    mm_compile::DecodeError::Invalid => {
+                                        SnapError::Corrupt("prelude code")
+                                    }
+                                    mm_compile::DecodeError::TooLarge => SnapError::TooLarge,
+                                })?;
+                        if p.workspace > std_scratch {
+                            charge(&mut budget, p.workspace - std_scratch)?;
+                            std_scratch = p.workspace;
+                        }
+                        unit_prog = Some((unit, p));
+                    }
+                    let c = need(
+                        unit_prog
+                            .as_ref()
+                            .and_then(|(_, p)| p.program.codes.get(at as usize)),
+                        "prelude code",
+                    )?;
+                    charge(&mut budget, c.buffer_bytes())?;
+                    unit_at = Some((unit, at));
+                    c.clone()
+                }
                 CODE_ENCODED => Arc::new(Code::decode_bounded(r.rest_mut(), &mut budget).map_err(
                     |e| match e {
                         mm_compile::DecodeError::Invalid => SnapError::Corrupt("code"),
@@ -1697,6 +1743,20 @@ impl Vm {
             let [consts, names] = values;
             if module_base > ci || (source != u32::MAX && source as usize >= sources.len()) {
                 return Err(SnapError::Corrupt("code"));
+            }
+            if let Some((unit, at)) = unit_at {
+                // A unit's codes sit together, under its own source.
+                let s = sources.get_mut(source as usize);
+                let Some(s) = s.filter(|s| s.unit.is_none_or(|u| u == unit)) else {
+                    return Err(SnapError::Corrupt("prelude code"));
+                };
+                if ci.checked_sub(at) != Some(module_base)
+                    || !is_prelude
+                    || gslot != crate::vm::GSLOT_PRELUDE
+                {
+                    return Err(SnapError::Corrupt("prelude code"));
+                }
+                s.unit = Some(unit);
             }
             if let Some((m, at)) = host_at {
                 // A host program's codes sit together, under one source.

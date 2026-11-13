@@ -192,6 +192,10 @@ pub const DEFAULT_MODULE_CACHE: u64 = 8 << 20;
 struct ModuleCache {
     slots: Vec<std::sync::OnceLock<Arc<mm_engine::DecodedModule>>>,
     chunks: Vec<std::sync::OnceLock<Arc<mm_engine::PreludeChunk>>>,
+    /// Prelude units' programs a restore decoded, by unit: allocated on
+    /// the first offer, so an engine that restores none pays nothing
+    /// (none without the chunk cache).
+    units: std::sync::OnceLock<Vec<std::sync::OnceLock<Arc<mm_engine::DecodedModule>>>>,
     /// Host-module code compiled once ([`Session::define`]), by key.
     host: std::sync::Mutex<Vec<Arc<mm_engine::HostProgram>>>,
     /// Bytes still free under the limit.
@@ -257,6 +261,22 @@ impl mm_engine::ModuleCache for ModuleCache {
 
     fn offer_prelude_chunk(&self, c: usize, chunk: &Arc<mm_engine::PreludeChunk>) {
         ModuleCache::offer(self, self.chunks.get(c), chunk, chunk.bytes());
+    }
+
+    fn prelude_unit(&self, u: usize) -> Option<Arc<mm_engine::DecodedModule>> {
+        self.units.get()?.get(u)?.get().cloned()
+    }
+
+    fn offer_prelude_unit(&self, u: usize, program: &Arc<mm_engine::DecodedModule>) {
+        if self.chunks.is_empty() {
+            return;
+        }
+        let units = self.units.get_or_init(|| {
+            (0..mm_engine::PRELUDE_UNITS)
+                .map(|_| std::sync::OnceLock::new())
+                .collect()
+        });
+        ModuleCache::offer(self, units.get(u), program, program.bytes());
     }
 
     fn host_program(&self, key: &[u8; 16]) -> Option<Arc<mm_engine::HostProgram>> {
@@ -1125,6 +1145,7 @@ impl Engine {
                     .map(|_| std::sync::OnceLock::new())
                     .collect(),
                 chunks: (0..chunks).map(|_| std::sync::OnceLock::new()).collect(),
+                units: std::sync::OnceLock::new(),
                 host: std::sync::Mutex::new(Vec::new()),
                 free: max_bytes.into(),
             })
@@ -1172,14 +1193,15 @@ impl Engine {
         self.config.limits
     }
 
-    /// Bytes of decoded modules, unpacked prelude chunks and compiled
-    /// host-module code the engine's cache holds now.
+    /// Bytes of decoded modules and prelude units, unpacked prelude chunks
+    /// and compiled host-module code the engine's cache holds now.
     #[must_use]
     pub fn module_cache_bytes(&self) -> u64 {
         self.modules.as_ref().map_or(0, |c| {
             let modules: u64 = c
                 .slots
                 .iter()
+                .chain(c.units.get().into_iter().flatten())
                 .filter_map(|s| s.get())
                 .map(|m| m.bytes())
                 .sum();

@@ -216,6 +216,17 @@ pub trait ModuleCache: Send + Sync {
     /// A prelude chunk `c` a session unpacked; the cache may keep it or
     /// not.
     fn offer_prelude_chunk(&self, c: usize, chunk: &Arc<PreludeChunk>);
+    /// The decoded program of prelude unit `u` (below
+    /// [`crate::PRELUDE_UNITS`]), if the cache holds it.
+    fn prelude_unit(&self, u: usize) -> Option<Arc<DecodedModule>> {
+        let _ = u;
+        None
+    }
+    /// A prelude unit `u`'s program a restore decoded; the cache may keep
+    /// it or not.
+    fn offer_prelude_unit(&self, u: usize, program: &Arc<DecodedModule>) {
+        let _ = (u, program);
+    }
     /// The host-module code compiled under `key`, if the cache holds it.
     fn host_program(&self, key: &[u8; 16]) -> Option<Arc<crate::HostProgram>>;
     /// Fills `out` from `offset` of the host's bundle `region` (0: the
@@ -316,6 +327,9 @@ pub(crate) struct Source {
     /// The shared host-module code its codes were loaded from
     /// ([`Vm::run_host_defs`]); snapshots refer to it by key.
     pub host: Option<Arc<crate::HostProgram>>,
+    /// The prelude unit its codes were built from: its chunk and record
+    /// offset ([`Vm::prelude_unit`]); snapshots refer to the code by that.
+    pub unit: Option<[u16; 2]>,
     /// Between-cell compaction workspace, admitted with the source record.
     pub reclaim_index: u32,
 }
@@ -1907,6 +1921,7 @@ impl Vm {
                 name: filename.into(),
                 text: source.into(),
                 host: None,
+                unit: None,
                 reclaim_index: 0,
             });
             let module_base = u32::try_from(self.codes.len()).unwrap_or(u32::MAX);

@@ -1770,9 +1770,10 @@ vm       registers, fuel left, limits, seq / virtual clock, frames,
          pending host calls and their ids, park reason,
          host modules (definition; for code the Engine shares, its 16-byte
          key, code hash and recipe), before the
-         code table (Code::encode_into; bundled-module code and the shared
-         code of host modules' current definitions referenced, not stored;
-         loaded prelude units stored like user code)
+         code table (Code::encode_into; bundled-module code, loaded
+         prelude units' code (by the unit's chunk and record offset) and
+         the shared code of host modules' current definitions referenced,
+         not stored)
 trailer  xxh64 of everything above
 ```
 

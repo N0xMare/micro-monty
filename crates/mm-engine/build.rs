@@ -574,11 +574,44 @@ fn fnv1a(parts: &[&[u8]]) -> u64 {
 /// [`record`]) go into chunks of about [`CHUNK`] bytes in source order,
 /// packed against one shared Huffman header. The Rust side gets the chunk
 /// bounds, the sorted unit names and one row per unit.
-fn write_units(
-    out_dir: &Path,
-    module_name: &str,
-    units: &BTreeMap<String, Unit>,
-) -> Result<(), String> {
+/// Where each unit's record is: its chunk, offset and length in the
+/// chunk's records.
+type Places<'a> = BTreeMap<&'a str, (usize, usize, usize)>;
+
+/// The units packed: the packed blob, the header ends, the chunk ends, the
+/// shared strings and their ends, the prelude hash, and where each
+/// non-alias unit's record is.
+struct Layout<'a> {
+    blob: Vec<u8>,
+    header_ends: Vec<usize>,
+    bounds: Vec<usize>,
+    text: String,
+    ends: Vec<u8>,
+    hash: u64,
+    place: Places<'a>,
+}
+
+/// The prelude hash, and where each unit's record is.
+pub(crate) type UnitPlaces = (u64, BTreeMap<String, Option<(usize, usize, usize)>>);
+
+/// For prelude source `src`: the prelude hash the build id covers, and
+/// where each unit's record is (`None` for an alias, which has none).
+/// Images name a unit by its chunk and offset (`CODE_PRELUDE`), so a
+/// prelude edit that moves a unit's record must move the hash
+/// (`tests/prelude_units.rs`).
+#[allow(dead_code, reason = "for tests/prelude_units.rs")]
+pub(crate) fn unit_places(src: &str) -> Result<UnitPlaces, String> {
+    let module = mm_parse::parse(src).map_err(|e| format!("prelude.py: {e:?}"))?;
+    let (_, units) = split(&module)?;
+    let l = layout(&units)?;
+    let places = units
+        .keys()
+        .map(|n| (n.clone(), l.place.get(n.as_str()).copied()))
+        .collect();
+    Ok((l.hash, places))
+}
+
+fn layout(units: &BTreeMap<String, Unit>) -> Result<Layout<'_>, String> {
     let mut order: Vec<&String> = units
         .keys()
         .filter(|n| !matches!(units[*n].kind, Kind::Alias(_)))
@@ -615,11 +648,36 @@ fn write_units(
         }
     }
     let (blob, header_ends, bounds) = pack_chunks(&chunks)?;
-    let header_len = header_ends[PARTS - 1];
     check_sections(&programs, &place, &chunks, &text, &ends)?;
     // The build id covers the whole prelude, wherever its chunks are
     // (`host-bundle` leaves them to the host).
     let hash = fnv1a(&[&blob, text.as_bytes(), &ends]);
+    Ok(Layout {
+        blob,
+        header_ends,
+        bounds,
+        text,
+        ends,
+        hash,
+        place,
+    })
+}
+
+fn write_units(
+    out_dir: &Path,
+    module_name: &str,
+    units: &BTreeMap<String, Unit>,
+) -> Result<(), String> {
+    let Layout {
+        blob,
+        header_ends,
+        bounds,
+        text,
+        ends,
+        hash,
+        place,
+    } = layout(units)?;
+    let header_len = header_ends[PARTS - 1];
     let external = env::var_os("CARGO_FEATURE_HOST_BUNDLE").is_some();
     let path = out_dir.join("prelude_chunks.bin");
     let linked = if external {
