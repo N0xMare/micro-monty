@@ -17,10 +17,14 @@
 //! so one run decides. It catches what wasm-opt and Cranelift do to the
 //! run loop's code (a spill, an inlining flip) at the commit that does
 //! it, either way; it does not see layout costs that leave the executed
-//! instructions alone. The gate fails when a program's count moves more
-//! than `LIMIT` (±0.5%) from the base's, either way, as the native Ir rule
-//! does, unless `MM_WASM_IR_ACCEPT` gives the reason for the move (which
-//! the commit message then records with the table).
+//! instructions alone. The gate fails when a program's count rises more
+//! than 1.0% (`PROGRAM_LIMIT`) or the geometric mean of the ratios more
+//! than 0.5% (`GEOMEAN_LIMIT`): unrelated commits move the run loop's
+//! register allocation by up to about 1% either way. Fewer instructions
+//! always pass, with the table printed. `MM_WASM_IR_ACCEPT` passes an
+//! intended rise, whose commit message records the table and the reason.
+//! Drift built up from commits each under the limits is caught at a
+//! release, against the previous tag (AGENTS.md).
 
 use std::{
     env, fs,
@@ -36,9 +40,11 @@ use crate::{
     workspace_root,
 };
 
-/// How far one program's count may move from the base's, either way, as
-/// the native Ir rule (AGENTS.md).
-const LIMIT: f64 = 0.005;
+/// The most one program's count may rise against the base's.
+const PROGRAM_LIMIT: f64 = 1.010;
+/// The most the geometric mean of the programs' ratios may rise.
+const GEOMEAN_LIMIT: f64 = 1.005;
+
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut base = "origin/main".to_owned();
     let mut head: Option<String> = None;
@@ -130,27 +136,25 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     verdict(&base, &report(&pairs))
 }
 
-/// Passes when nothing moved past the limit, or `MM_WASM_IR_ACCEPT` says
-/// why it did.
+/// Passes when nothing rose past a limit, or `MM_WASM_IR_ACCEPT` says why
+/// it did.
 fn verdict(base: &str, failures: &[String]) -> Result<(), String> {
     let accepted = env::var("MM_WASM_IR_ACCEPT").unwrap_or_default();
     if failures.is_empty() {
-        println!("\nwasm-ir: every program within ±{:.1}%", LIMIT * 100.0);
+        println!("\nwasm-ir: within the limits");
         Ok(())
     } else if !accepted.trim().is_empty() {
         println!(
-            "\nwasm-ir: moved past ±{:.1}% ({}), accepted: {}",
-            LIMIT * 100.0,
+            "\nwasm-ir: past the limits ({}), accepted: {}",
             failures.join("; "),
             accepted.trim()
         );
         Ok(())
     } else {
         Err(format!(
-            "wasm-ir: moved past ±{:.1}% from {base}: {}; if the move is \
+            "wasm-ir: more guest instructions than {base}: {}; if the rise is \
              intended, rerun with MM_WASM_IR_ACCEPT=<reason> and record the \
-             table in the commit message",
-            LIMIT * 100.0,
+             table and the reason in the commit message",
             failures.join("; ")
         ))
     }
@@ -189,30 +193,31 @@ fn parallel<T: Send>(n: usize, job: impl Fn(usize) -> T + Sync) -> Vec<T> {
     done.into_iter().map(|(_, result)| result).collect()
 }
 
-/// Prints the table; returns the programs past the limit.
+/// Prints the table; returns the limits exceeded.
 fn report(pairs: &[(&str, u64, u64)]) -> Vec<String> {
     println!("\nwasmtime guest instructions, millions (base, head), ratio head / base");
     let mut failures = Vec::new();
     let mut product = 1.0_f64;
     for &(name, head, base) in pairs {
         let ratio = ratio(head, base);
-        let flag = if (ratio - 1.0).abs() > LIMIT {
-            "  <-"
-        } else {
-            ""
-        };
+        let over = ratio > PROGRAM_LIMIT;
         println!(
-            "  {name:<11} {:>10.3} {:>10.3}  {ratio:.4}{flag}",
+            "  {name:<11} {:>10.3} {:>10.3}  {ratio:.4}{}",
             millions(base),
-            millions(head)
+            millions(head),
+            if over { "  > limit" } else { "" }
         );
         product *= ratio;
-        if !flag.is_empty() {
-            failures.push(format!("{name} {ratio:.4}"));
+        if over {
+            failures.push(format!("{name} {ratio:.4} > {PROGRAM_LIMIT}"));
         }
     }
     let count = i32::try_from(pairs.len()).unwrap_or(i32::MAX).max(1);
-    println!("  geomean     {:.4}", product.powf(1.0 / f64::from(count)));
+    let geomean = product.powf(1.0 / f64::from(count));
+    println!("  geomean     {geomean:.4}");
+    if geomean > GEOMEAN_LIMIT {
+        failures.push(format!("geomean {geomean:.4} > {GEOMEAN_LIMIT}"));
+    }
     failures
 }
 

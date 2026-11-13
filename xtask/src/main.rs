@@ -122,8 +122,9 @@ tasks:
                              (target/wasm-wall/rounds/*.tsv, same base and
                              head); builds and times nothing
   wasm-ir [options]          wasmtime guest instructions of bench/*.py against
-                             a base revision under callgrind, ±0.5% (in check;
-                             MM_WASM_IR_ACCEPT=<reason> passes a move)
+                             a base revision under callgrind (in check): fails
+                             on a program rising past 1.0% or the geomean past
+                             0.5%; MM_WASM_IR_ACCEPT=<reason> passes a rise
       --base <rev>           the revision to compare with (default origin/main)
       --head <rev>           a revision instead of the working tree
       --programs <a,b,..>    only these programs (default all)

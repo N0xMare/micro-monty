@@ -74,7 +74,7 @@ python3.14 conformance/codemode/real/gate.py --check   # 2,841 recorded real cel
 cargo xtask durability              # passing cases parked, snapshotted, resumed in new processes
 cargo xtask durability --cross-target   # own cases, each snapshot restored on the other target
 cargo xtask bench --quick --engines cpython,micro-monty   # checksums match
-cargo xtask wasm-ir                 # wasmtime guest instructions vs origin/main, ±0.5% (callgrind; Linux)
+cargo xtask wasm-ir                 # wasmtime guest instructions vs origin/main: +1.0% a program, +0.5% geomean (callgrind; Linux)
 python3.14 conformance/codemode/run.py --check   # codemode workload outcomes unchanged (not in `check`)
 cargo xtask wasm-host               # shipped mm-wasm guests vs crates/mm-wasm-host tests (not in `check`)
 cargo xtask wasm-wall               # wasm wall time vs origin/main on wasmtime and V8 (advisory; not in `check`)
@@ -132,8 +132,10 @@ Verification is local; GitHub runs no gates (owner, 2026-11-12). A `v*`
 tag runs only `.github/workflows/release.yml`, which builds the release
 artifacts and opens a draft release. Before tagging, run on the tagged tree:
 the release gate, the fuzz build (`cargo check --manifest-path
-fuzz/Cargo.toml --features memory-probes --bins`), `cargo xtask wasm-wall
---base <previous v* tag>` when there is one, and the three `cargo deny`
+fuzz/Cargo.toml --features memory-probes --bins`), `cargo xtask wasm-ir
+--base <previous v* tag>` and `cargo xtask wasm-wall --base <previous v*
+tag>` when there is one (`wasm-ir` catches drift built up from commits each
+under its limits), and the three `cargo deny`
 checks (cargo-deny 0.20.2 from `.agents/setup`), which stay out of `check`
 because the advisory database is fetched over the network.
 `python3.14` (CPython 3.14.7, installed by `.agents/setup` through uv; override
@@ -181,23 +183,25 @@ with `PYTHON`) is the conformance oracle.
   program's guest instructions under callgrind: the instructions at
   addresses in wasmtime's perf map (`--profile=perfmap`), the guest's
   compiled code only. The count does not depend on load or host, so one
-  run decides; about 30 s warm on 16 cores [M]. It fails when a program
-  moves more than ±0.5% either way, the native Ir rule, unless
-  `MM_WASM_IR_ACCEPT=<reason>` names why (a speedup, or work the change
-  needs); the commit message then carries the table and the reason. It is
-  in `check` on Linux (valgrind). Calibration [M]: 4fe04e1's Cranelift
-  spill fails it (fib 1.080, closure 1.102, loop 1.087, geomean 1.039);
-  the same build against itself gives 1.0000. Unrelated commits move the
-  run loop's register allocation by up to about 1% either way: in the
-  0.0.1 batch (828eba9..ca39f934, 30 commits), at least 5 moved fib,
-  closure, loop or generators past 0.5% (42400129 fib 1.0077, 50d2db61
-  closure 0.9907, ca99d1b8 closure 1.0103, d2b77d88 generators 0.9900,
-  2f067c37 fib 1.0070), so about one commit in six needs a reason even
-  when it did not touch the hot path. It cannot see the host-tuned
-  layout cost that batch added (wall 1.03–1.08 on AVX-512 precompiles,
-  counts at most 1.010 generic and 1.006 at AVX2; valgrind does not run AVX-512
-  code); `wasm-wall` measures that. **Required before every push**, as
-  part of `check`.
+  run decides; about 30 s warm on 16 cores [M]. Unrelated commits move
+  the run loop's register allocation by up to about 1% either way, so it
+  fails only when a program's count rises past 1.0% or the geomean of the
+  ratios past 0.5%; fewer instructions always pass, with the table
+  printed. `MM_WASM_IR_ACCEPT=<reason>` passes an intended rise; the
+  commit message then carries the table and the reason. Drift from
+  commits each under the limits is caught before a release tag, against
+  the previous tag (below). It is in `check` on Linux (valgrind).
+  Calibration [M]: 4fe04e1's Cranelift spill fails it (fib 1.080, closure
+  1.102, loop 1.087, geomean 1.039); the same build against itself gives
+  1.0000. Each of the 0.0.1 batch's 30 commits against its parent
+  (828eba9..ca39f934): one trips it, ca99d1b8 at closure 1.0103 (layout,
+  no hot-path change); a two-sided ±0.5% tripped six. The batch end to end
+  (closure 1.0104, geomean 1.0033) trips it too, as the pre-tag run would
+  have. It cannot see the host-tuned layout cost that
+  batch added (wall 1.03–1.08 on AVX-512 precompiles, counts at most
+  1.010 generic and 1.006 at AVX2; valgrind does not run AVX-512 code);
+  `wasm-wall` measures that. **Required before every push**, as part of
+  `check`.
 - `cargo xtask parse-diff` builds `mm-parse` with `ruff-oracle` in a
   separate cargo invocation (ruff never enters the default build) and
   requires identical ASTs, or identical micro-monty errors, from both front
@@ -277,9 +281,10 @@ with `PYTHON`) is the conformance oracle.
   `__libc_start_main` onward, without glibc's `pthread_getattr_np`
   (`/proc/self/maps` parsing, which follows the binary's layout). Report
   the whole-process count it prints second as well (`docs/spec.md` §12).
-  The same ±0.5% holds for wasmtime's guest instructions per program
-  (`cargo xtask wasm-ir`, in `check`); a move past it says why in the
-  commit, with the table.
+  wasmtime's guest instructions have their own limits, set by layout
+  noise: a program may rise 1.0% and the geomean 0.5% (`cargo xtask
+  wasm-ir`, in `check`); a rise past them says why in the commit, with
+  the table.
 
 - No `unsafe`. The workspace forbids it; an exception needs a spec change
   first (`docs/spec.md` §5).
