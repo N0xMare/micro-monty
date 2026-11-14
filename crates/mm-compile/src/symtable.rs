@@ -108,7 +108,6 @@ pub struct Scope {
 /// `private` (its name without leading underscores) is `_private__x`;
 /// dunder names, dotted names and names outside a class are kept.
 #[must_use]
-#[cfg_attr(mm_shipped, optimize(size))]
 pub fn mangle<'a>(private: &str, name: &'a str) -> Cow<'a, str> {
     if private.is_empty() || !name.starts_with("__") || name.ends_with("__") || name.contains('.') {
         return Cow::Borrowed(name);
@@ -138,7 +137,6 @@ impl Scope {
         }
     }
 
-    #[cfg_attr(mm_shipped, optimize(size))]
     fn slot(&mut self, name: &str) -> usize {
         let name = &*mangle(&self.private, name);
         if let Some(&i) = self.index.get(name) {
@@ -154,14 +152,12 @@ impl Scope {
 
     /// The binding of `name`, if the scope mentions it.
     #[must_use]
-    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn binding(&self, name: &str) -> Option<Binding> {
         self.position(name).map(|i| self.bindings[i])
     }
 
     /// Index of `name` in `names`.
     #[must_use]
-    #[cfg_attr(mm_shipped, optimize(size))]
     pub fn position(&self, name: &str) -> Option<usize> {
         self.index.get(&*mangle(&self.private, name)).copied()
     }
@@ -285,7 +281,6 @@ impl Builder {
         Ok(())
     }
 
-    #[cfg_attr(mm_shipped, optimize(size))]
     fn use_name(&mut self, name: &str) {
         let s = self.scope();
         let i = s.slot(name);
@@ -347,7 +342,6 @@ impl Builder {
         Ok(())
     }
 
-    #[cfg_attr(mm_shipped, optimize(size))]
     fn stmt(&mut self, s: &Stmt) -> Result<(), CompileError> {
         match &s.kind {
             StmtKind::Expr(e) => self.expr(e)?,
@@ -835,7 +829,6 @@ impl Builder {
         Ok(())
     }
 
-    #[cfg_attr(mm_shipped, optimize(size))]
     fn expr(&mut self, e: &Expr) -> Result<(), CompileError> {
         // A left-nested chain (`a + b + c`, `x.f(1).g`): its innermost
         // operand, then each step's other operands, in a loop.
@@ -960,7 +953,6 @@ impl Builder {
 
 impl Builder {
     /// The operands of chain step `e` after its first ([`Expr::chain_left`]).
-    #[cfg_attr(mm_shipped, optimize(size))]
     fn chain_rest(&mut self, e: &Expr) -> Result<(), CompileError> {
         match &e.kind {
             ExprKind::BinOp(_, _, b) | ExprKind::Subscript(_, b) => self.expr(b),
@@ -989,7 +981,6 @@ struct Need {
 /// Resolves every name of scope `id`. `visible` lists the names bound by
 /// enclosing function scopes (innermost last). Returns the names `id` needs
 /// from outside.
-#[cfg_attr(mm_shipped, optimize(size))]
 fn analyze(t: &mut SymTable, id: ScopeId, visible: &[String]) -> Result<Vec<Need>, CompileError> {
     let kind = t.scopes[id].kind;
     let mut needs: Vec<Need> = Vec::new();
