@@ -5254,11 +5254,9 @@ def _slot(name, a):
 _host_records = {}
 
 
-def _rec_getattr(self, name):
-    fields = type(self)._fields
-    if name in fields:
-        return self[fields.index(name)]
-    raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+# Bound to a field's index, the getter of the field's property.
+def _rec_field(index, self):
+    return self[index]
 
 
 def _rec_repr(self):

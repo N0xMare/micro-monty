@@ -342,6 +342,61 @@ fn host_record_names_must_be_namedtuple_names() {
     );
 }
 
+/// Every field of a host record reads as that field, including names
+/// `tuple` defines (`count`, `index`), and the record stays a tuple for
+/// indexing, unpacking, `tuple`'s methods and class patterns. The expected
+/// lines are what python3.14 prints for the same cell with
+/// `r = namedtuple('R', ['count', 'index', 'total'])(3, 1, 7)`.
+#[test]
+fn host_record_fields_read_as_fields() {
+    let out = Arc::new(Mutex::new(String::new()));
+    let (engine, mut s) = session(&out);
+    s.define(&HostModule::untyped("", &["echo"]))
+        .expect("defined");
+    let cell = "r = echo()
+R = type(r)
+print(r.count, r.index, r.total, getattr(r, 'count'), getattr(r, 'index'))
+print(r[0], r[-1], len(r), isinstance(r, tuple), r == (3, 1, 7))
+c, i, t = r
+print(c, i, t, tuple.count(r, 7), tuple.index(r, 7))
+print(r._replace(count=9).count, R._make([4, 5, 6]).index, R.count.__doc__)
+match r:
+    case R(c, i, t):
+        print('positional', c, i, t)
+match r:
+    case R(count=c, index=i):
+        print('keywords', c, i)
+try:
+    r.count = 5
+except AttributeError:
+    print('read-only', r.count)
+print(r)";
+    let p = start(&engine, &mut s, cell);
+    assert!(matches!(p, Progress::HostCall { .. }), "{p:?}");
+    let record = HostValue::Record {
+        name: "R".into(),
+        fields: vec![
+            ("count".into(), HostValue::Int(3)),
+            ("index".into(), HostValue::Int(1)),
+            ("total".into(), HostValue::Int(7)),
+        ],
+    };
+    let p = s.resume(Resume::Value(record)).expect("resumes");
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    assert_eq!(
+        out.lock().expect("output lock").as_str(),
+        "3 1 7 3 1
+3 7 3 True True
+3 1 7 1 2
+9 5 Alias for field number 0
+positional 3 1 7
+keywords 3 1
+read-only 3
+R(count=3, index=1, total=7)
+"
+    );
+}
+
 #[test]
 fn host_values_convert_both_ways() {
     let out = Arc::new(Mutex::new(String::new()));

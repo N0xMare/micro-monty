@@ -32,6 +32,10 @@ hashes are pre-release history, kept in the private archive
 
 ### Changed
 
+- A host record's fields read as its fields whatever their names: a field
+  named `count` or `index` returned the tuple method before. Each field is
+  a property, as in a namedtuple, and the class has `__match_args__`, so
+  `case R(a, b)` matches positionally.
 - `import xml` and `import email` no longer carry a redirect hint;
   `HintGroup::XmlEmail` covers no modules and keeps its key (`xml`), so a
   host that sets it still succeeds.

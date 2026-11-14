@@ -1300,13 +1300,33 @@ impl Vm {
         let names = self.tuple_items(key);
         let field_names = self.alloc_tuple(names.get(1..).unwrap_or_default())?;
         let ns = self.new_dict()?;
-        let k = self.intern("_fields")?;
-        self.dict_set(ns, k, field_names)?;
+        for attr in ["_fields", "__match_args__"] {
+            let k = self.intern(attr)?;
+            self.dict_set(ns, k, field_names)?;
+        }
         let k = self.intern("__module__")?;
         let m = self.new_str("__main__")?;
         self.dict_set(ns, k, m)?;
+        // A property per field, as `namedtuple` makes, so a field named
+        // like a tuple method (`count`, `index`) is the field.
+        let getter = self.prelude_fn("_rec_field")?;
+        for (i, f) in (0_i64..).zip(&fields) {
+            let index = self.new_int(i)?;
+            let get = self.new_method(getter, index)?;
+            let doc = self.new_str(&format!("Alias for field number {i}"))?;
+            let p = {
+                let res = self.heap.alloc_init(
+                    ty::PROPERTY,
+                    0,
+                    &[get, Value::NONE, Value::NONE, doc],
+                    &[],
+                );
+                self.hx_o(res)
+            }?;
+            let k = self.intern(f)?;
+            self.dict_set(ns, k, Value::from_ref(p, ty::PROPERTY as u8))?;
+        }
         for (attr, f) in [
-            ("__getattr__", "_rec_getattr"),
             ("__repr__", "_rec_repr"),
             ("_asdict", "_rec_asdict"),
             ("_replace", "_rec_replace"),
