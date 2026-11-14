@@ -449,7 +449,6 @@ impl Vm {
     }
 
     /// The cancel message of cancelled `a` (`_cancel_message`).
-    #[cfg_attr(mm_shipped, optimize(size))]
     fn cancel_msg(&self, a: Value) -> Value {
         if self.raw_of(a, aw::MUST_CANCEL) == aw::HELD {
             Value::NONE
@@ -598,7 +597,6 @@ impl Vm {
 
     /// What `send()`/`throw()` deliver to suspended coroutine `c` when it
     /// resumes.
-    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn coro_deliver(&mut self, c: Value, v: Value, mode: u64) {
         if let Some(r) = c.as_obj() {
             self.set_slot(r, coro::SENT, v);
@@ -701,7 +699,6 @@ impl Vm {
     /// from `st` to the one `send()` runs saves its frame (as a generator
     /// does at a `yield`) and `send()` returns `y`. In a task (`asyncio`),
     /// `None` yields to the event loop and any other value is an error.
-    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn await_yield(
         &mut self,
         st: &mut State,
@@ -1492,7 +1489,6 @@ impl Vm {
     }
 
     /// A gather's done callback: settles it if its children allow.
-    #[cfg_attr(mm_shipped, optimize(size))]
     fn check_gather(&mut self, g: Value) {
         if self.raw_of(g, aw::STATE) != aw::PENDING {
             return;
@@ -2204,7 +2200,6 @@ impl Vm {
     /// `_aio_first(aws)`: an awaitable settled with the first of `aws`
     /// (tasks or futures) to finish, at once if one already has.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn first_of(&mut self, items: &[Value]) -> Result<Value, Raised> {
         // `_mm` is importable: check every item before reading its slots.
         if !items
@@ -2267,7 +2262,6 @@ impl Vm {
 
     /// Is `v` a future the loop settles (`asyncio.Future()`)?
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn is_loop_future(&self, v: Value) -> bool {
         v.is_obj_kind(ty::FUTURE as u8) && self.raw_of(v, aw::AUX) == LOOP_FUTURE
     }
@@ -2292,7 +2286,6 @@ impl Vm {
 
     /// An awaitable's kind-specific value (a task's coroutine).
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn aw_extra(&self, a: Value) -> Value {
         self.vslot(a, aw::EXTRA)
     }
@@ -2451,7 +2444,6 @@ impl Vm {
     /// The running task's handle (`asyncio.current_task()`); the main
     /// task gets one when first asked.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn current_task(&mut self) -> Result<Value, Raised> {
         let i = self.cur;
         let h = self
