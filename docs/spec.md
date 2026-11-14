@@ -2915,6 +2915,19 @@ raise wins if one side is an accepted raise, else the lower count; the
 gate on the combined tree then sets it. What is lost against counting
 every commit is which commit moved a count.
 
+**Recorded sessions.** The bench programs reach a small part of the
+engine (one size change marked 261 functions; they ran 20 of them [M]),
+so the release gate also counts the 160 recorded real sessions: `cargo
+xtask replay-ir` replays them through `conformance/codemode/real/gate.py`
+on the `replay_worker` built as shipped plus `--cfg mm_size_wasm`, which
+turns the wasm-only `optimize(size)` marks on natively, under callgrind,
+counting each worker's Ir from glibc's `start_thread` (the thread that
+serves) without `pthread_getattr_np`. One binary's sessions differ by up
+to 0.1% run to run, and one session holds 56% of the instructions [M], so
+it judges head against base only, per session (+0.5%) and by the median
+of the sessions' ratios (+0.3%), with the same accept line naming
+`sessions`; it keeps no floors.
+
 ## 13. Tests and conformance
 
 Every gate is local: GitHub runs none. `cargo xtask check` (the landing
@@ -2994,7 +3007,8 @@ opens a draft release.
   `bench/results/`; run it alone on an idle machine. Native Ir follows the
   gated-count rule (§12): `cargo xtask native-ir` (in `check`, Linux) fails
   when a program's gated count rises past 0.5% (`startup` past 300
-  instructions) over the base's or its floor.
+  instructions) over the base's or its floor; `cargo xtask replay-ir`
+  (release gate) gates the recorded real sessions against the base.
 - **wasm-ir** (in both tiers, Linux only, since it needs valgrind):
   `cargo xtask wasm-ir` builds the working tree (or `--head REV`) and the
   base (`--base REV`, default `origin/main`), the base in a worktree

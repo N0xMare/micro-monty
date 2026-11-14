@@ -122,8 +122,10 @@ def recorded_cells(lines):
 
 
 class Worker:
-    def __init__(self, path, clock):
-        env = {'PATH': '/usr/bin:/bin', 'MM_REPLAY_CLOCK': repr(clock)}
+    def __init__(self, path, clock, sid=''):
+        # MM_REPLAY_SESSION names the session for a --worker wrapper (the
+        # worker ignores it; `cargo xtask replay-ir` counts per session).
+        env = {'PATH': '/usr/bin:/bin', 'MM_REPLAY_CLOCK': repr(clock), 'MM_REPLAY_SESSION': sid}
         self.process = subprocess.Popen([path], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, env=env)
 
@@ -187,7 +189,7 @@ def replay_session(path, session):
     """One record per recorded cell: the fields that differ from the recording."""
     sid, clock, lines = session
     script, cells = recorded_cells(lines)
-    worker = Worker(path, clock)
+    worker = Worker(path, clock, sid)
     records, broken = [], None
     try:
         if (worker.recv() or {}).get('frame') != 'hello':

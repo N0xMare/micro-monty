@@ -52,7 +52,8 @@ Run `just --list` for the rest. Gates without a recipe are `cargo xtask`
 commands: `wasm-ir`, `v8-ir` (V8's instructions on both
 wasm32-unknown-unknown guests vs base and floors; release gate, Linux),
 `native-ir` (the gated bench Ir on the shipped native `mm` vs base and
-floors; in `check`, Linux), `wasm-host`, `wasm-wall`, `gc-stress`,
+floors; in `check`, Linux), `replay-ir` (the recorded real sessions' Ir on
+the replay worker vs base; release gate, Linux), `wasm-host`, `wasm-wall`, `gc-stress`,
 `parse-diff`, `docs`, `difffuzz`, `handoffs` (writes
 `xtask/handoff-sites.txt`, the `need_py()` hand-off sites; `--check` is in
 `check`) and `shipped-mm` (`mm` built natively as shipped, the binary bench
@@ -62,7 +63,7 @@ Ir measures).
 `-Cpanic=immediate-abort` (`RUSTC_BOOTSTRAP=1` on the pinned stable) and
 `--cfg mm_shipped`, which turns on `#[optimize(size)]` through
 `cfg_attr(mm_shipped, …)`. `size`, `wasm`, `wasm-ir`, `v8-ir`,
-`wasm-host`, `native-ir` and `shipped-mm` build that way, `shipped-cases`
+`wasm-host`, `native-ir`, `replay-ir` and `shipped-mm` build that way, `shipped-cases`
 runs the own cases and Monty's corpus on the shipped `mm`, and the
 step-time oracle is built fully as shipped (std and libtest rebuilt, each
 test in its own process; a row over the limit prints `OVER`).
@@ -154,7 +155,7 @@ to `target/check/logs/<stage>.log`.
   build. Two landings that both move a floor: take the raise when one side
   is an accepted raise, else the lower count; the gate then sets it.
   Startup drift is not accepted (owner): `startup` may move 300
-  instructions without a line. Three gates, on Linux:
+  instructions without a line. Four gates, on Linux:
   - `cargo xtask native-ir` (both tiers): the gated count
     `python3 bench/callgrind.py` prints first, on the shipped native `mm`
     (`cargo xtask shipped-mm`), run with an empty environment from a fixed
@@ -169,12 +170,17 @@ to `target/check/logs/<stage>.log`.
   - `cargo xtask v8-ir` (release gate): V8's generated code on both
     `wasm32-unknown-unknown` guests. Fails on a program past +0.5% or a
     guest's geomean past +0.3%.
+  - `cargo xtask replay-ir` (release gate): the 160 recorded real
+    sessions (`conformance/codemode/real`) on the replay worker built as
+    shipped plus `--cfg mm_size_wasm` (the wasm-only `optimize(size)` marks
+    on), head against base only, no floors. Fails on a session past +0.5%
+    or the sessions' median ratio past +0.3%.
 
   An intended rise says why in its commit, with the table. Each gate takes
-  a line `<Prefix> <names> <ceiling> <reason>`: `Native-IR-Accepted:`,
-  `Wasm-IR-Accepted:` or `V8-IR-Accepted:`,
+  a line `<Prefix> <names> <ceiling> <reason>`: `Native-IR-Accepted:`
+  (native-ir and replay-ir), `Wasm-IR-Accepted:` or `V8-IR-Accepted:`,
   such as `Native-IR-Accepted: dict,startup 1.006 <reason>`. It passes
-  only the names it lists (programs or `geomean`; v8-ir may
+  only the names it lists (programs, `sessions` or `geomean`; v8-ir may
   put `plain/` or `bundle/` before one) up to the ceiling ratio, and
   raises only their floors. `MM_IR_ACCEPT`, `MM_WASM_IR_ACCEPT` and
   `MM_V8_IR_ACCEPT` with the same text stand for the line in an

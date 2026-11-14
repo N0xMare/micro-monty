@@ -31,6 +31,8 @@
 //!   revision, on wasmtime and V8.
 //! - `wasm-ir`: wasmtime's guest instructions on the bench programs
 //!   against a base revision (callgrind; deterministic).
+//! - `replay-ir`: the recorded real sessions' instructions on the replay
+//!   worker against a base revision (callgrind).
 //! - `gc-stress`: own cases, the corpus and durability on the own cases
 //!   with `MM_GC_STRESS=1` (a collection at every safepoint).
 //! - `handoffs`: the native-to-Python hand-off sites (`need_py()` calls)
@@ -68,6 +70,7 @@ mod handoffs;
 mod native_ir;
 mod overflow;
 mod package;
+mod replay_ir;
 mod restack;
 mod shipped;
 mod size;
@@ -102,8 +105,8 @@ tasks:
                              last and alone; logs in target/check/logs/
       --serial               one stage at a time, output on the terminal
       --release-gate         the full gate: release builds, durability at
-                             1:1000, also wasm-host, overflow-wasip1, v8-ir
-                             and the codemode check
+                             1:1000, also wasm-host, overflow-wasip1, v8-ir,
+                             replay-ir and the codemode check
                              (default: the landing tier, or the release gate
                              when the change touches parking, snapshots, the
                              GC, the wasm crates, the shipped recipe, the
@@ -189,6 +192,14 @@ tasks:
                              against it)
       --write-floors         write the floor file the head must have
       --plain                advisory: shipped against a plain release build
+  replay-ir [options]        the 160 recorded real sessions' callgrind Ir on
+                             the replay worker (shipped, --cfg mm_size_wasm)
+                             against the base's, session by session (in the
+                             release gate): fails on a session past +0.5% or
+                             the median ratio past +0.3%, unless a
+                             `Native-IR-Accepted: sessions <ceiling> <reason>`
+                             line covers it
+      --base <rev>           the revision to compare with (default origin/main)
   v8-ir [options]            V8's instructions (node --no-liftoff, generated
                              code, the second of two runs) on bench/*.py in
                              both wasm32-unknown-unknown guests against a base
@@ -264,6 +275,7 @@ fn main() -> ExitCode {
         Some("wasm-wall") => wasm_wall::run(&rest),
         Some("wasm-ir") => wasm_ir::run(&rest),
         Some("native-ir") => native_ir::run(&rest),
+        Some("replay-ir") => replay_ir::run(&rest),
         Some("v8-ir") => v8_ir::run(&rest),
         Some("wasm-opt") => wasm::wasm_opt_command(&rest),
         Some("gc-stress") => gc_stress::run(&rest),
@@ -641,6 +653,16 @@ fn check(args: &[String]) -> Result<(), String> {
             "--base",
             base,
         ])));
+        // The recorded real sessions' Ir on the shipped replay worker,
+        // built beside shipped-mm's mm (the same target directory). Its
+        // builds and replays fill cores for minutes, so it waits for the
+        // stages with wall-clock limits; an Ir count does not care when it
+        // runs.
+        stages.push(
+            Stage::new("replay-ir")
+                .after(&["shipped-mm", "durability", "durability-cross", "wasm-host"])
+                .run(task(&["replay-ir", "--base", base])),
+        );
     }
     if release_gate {
         // Next to the other wasip1 stage, but off the critical path: it
