@@ -34,20 +34,19 @@
 //! guests of the commits built with it, and counts only those whose bytes
 //! changed.
 //!
-//! The anchor and the accept line work as `wasm-ir`'s: the latest `v*` tag
-//! the base descends from, or the latest commit since it with a
-//! `V8-IR-Accepted:` line; its count of a program is the least of the
-//! anchor's, the base's and every first-parent commit's between them that
-//! changed the build. Against both, a program's count rising past 0.5%
-//! (`PROGRAM_LIMIT`) or the geometric mean of the ratios past 0.3%
-//! (`GEOMEAN_LIMIT`), on either guest, fails. Unrelated commits move a
+//! The anchor is the latest `v*` tag the base descends from; a count's
+//! anchor count is its least over the anchor, the base and every
+//! first-parent commit between them that changed the build, from the last
+//! accept line there that names it on ([`crate::accept`]). Against both, a
+//! program's count rising past 0.5% (`PROGRAM_LIMIT`) or the geometric
+//! mean of the ratios past 0.3% (`GEOMEAN_LIMIT`), on either guest, fails
+//! unless a `V8-IR-Accepted: <names> <ceiling> <reason>` line in a commit
+//! since the base covers it; a name is a program or `geomean`, with
+//! `plain/` or `bundle/` before it for one guest. Unrelated commits move a
 //! program by 0.00-0.06% [M]. Fewer instructions always pass.
-//! `MM_V8_IR_ACCEPT=<reason>` passes an intended rise, whose commit
-//! message records the table on a `V8-IR-Accepted:` line.
 
 use std::{
     collections::BTreeMap,
-    env,
     fmt::Write as _,
     fs,
     path::{Path, PathBuf},
@@ -57,9 +56,10 @@ use std::{
 };
 
 use crate::{
+    accept::{self, Failure},
     bench::{PROGRAMS, read_expected},
     size,
-    wasm_ir::{changed_since, default_anchor, source_hash, version},
+    wasm_ir::{changed_since, source_hash, version},
     wasm_wall::{checkout, git, head_id},
     workspace_root,
 };
@@ -140,8 +140,21 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let counts = measure(
         &root, &valgrind, &node, &tools, &sides, &programs, head_built,
     )?;
-    // The anchor's counts: the least from the anchor to the base.
-    let least = (sides.len() > 2).then(|| least(&counts[1..]));
+    // Each count's anchor: its least from the anchor to the base, from the
+    // last accept line there that names it on.
+    let least = match (sides.get(2), &sides[1].sha) {
+        (Some(Side { sha: Some(a), .. }), Some(b)) => {
+            let history: Vec<(&str, &Counts)> = sides[2..]
+                .iter()
+                .zip(&counts[2..])
+                .filter_map(|(s, c)| Some((s.sha.as_deref()?, c)))
+                .chain([(b.as_str(), &counts[1])])
+                .collect();
+            let accepts = accept::committed(&root, ACCEPTED, &format!("{a}..{b}"))?;
+            Some(accept::least_since(&root, &history, &accepts, split)?)
+        }
+        _ => None,
+    };
     let anchor_name = sides
         .get(2)
         .map(|side| format!("{} to the base", side.name));
@@ -155,11 +168,28 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             anchor_name.as_deref().zip(least.as_ref()),
         ));
     }
-    verdict(&failures)
+    let base = sides[1].sha.clone().unwrap_or_default();
+    let accepts = accept::for_change(&root, ACCEPTED, &base, "MM_V8_IR_ACCEPT")?;
+    accept::verdict("v8-ir", ACCEPTED, "MM_V8_IR_ACCEPT", &failures, &accepts)
+}
+
+/// The short name of a guest in accept lines.
+fn label(guest: &str) -> &'static str {
+    if guest == GUESTS[1] {
+        "bundle"
+    } else {
+        "plain"
+    }
+}
+
+/// A count's key (`<guest>/<program>`) as its guest label and program.
+fn split(key: &str) -> (Option<String>, String) {
+    let (guest, program) = key.split_once('/').unwrap_or(("", key));
+    (Some(label(guest).to_owned()), program.to_owned())
 }
 
 /// The head (the working tree), the base (the merge base with `base`),
-/// and the anchor (`anchor`, else [`default_anchor`]) with every commit
+/// and the anchor (`anchor`, else the last `v*` tag) with every commit
 /// after it up to the base that changed the build.
 fn sides(root: &Path, base: &str, anchor: Option<&str>) -> Result<Vec<Side>, String> {
     let sha = |rev: &str| {
@@ -172,7 +202,7 @@ fn sides(root: &Path, base: &str, anchor: Option<&str>) -> Result<Vec<Side>, Str
     let base_sha = git(root, &["merge-base", base, "HEAD"])?;
     let anchor = match anchor {
         Some(rev) => Some((rev.to_owned(), sha(rev)?)),
-        None => default_anchor(root, &base_sha, ACCEPTED, "v8-ir")?,
+        None => Some(accept::tag_anchor(root, &base_sha, "v8-ir")?),
     }
     .filter(|(_, a)| *a != base_sha);
     let mut sides = vec![
@@ -342,12 +372,11 @@ fn contents_of(
     let (cache, store) = (dir.join("cache"), dir.join("guests"));
     let (tree, own) = match &side.sha {
         Some(sha) => {
-            let tree = dir.join(format!("{}-src", side.tree));
-            let own = size::builds_itself(root, sha);
-            if own {
-                checkout(root, &tree, sha)?;
-            }
-            (tree, own)
+            // Outside this checkout ([`crate::shipped::refs_dir`]); checked
+            // out either way, since its toolchain builds it.
+            let tree = crate::shipped::refs_dir("v8-ir").join(format!("{}-src", side.tree));
+            checkout(root, &tree, sha)?;
+            (tree, size::builds_itself(root, sha))
         }
         None => (root.to_path_buf(), true),
     };
@@ -365,7 +394,7 @@ fn contents_of(
         ids
     } else {
         let mut ids = BTreeMap::new();
-        for (guest, path) in guests(root, &dir, side, &tree, own, head_built)? {
+        for (guest, path) in guests(root, side, &tree, own, head_built)? {
             if !GUESTS.contains(&guest.as_str()) {
                 continue;
             }
@@ -420,7 +449,6 @@ fn save_guests(
 /// with its own recipe when it has one (`own`).
 fn guests(
     root: &Path,
-    dir: &Path,
     side: &Side,
     tree: &Path,
     own: bool,
@@ -436,10 +464,12 @@ fn guests(
                 paths(&size::size_head(tree)?)
             } else {
                 println!(
-                    "v8-ir: building the {} with the head's recipe (its xtask has no `size --head`)",
+                    "v8-ir: building the {} with the head's recipe and its own toolchain (its \
+                     xtask has no `size --head`)",
                     side.label
                 );
-                Ok(listed(crate::shipped_guests(tree, &dir.join(side.tree))?))
+                let target = crate::shipped::refs_dir("v8-ir").join(side.tree);
+                Ok(listed(crate::shipped_guests(tree, &target)?))
             }
         }
     }
@@ -564,19 +594,6 @@ fn generated(cg: &str) -> u64 {
     n
 }
 
-/// Each count's least over `counts`.
-fn least(counts: &[Counts]) -> Counts {
-    let mut out = Counts::new();
-    for c in counts {
-        for (id, &n) in c {
-            out.entry(id.clone())
-                .and_modify(|m: &mut u64| *m = (*m).min(n))
-                .or_insert(n);
-        }
-    }
-    out
-}
-
 /// The cached counts of the guest with content `id` under `key`, each kept
 /// only while its program's source hash is `hashes`'.
 fn load(cache: &Path, id: &str, key: &str, hashes: &BTreeMap<String, String>) -> Counts {
@@ -634,7 +651,7 @@ fn report(
     head: &Counts,
     base: (&str, &Counts),
     anchor: Option<(&str, &Counts)>,
-) -> Vec<String> {
+) -> Vec<Failure> {
     let at = |c: &Counts, name: &str| c.get(&format!("{guest}/{name}")).copied().unwrap_or(0);
     println!("\nV8 instructions in generated code, {guest}, second run, millions");
     let mut header = format!(
@@ -678,40 +695,27 @@ fn report(
             product *= r;
             n += 1;
             if r > PROGRAM_LIMIT {
-                failures.push(format!("{guest} {name} {r:.4} against {against}"));
+                failures.push(Failure {
+                    guest: Some(label(guest).to_owned()),
+                    name: name.to_owned(),
+                    ratio: r,
+                    text: format!("{guest} {name} {r:.4} against {against}"),
+                });
             }
         }
         let geomean = product.powf(1.0 / f64::from(n.max(1)));
         let _ = write!(geo, " {geomean:.4} against {against};");
         if geomean > GEOMEAN_LIMIT {
-            failures.push(format!("{guest} geomean {geomean:.4} against {against}"));
+            failures.push(Failure {
+                guest: Some(label(guest).to_owned()),
+                name: "geomean".to_owned(),
+                ratio: geomean,
+                text: format!("{guest} geomean {geomean:.4} against {against}"),
+            });
         }
     }
     println!("{geo}\n  (^ past +0.5%, v below -0.5%; the geomean's limit is +0.3%)");
     failures
-}
-
-/// Passes when nothing rose past a limit, or `MM_V8_IR_ACCEPT` says why.
-fn verdict(failures: &[String]) -> Result<(), String> {
-    let accepted = env::var("MM_V8_IR_ACCEPT").unwrap_or_default();
-    if failures.is_empty() {
-        println!("\nv8-ir: no count rose past its limit");
-        Ok(())
-    } else if !accepted.trim().is_empty() {
-        println!(
-            "\nv8-ir: past the limits ({}), accepted: {}",
-            failures.join("; "),
-            accepted.trim()
-        );
-        Ok(())
-    } else {
-        Err(format!(
-            "v8-ir: past the limits: {}; if the rise is intended, rerun with \
-             MM_V8_IR_ACCEPT=<reason> and put the table and a `{ACCEPTED} <reason>` \
-             line in the commit message (later runs anchor there)",
-            failures.join("; ")
-        ))
-    }
 }
 
 #[allow(clippy::cast_precision_loss, reason = "a ratio of counts")]

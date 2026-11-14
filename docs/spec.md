@@ -2618,9 +2618,14 @@ callgrind twice, on the shipped native `mm` (`target/<host>/release/mm`,
 built by `cargo xtask shipped-mm`; the script stops if it is missing). The
 *gated* count runs from glibc's `__libc_start_main` onward and leaves out glibc's `pthread_getattr_np`; the *whole-process*
 count includes everything. A change may raise the gated count of a
-program by at most 0.5% over the base, unless a commit says why with the
-table on a `Native-IR-Accepted:` line; a drop passes. `cargo xtask
-native-ir` checks it (in `check`, Linux), and the whole-process count is
+program by at most 0.5% (`startup` by at most 2,900 instructions) over
+the base and over the anchor (its lowest count since the last `v*` tag),
+unless a commit says why with the table on a `Native-IR-Accepted:
+<programs> <ceiling> <reason>` line, which passes only those programs up
+to that ratio; a drop passes. `cargo xtask native-ir` checks it (in
+`check`, Linux), building base and anchor history with their own
+toolchain and, where their xtask has `shipped-mm`, their own recipe; the
+whole-process count is
 reported beside it. The two parts left out depend on where the binary's segments land, not
 on engine work: the dynamic loader's relocations, and `pthread_getattr_np`
 parsing `/proc/self/maps`, which Rust's runtime calls from inside `main` to
@@ -2707,7 +2712,8 @@ opens a draft release.
   `cargo xtask bench` times the engines it finds and writes
   `bench/results/`; run it alone on an idle machine. Native Ir follows the
   gated-count rule (§12): `cargo xtask native-ir` (in `check`, Linux) fails
-  when a program's gated count rises past 0.5% over the base's.
+  when a program's gated count rises past 0.5% (`startup` past 2,900
+  instructions) over the base's or the anchor's.
 - **wasm-ir** (in both tiers, Linux only, since it needs valgrind):
   `cargo xtask wasm-ir` builds the working tree (or `--head REV`), the base
   (`--base REV`, default `origin/main`) and an anchor, each in a worktree
@@ -2752,8 +2758,12 @@ opens a draft release.
   whose xtask has `size --head` builds its guests with its own recipe, so
   a change to the `wasm-opt` flags or the `optimize(size)` marks is
   counted at its commit; older ones are built with the head's recipe.
-  Base, anchor, accept line (`V8-IR-Accepted:`, `MM_V8_IR_ACCEPT`) and the
-  anchor's least-of history work as wasm-ir's. Limits, on either guest
+  Base and the anchor's least-of history work as wasm-ir's, with the last
+  `v*` tag as the anchor. An accept line `V8-IR-Accepted: <names>
+  <ceiling> <reason>` (programs or `geomean`, `plain/` or `bundle/` before
+  one for one guest) passes only those counts up to that ratio, and later
+  runs re-anchor only those; `MM_V8_IR_ACCEPT` stands for it in an
+  uncommitted tree only. Limits, on either guest
   against base and anchor: a program rising past 0.5% or the geomean past
   0.3%; decreases pass. Counts are cached per guest content, keyed by
   node's and valgrind's versions, the driver and the program's source, so

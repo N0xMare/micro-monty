@@ -49,8 +49,8 @@ just pretag [base]       the pre-tag checklist against the previous `v*` tag
 Run `just --list` for the rest. Gates without a recipe are `cargo xtask`
 commands: `wasm-ir`, `v8-ir` (V8's instructions on both
 wasm32-unknown-unknown guests vs base and anchor; release gate, Linux),
-`native-ir` (the gated bench Ir on the shipped native `mm` vs the merge
-base; in `check`, Linux), `wasm-host`, `wasm-wall`, `gc-stress`,
+`native-ir` (the gated bench Ir on the shipped native `mm` vs base and
+anchor; in `check`, Linux), `wasm-host`, `wasm-wall`, `gc-stress`,
 `parse-diff`, `docs`, `difffuzz`, `handoffs` (writes
 `xtask/handoff-sites.txt`, the `need_py()` hand-off sites; `--check` is in
 `check`) and `shipped-mm` (`mm` built natively as shipped, the binary bench
@@ -108,23 +108,45 @@ to `target/check/logs/<stage>.log`.
 - No credentials, auth headers, private session data or unsanitized
   recordings in the tree, logs or tests. The workspace forbids `unsafe`.
 - Tiers: `cargo xtask check` before every push to main, rebased onto the
-  latest main. The release gate instead before a tag and for any change
-  whose files since `origin/main` include `crates/mm-engine/src/interp.rs`,
-  `snapshot.rs` or `nstep.rs`, `crates/mm-core/src/gc.rs` or `snapshot.rs`,
-  `crates/micro-monty/src/image.rs`, `crates/mm-compile/src/encode.rs`, a
-  `crates/mm-wasm-*` crate or a line of a `[profile.*]` table. A facade API
-  or snapshot format change also needs `cargo xtask wasm-host` (in the
-  release gate).
-- Ir: native bench Ir moves at most ±0.5% per change on the gated count
-  `python3 bench/callgrind.py` prints first, measured on the shipped native
-  `mm` (`target/<host>/release/mm`, from `cargo xtask shipped-mm`; the
-  script stops if it is missing); also report the whole-process count. `cargo xtask wasm-ir` (in `check`, Linux) counts the
-  shipped wasip1 `mm`'s guest instructions under wasmtime and fails when a
-  program rises past 1.0%, the geomean past 0.5% or `startup` past 50,000
-  instructions, against the base and the anchor (the lowest count since
-  the last `v*` tag or `Wasm-IR-Accepted:` commit; it needs the tags
-  fetched). An intended rise says why in the commit, with the table
-  (wasm: `MM_WASM_IR_ACCEPT=<reason>` and a `Wasm-IR-Accepted:` line).
+  latest main. It runs the release gate by itself (and says why) before a
+  tag and for any change whose files since `origin/main`, committed or not,
+  old and new names of a rename both counted, include a path of
+  `RELEASE_GATE_PATHS` in `xtask/src/main.rs`: in `crates/mm-engine/src/`
+  `interp.rs`, `snapshot.rs`, `nstep.rs`, `cont.rs`, `vm.rs`,
+  `generator.rs` or `aio.rs`; `crates/mm-core/src/gc*` or `snapshot.rs`;
+  `crates/micro-monty/src/image.rs` or `tests/golden/`;
+  `crates/mm-compile/src/encode.rs`; a `crates/mm-wasm-*` crate;
+  `xtask/src/wasm.rs` or `shipped.rs`; `rust-toolchain.toml`,
+  `Cargo.lock`, `.cargo/` or `.agents/setup`. A line of a `[profile.*]`
+  table, an `optimize(size)` mark added or removed, or no merge base does
+  the same. `--landing-tier` forces the landing tier; say why in the commit
+  if you use it. A facade API or snapshot format change also needs
+  `cargo xtask wasm-host` (in the release gate).
+- Ir: drops always pass; rises are gated against the base and against an
+  anchor (each count's lowest since the last `v*` tag, so steps under a
+  limit cannot add up; the gates need the tags fetched). Three gates, on
+  Linux:
+  - `cargo xtask native-ir` (both tiers): the gated count
+    `python3 bench/callgrind.py` prints first, on the shipped native `mm`
+    (`cargo xtask shipped-mm`). Fails on a program past +0.5% or `startup`
+    past +2,900 instructions. Base and anchor build with their own
+    toolchain and, when their xtask has `shipped-mm`, their own recipe.
+  - `cargo xtask wasm-ir` (both tiers): the shipped wasip1 `mm`'s guest
+    instructions under wasmtime. Fails on a program past +1.0%, the
+    geomean past +0.5% or `startup` past +50,000 instructions.
+  - `cargo xtask v8-ir` (release gate): V8's generated code on both
+    `wasm32-unknown-unknown` guests. Fails on a program past +0.5% or a
+    guest's geomean past +0.3%.
+
+  An intended rise says why in its commit, with the table. native-ir and
+  v8-ir take `Native-IR-Accepted:` / `V8-IR-Accepted: <names> <ceiling>
+  <reason>`, such as `Native-IR-Accepted: dict,startup 1.006 <reason>`:
+  it passes only the names it lists (programs or `geomean`; v8-ir may put
+  `plain/` or `bundle/` before one) up to the ceiling ratio, and later runs
+  re-anchor only those. `MM_IR_ACCEPT` / `MM_V8_IR_ACCEPT` with the same
+  text stand for the line in an uncommitted tree only. wasm-ir takes
+  `MM_WASM_IR_ACCEPT=<reason>` and a `Wasm-IR-Accepted:` line. Report the
+  whole-process count `bench/callgrind.py` prints second too.
 - Snapshots: keep code that writes or reads an image in the codec files
   (`micro-monty/src/image.rs`, `mm-engine/src/snapshot.rs`,
   `mm-core/src/snapshot.rs`, `mm-compile/src/encode.rs`). Bump

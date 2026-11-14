@@ -59,3 +59,6 @@ pretag base=prev_tag:
     cargo deny --all-features --manifest-path fuzz/Cargo.toml check
     cargo deny --all-features --manifest-path crates/mm-wasm-host/Cargo.toml check
     {{ if base == "none" { "true" } else { "cargo xtask wasm-ir --base " + base } }}
+    {{ if base == "none" { "true" } else { "cargo xtask native-ir --base " + base } }}
+    cargo xtask native-ir --plain
+    {{ if base == "none" { "true" } else { "cargo xtask v8-ir --base " + base } }}

@@ -49,6 +49,7 @@
     reason = "the docs name CPython and QuickJS in prose"
 )]
 
+mod accept;
 mod bench;
 mod check;
 mod conformance;
@@ -95,7 +96,9 @@ tasks:
                              1:1000, also wasm-host and the codemode check
                              (default: the landing tier, or the release gate
                              when the change touches parking, snapshots, the
-                             GC, the wasm crates or a profile; AGENTS.md)
+                             GC, the wasm crates, the shipped recipe, the
+                             toolchain, Cargo.lock, .cargo/ or a profile;
+                             AGENTS.md)
       --landing-tier         the landing tier whatever the change touches
   size [--base <rev>]        build `hello` and the mm-wasm guests as shipped
                              (wasm-opt -Oz on wasm), and the base's (default
@@ -156,23 +159,25 @@ tasks:
       --pool <file>...       judge the rounds of several runs together
                              (target/wasm-wall/rounds/*.tsv, same base and
                              head); builds and times nothing
-  native-ir [--base <rev>]   bench/*.py's gated callgrind Ir on the shipped
-                             native mm ($MM, else built) against the base's
-                             (default origin/main; built in a worktree under
-                             target/native-ir/, cached per commit): fails on
-                             a program rising past 0.5%, unless a commit since
-                             the base has a Native-IR-Accepted: line or
-                             MM_IR_ACCEPT=<reason> is set
+  native-ir [options]        bench/*.py's gated callgrind Ir on the shipped
+                             native mm ($MM, else built) against the base and
+                             the anchor (each built outside the checkout with
+                             its own toolchain and recipe, cached per commit):
+                             fails on a program past +0.5% or startup past
+                             +2,900 instructions, unless a `Native-IR-Accepted:
+                             <programs> <ceiling> <reason>` line covers it
+      --base <rev>           the revision to compare with (default origin/main)
+      --anchor <rev>         the anchor (default: the last v* tag)
+      --plain                advisory: shipped against a plain release build
   v8-ir [options]            V8's instructions (node --no-liftoff, generated
                              code, the second of two runs) on bench/*.py in
                              both wasm32-unknown-unknown guests against a base
                              and an anchor, as wasm-ir (in the release gate):
                              fails on a program rising past 0.5% or a guest's
-                             geomean past 0.3%; MM_V8_IR_ACCEPT=<reason>
-                             passes a rise
+                             geomean past 0.3%, unless a `V8-IR-Accepted:
+                             <names> <ceiling> <reason>` line covers it
       --base <rev>           the revision to compare with (default origin/main)
-      --anchor <rev>         the anchor (default: the last v* tag, or the
-                             last commit since with a V8-IR-Accepted: line)
+      --anchor <rev>         the anchor (default: the last v* tag)
       --programs <a,b>       only these programs
       --head-built           the head's guests from target/size/head.tsv
   wasm-ir [options]          wasmtime guest instructions of bench/*.py against
@@ -560,7 +565,7 @@ fn check(args: &[String]) -> Result<(), String> {
     if cfg!(target_os = "linux") {
         stages.push(Stage::new("wasm-ir").run(task(&["wasm-ir"])));
         // The bench programs' gated Ir on the shipped native `mm` against
-        // the base's: a rise past 0.5% fails (AGENTS.md's Ir rule).
+        // the base's and the anchor's (AGENTS.md's Ir rule).
         stages.push(Stage::new("native-ir").after(&["shipped-mm"]).run({
             let mut ir = task(&["native-ir"]);
             ir.env("MM", &shipped_mm);
@@ -614,18 +619,30 @@ fn check(args: &[String]) -> Result<(), String> {
 }
 
 /// Paths (prefixes) whose change makes plain `check` the release gate:
-/// parking, snapshots, the GC, the wasm crates and how the wasm guests are
-/// built (`v8-ir` gates that).
+/// parking and the park state (`Cont`, the VM's frames, generators and
+/// tasks), snapshots and the golden images, the GC, the wasm crates, how
+/// shipped builds are made (`v8-ir` gates the guests), and the toolchain,
+/// the lockfile and cargo's configuration, which every build reads.
 const RELEASE_GATE_PATHS: &[&str] = &[
     "crates/mm-engine/src/interp.rs",
     "crates/mm-engine/src/snapshot.rs",
     "crates/mm-engine/src/nstep.rs",
-    "crates/mm-core/src/gc.rs",
+    "crates/mm-engine/src/cont.rs",
+    "crates/mm-engine/src/vm.rs",
+    "crates/mm-engine/src/generator.rs",
+    "crates/mm-engine/src/aio.rs",
+    "crates/mm-core/src/gc",
     "crates/mm-core/src/snapshot.rs",
     "crates/micro-monty/src/image.rs",
+    "crates/micro-monty/tests/golden/",
     "crates/mm-compile/src/encode.rs",
     "crates/mm-wasm-",
     "xtask/src/wasm.rs",
+    "xtask/src/shipped.rs",
+    "rust-toolchain.toml",
+    "Cargo.lock",
+    ".cargo/",
+    ".agents/setup",
 ];
 
 /// Why the change since the merge base with `origin/main`, committed or
@@ -647,7 +664,9 @@ fn release_gate_reason(root: &Path) -> Option<String> {
         return Some("an unknown set of files (no merge base with origin/main)".to_owned());
     };
     let base = base.trim();
-    let changed = git(&["diff", "--name-only", base]).unwrap_or_default()
+    // `--no-renames`: a moved file counts under its old and its new path,
+    // so `git mv interp.rs run.rs` still names interp.rs.
+    let changed = git(&["diff", "--name-only", "--no-renames", base]).unwrap_or_default()
         + &git(&["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
     if let Some(path) = changed
         .lines()
