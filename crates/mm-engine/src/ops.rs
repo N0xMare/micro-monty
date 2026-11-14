@@ -2281,22 +2281,32 @@ impl Vm {
         out
     }
 
-    /// Do subscripts of `t` take an index (so a huge int overflows)?
-    pub(crate) fn is_sequence_type(t: T) -> bool {
-        matches!(
-            t,
-            T::list | T::tuple | T::str | T::range | T::bytes | T::bytearray
-        )
-    }
-
-    /// A sequence subscript's instance key: an int subclass's is its value;
-    /// any other keeps itself (a float subclass's `__index__` goes to the
-    /// prelude). Out of line: inlined, `getitem` moves dispatch's register
-    /// allocation, +0.68% on bench/interp.py [M].
+    /// `obj[key]` for sequence `obj` (type `t`) whose key is neither a small
+    /// int nor a slice: an int subclass's instance subscripts as its value,
+    /// and an int past i64 is an IndexError. None: the arm's own fallback
+    /// (a float subclass's `__index__` goes to the prelude). Called from each
+    /// sequence arm after its fast paths, so `getitem`'s entry tests nothing
+    /// of the key: a test there, even with the rest out of line, cost V8's
+    /// code for `getitem` 1.5% (bench/interp.py +0.10%, wasm-opt inlines a
+    /// function with one caller) [M].
     #[cold]
     #[inline(never)]
-    fn index_key(&self, key: Value) -> Value {
-        self.int_unbx(key)
+    fn index_key(&mut self, obj: Value, t: T, key: Value) -> Result<Option<Value>, Raised> {
+        let k = self.int_unbx(key);
+        if Vm::is_heap_int(k) && self.int_of(k).is_none() {
+            // A range computes with the int itself (CPython's
+            // `compute_range_item`), so it is only out of range.
+            return Err(if t == T::range {
+                self.err(T::IndexError, "range object index out of range")
+            } else {
+                self.index_overflow(T::IndexError)
+            });
+        }
+        if k == key {
+            return Ok(None);
+        }
+        // The int itself; it is no instance, so this does not come back.
+        self.getitem(obj, k).map(Some)
     }
 
     /// `obj[key]`.
@@ -2308,19 +2318,6 @@ impl Vm {
             };
         }
         let t = self.type_of(obj);
-        let key = if Vm::is_sequence_type(t) && key.is_obj_kind(ty::INST as u8) {
-            self.index_key(key)
-        } else {
-            key
-        };
-        if Vm::is_heap_int(key) && self.int_of(key).is_none() && Vm::is_sequence_type(t) {
-            // A range computes with the int itself (CPython's
-            // `compute_range_item`), so it is only out of range.
-            if t == T::range {
-                return Err(self.err(T::IndexError, "range object index out of range"));
-            }
-            return Err(self.index_overflow(T::IndexError));
-        }
         let is_slice = key.is_obj_kind(ty::SLICE as u8);
         match t {
             T::list | T::tuple => {
@@ -2360,6 +2357,9 @@ impl Vm {
                     } else {
                         self.alloc_tuple(&picked)
                     };
+                }
+                if let Some(v) = self.index_key(obj, t, key)? {
+                    return Ok(v);
                 }
                 if self.uflags(key) & f::INDEX != 0 {
                     return Err(self.need_py());
@@ -2409,6 +2409,9 @@ impl Vm {
                     }
                     return crate::strmeth::ext_slice(self, obj, start, step, len);
                 }
+                if let Some(v) = self.index_key(obj, t, key)? {
+                    return Ok(v);
+                }
                 if self.uflags(key) & f::INDEX != 0 {
                     return Err(self.need_py());
                 }
@@ -2424,7 +2427,14 @@ impl Vm {
                 Some(v) => Ok(v),
                 None => Err(self.err_value(T::KeyError, key)),
             },
-            T::bytes | T::bytearray => self.bytes_getitem(obj, key),
+            T::bytes | T::bytearray => {
+                if (key.is_obj_kind(ty::INST as u8) || Vm::is_heap_int(key))
+                    && let Some(v) = self.index_key(obj, t, key)?
+                {
+                    return Ok(v);
+                }
+                self.bytes_getitem(obj, key)
+            }
             T::range => {
                 let (start, _, step) = self.range_parts(obj);
                 let n = self.range_len(obj);
@@ -2444,6 +2454,9 @@ impl Vm {
                 }
                 if is_slice {
                     return self.range_slice(obj, key);
+                }
+                if let Some(v) = self.index_key(obj, t, key)? {
+                    return Ok(v);
                 }
                 if self.uflags(key) & f::INDEX != 0 {
                     return Err(self.need_py());
