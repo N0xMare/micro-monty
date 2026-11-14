@@ -993,11 +993,21 @@ std and libtest rebuilt, each test in its own process
 (`-Zpanic-abort-tests`), so a failing row aborts without its panic
 message but its `OVER` line is printed. Bench Ir (§12) measures the shipped `mm` too:
 an `optimize(size)` set can pass Ir and still slow shipped steps past the
-bound (647 functions: Ir within 0.22%, `steps` failed as shipped [M]). A mark
-that slows only the wasm guests is native only
-(`cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), …)`), including one
-that slows a function it does not mark: `Vm::arg_o` gets the stack's fields
-instead of `&Vm` only while LLVM proves every caller's `&Vm` valid. Tests,
+bound (647 functions: Ir within 0.22%, `steps` failed as shipped [M]), and a
+marked function no Ir workload runs can slow down unseen (an `await` loop
++17% and `gather` +21% with every gate green [M]). So a commit that adds
+marks under `crates/` carries a trailer `Size-Marks: <n> added, <run> run
+by an Ir workload (<how>)`, with `<n>` the marks it adds net of those it
+removes; `cargo xtask size` fails without it (it reads the statement, it
+does not count the runs). A mark that slows only the wasm guests is native
+only (`cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), …)`),
+including one that slows a function it does not mark: `Vm::arg_o` gets the
+stack's fields instead of `&Vm` only while LLVM proves every caller's `&Vm`
+valid. A mark on for wasm only is written
+`cfg_attr(all(mm_shipped, any(target_arch = "wasm32", mm_size_wasm)),
+optimize(size))`, so the native replay worker `cargo xtask replay-ir`
+builds with `--cfg mm_size_wasm` runs it too; `cargo xtask size` fails on
+one written otherwise. Tests,
 clippy and every other build stay on plain stable; `cargo xtask wasm`
 builds its examples as shipped too. Native binaries stay
 position-independent (the worker runs untrusted code). Shipped wasm modules

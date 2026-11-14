@@ -220,6 +220,11 @@ to `target/check/logs/<stage>.log`.
   base, with signed bytes; only the owner adds budget lines, and one
   lands before the growth it allows. A push is judged once, head against
   base, on its net change, so an intended rise lands in its own push.
+  A commit that adds `optimize(size)` marks under `crates/` says how many
+  an Ir workload runs, in a trailer `Size-Marks: <n> added, <run> run by
+  an Ir workload (<how>)`; `cargo xtask size` fails without it. A mark
+  on for wasm only is `cfg_attr(all(mm_shipped, any(target_arch =
+  "wasm32", mm_size_wasm)), optimize(size))`, so replay-ir counts it.
   `xtask/size-ceilings.txt` is history; do not write ceiling lines.
 - Results that move on purpose are rerun and committed:
   `conformance/results/` (`cargo xtask conformance`), and

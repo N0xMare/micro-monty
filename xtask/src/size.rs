@@ -157,18 +157,108 @@ pub(crate) fn gate(
     // The budgets the base holds: a change cannot raise its own.
     let budget = git(&root, &["show", &format!("{base}:{BUDGET}")]).unwrap_or_default();
     let budgets = budgets(&budget)?;
-    let failed = judge(
+    let mut failed = judge(
         &head,
         &sized[0],
         Some((tag.as_str(), &sized[1])),
         &budgets,
         &trailers,
     );
+    failed.extend(marks(&root, &base)?);
     if failed.is_empty() {
         Ok(())
     } else {
         Err(failed.join("\n"))
     }
+}
+
+/// The mark that compiles a function for size ([`marks`]).
+const MARK: &str = "optimize(size)";
+
+/// The commits since `base`, and the uncommitted changes, that add
+/// [`MARK`]s under `crates/` without saying how many of them an Ir
+/// workload runs: a commit that adds N (net of those it removes) needs a
+/// trailer `Size-Marks: N added, <run> run by an Ir workload (<how>)`,
+/// since a marked function the workloads never run can slow down unseen
+/// (an `await` loop +17%, `gather` +21% with every gate green; size review
+/// of A+B). The check reads the statement; it does not count the runs.
+fn marks(root: &Path, base: &str) -> Result<Vec<String>, String> {
+    let added = |diff: &str| -> i64 {
+        let count = |sign: char| {
+            diff.lines()
+                .filter(|l| l.starts_with(sign) && !l.starts_with("+++") && !l.starts_with("---"))
+                .filter(|l| l.contains(MARK) && !comment(&l[1..]))
+                .count()
+        };
+        i64::try_from(count('+')).unwrap_or(i64::MAX) - i64::try_from(count('-')).unwrap_or(0)
+    };
+    let mut failed = Vec::new();
+    let log = git(
+        root,
+        &[
+            "log",
+            "--format=%H%x1f%(trailers:key=Size-Marks,valueonly,unfold,separator=%x1e)",
+            &format!("{base}..HEAD"),
+        ],
+    )?;
+    for line in log.lines().filter(|l| !l.is_empty()) {
+        let (sha, said) = line.split_once('\x1f').unwrap_or((line, ""));
+        let n = added(&git(
+            root,
+            &["show", "--format=", "-U0", sha, "--", "crates"],
+        )?);
+        if n <= 0 {
+            continue;
+        }
+        let short = &sha[..sha.len().min(10)];
+        let numbers: Vec<i64> = said
+            .split(|c: char| !c.is_ascii_digit())
+            .filter_map(|t| t.parse().ok())
+            .take(2)
+            .collect();
+        match numbers[..] {
+            [a, run] if a == n && run <= a => {
+                println!("size: {short} adds {n} {MARK} marks; {run} run by an Ir workload");
+            }
+            _ => failed.push(format!(
+                "{short} adds {n} {MARK} marks: its message needs a trailer `Size-Marks: {n} \
+                 added, <run> run by an Ir workload (<how it was counted>)`{}",
+                if said.is_empty() {
+                    String::new()
+                } else {
+                    format!(", not `Size-Marks: {said}`")
+                }
+            )),
+        }
+    }
+    // A mark on for wasm only also names `mm_size_wasm`, so replay-ir's
+    // native worker, built with it, runs it (spec §6).
+    let listed = git(root, &["grep", "-n", "-F", MARK, "--", "crates"]).unwrap_or_default();
+    for line in listed.lines().filter(|l| {
+        !comment(l.splitn(3, ':').nth(2).unwrap_or(l))
+            && l.contains("target_arch = \"wasm32\"")
+            && !l.contains("not(target_arch = \"wasm32\")")
+            && !l.contains("mm_size_wasm")
+    }) {
+        failed.push(format!(
+            "{line}: a mark on for wasm only is written \
+             `cfg_attr(all(mm_shipped, any(target_arch = \"wasm32\", mm_size_wasm)), \
+             optimize(size))`, so replay-ir counts it natively"
+        ));
+    }
+    let n = added(&git(root, &["diff", "-U0", "HEAD", "--", "crates"])?);
+    if n > 0 {
+        failed.push(format!(
+            "uncommitted changes add {n} {MARK} marks: commit them with a trailer `Size-Marks: \
+             {n} added, <run> run by an Ir workload (<how it was counted>)`"
+        ));
+    }
+    Ok(failed)
+}
+
+/// A line of Rust that is a comment, which names a mark without being one.
+fn comment(line: &str) -> bool {
+    line.trim_start().starts_with("//")
 }
 
 /// `git log`'s format for [`trailers`]: per commit its id, its message
@@ -538,7 +628,7 @@ fn save(cache: &Path, sha: &str, key: &str, sizes: &Sizes) -> Result<(), String>
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used, reason = "tests")]
 mod tests {
-    use super::{BTreeMap, LOG_FORMAT, Sizes, budgets, git, judge, trailers};
+    use super::{BTreeMap, LOG_FORMAT, Sizes, budgets, git, judge, marks, trailers};
     use std::{env, fs};
 
     fn sizes(pairs: &[(&str, u64)]) -> Sizes {
@@ -658,6 +748,89 @@ mod tests {
         commit("Quote\n\nIt said:\n\n    Size: hello.wasm +9999 quoted\n\nThat is all.");
         let log = git(&dir, &["log", LOG_FORMAT, &format!("{base}..HEAD")]).unwrap();
         assert_eq!(trailers(&log), vec![("hello.wasm".to_owned(), 600)]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_commit_adding_size_marks_says_how_many_run() {
+        let dir = env::temp_dir().join(format!("size-marks-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("crates")).unwrap();
+        git(&dir, &["init", "--quiet"]).unwrap();
+        let file = dir.join("crates/a.rs");
+        let commit = |text: &str, message: &str| {
+            fs::write(&file, text).unwrap();
+            let who = ["-c", "user.name=t", "-c", "user.email=t@t"];
+            let hooks = ["-c", "core.hooksPath=/dev/null"];
+            git(&dir, &["add", "--all"]).unwrap();
+            let args = [&who[..], &hooks[..], &["commit", "--quiet", "-m", message]].concat();
+            git(&dir, &args).unwrap();
+            git(&dir, &["rev-parse", "HEAD"]).unwrap()
+        };
+        let m = "#[optimize(size)]\nfn x() {}\n";
+        let base = commit("fn a() {}\n", "base");
+        // Two marks added and said, then one moved (none net), a comment
+        // naming one, then one added without the trailer, then one with a
+        // wrong count.
+        commit(
+            &m.repeat(2),
+            "two\n\nSize-Marks: 2 added, 1 run by an Ir workload (bench)",
+        );
+        commit(&format!("fn y() {{}}\n{}", m.repeat(2)), "moved");
+        // A comment naming the mark is not one.
+        commit(
+            &format!(
+                "/// `optimize(size)` here slows aio\nfn y() {{}}\n{}",
+                m.repeat(2)
+            ),
+            "comment",
+        );
+        let unsaid = commit(&m.repeat(3), "three");
+        let wrong = commit(
+            &m.repeat(5),
+            "five\n\nSize-Marks: 3 added, 0 run by an Ir workload",
+        );
+        let failed = marks(&dir, &base).unwrap();
+        assert_eq!(failed.len(), 2, "{failed:?}");
+        assert!(
+            failed.iter().any(|f| f.starts_with(&unsaid[..10])),
+            "{failed:?}"
+        );
+        assert!(
+            failed
+                .iter()
+                .any(|f| f.starts_with(&wrong[..10]) && f.contains("not `Size-Marks: 3"))
+        );
+        // A wasm-only mark must name mm_size_wasm.
+        let wasm = "#[cfg_attr(all(mm_shipped, target_arch = \"wasm32\"), optimize(size))]\n";
+        commit(
+            &format!("{}{wasm}fn w() {{}}\n", m.repeat(5)),
+            "wasm\n\nSize-Marks: 1 added, 1 run by an Ir workload (sessions)",
+        );
+        let failed = marks(&dir, &base).unwrap();
+        assert!(
+            failed.iter().any(|f| f.contains("mm_size_wasm")),
+            "{failed:?}"
+        );
+        let fixed = "#[cfg_attr(all(mm_shipped, any(target_arch = \"wasm32\", mm_size_wasm)), \
+                     optimize(size))]\n";
+        let wrong = commit(
+            &format!("{}{fixed}fn w() {{}}\n", m.repeat(5)),
+            "fixed\n\nSize-Marks: 1 added, 1 run by an Ir workload (sessions)",
+        );
+        assert!(
+            !marks(&dir, &base)
+                .unwrap()
+                .iter()
+                .any(|f| f.contains("mm_size_wasm"))
+        );
+        // Uncommitted marks always fail: no message speaks for them.
+        fs::write(&file, m.repeat(7)).unwrap();
+        let failed = marks(&dir, &wrong).unwrap();
+        assert!(
+            failed.len() == 1 && failed[0].starts_with("uncommitted changes add 1"),
+            "{failed:?}"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 }
