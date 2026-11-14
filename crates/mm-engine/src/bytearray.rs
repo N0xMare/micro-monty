@@ -34,7 +34,7 @@ pub(crate) mod fin {
 
 /// The block a bytearray of capacity `cap` grows into to hold `n` bytes:
 /// CPython's over-allocation for appends, at most to the largest block.
-#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+#[cfg_attr(mm_shipped, optimize(size))]
 fn grown_block(cap: usize, n: usize) -> usize {
     if n <= cap.saturating_add(cap / 8) {
         let max = usize::try_from(mm_core::MAX_OBJECT_BYTES).unwrap_or(usize::MAX);
@@ -48,13 +48,13 @@ fn grown_block(cap: usize, n: usize) -> usize {
 impl Vm {
     /// Is `v` a `bytearray`?
     #[inline]
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn is_bytearray(v: Value) -> bool {
         v.is_obj_kind(ty::BYTEARRAY as u8)
     }
 
     /// A new `bytearray` holding a copy of `data`, with no spare capacity.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn new_bytearray(&mut self, data: &[u8]) -> Result<Value, Raised> {
         if data.len() >= 64 {
             self.burn_result(data.len(), true);
@@ -76,14 +76,12 @@ impl Vm {
     }
 
     /// The capacity block of bytearray `v`.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn ba_block(&self, v: Value) -> Option<ByteRef> {
         self.vslot_o(v, 0).as_byte_ref()
     }
 
     /// The live bytes of bytearray `v`. A length past the block (only in a
     /// corrupt snapshot) reads as the whole block.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn bytearray_data(&self, v: Value) -> &[u8] {
         let Some(r) = v.as_obj() else { return &[] };
         let n = usize::try_from(self.raw_o(r, 1)).unwrap_or(usize::MAX);
@@ -100,7 +98,6 @@ impl Vm {
     /// length opens its gap there instead: the bytes from `at` on move to
     /// the end (into a new block directly), and the caller fills the gap.
     /// Growth that does not fit raises `MemoryError` before anything changes.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn ba_resize(&mut self, v: Value, n: usize, at: usize) -> Result<(), Raised> {
         let (Some(r), Some(b)) = (v.as_obj(), self.ba_block(v)) else {
             return Ok(());
@@ -150,7 +147,6 @@ impl Vm {
 
     /// Does growing bytearray `v` to `need` bytes move more than a step's
     /// copy into a new block?
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn ba_grows_far(&self, v: Value, need: usize) -> bool {
         let cap = self
             .ba_block(v)
@@ -163,7 +159,7 @@ impl Vm {
     /// a [`job::GROW`] job: its bytes copied into the new block a step at a
     /// time, then the operation `f` ([`fin`]; arguments `w`, `operand`)
     /// done in it.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn ba_grow(
         &mut self,
         v: Value,
@@ -231,7 +227,6 @@ impl Vm {
 
     /// Replaces `v[lo:hi]` with the bytes of `src` (a `bytes` or another
     /// `bytearray`; `None` deletes). `src` must not be `v` itself.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn ba_splice(
         &mut self,
         v: Value,
@@ -268,7 +263,6 @@ impl Vm {
     }
 
     /// Stores byte `x` at index `k` (in range) of bytearray `v`.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn ba_put(&mut self, v: Value, k: usize, x: u8) {
         if let Some(b) = self.ba_block(v)
             && let Ok(d) = self.heap.bytes_mut(b)
@@ -279,7 +273,6 @@ impl Vm {
     }
 
     /// A byte argument as CPython's `_getbytevalue` reads it.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn byte_arg(&mut self, v: Value) -> Result<u8, Raised> {
         let v = self.int_unbx(v);
         if !Vm::is_intlike(v) {
@@ -297,7 +290,7 @@ impl Vm {
 
     /// The bytes-like source of a slice assignment to `v`: `src` itself,
     /// a copy when it is `v`, or a new `bytes` of an iterable of ints.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn ba_source(&mut self, v: Value, src: Value) -> Result<Value, Raised> {
         if src == v {
             return self.bytes_slice_as(v, false);
@@ -337,7 +330,7 @@ impl Vm {
     }
 
     /// `v[key] = x` for bytearray `v`.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn bytearray_setitem(
         &mut self,
         v: Value,
@@ -387,7 +380,7 @@ impl Vm {
     }
 
     /// `del v[key]` for bytearray `v`.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn bytearray_delitem(&mut self, v: Value, key: Value) -> Result<(), Raised> {
         let n = self.bytearray_data(v).len();
         if let Some(i) = self.int_of_o(key) {
@@ -411,7 +404,7 @@ impl Vm {
     }
 
     /// Deletes the `len` items `start`, `start + step`, ... (`step != 1`).
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn ba_del_extended(
         &mut self,
         v: Value,
@@ -511,7 +504,7 @@ impl Vm {
 
     /// Bytearray `v` takes byte block `b` (filled, `len` bytes) as its
     /// contents.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn ba_adopt(&mut self, v: Value, b: ByteRef, len: usize) {
         if let Some(r) = v.as_obj().filter(|_| Vm::is_bytearray(v)) {
             self.set_slot_o(r, 0, Value::from_byte_ref(b));
@@ -519,7 +512,7 @@ impl Vm {
         }
     }
 
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    #[cfg_attr(mm_shipped, optimize(size))]
     fn ba_bad_index(&mut self, key: Value) -> Raised {
         if self.uflags(key) & crate::class::f::INDEX != 0 {
             return self.need_py();
@@ -532,14 +525,13 @@ impl Vm {
     }
 
     /// `a += b` for bytearray `a` and bytes-like `b`.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn bytearray_iadd(&mut self, a: Value, b: Value) -> Result<Value, Raised> {
         self.ba_add(a, b, fin::IADD)
     }
 
     /// `a += b` ([`fin::IADD`], `a` the value) or `a.extend(b)`
     /// ([`fin::EXTEND`], `None`).
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn ba_add(&mut self, a: Value, b: Value, f: u64) -> Result<Value, Raised> {
         if a == b && !self.bytearray_data(a).is_empty() {
             // CPython exports `b`'s buffer while resizing `a`.
@@ -558,7 +550,7 @@ impl Vm {
     }
 
     /// `a *= k` for bytearray `a`.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn bytearray_imul(&mut self, a: Value, k: usize) -> Result<Value, Raised> {
         self.repeat_job(a, k, a)
     }
@@ -566,7 +558,6 @@ impl Vm {
 
 // ---------------------------------------------------------------- methods
 
-#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 fn this(vm: &mut Vm, a: &CallArgs, name: &str) -> Result<Value, Raised> {
     let s = vm.arg_o(a, 0);
     if !Vm::is_bytearray(s) {
@@ -580,7 +571,6 @@ fn this(vm: &mut Vm, a: &CallArgs, name: &str) -> Result<Value, Raised> {
 }
 
 /// `bytearray.append(item)`.
-#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn append(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = this(vm, &a, "append")?;
     let x = vm.byte_arg(vm.arg_o(&a, 1))?;
@@ -594,7 +584,7 @@ pub(crate) fn append(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `bytearray.extend(iterable_of_ints)`.
-#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn extend(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = this(vm, &a, "extend")?;
     let it = vm.arg_o(&a, 1);
@@ -648,7 +638,6 @@ pub(crate) fn extend(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `bytearray.insert(index, item)`.
-#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn insert(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = this(vm, &a, "insert")?;
     let i = vm.int_arg(vm.arg_o(&a, 1), "index")?;
@@ -673,7 +662,6 @@ pub(crate) fn insert(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `bytearray.pop(index=-1)`.
-#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn pop(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = this(vm, &a, "pop")?;
     let i = match vm.arg_o(&a, 1) {
@@ -693,7 +681,6 @@ pub(crate) fn pop(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `bytearray.remove(value)`.
-#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn remove(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = this(vm, &a, "remove")?;
     let x = vm.byte_arg(vm.arg_o(&a, 1))?;
@@ -705,7 +692,7 @@ pub(crate) fn remove(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `bytearray.clear()`.
-#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn clear(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = this(vm, &a, "clear")?;
     vm.ba_resize(s, 0, usize::MAX)?;
@@ -713,7 +700,7 @@ pub(crate) fn clear(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `bytearray.reverse()`.
-#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn reverse(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = this(vm, &a, "reverse")?;
     let n = vm.bytearray_data(s).len();
@@ -728,7 +715,7 @@ pub(crate) fn reverse(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `bytearray.copy()`.
-#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+#[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn copy(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = this(vm, &a, "copy")?;
     vm.bytes_copy(s, true)
