@@ -68,7 +68,7 @@ pub(crate) fn iter_type(k: u64) -> T {
 }
 
 /// The fractional part of `x` (`x - trunc(x)`); NaN for non-finite `x`.
-#[cfg_attr(mm_shipped, optimize(size))]
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn fract(x: f64) -> f64 {
     if !x.is_finite() {
         return f64::NAN;
@@ -200,7 +200,7 @@ pub(crate) fn powf(x: f64, y: f64) -> f64 {
 
 /// C99 `pow` for a zero or non-finite operand (both not NaN, `y != 0`,
 /// `x != 1`).
-#[cfg_attr(mm_shipped, optimize(size))]
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn powf_special(x: f64, y: f64) -> f64 {
     let yint = crate::libm::rint(y) == y;
     let odd = yint && y.abs() < 9.007_199_254_740_992e15 && float_divmod(y, 2.0).1 != 0.0;

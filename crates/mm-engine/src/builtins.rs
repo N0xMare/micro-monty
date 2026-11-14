@@ -2281,7 +2281,12 @@ impl Vm {
         }
     }
 
-    /// [`Vm::arg`], out of line (see [`Vm::slot_o`]).
+    /// [`Vm::arg`], out of line (see [`Vm::slot_o`]). On wasm, LLVM passes
+    /// it the stack's pointer and length instead of `&Vm` only while it can
+    /// prove every caller's `&Vm` valid. `optimize(size)` on `dt_ord`, or on
+    /// two of `hand_to_twin`, `aio_gather` and `type_dunder_call`, loses
+    /// that, and `bytearray.append` runs 0.6% slower under V8 [M], so those
+    /// marks are native only.
     #[inline(never)]
     pub(crate) fn arg_o(&self, a: &CallArgs, i: u32) -> Value {
         self.arg(a, i)
@@ -2566,7 +2571,7 @@ impl Vm {
     /// a tuple and then each keyword-only value (`_MISSING` if absent).
     /// Builtins without a twin run again on materialized iterables
     /// (`_mcall`).
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn hand_to_twin(&mut self, idx: u32, n: &Native, a: CallArgs) -> Result<Value, Raised> {
         let name = match n.owner {
             Some(o) => format!("_{}_{}", o.name(), n.name()),
@@ -2996,7 +3001,7 @@ fn stream_flush(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 #[cfg(feature = "asyncio")]
-#[cfg_attr(mm_shipped, optimize(size))]
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 fn aio_gather(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let items = vm.args_vec(&a);
     let keep = vm.kwarg(&a, 0);

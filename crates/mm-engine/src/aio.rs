@@ -216,7 +216,7 @@ impl Vm {
     /// name once `c` died unstarted: the collector does not keep `c` alive
     /// ([`Vm::sweep_fresh`]). Started or scheduled ones are dropped when the
     /// list would grow.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn note_fresh(&mut self, c: Value) -> Result<(), Raised> {
         let f = self.vslot(c, coro::FUNC);
         // Only the cell's own: the prelude's (`anext()`) and the bundled
@@ -282,7 +282,7 @@ impl Vm {
     /// everything else is marked: a coroutine nothing else keeps alive
     /// leaves its name behind, each name object once (the first), and the
     /// names are kept alive.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn sweep_fresh(fresh: &mut Vec<Value>, t: &mut mm_core::Tracer<'_>) {
         let (mut w, mut i) = (0, 0);
         let mut bare = 0;
@@ -342,7 +342,7 @@ impl Vm {
     /// never awaited`, once per name, in creation order. A scan at the end
     /// of the cell, not a finalizer, so it does not depend on GC timing
     /// (docs/spec.md §1): coroutines collected unstarted left their names.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn warn_unawaited(&mut self) {
         // (creation order, name): name values first, deduplicated before
         // any text is compared or copied.
@@ -441,7 +441,7 @@ impl Vm {
     /// Settles `v` cancelled with message `msg`; `exc` is the
     /// `CancelledError` that ended a task (its first retrieval raises it),
     /// or `None`.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn settle_cancelled(&mut self, v: Value, msg: Value, exc: Value) {
         let held = exc.is_obj_kind(ty::EXC as u8);
         self.set_raw_of(v, aw::MUST_CANCEL, if held { aw::HELD } else { 0 });
@@ -560,7 +560,7 @@ impl Vm {
 
     /// The state of coroutine `c` (`asyncio.sleep()` objects count as
     /// coroutines once awaited).
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn coro_state(&self, c: Value) -> u64 {
         if c.is_obj_kind(ty::CORO as u8) {
             self.raw_of(c, coro::STATE) & 3
@@ -573,7 +573,7 @@ impl Vm {
 
     /// `send()` and `throw()` need a coroutine that has not started, or
     /// one that a `send()` suspended.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn coro_unstarted(&mut self, c: Value) -> Result<(), Raised> {
         match self.coro_state(c) {
             coro::CREATED => Ok(()),
@@ -585,7 +585,7 @@ impl Vm {
     }
 
     /// `close()` of a coroutine that is not running: it is done.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn coro_close(&mut self, c: Value) {
         if let Some(r) = c.as_obj()
             && c.is_obj_kind(ty::CORO as u8)
@@ -605,7 +605,7 @@ impl Vm {
     }
 
     /// Takes what coroutine `c` (or a plain frame, `None`) was sent.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn coro_take_sent(&mut self, c: Value) -> (Value, u64) {
         let Some(r) = c.as_obj().filter(|_| c.is_obj_kind(ty::CORO as u8)) else {
             return (Value::NONE, coro::SEND);
@@ -687,7 +687,7 @@ impl Vm {
 
     /// The iterator an `__await__()` (or a `types.coroutine` generator)
     /// gave, which an `AWAIT` steps until it returns.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn new_delegation(&mut self, it: Value) -> Result<Value, Raised> {
         let b = self.alloc_buf(1)?;
         self.set_slot(b, 0, it);
@@ -815,7 +815,7 @@ impl Vm {
     // ---------------------------------------------------------- await
 
     /// One `AWAIT` of `aw` at `pc`.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn await_step(
         &mut self,
         st: &mut State,
@@ -913,7 +913,7 @@ impl Vm {
     }
 
     /// Was generator `gn` made by a function `types.coroutine` marked?
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn iterable_coroutine(&mut self, gn: Value) -> bool {
         let f = self.vslot(gn, crate::generator::g::FUNC);
         let d = self.vslot(f, fn_slot::DICT);
@@ -926,7 +926,7 @@ impl Vm {
         matches!(self.dict_get(d, k), Ok(Some(v)) if v == Value::TRUE)
     }
 
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn not_awaitable(&mut self, a: Value) -> Raised {
         let msg = format!("'{}' object can't be awaited", self.type_name(a));
         self.err(T::TypeError, &msg)
@@ -940,7 +940,7 @@ impl Vm {
 
     /// Pending child notifications plus callbacks already queued. Duplicate
     /// child references overestimate pending notifications, never undercount.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn callback_slots(&self) -> usize {
         let queued = self
             .ready
@@ -1087,7 +1087,7 @@ impl Vm {
     /// tasks are done by then; the scheduler's own (timers: `call_later`'s,
     /// `wait_for`'s, `as_completed`'s) end cancelled and their coroutines
     /// closed, as CPython's closing loop drops its scheduled handles.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn drop_other_tasks(&mut self) {
         self.check_parked_bytes();
         for k in 1..self.tasks.len() {
@@ -1125,7 +1125,7 @@ impl Vm {
     /// Saves the running task, blocked on `a` (queued again at once if `a`
     /// is a sleep already due, as `sleep(0)` yields). A cancel requested
     /// while it ran goes to `a` now, as CPython's `__step` does.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn block_current(&mut self, st: State, a: Value) {
         let i = self.cur;
         let stack = core::mem::take(&mut self.stack);
@@ -1218,7 +1218,7 @@ impl Vm {
     }
 
     /// Is `a` a child of a `gather` (which retrieves its exception)?
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn gathered(&self, a: Value) -> bool {
         let w = self.vslot(a, aw::WAITERS);
         let all = if w.is_obj_kind(ty::TUPLE as u8) {
@@ -1232,7 +1232,7 @@ impl Vm {
 
     /// Failed `a` reports \"exception was never retrieved\" at the end of
     /// `asyncio.run` unless something retrieves it first.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn note_unretrieved(&mut self, a: Value) {
         if self.loop_flags & crate::vm::LOOP_IN_RUN == 0 {
             return;
@@ -1253,7 +1253,7 @@ impl Vm {
     }
 
     /// `a`'s exception was retrieved.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn retrieved(&mut self, a: Value) {
         if self.raw_of(a, aw::STATE) == aw::FAILED {
             self.set_raw_of(a, aw::MUST_CANCEL, 0);
@@ -1263,7 +1263,7 @@ impl Vm {
     /// The failed tasks and futures whose exception nobody retrieved, in
     /// the order they failed (the list empties).
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn take_unretrieved(&mut self) -> Vec<Value> {
         let mut all = core::mem::take(&mut self.unretrieved);
         all.retain(|&f| self.raw_of(f, aw::MUST_CANCEL) == aw::LOG_TB);
@@ -1289,7 +1289,7 @@ impl Vm {
     }
 
     /// A new `CancelledError(msg)`, or `CancelledError()` for `None`.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn new_cancelled(&mut self, msg: Value) -> Result<Value, Raised> {
         let args = if msg == Value::NONE {
             self.alloc_tuple(&[])?
@@ -1303,7 +1303,7 @@ impl Vm {
     /// What retrieving cancelled `a` raises (`_make_cancelled_error`): the
     /// `CancelledError` that ended a task the first time, then new ones
     /// with the message.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn cancelled_error(&mut self, a: Value) -> Result<Value, Raised> {
         if self.raw_of(a, aw::MUST_CANCEL) == aw::HELD {
             let e = self.vslot(a, aw::RESULT);
@@ -1569,7 +1569,7 @@ impl Vm {
     }
 
     /// The exception a gather takes from failed or cancelled child `c`.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn child_error(&mut self, c: Value) -> Value {
         self.retrieved(c);
         if self.raw_of(c, aw::STATE) == aw::CANCELLED {
@@ -1755,7 +1755,7 @@ impl Vm {
     /// waits on (`shield`, `wait`, `add_done_callback`). Only futures in
     /// the cell's table count: cell end clears `futures`, and the host
     /// cannot answer a call of an earlier cell.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn pending_ids(&self, all: bool) -> Vec<u64> {
         let pending = |id: u64| {
             matches!(self.futures.binary_search_by_key(&id, |&(id, _)| id),
@@ -1805,7 +1805,7 @@ impl Vm {
 
     /// The status of host future `id`.
     #[must_use]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn future_status(&self, id: u64) -> FutureStatus {
         match self.futures.binary_search_by_key(&id, |&(id, _)| id) {
             Err(_) => FutureStatus::Unknown,
@@ -1820,7 +1820,7 @@ impl Vm {
     /// Delivers host results to pending futures (unknown or settled ids are
     /// ignored; check [`Vm::future_status`] first) and runs until the next
     /// event.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub fn resume_batch(
         &mut self,
         results: &[(u64, Result<crate::HostValue, crate::HostError>)],
@@ -1852,7 +1852,7 @@ impl Vm {
     }
 
     /// Picks the next task and runs it.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn run_next(&mut self) -> Exit {
         match self.next_task() {
             Next::Run(st) => self.execute(st, false),
@@ -1863,7 +1863,7 @@ impl Vm {
 
     /// `Exit::Waiting`, unless nothing is pending (the main task is gone,
     /// which would be an engine bug): then the cell fails.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn wait_on(&mut self, ids: Vec<u64>) -> Exit {
         if ids.is_empty() {
             self.end_cell();
@@ -2014,7 +2014,7 @@ impl Vm {
     /// `fut.add_done_callback(fn)`: `fn(fut)` runs soon after `fut` is
     /// done, or soon if it is done already.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn add_done_callback(&mut self, fut: Value, f: Value) -> Result<(), Raised> {
         self.reserve_scheduler(self.tasks.len(), self.gathers.len(), 1)?;
         if self.raw_of(fut, aw::STATE) != aw::PENDING {
@@ -2030,7 +2030,7 @@ impl Vm {
     /// (the same object, or a bound method of the same function and
     /// object) and returns how many.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn remove_done_callback(&mut self, fut: Value, f: Value) -> Result<usize, Raised> {
         let w = self.vslot(fut, aw::WAITERS);
         let all = if w == Value::NONE {
@@ -2075,7 +2075,7 @@ impl Vm {
 
     /// `loop.call_soon(fn)`: `fn()` runs at its turn in the run queue.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn call_soon(&mut self, f: Value) -> Result<(), Raised> {
         self.reserve_scheduler(self.tasks.len(), self.gathers.len(), 1)?;
         self.ready.push_back(Ready::Call(f, Value::UNDEFINED));
@@ -2085,7 +2085,7 @@ impl Vm {
     /// Runs `f(arg)` (or `f()`) as a callback of the loop: in a task slot
     /// of its own with no handle, through the prelude's `_aio_callback`
     /// (which reports what it raises).
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn start_callback(&mut self, f: Value, arg: Value) -> Result<State, Raised> {
         let from = self.task_hint.min(self.tasks.len());
         let i = self.tasks[from..]
@@ -2159,7 +2159,7 @@ impl Vm {
 
     /// Is `asyncio.run` refused here (inside a coroutine or a task)?
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn in_event_loop(&self, st: &State) -> bool {
         let is_coro = |c: Value| c.is_obj_kind(ty::CORO as u8) || c.is_obj_kind(ty::AGEN as u8);
         self.cur != 0 || is_coro(st.coro) || self.specials.iter().any(|f| is_coro(f.coro))
@@ -2168,7 +2168,7 @@ impl Vm {
     /// Marks `c` as `asyncio.run`'s coroutine, which runs as the first
     /// step of its loop's first iteration.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn mark_run_root(&mut self, c: Value) -> Result<(), Raised> {
         let s = self.raw_of(c, coro::STATE);
         self.set_raw_of(c, coro::STATE, s | coro::RUN_ROOT);
@@ -2190,7 +2190,7 @@ impl Vm {
     /// Marks `asyncio.run`'s coroutine `c` as a `run_until_complete()`.
     /// (`anon`: its task takes no number).
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn mark_run_open(&mut self, c: Value, anon: bool) {
         let s = self.raw_of(c, coro::STATE) | coro::RUN_OPEN;
         let s = if anon { s | coro::RUN_ANON } else { s };
@@ -2228,7 +2228,7 @@ impl Vm {
     }
 
     /// The finished child of gather `g` that settled first.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn first_done(&self, g: Value) -> Option<Value> {
         let children = self.tuple_items(self.vslot(g, aw::EXTRA));
         children
@@ -2240,7 +2240,7 @@ impl Vm {
     /// `_aio_deadline(delay)`: a sleep that waits for pending host calls
     /// before virtual time reaches it.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn deadline(&mut self, delay: Value) -> Result<Value, Raised> {
         let s = self.sleep(delay, Value::UNDEFINED)?;
         self.set_raw_of(s, aw::LEFT, 1);
@@ -2249,7 +2249,7 @@ impl Vm {
 
     /// `asyncio.Future()`: a future the loop settles (`_aio_set`).
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn loop_future(&mut self) -> Result<Value, Raised> {
         self.new_awaitable(
             ty::FUTURE,
@@ -2268,7 +2268,7 @@ impl Vm {
 
     /// Settles a pending awaitable; `false` if it was already done.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn settle_pending(&mut self, a: Value, ok: bool, v: Value) -> bool {
         if self.raw_of(a, aw::STATE) != aw::PENDING {
             return false;
@@ -2279,7 +2279,7 @@ impl Vm {
 
     /// The pending awaitable state as `asyncio.Future` reports it: 0
     /// pending, 1 done, 2 failed.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn aw_state(&self, a: Value) -> u64 {
         self.raw_of(a, aw::STATE)
     }
@@ -2291,7 +2291,7 @@ impl Vm {
     }
 
     /// The result or exception of a settled awaitable.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn aw_result(&self, a: Value) -> Value {
         self.vslot(a, aw::RESULT)
     }
@@ -2304,7 +2304,7 @@ impl Vm {
     /// Iterative: the awaitables reached, in CPython's call order with
     /// their parents, act first; then the results flow back to them.
     /// `false` if nothing took the cancel.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn cancel_tree(&mut self, root: Value, msg: Value) -> Result<bool, Raised> {
         // (awaitable, parent index, depth, cancelled)
         let mut nodes: Vec<(Value, usize, u32, bool)> = Vec::new();
@@ -2410,7 +2410,7 @@ impl Vm {
     }
 
     /// Task `h` raises `CancelledError(msg)` at its next step.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn set_must_cancel(&mut self, h: Value, msg: Value) {
         self.set_raw_of(h, aw::MUST_CANCEL, 1);
         if let Some(r) = h.as_obj() {
@@ -2420,7 +2420,7 @@ impl Vm {
 
     /// `Task.cancelling()`.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn cancelling(&self, h: Value) -> u64 {
         self.raw_of(h, aw::CANCELS) & aw::COUNT
     }
@@ -2428,7 +2428,7 @@ impl Vm {
     /// `Task.uncancel()`: one cancel request fewer; none left drops a
     /// pending one.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn uncancel(&mut self, h: Value) -> u64 {
         let w = self.raw_of(h, aw::CANCELS);
         let n = w & aw::COUNT;
@@ -2466,7 +2466,7 @@ impl Vm {
     /// pending cancel makes a return a `CancelledError`, raised), and the
     /// next `asyncio.run` gets a new one.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn main_ended(&mut self, ok: bool, v: Value) -> Result<Value, Raised> {
         let h = match self.tasks.first_mut() {
             Some(Some(t)) if self.cur == 0 => core::mem::replace(&mut t.handle, Value::NONE),
@@ -2487,7 +2487,7 @@ impl Vm {
 
     /// The pending tasks other than the running main task, by slot.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn other_tasks(&self) -> Vec<Value> {
         self.all_tasks(1)
     }
@@ -2495,7 +2495,7 @@ impl Vm {
     /// The program's pending tasks from slot `from` on (`asyncio.all_tasks`
     /// with 0), not the scheduler's own or callbacks.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn all_tasks(&self, from: usize) -> Vec<Value> {
         self.tasks
             .iter()
@@ -2512,7 +2512,7 @@ impl Vm {
 
     /// `Task.get_name()`: a name the program set, else `Task-N`.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn task_name(&mut self, h: Value) -> Result<Value, Raised> {
         if self.task_names != Value::NONE
             && let Some(n) = self.dict_get(self.task_names, h)?
@@ -2526,7 +2526,7 @@ impl Vm {
     /// `Task.set_name(name)` (with `str(name)` already taken). Names live
     /// in a dict of the cell, which keeps their tasks alive until it ends.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn set_task_name(&mut self, h: Value, name: Value) -> Result<(), Raised> {
         if self.task_names == Value::NONE {
             self.task_names = self.new_dict()?;
@@ -2545,7 +2545,7 @@ impl Vm {
     }
 
     /// The running context's dict, made on first use.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn context_dict(&mut self) -> Result<Value, Raised> {
         if !self.context.is_obj_kind(ty::DICT as u8) {
             self.context = self.new_dict()?;
@@ -2555,7 +2555,7 @@ impl Vm {
 
     /// Task `h`'s context (before it first runs): `d`.
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn set_task_context(&mut self, h: Value, d: Value) {
         let i = usize::try_from(self.raw_of(h, aw::AUX)).unwrap_or(usize::MAX);
         if let Some(Some(t)) = self.tasks.get_mut(i)
@@ -2567,14 +2567,14 @@ impl Vm {
 
     /// The virtual clock (`loop.time()`).
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn loop_time(&self) -> f64 {
         self.vclock
     }
 
     /// Is a loop running here (`get_running_loop()` succeeds)?
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn loop_running(&self) -> bool {
         let is_coro = |c: Value| c.is_obj_kind(ty::CORO as u8) || c.is_obj_kind(ty::AGEN as u8);
         self.cur != 0 || self.loop_flags != 0 || self.specials.iter().any(|f| is_coro(f.coro))
@@ -2585,7 +2585,7 @@ impl Vm {
     /// (CPython's `run_until_complete` stopping after the callback that
     /// ends it).
     #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn stop_future(&mut self, n: u32) -> Result<Value, Raised> {
         if self.cur != 0 {
             return Err(self.err(T::RuntimeError, "_aio_stop() outside the main task"));
@@ -2603,7 +2603,7 @@ impl Vm {
 
     /// The loop stopped: the main task, blocked on its stop future, runs
     /// next, outside any iteration.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn loop_stopped(&mut self) -> Option<State> {
         let a = self.tasks.first().and_then(Option::as_ref)?.awaiting;
         if !(a.is_obj_kind(ty::FUTURE as u8)
@@ -2619,7 +2619,7 @@ impl Vm {
     }
 
     /// The index of the task running task handle `h`.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn task_index(&self, h: Value) -> Option<usize> {
         if !h.is_obj_kind(ty::TASK as u8) {
             return None;
@@ -2629,7 +2629,7 @@ impl Vm {
     }
 
     /// A pending host future for call `id`.
-    #[cfg_attr(mm_shipped, optimize(size))]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn new_future(&mut self, id: u64) -> Result<Value, Raised> {
         if self.futures.len() == self.futures.capacity() {
             let extra = self.futures.len().max(4);

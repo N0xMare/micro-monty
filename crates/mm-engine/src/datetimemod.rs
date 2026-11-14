@@ -842,7 +842,7 @@ pub(crate) fn dt_strptime(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// `_mm.dt_ord(y, m, d)`: `date(y, m, d).toordinal()` for a valid date,
 /// else `None` (the Python caller then takes its own path).
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
-#[cfg_attr(mm_shipped, optimize(size))]
+#[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
 pub(crate) fn dt_ord(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let f = |i: u32| vm.int_of_o(vm.arg_o(&a, i));
     Ok(match (f(0), f(1), f(2)) {
