@@ -31,8 +31,13 @@ use serde_json::Value;
 
 use crate::{cpython_oracle_version, micro_monty_binary, python, workspace_root};
 
-/// Per-case wall-clock limit, the datatest watchdog's soft deadline (for
-/// micro-monty, the oracle's wall-clock backstop plus 20 s).
+/// Per-case limit, the datatest watchdog's soft deadline (for micro-monty,
+/// the oracle's wall-clock backstop plus 20 s, in wall-clock time). On the
+/// CPython side it counts the oracle process's CPU time where `/proc` shows
+/// it, so a loaded machine does not time out reference data (the corpus
+/// took 93.9 s on a loaded machine and `builtin__math_funcs.py` passed 30 s
+/// of wall-clock time [M, GC lane]), with `MM_WALL_FACTOR` times as much
+/// wall-clock time as the backstop for a process that does not run.
 const CASE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Per-case limit for `mm exec` (the oracle's `--timeout`, `--timeout`
@@ -400,21 +405,20 @@ fn run_case(runner: &Runner, case: &Path) -> CaseResult {
             );
         }
     };
-    let case_timeout = if runner.mm.is_some() {
-        CASE_TIMEOUT.max(Duration::from_secs(runner.mm_timeout * MM_WALL_FACTOR + 20))
-    } else {
-        CASE_TIMEOUT
+    // CPython runs the case in the oracle's own process, so its CPU time
+    // is the case's; micro-monty's mm processes have their own CPU limit.
+    let cpu = (runner.mm.is_none() && cpu_time(child.id()).is_some()).then_some(CASE_TIMEOUT);
+    let wall = match (runner.mm.is_some(), cpu) {
+        (true, _) => CASE_TIMEOUT.max(Duration::from_secs(runner.mm_timeout * MM_WALL_FACTOR + 20)),
+        (false, Some(c)) => c * u32::try_from(MM_WALL_FACTOR).unwrap_or(6),
+        (false, None) => CASE_TIMEOUT,
     };
-    let (stdout, stderr, timed_out) = match wait_with_timeout(child, case_timeout) {
+    let (stdout, stderr, timed_out) = match wait_with_timeout(child, wall, cpu) {
         Ok(output) => output,
         Err(err) => return error("oracle", err, String::new()),
     };
-    if timed_out {
-        return error(
-            "timeout",
-            format!("timed out after {} s", case_timeout.as_secs()),
-            stderr,
-        );
+    if let Some(over) = timed_out {
+        return error("timeout", over, stderr);
     }
     let Some(record) = stdout
         .lines()
@@ -441,21 +445,32 @@ fn run_case(runner: &Runner, case: &Path) -> CaseResult {
     }
 }
 
-/// Waits for `child`, killing it after `timeout`. Returns stdout, stderr and
-/// whether it timed out.
+/// Waits for `child`, killing it after `wall` of wall-clock time or, with
+/// `cpu`, once it has used that much CPU time. Returns stdout, stderr and,
+/// if it was killed, which limit it passed.
 fn wait_with_timeout(
     mut child: Child,
-    timeout: Duration,
-) -> Result<(String, String, bool), String> {
+    wall: Duration,
+    cpu: Option<Duration>,
+) -> Result<(String, String, Option<String>), String> {
     let stdout = child.stdout.take().map(drain);
     let stderr = child.stderr.take().map(drain);
     let started = Instant::now();
-    let mut timed_out = false;
+    let mut timed_out = None;
+    let mut polls = 0_u32;
     loop {
+        polls = polls.wrapping_add(1);
+        // /proc is read every 50th poll, about every 100 ms.
+        let over_cpu = cpu
+            .filter(|_| polls.is_multiple_of(50))
+            .filter(|&c| cpu_time(child.id()).is_some_and(|used| used > c));
         match child.try_wait() {
             Ok(Some(_)) => break,
-            Ok(None) if started.elapsed() > timeout => {
-                timed_out = true;
+            Ok(None) if over_cpu.is_some() || started.elapsed() > wall => {
+                timed_out = Some(match over_cpu {
+                    Some(c) => format!("used more than {} s of CPU time", c.as_secs()),
+                    None => format!("timed out after {} s", wall.as_secs()),
+                });
                 // Already exited, or killed now: either way `wait` reaps it.
                 let _ = child.kill();
                 let _ = child.wait();
@@ -469,6 +484,19 @@ fn wait_with_timeout(
         reader.map_or_default(|handle| handle.join().unwrap_or_default())
     };
     Ok((join(stdout), join(stderr), timed_out))
+}
+
+/// The CPU time `pid` has used (user and system), from `/proc/<pid>/stat`;
+/// `None` where there is no `/proc` or the process is gone.
+fn cpu_time(pid: u32) -> Option<Duration> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // Fields after the command name, which may hold spaces: utime and
+    // stime are the 14th and 15th fields, in clock ticks (100 a second on
+    // Linux's ABI).
+    let rest = stat.rsplit_once(')')?.1;
+    let mut f = rest.split_whitespace().skip(11);
+    let ticks = f.next()?.parse::<u64>().ok()? + f.next()?.parse::<u64>().ok()?;
+    Some(Duration::from_millis(ticks * 10))
 }
 
 /// Reads a pipe to the end on its own thread, so a full pipe cannot block the child.
@@ -964,4 +992,43 @@ fn compare(committed: &str, fresh: &str, shown: &str, rerun: &str) -> Result<(),
          change is intended",
         counts[0], counts[1], counts[2]
     ))
+}
+
+#[cfg(test)]
+mod watchdog_tests {
+    #![allow(clippy::unwrap_used, reason = "tests fail on a broken fixture")]
+
+    use super::*;
+
+    fn spawn(script: &str) -> Child {
+        Command::new("sh")
+            .args(["-c", script])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    }
+
+    #[test]
+    fn the_cpu_limit_stops_a_busy_case_but_not_a_waiting_one() {
+        if cpu_time(std::process::id()).is_none() {
+            return; // no /proc: the CPython side uses wall-clock time
+        }
+        let limit = Some(Duration::from_millis(500));
+        let started = Instant::now();
+        let busy = wait_with_timeout(spawn("while :; do :; done"), Duration::from_secs(20), limit);
+        let (_, _, over) = busy.unwrap();
+        assert_eq!(over.as_deref(), Some("used more than 0 s of CPU time"));
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        // A process that waits, as one on a loaded machine does, uses no CPU
+        // time: it runs past the CPU limit in wall-clock time and finishes.
+        let waiting =
+            wait_with_timeout(spawn("sleep 1; echo done"), Duration::from_secs(20), limit);
+        let (stdout, _, over) = waiting.unwrap();
+        assert_eq!((stdout.trim(), over), ("done", None));
+    }
 }
