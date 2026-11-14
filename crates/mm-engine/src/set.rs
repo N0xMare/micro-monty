@@ -1191,6 +1191,7 @@ impl Vm {
                     // Read in place: a call that runs again after a
                     // collection would miss the items taken.
                     self.oom_rerun = self.op_stamp();
+                    self.oom_rerun_at = u64::MAX;
                 } else {
                     // The caller's twin runs the call again from the
                     // start: it gets the items (`Vm::unconsume`).

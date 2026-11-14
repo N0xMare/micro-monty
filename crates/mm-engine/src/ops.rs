@@ -1847,6 +1847,7 @@ impl Vm {
             }
             // What it yields is gone: not run again after a collection.
             self.oom_rerun = self.op_stamp();
+            self.oom_rerun_at = u64::MAX;
             if self.list_more(l, src)? {
                 return Err(self.need_py());
             }
@@ -3191,6 +3192,7 @@ impl Vm {
             // not run again after a collection (`Vm::oom_retry_if`): it
             // would gather what is left (`l[:] = zip(a, b)` emptied `l`).
             self.oom_rerun = self.op_stamp();
+            self.oom_rerun_at = u64::MAX;
         }
         // A range knows its length: refuse what cannot fit up front.
         let left = self.range_left(itv);

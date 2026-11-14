@@ -535,6 +535,48 @@ impl Vm {
         }
     }
 
+    /// A call's `**src` spread into its keyword dict `d` failed for room:
+    /// it had inserted the keys of `src` before the one that did not fit,
+    /// in order and each new to `d` (a key `d` held raises first), and a
+    /// failed insert writes nothing. Takes them out again (the last
+    /// entries of `d`), so the spread's rerun after a collection refuses
+    /// none of its own; true. False, changing nothing, when `d`'s last
+    /// entries are not those keys (the failure came from elsewhere). Out
+    /// of the dispatch loop, which the spread's insert loop is in.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn kwargs_unput(&mut self, d: Value, src: Value) -> bool {
+        if !d.is_obj_kind(ty::DICT as u8) || !src.is_obj_kind(ty::DICT as u8) {
+            return false;
+        }
+        let keys: Vec<Value> = self
+            .dict_items_vec(src)
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        let n = keys
+            .iter()
+            .take_while(|&&k| Vm::is_str(k) && self.dict_get_str(d, k).is_some())
+            .count();
+        self.burn(n as u64);
+        let mut last = Vec::new();
+        for i in (0..self.dict_used(d)).rev() {
+            if last.len() == n {
+                break;
+            }
+            if let Some((k, _)) = self.dict_entry(d, i) {
+                last.push(k);
+            }
+        }
+        if !last.iter().rev().eq(keys.iter().take(n)) {
+            return false;
+        }
+        for _ in 0..n {
+            self.dict_pop_last(d);
+        }
+        true
+    }
+
     /// Number of live entries of a dict.
     #[inline(never)]
     pub(crate) fn dict_len(&self, d: Value) -> usize {

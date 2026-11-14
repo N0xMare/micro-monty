@@ -1448,8 +1448,7 @@ differs:
   allocation fails wait for a full collection and run once more: copies,
   constructors over a container, slices and list comprehensions succeed
   where the result fits (three dropped `s.copy()` of a 2M-item set at 256
-  MiB, as in CPython \[M\]). A call's `**kw` is never run again (its merge
-  raises on a duplicate key). A retry's collection is charged, a unit per 64
+  MiB, as in CPython \[M\]). A retry's collection is charged, a unit per 64
   bytes of `Limits::memory` up to 2^20, so a loop that catches `MemoryError`
   pays for each. A snapshot collects first, so it can flip an unretried
   outcome either way, and it moves fuel totals (six `f(*big, **kw)`: 11%

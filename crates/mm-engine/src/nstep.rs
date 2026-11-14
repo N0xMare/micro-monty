@@ -304,7 +304,8 @@ impl Vm {
         } else {
             // Room for every key: growing by doubling would copy them all
             // in one step.
-            // A list that does not fit gets its items back (`list.sort`).
+            // A list that does not fit gets its items back (`list.sort`),
+            // so the call can run again after a collection (`Vm::oom_retry`).
             let n = self.list_len(xs);
             match self.list_with_room(0, n) {
                 Ok(k) => k,
@@ -328,7 +329,7 @@ impl Vm {
     /// The callee a step invoked returned `v` (`UNDEFINED` to start): the
     /// operation's next step.
     pub(crate) fn native_step(&mut self, op: u8, state: Value, v: Value) -> Result<Next, Raised> {
-        let Some(([xs, keys, key, target], [rev])) = self.nstate_get::<4, 1>(op, state) else {
+        let Some(([xs, keys, key, target], [word])) = self.nstate_get::<4, 1>(op, state) else {
             return Err(self.bad_step());
         };
         // The sort's lists, and the list `list.sort` gets its items back
@@ -341,10 +342,14 @@ impl Vm {
         {
             return Err(self.bad_step());
         }
-        let rev = rev != 0;
+        // Bit 0 `reverse`; bit 1 set once the sort waited for a collection
+        // (below).
+        let rev = word & 1 != 0;
         let sorted = match op {
             op::SORT_KEYS => {
-                if v != Value::UNDEFINED {
+                // Once the sort has waited (bit 1, set as the wait starts,
+                // with every key in), `v` is what the wait returned.
+                if v != Value::UNDEFINED && word & 2 == 0 {
                     self.list_push(keys, v)?;
                 }
                 let i = self.list_len(keys);
@@ -379,10 +384,23 @@ impl Vm {
                 if i != self.list_len(xs) {
                     return Err(self.bad_step());
                 }
+                // Waiting for a collection (below): the sort goes on once it
+                // has ended.
+                if self.oom_deferred() {
+                    return self.sort_gc_wait(state, xs, target);
+                }
                 let sorted = self.sort_by_keys(xs, keys, rev);
                 if sorted.is_err() {
-                    // Out of memory for the arrays: the list gets its items
-                    // back, as when a later step fails.
+                    // Out of memory for the arrays, with the keys made (key
+                    // calls the call cannot run again): once, the sort
+                    // waits for a collection (`Vm::oom_defer`) and tries
+                    // again, bit 1 of its state word saying so, in the
+                    // image too. Then the list gets its items back, as
+                    // when a later step fails.
+                    if word & 2 == 0 && self.oom_defer() {
+                        self.nstate_set_raw(state, 0, word | 2);
+                        return self.sort_gc_wait(state, xs, target);
+                    }
                     self.sort_reattach(xs, target);
                 }
                 match sorted? {
@@ -436,6 +454,25 @@ impl Vm {
             self.sort_reattach(xs, target);
         }
         Next::Pass
+    }
+
+    /// The sort's next step after a call to `_gc_wait`, whose safepoint
+    /// runs the collection the sort waits for to its end.
+    #[cold]
+    fn sort_gc_wait(&mut self, state: Value, xs: Value, target: Value) -> Result<Next, Raised> {
+        match self.prelude_fn("_gc_wait") {
+            Ok(f) => {
+                let cont = Cont::Native {
+                    op: op::SORT_KEYS,
+                    state,
+                };
+                Ok(Next::Invoke(f, Args::of(&[]), Value::NONE, cont))
+            }
+            Err(e) => {
+                self.sort_reattach(xs, target);
+                Err(e)
+            }
+        }
     }
 
     /// `list.sort` failed: its list gets its items back, unsorted.

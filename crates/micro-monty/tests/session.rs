@@ -3295,3 +3295,150 @@ except MemoryError:
     assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{out}");
     assert_eq!(out, "MemoryError 500000 [500000, 499999] 0\n");
 }
+
+/// A sort with keywords, and `l.sort()`, runs again after a collection when
+/// its first lists do not fit beside garbage (`sorted` without keywords
+/// alone did), and a keyed sort's arrays, which come after the key calls,
+/// wait for one collection in the sort's next step: here the last key call
+/// drops the room they need, and the sort fits where it raised (the GC
+/// design review's finding A). Python 3.14 completes them.
+#[test]
+fn a_sort_with_keywords_beside_garbage_waits_for_a_collection() {
+    let keyed = "\
+l = list(range(500_000, 0, -1))
+big = [None] * 1_500_000
+n = 0
+def k(x):
+    global n
+    n += 1
+    if x == 1:
+        big.clear()
+    return x
+try:
+    l.sort(key=k)
+    print('fit', len(l), l[:2], n)
+except MemoryError:
+    print('MemoryError', len(l), l[:2], n)
+";
+    for (mib, want) in [
+        (18, "MemoryError 500000 [500000, 499999] 0\n"),
+        (22, "fit 500000 [1, 2] 500000\n"),
+    ] {
+        let (p, out) = run_with(Limits::new().with_memory(mib << 20), keyed);
+        assert!(matches!(p, Progress::Complete(_)), "{mib}: {p:?}\n{out}");
+        assert_eq!(out, want, "{mib}");
+    }
+    for op in [
+        "l.sort()",
+        "l.sort(reverse=True)",
+        "r = sorted(l, reverse=True)",
+        "r = sorted(l, key=None)",
+    ] {
+        let src = format!(
+            "l = [(i * 7919) % 500_000 for i in range(500_000)]
+g = [None] * 1_000_000
+g = None
+{op}
+print('fit')
+"
+        );
+        let (p, out) = run_with(Limits::new().with_memory(15 << 20), &src);
+        assert!(matches!(p, Progress::Complete(_)), "{op}: {p:?}\n{out}");
+        assert_eq!(out, "fit\n", "{op}");
+    }
+}
+
+/// A call's `**d` spread whose dict does not fit, beside the dicts of
+/// earlier spreads, runs again after a collection: the keys it put in come
+/// out first, so the rerun finds none of its own (AA7: four `f(**base)` of
+/// 1M keys gave `[ok, ok, MemoryError, ok]` at 256 MiB [M, GC lane]).
+/// After it, the call's `CALL_EX` retries as its own instruction. Python
+/// 3.14 runs them all.
+#[test]
+fn a_keyword_spread_beside_garbage_waits_for_a_collection() {
+    let src = "\
+base = {f'k{i}': i for i in range(250_000)}
+def f(**kw):
+    return len(kw)
+out = set()
+for r in range(4):
+    out.add(f(**base))
+    out.add(len(dict({}, **base)))
+    out.add(len(dict(base, **base)))
+print(out)
+";
+    let (p, out) = run_with(Limits::new().with_memory(80 << 20), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{out}");
+    assert_eq!(out, "{250000}\n");
+}
+
+/// An f-string field formatting a container beside garbage runs again
+/// after a collection, as a scalar's does: a user `__repr__`, `__str__`
+/// or `__format__` in the value hands the whole format to the prelude
+/// twin, whose builtins (`repr`, `format`, its walk) are retried in turn,
+/// so user code runs once. Python 3.14's lengths.
+#[test]
+fn a_container_format_beside_garbage_waits_for_a_collection() {
+    let src = "\
+calls = 0
+class C:
+    def __repr__(self):
+        global calls
+        calls += 1
+        return 'C'
+def fill():
+    keep = []
+    for n in (1_000_000, 100_000, 10_000, 1_000):
+        try:
+            while True:
+                keep.append(bytearray(n))
+        except MemoryError:
+            pass
+    del keep[:8]
+    return keep
+l = list(range(100_000))
+d = {str(i): (i, 1.5) for i in range(20_000)}
+c = C()
+out = []
+for shape in range(5):
+    keep = fill()
+    if shape == 0:
+        s = f'{l}'
+    elif shape == 1:
+        s = f'{l!r:>10}'
+    elif shape == 2:
+        s = f'{d}'
+    elif shape == 3:
+        s = f'{[l, d]!s}'
+    else:
+        s = f'{[l, c]}'
+    out.append(len(s))
+    keep = s = None
+print(out, calls)
+";
+    let (p, out) = run_with(Limits::new().with_memory(64 << 20), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{out}");
+    assert_eq!(out, "[688890, 688890, 437780, 1126674, 688895] 1\n");
+}
+
+/// A caught `MemoryError` leaves nothing behind that stops the next
+/// allocation's retry: after six 12 MB blocks raise and `y = None` drops
+/// the first ones, four more fit, as in Python 3.14. On ce3c049b the
+/// second comprehension raised (the semantics review's `after_caught_memoryerror.py`, at 50 MB and
+/// 256 MiB [M]); b37125bc closed it.
+#[test]
+fn a_caught_memory_error_leaves_the_next_retry_alone() {
+    let src = "\
+N = 12_000_000
+try:
+    y = [bytearray(N) for _ in range(6)]
+except MemoryError:
+    print('caught')
+y = None
+z = [bytearray(N) for _ in range(4)]
+print('ok')
+";
+    let (p, out) = run_with(Limits::new().with_memory(64 << 20), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{out}");
+    assert_eq!(out, "caught\nok\n");
+}

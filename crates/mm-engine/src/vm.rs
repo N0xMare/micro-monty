@@ -833,8 +833,13 @@ pub struct Vm {
     /// itself, so a native that allocates before failing does not retry
     /// for ever, or one that drew items from a one-shot iterator. A mark
     /// lasts until the next safepoint, which a host's fuel slice cannot
-    /// move. Not in the image.
+    /// move.
     pub(crate) oom_rerun: u64,
+    /// The instruction `oom_rerun` marks, as [`Vm::op_at`]; `u64::MAX`:
+    /// whichever runs (a native's mark). A retried instruction whose rerun
+    /// succeeded is followed by others in the same tick (`f(**d)`: the
+    /// spread, then `CALL_EX`), which retry as their own.
+    pub(crate) oom_rerun_at: u64,
     /// The collection count a chunked step's deferred allocation waits for
     /// ([`Vm::oom_defer`]); 0: none. Not in the image: a snapshot collects
     /// in full, so after a restore that wait is over. Whether the step has
@@ -1079,6 +1084,7 @@ impl Vm {
             gc_yield: false,
             oom_wait: false,
             oom_rerun: u64::MAX,
+            oom_rerun_at: u64::MAX,
             oom_defer_at: 0,
             consumed_at: u64::MAX,
             tick_epoch: 0,
@@ -1261,6 +1267,11 @@ impl Vm {
         (u64::from(self.tick_epoch) << 32) | (self.ticks_used() & 0xFFFF_FFFF)
     }
 
+    /// Instruction `st.pc` of code `st.ci`, for `oom_rerun_at`.
+    pub(crate) fn op_at(st: &State) -> u64 {
+        (u64::from(st.ci) << 32) | st.pc as u64
+    }
+
     /// Drops what an earlier instruction's builtin consumed.
     pub(crate) fn fresh_consumed(&mut self) {
         let now = self.op_stamp();
@@ -1413,12 +1424,21 @@ impl Vm {
                     let x = self.arg_o(a, 1);
                     x.is_obj_kind(ty::LIST as u8) || x.is_obj_kind(ty::TUPLE as u8)
                 }
-                // Without a key, `sorted(x)` sorts a copy it builds first;
-                // a key may be user code, which runs once only.
-                (None, "sorted") => n.module().is_none() && a.kw == u32::MAX,
+                // `sorted(x)` sorts a copy it builds first, and `l.sort()`
+                // gives `l` its items back when the sort's first lists do
+                // not fit (`Vm::sort_start`); a key is called from later
+                // steps (a failure after them waits in the sort, as its
+                // state says). `reverse` is read as a bool: a user
+                // `__bool__` runs once only.
+                (None, "sorted") | (Some(T::list), "sort")
+                    if n.owner.is_some() || n.module().is_none() =>
+                {
+                    let r = self.kwarg(a, 1);
+                    [Value::UNDEFINED, Value::TRUE, Value::FALSE].contains(&r) || r.is_int()
+                }
                 _ => false,
             };
-        self.oom_retry_if(pure)
+        self.oom_retry_if(pure, u64::MAX)
     }
 
     /// Whether builtin `n` changes nothing before its result is allocated,
@@ -1446,8 +1466,21 @@ impl Vm {
             // hash (a comprehension or `set(xs)` over user `__hash__`
             // keys): a table grows before the entry is written, or the
             // entry is taken out again (`set_unput`), and nothing compares.
-            None if n.module() == Some("_prelude") => {
-                matches!(n.name(), "_set_insert" | "_dict_insert")
+            // What a repr's twin (`_repr_of`) reads with builds only its
+            // result: its walk (`_walk_repr`) gives `None` on a user
+            // `__repr__`, which runs through `repr`.
+            None if n.module() == Some("_prelude") => matches!(
+                n.name(),
+                "_set_insert" | "_dict_insert" | "_walk_repr" | "_type_name" | "_dict_at"
+            ),
+            // `repr`, `ascii` and `format` (a format's twin `_op_fmt` calls
+            // them) build only their result: a user `__repr__`, `__str__`
+            // or `__format__` anywhere in the value runs in a prelude twin.
+            // So do `iter` (a user `__iter__` runs as a request) and `id`.
+            None if n.module().is_none()
+                && matches!(n.name(), "repr" | "ascii" | "format" | "iter" | "id") =>
+            {
+                true
             }
             // The constructors that copy their argument.
             None => {
@@ -1486,7 +1519,7 @@ impl Vm {
         // A list's `+=` and `*=` build or grow its buffer before they
         // change it; a dict's or set's `|=` adds an item at a time.
         let changed = inplace && (a.is_obj_kind(ty::DICT as u8) || a.is_obj_kind(ty::SET as u8));
-        self.oom_retry_if(!changed);
+        self.oom_retry_if(!changed, u64::MAX);
     }
 
     /// A fault the dispatch loop reports where the heap's `MemoryError`
@@ -1510,13 +1543,6 @@ impl Vm {
     pub(crate) fn oom_retry_fault(&mut self, st: &State) -> bool {
         use mm_compile::bytecode::{op, operand};
         let seq = |v: Value| v.is_obj_kind(ty::LIST as u8) || v.is_obj_kind(ty::TUPLE as u8);
-        let scalar = |v: Value| {
-            v.is_int()
-                || v.is_float()
-                || [ty::STR, ty::INT, ty::BYTES]
-                    .iter()
-                    .any(|&t| v.is_obj_kind(t as u8))
-        };
         let Some(bc) = self
             .codes
             .get(st.ci as usize)
@@ -1531,41 +1557,56 @@ impl Vm {
             // entry out again, or writes nothing, when its table does not
             // grow (`set_unput`, `Vm::dict_resize`), and a user `__hash__`
             // or `__eq__` runs in the prelude twin, whose insert retries as
-            // a call.
+            // a call. A format builds only its result natively: a user
+            // `__repr__`, `__str__` or `__format__` anywhere in the value
+            // hands the whole format to the prelude twin (`_op_fmt`), a
+            // long repr under fuel too, so a failure here ran none.
             Some(
                 op::BUILD_STRING
                 | op::LIST_TO_TUPLE
                 | op::LIST_APPEND
                 | op::SET_ADD
-                | op::DICT_INSERT,
+                | op::DICT_INSERT
+                | op::FORMAT
+                | op::FORMAT_SPEC,
             ) => true,
-            // An int, float, str or bytes formatted (`f'{1:>64000000}'`)
-            // builds only its result; a container's `repr` may have run a
-            // user `__repr__`.
-            Some(op::FORMAT) => scalar(st.acc),
-            Some(op::FORMAT_SPEC) => self
-                .stack
-                .get(st.base + operand(bc, st.pc, 0))
-                .is_some_and(|&o| scalar(o)),
+            // A call's keyword (mode 2): a failed insert wrote nothing. A
+            // `**` spread (mode 1) first takes out the keys it put in
+            // (`Vm::kwargs_unput`). A merge (mode 0) waits for its
+            // collection in the bulk update itself (`bulk_defer`).
+            Some(op::DICT_UPDATE) => match operand(bc, st.pc, 1) {
+                2 => true,
+                1 => {
+                    let d = self
+                        .stack
+                        .get(st.base + operand(bc, st.pc, 0))
+                        .copied()
+                        .unwrap_or(Value::NONE);
+                    self.kwargs_unput(d, st.acc)
+                }
+                _ => false,
+            },
             Some(op::UNPACK_EX) => seq(st.acc),
             // A list's or tuple's iterator too: its items are copied before
             // it ends (`Vm::seq_items_left`), or `collect` marks what it
             // took (`oom_rerun`).
             Some(op::LIST_EXTEND) => self.seq_items_left(st.acc).is_some(),
-            Some(op::CALL_EX) => self
-                .stack
-                .get(st.base + operand(bc, st.pc, 0))
-                .is_some_and(|f| f.is_obj_kind(ty::FUNC as u8)),
             // A builtin type called as a constructor that copies its
-            // argument (`list(l)`); a builtin called directly retries in
-            // `call_native`.
-            Some(op::CALL) => self
-                .stack
-                .get(st.base + operand(bc, st.pc, 0))
-                .and_then(|&f| self.type_of_typeobj(f))
-                .and_then(|t| self.ctor_of(t))
-                .and_then(crate::native)
-                .is_some_and(Self::native_pure),
+            // argument (`list(l)`, `dict(x, **kw)`); a builtin called
+            // directly retries in `call_native`.
+            Some(o @ (op::CALL | op::CALL_EX)) => {
+                let f = self
+                    .stack
+                    .get(st.base + operand(bc, st.pc, 0))
+                    .copied()
+                    .unwrap_or(Value::NONE);
+                (o == op::CALL_EX && f.is_obj_kind(ty::FUNC as u8))
+                    || self
+                        .type_of_typeobj(f)
+                        .and_then(|t| self.ctor_of(t))
+                        .and_then(crate::native)
+                        .is_some_and(Self::native_pure)
+            }
             // A subscript read of a builtin container builds only its
             // result (a slice); a user `__getitem__` runs as a request.
             Some(op::GET_ITEM) => self
@@ -1578,7 +1619,7 @@ impl Vm {
             return false;
         }
         // The caller waits for the collection itself.
-        let retry = self.oom_retry_if(true);
+        let retry = self.oom_retry_if(true, Self::op_at(st));
         self.oom_wait = false;
         retry
     }
@@ -1659,9 +1700,10 @@ impl Vm {
         self.collect_in_steps(false);
     }
 
-    fn oom_retry_if(&mut self, pure: bool) -> bool {
+    fn oom_retry_if(&mut self, pure: bool, at: u64) -> bool {
         self.fresh_consumed();
-        let rerun = core::mem::replace(&mut self.oom_rerun, u64::MAX) == self.op_stamp();
+        let rerun = core::mem::replace(&mut self.oom_rerun, u64::MAX) == self.op_stamp()
+            && (at == u64::MAX || [u64::MAX, at].contains(&self.oom_rerun_at));
         let retry = !rerun
             && pure
             && self.exc_type(self.exc) == T::MemoryError
@@ -1671,6 +1713,7 @@ impl Vm {
         if retry {
             self.collect_for_retry();
             self.oom_wait = true;
+            self.oom_rerun_at = at;
         }
         retry
     }

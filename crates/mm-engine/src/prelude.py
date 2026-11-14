@@ -2157,6 +2157,12 @@ def _sort_keys(xs, keys, rev):
     return [xs[i] for i in idx]
 
 
+def _gc_wait():
+    # A native step's wait for the collection it asked for
+    # (`Vm::oom_defer`): this call's safepoint runs it to its end.
+    return None
+
+
 def _sort_rest(xs, keys, rev, st):
     # A long sort merges a slice per loop step, each a safepoint
     # (docs/spec.md §5); keys that need Python to compare sort here.

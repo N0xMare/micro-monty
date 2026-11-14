@@ -78,7 +78,7 @@ const STACK_SLACK: usize = 1 << 16;
 ///   set tables;
 /// - what an opcode's operands mean, with the same format;
 /// - how frames, generators or coroutines keep their state.
-pub(crate) const SNAPSHOT_EPOCH: u32 = 6;
+pub(crate) const SNAPSHOT_EPOCH: u32 = 7;
 
 /// This build's engine fingerprint for snapshot build ids: what an image
 /// written by this engine means. The layout epoch; the codecs and every
@@ -800,8 +800,10 @@ impl Vm {
         put_u64(out, self.fuel_wanted);
         // Whether the instruction parked at is the rerun of one that ran
         // out of memory, parked in its wait for the collection
-        // (`Vm::oom_retry_if`): it raises if it fails again.
+        // (`Vm::oom_retry_if`): it raises if it fails again. Which one it is
+        // (`oom_rerun_at`).
         put_bool(out, self.oom_rerun == self.op_stamp());
+        put_u64(out, self.oom_rerun_at);
         put_len(out, self.call_log.len());
         for &(id, function, status) in &self.call_log {
             put_u64(out, id);
@@ -1953,6 +1955,7 @@ impl Vm {
         };
         let fuel_wanted = need(r.u64(), "fuel wanted")?;
         let rerun = need(r.bool(), "rerun")?;
+        let rerun_at = need(r.u64(), "rerun")?;
         let ncalls = need(r.count(13), "call log")?;
         charge(
             &mut budget,
@@ -2136,6 +2139,7 @@ impl Vm {
             gc_yield: false,
             oom_wait: false,
             oom_rerun: u64::MAX,
+            oom_rerun_at: u64::MAX,
             oom_defer_at: 0,
             consumed_at: u64::MAX,
             tick_epoch: 0,
@@ -2161,6 +2165,7 @@ impl Vm {
         if rerun {
             vm.oom_rerun = vm.op_stamp();
         }
+        vm.oom_rerun_at = rerun_at;
         vm.reserve_code(u64::from(n_ics) * size_of::<crate::vm::Ic>() as u64)
             .map_err(|_| SnapError::TooLarge)?;
         vm.ics

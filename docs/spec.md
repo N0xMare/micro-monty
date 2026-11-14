@@ -811,10 +811,10 @@ are the rules above. Where the code falls short, the clause says so under
    a known cause adds its line by hand, naming the cause and the step
    that closes it. Its first full run (1,416 runs) gave
    identical reports in all and equal fuel in 1,397 [M]. An operation the
-   engine does not run again after a collection (§9.2), such as a call's
-   `**kw` (`DICT_UPDATE` mode 1, which `Vm::oom_retry_fault` does not
-   retry [S]), can raise `MemoryError` while garbage not yet collected
-   still counts against the limit, where CPython succeeds. A snapshot
+   engine does not run again after a collection (§9.2), such as one that
+   drew items from a one-shot iterator, can raise `MemoryError` while
+   garbage not yet collected still counts against the limit, where CPython
+   succeeds. A snapshot
    collects garbage before it writes the image, which also moves when the
    next collection falls due [E], so such an operation can come out either
    way: raise `MemoryError` unparked and succeed after a restore, or
@@ -1512,7 +1512,9 @@ timer deadlines.
   of a list, dict or set, `dict.fromkeys`, `set.union`, `intersection`,
   `difference`, `symmetric_difference`), a growth that writes nothing
   until its new buffer or table is in place (`list.append`, `set.add`,
-  `list.extend` from a list or tuple), `sorted` without `key=`, or a
+  `list.extend` from a list or tuple), `sorted` and `list.sort` (with a
+  `reverse` that is a bool or an int; a key is called from the sort's
+  later steps, and `list.sort` gives its list the items back first), or a
   constructor that builds or copies its argument (`list`, `tuple`, `set`,
   `frozenset`, `dict`, `bytes`, `bytearray`), called straight
   from a `CALL` that raises `MemoryError`, changed nothing and consumed no
@@ -1554,7 +1556,11 @@ timer deadlines.
   waited is in its own state, so in the image: kept in the VM, it was
   lost on a restore, and a chain restored at every park deferred for ever
   [M, reviewer]. Its work so far is kept. A long sort's second array, or
-  a slice's room, waits the same way, its wait in the sort's state. The
+  a slice's room, waits the same way, its wait in the sort's state, and so
+  does a keyed sort's first array, which comes after the key calls (the
+  call cannot run them again): through a call to the prelude's `_gc_wait`,
+  whose safepoint runs the collection, its wait a bit of the sort's state
+  word. The
   retried `CALL`'s fuel is
   charged again. An instruction whose native raises `MemoryError` straight
   back to the dispatch loop retries the same way (`Vm::oom_retry_op`): a
@@ -1562,16 +1568,22 @@ timer deadlines.
   operand first (an in-place operator on a dict or set, or on an instance
   of a subclass of one), an f-string's `BUILD_STRING`, a starred display's
   `LIST_TO_TUPLE`, `UNPACK_EX` from a list or tuple, `LIST_EXTEND` from a
-  list or tuple or an iterator over one, `CALL_EX` of a Python function, `SET_ITEM` (stores are
+  list or tuple or an iterator over one, `CALL_EX` of a Python function
+  or of a builtin type whose constructor copies its argument
+  (`dict(x, **kw)`), a call's keyword and `**` spread (`DICT_UPDATE` modes
+  2 and 1: a failed insert writes nothing, and a spread first takes out
+  the keys it put in, so its rerun refuses none of its own), `SET_ITEM` (stores are
   idempotent, and a list slice builds its new buffer before installing it),
   `GET_ITEM` of a builtin container (a slice builds only its result),
   `LIST_APPEND` (a comprehension's list grows into a new buffer before it
   changes), `SET_ADD` and `DICT_INSERT` (a comprehension's set or dict
   takes the entry out again, or writes nothing, when its table does not
   grow: its outgrown tables are garbage only a collection frees),
-  `FORMAT` and `FORMAT_SPEC` of an int, float, str or bytes (a
-  container's `repr` may run user code) and `CALL` of a builtin type whose constructor copies its
-  argument (`list(l)`), the last three read at the fault exit
+  `FORMAT` and `FORMAT_SPEC` (a user `__repr__`, `__str__` or
+  `__format__` anywhere in the value hands the whole format to the
+  prelude twin `_op_fmt`, whose `repr`, `ascii`, `format` and walk
+  `_walk_repr` are retried natives) and `CALL` of a builtin type whose constructor copies its
+  argument (`list(l)`), the last ones read at the fault exit
   (`Vm::oom_retry_fault`).
   User code never runs inside those natives (a dunder runs as a request),
   so it never runs twice. Nothing that drew items from a one-shot iterator
@@ -1583,7 +1595,9 @@ timer deadlines.
   consumed (`consumed`) belong to the instruction that set them
   (`Vm::op_stamp`), so they end at the next tick wherever a host's fuel
   slices end, and whether a later instruction runs again does not depend
-  on the slices. The hooks sit outside the dispatch loop's arms
+  on the slices. A rerun's mark also names its instruction (`oom_rerun_at`,
+  in the image): the next instruction in the same tick (`f(**d)`'s
+  `CALL_EX` after its spread) retries as its own. The hooks sit outside the dispatch loop's arms
   (`Vm::op_binop`, `Vm::op_setitem`, `Vm::oom_retry_fault`), so its code is
   unchanged. A size the heap refuses before the native allocates
   (`Heap::would_fit`, `list(range(n))`) is retried as a block that did not

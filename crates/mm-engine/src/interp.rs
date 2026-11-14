@@ -368,11 +368,17 @@ impl Vm {
                     return Exit::HostCall(call);
                 }
                 Ok(Flow::Block(a)) => self.block_current(st, a),
+                // `oom_retry_fault` is called through a pointer: with one
+                // caller, `wasm-opt -Oz` inlined it here, whatever its
+                // `inline(never)`, and every change to it moved the dispatch
+                // loop's code (fib +1.2% on wasm for a cold arm [M]).
                 Err(Fault { reraise })
                     if core::mem::take(&mut self.oom_wait)
                         || (!reraise
                             && self.exc == self.memory_error
-                            && self.oom_retry_fault(&st)) =>
+                            && core::hint::black_box(
+                                Vm::oom_retry_fault as fn(&mut Vm, &State) -> bool,
+                            )(self, &st)) =>
                 {
                     // A builtin ran out of memory that garbage may hold
                     // (`Vm::oom_retry`): `st.pc` is still the `CALL`, which
