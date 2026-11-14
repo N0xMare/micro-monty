@@ -3442,3 +3442,36 @@ print('ok')
     assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{out}");
     assert_eq!(out, "caught\nok\n");
 }
+
+/// A fill that raised `MemoryError` and was dropped in its handler is free
+/// (AC1): the interrupted statement's temporaries held it, and a
+/// collection clears every register above the handler's live top. Before,
+/// a fill at module level stayed in the nested call's argument register,
+/// and no collection freed it: a second fill by another statement got 0 of
+/// the 39,826 lists that fit after no first fill, and 32,768 of 262,144
+/// dicts [M, c357735]. It must get about as far as after no first fill.
+#[test]
+fn a_dropped_fill_is_free_after_its_memory_error() {
+    let second = |fill: &str, again: &str, mib: u64| {
+        let src = format!(
+            "x = []\ntry:\n    while True:\n        {fill}\nexcept MemoryError:\n    x = None\n\
+             y = []\ntry:\n    while True:\n        {again}\nexcept MemoryError:\n    \
+             n = len(y)\n    y = None\nprint(n)\n"
+        );
+        let (p, out) = run_with(Limits::new().with_memory(mib << 20), &src);
+        assert!(matches!(p, Progress::Complete(_)), "{fill}: {p:?}");
+        out.trim().parse::<u64>().expect("a count")
+    };
+    for (fill, again, mib) in [
+        ("x.append([len(x)] * 40)", "y.append([0] * 40)", 16),
+        (
+            "x.append({'id': len(x), 'name': 'n' + str(len(x))})",
+            "y.append({'id': 0, 'name': 'n'})",
+            20,
+        ),
+    ] {
+        let alone = second("raise MemoryError", again, mib);
+        let n = second(fill, again, mib);
+        assert!(n * 10 >= alone * 9, "{fill}: {n} of {alone}");
+    }
+}

@@ -1313,12 +1313,16 @@ The table retains its high-water capacity inside the arena budget.
   compiler.
 - Generators and coroutines own a copy of their frame. Resuming copies it
   onto the stack, and yielding back, with one validated block access each
-  way; the copy is a few instructions per register, so a per-yield liveness
-  set would save little and is not emitted.
+  way. The saved copy holds every register, so a suspended generator keeps
+  its dead temporaries alive until it runs again (below).
 - The VM keeps `pc`, the frame base and the accumulator in locals during
   dispatch and writes them back at safepoints, so a park is "stop the loop".
-- GC roots are every register of every live frame; the compiler clears dead
-  temporaries at statement ends so they don't keep objects alive.
+- GC roots are the live registers of every frame on the stack. Each
+  statement's position entries carry its live top (its mark and its own
+  temporaries; outside statements, the unit's), and a collection first
+  clears each frame's registers from its live top to the frame above, so an
+  ended statement's temporaries and a returned callee's frame keep nothing
+  alive.
 
 ### 8.4 Exceptions
 

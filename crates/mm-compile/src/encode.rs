@@ -328,6 +328,7 @@ impl<P: Strings> Out<'_, P> {
                 self.u32(x);
             }
             self.bool(e.no_carets);
+            self.byte(e.top);
         }
         self.len(c.reg_names.len());
         for r in &c.reg_names {
@@ -782,6 +783,7 @@ impl<'a> In<'a> {
                     right_col: r.u32()?,
                 },
                 no_carets: r.bool()?,
+                top: r.byte()?,
             })
         })?;
         c.reg_names = self.list(|r| {

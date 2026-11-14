@@ -12,7 +12,7 @@ use crate::ast::{
     Anchor, BinOp, BoolOp, ClassDef, CmpOp, Comprehension, Const, Expr, ExprKind, FPart, FuncDef,
     Handler, Keyword, Module, Pos, Stmt, StmtKind, UnaryOp, WithItem,
 };
-use crate::bytecode::{Code, ExcEntry, Konst, ParamSpec, PosEntry, Program, RegName, op};
+use crate::bytecode::{Code, ExcEntry, Konst, NO_TOP, ParamSpec, PosEntry, Program, RegName, op};
 use crate::error::CompileError;
 use crate::symtable::{self, Binding, ScopeId, ScopeKind, SymTable};
 use alloc::{
@@ -227,6 +227,10 @@ struct Unit<'a> {
     regs: Vec<(ScopeId, BTreeMap<String, usize>)>,
     next_reg: u32,
     max_reg: u32,
+    /// The end of the registers the current statement's own code
+    /// allocated (outside statements, the unit's): its mark, or past its
+    /// highest temporary.
+    hi: u32,
     labels: Vec<Option<u32>>,
     /// Jump operands to patch: word, bit shift, label.
     fixups: Vec<(usize, u8, usize)>,
@@ -354,6 +358,7 @@ impl<'a> Compiler<'a> {
             regs: Vec::new(),
             next_reg: 0,
             max_reg: 0,
+            hi: 0,
             labels: Vec::new(),
             fixups: Vec::new(),
             handlers: Vec::new(),
@@ -412,6 +417,7 @@ impl<'a> Compiler<'a> {
             let nvars = u32::try_from(unit.code.varnames.len()).unwrap_or(250);
             unit.next_reg = nvars;
             unit.max_reg = nvars;
+            unit.hi = nvars;
         }
         self.units.push(unit);
         if !is_module {
@@ -440,6 +446,14 @@ impl<'a> Compiler<'a> {
         }
         for &(at, shift, l) in &u.fixups {
             u.code.bytecode[at] |= u.labels[l].unwrap_or(0) << shift;
+        }
+        // Code outside statements (a prologue, an epilogue, a lambda's or
+        // a cell's last expression) keeps what it allocated live.
+        let top = u8::try_from(u.hi).unwrap_or(NO_TOP);
+        for p in &mut u.code.positions {
+            if p.top == NO_TOP {
+                p.top = top;
+            }
         }
         for &(start, end, l, depth) in &u.raw_exc {
             if start < end {
@@ -547,6 +561,7 @@ impl<'a> Compiler<'a> {
                 pos: u.cur.pos,
                 anchor: u.cur.anchor,
                 no_carets: u.cur.no_carets,
+                top: NO_TOP,
             });
             u.last_loc = Some(u.cur);
         }
@@ -759,6 +774,7 @@ impl<'a> Compiler<'a> {
             .ok_or_else(|| too_many("expressions needing more than 255 registers"))?;
         u.next_reg += 1;
         u.max_reg = u.max_reg.max(u.next_reg);
+        u.hi = u.hi.max(u.next_reg);
         Ok(r)
     }
 
@@ -945,7 +961,25 @@ impl<'a> Compiler<'a> {
     fn stmt(&mut self, s: &'a Stmt) -> R<()> {
         self.enter(s.pos)?;
         let m = self.mark();
+        // The statement's instructions get position entries of their own,
+        // whose live top is the statement's highest register: a collection
+        // clears its temporaries, and a returned callee's frame above
+        // them, once it has ended (docs/spec.md §8.1). Its nested
+        // statements set theirs first.
+        let u = self.u();
+        let hi = core::mem::replace(&mut u.hi, m);
+        let first = u.code.positions.len();
+        u.last_loc = None;
         self.stmt_inner(s)?;
+        let u = self.u();
+        let top = u8::try_from(u.hi).unwrap_or(NO_TOP);
+        for p in &mut u.code.positions[first..] {
+            if p.top == NO_TOP {
+                p.top = top;
+            }
+        }
+        u.hi = hi;
+        u.last_loc = None;
         self.release(m);
         self.depth -= 1;
         Ok(())

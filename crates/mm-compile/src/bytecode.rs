@@ -374,7 +374,15 @@ pub struct PosEntry {
     pub anchor: crate::ast::Anchor,
     /// No carets for this instruction (CPython's full-line call rule).
     pub no_carets: bool,
+    /// The registers live over this entry's instructions are those below
+    /// `top` ([`NO_TOP`]: all of them): the statement's mark and its own
+    /// temporaries. A collection clears the rest (docs/spec.md §8.1).
+    pub top: u8,
 }
+
+/// [`PosEntry::top`] of instructions outside any statement: every
+/// register is live.
+pub const NO_TOP: u8 = u8::MAX;
 
 /// The variable a register holds over `start..end`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -508,6 +516,16 @@ impl Code {
     pub fn position(&self, pc: u32) -> Option<&PosEntry> {
         let i = self.positions.partition_point(|p| p.pc <= pc);
         i.checked_sub(1).and_then(|i| self.positions.get(i))
+    }
+
+    /// The end of the registers live at `pc`: those an instruction there or
+    /// after it may read before writing.
+    #[must_use]
+    pub fn live_top(&self, pc: u32) -> usize {
+        match self.position(pc) {
+            Some(p) if p.top != NO_TOP => usize::from(p.top).min(self.nregs as usize),
+            _ => self.nregs as usize,
+        }
     }
 
     /// The name of the variable in register `reg` at `pc`.

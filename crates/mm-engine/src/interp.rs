@@ -110,6 +110,66 @@ pub(crate) fn walk_frames(
     (sp == 0).then_some(out)
 }
 
+/// What a cleared dead register holds: `UNDEFINED`, or in debug builds a
+/// poison no program makes, which the dispatch loop's operand reads assert
+/// they never see (`rd!`).
+pub(crate) const DEAD: Value = if cfg!(debug_assertions) {
+    match Value::int(-0x5EAD_DEAD_0BAD) {
+        Some(v) => v,
+        None => Value::UNDEFINED,
+    }
+} else {
+    Value::UNDEFINED
+};
+
+/// Clears the dead registers of the frames on `stack`, the running one
+/// (`st`, `depth` frames above the bottom) and its callers: in each, those
+/// from its live top at its pc (`Code::live_top`, its statement's) up to
+/// the header of the frame above it. They hold what ended statements and
+/// returned callees left, which no instruction reads before writing it, and
+/// would otherwise keep it alive: the collector traces every register
+/// below the running frame's top. Done whenever roots are taken.
+fn clear_dead(
+    stack: &mut [Value],
+    specials: &[Frame],
+    codes: &[Arc<CodeObj>],
+    st: &State,
+    depth: u32,
+) {
+    let Some(code) = codes.get(st.ci as usize) else {
+        return;
+    };
+    let code = &code.code;
+    let end = (st.base + code.nregs as usize).min(stack.len());
+    let live = st.base + code.live_top(u32::try_from(st.pc).unwrap_or(u32::MAX));
+    if let Some(dead) = stack.get_mut(live..end) {
+        dead.fill(DEAD);
+    }
+    let Some(frames) = walk_frames(stack, specials, codes, st.base, depth) else {
+        return;
+    };
+    let mut above = st.base;
+    for f in frames {
+        let Some(c) = codes.get(f.code as usize) else {
+            return;
+        };
+        let c = &c.code;
+        // A caller waits in the instruction at its call pc, before its
+        // return pc, or reruns the one at it.
+        let top = [f.call_pc, f.ret_pc.saturating_sub(1), f.ret_pc]
+            .map(|pc| c.live_top(pc))
+            .into_iter()
+            .max()
+            .unwrap_or(c.nregs as usize);
+        let base = f.base as usize;
+        let end = (base + c.nregs as usize).min(above.saturating_sub(HDR));
+        if let Some(dead) = stack.get_mut(base + top..end) {
+            dead.fill(DEAD);
+        }
+        above = base;
+    }
+}
+
 /// A called frame's header.
 enum Header {
     /// A plain frame: its caller's record.
@@ -700,6 +760,12 @@ impl Vm {
     /// A full collection, one step of an incremental one, or a full one
     /// swept at once.
     fn gc(&mut self, st: &State, kind: Gc) {
+        clear_dead(&mut self.stack, &self.specials, &self.codes, st, self.depth);
+        for task in self.tasks.iter_mut().flatten() {
+            if let Some(s) = &task.st {
+                clear_dead(&mut task.stack, &task.specials, &self.codes, s, task.depth);
+            }
+        }
         let top = (st.base + self.codes[st.ci as usize].code.nregs as usize).min(self.stack.len());
         self.prune_fresh();
         let fresh = &mut self.fresh;
@@ -2834,6 +2900,18 @@ impl Vm {
                     self.stack[base + $r]
                 };
             }
+            // A register an instruction reads as its operand: never one a
+            // collection cleared as dead (`clear_dead`), in debug builds.
+            macro_rules! rd {
+                ($r:expr) => {{
+                    let v = reg!($r);
+                    debug_assert!(
+                        v != DEAD || DEAD == Value::UNDEFINED,
+                        "read of a cleared register at pc {pc}"
+                    );
+                    v
+                }};
+            }
             // The instruction word at `pc`, fetched by the loop below.
             let mut w: u32;
             // Operands of the instruction word `w` at `pc` (see
@@ -3081,7 +3159,7 @@ impl Vm {
                 match opcode {
                     op::NOP => pc += 1,
                     op::LDAR => {
-                        acc = reg!(wa!());
+                        acc = rd!(wa!());
                         pc += 1;
                     }
                     op::STAR => {
@@ -3089,7 +3167,7 @@ impl Vm {
                         pc += 1;
                     }
                     op::MOV => {
-                        let v = reg!(wa!());
+                        let v = rd!(wa!());
                         reg!(wb!()) = v;
                         pc += 1;
                     }
@@ -3200,7 +3278,7 @@ impl Vm {
                     }
                     // A deref of anything but a cell (only bytecode the
                     // compiler never emits) raises in `dispatch_rare`.
-                    op::LDA_DEREF if reg!(wa!()).is_obj_kind(ty::CELL as u8) => {
+                    op::LDA_DEREF if rd!(wa!()).is_obj_kind(ty::CELL as u8) => {
                         let r = wa!();
                         let c = reg!(r);
                         // A cell value's kind byte proves its one slot.
@@ -3216,8 +3294,8 @@ impl Vm {
                         acc = v;
                         pc += 1;
                     }
-                    op::STA_DEREF if reg!(wa!()).is_obj_kind(ty::CELL as u8) => {
-                        if let Some(c) = reg!(wa!()).as_obj() {
+                    op::STA_DEREF if rd!(wa!()).is_obj_kind(ty::CELL as u8) => {
+                        if let Some(c) = rd!(wa!()).as_obj() {
                             self.set_slot(c, 0, acc);
                         }
                         pc += 1;
@@ -3229,7 +3307,7 @@ impl Vm {
                         pc += 1;
                     }
                     op::ADD => {
-                        let a = reg!(wa!());
+                        let a = rd!(wa!());
                         if let (Some(x), Some(y)) = (a.as_int(), acc.as_int())
                             && let Some(v) = Value::int(x + y)
                         {
@@ -3251,7 +3329,7 @@ impl Vm {
                         pc += 1;
                     }
                     op::SUB => {
-                        let a = reg!(wa!());
+                        let a = rd!(wa!());
                         if let (Some(x), Some(y)) = (a.as_int(), acc.as_int())
                             && let Some(v) = Value::int(x - y)
                         {
@@ -3273,7 +3351,7 @@ impl Vm {
                         pc += 1;
                     }
                     op::MUL => {
-                        let a = reg!(wa!());
+                        let a = rd!(wa!());
                         if let (Some(x), Some(y)) = (a.as_int(), acc.as_int())
                             && let Some(v) = x.checked_mul(y).and_then(Value::int)
                         {
@@ -3296,7 +3374,7 @@ impl Vm {
                     }
                     op::BINOP | op::INPLACE => {
                         let bop = BinOp::ALL.get(wa!()).copied().unwrap_or(BinOp::Add);
-                        let a = reg!(wb!());
+                        let a = rd!(wb!());
                         // Small-int `+ - * % //` without leaving the loop (a
                         // positive divisor floors as Euclid's division does).
                         if let (Some(x), Some(y)) = (a.as_int(), acc.as_int())
@@ -3361,7 +3439,7 @@ impl Vm {
                             op::TEST_GE_JF => op::TEST_GE,
                             o => o,
                         };
-                        let a = reg!(wa!());
+                        let a = rd!(wa!());
                         if let (Some(x), Some(y)) = (a.as_int(), acc.as_int()) {
                             let b = match cmp {
                                 op::TEST_LT => x < y,
@@ -3385,7 +3463,7 @@ impl Vm {
                         }
                     }
                     op::TEST_EQ | op::TEST_NE => {
-                        let a = reg!(wa!());
+                        let a = rd!(wa!());
                         if let (Some(x), Some(y)) = (a.as_int(), acc.as_int()) {
                             acc = Value::from_bool((x == y) == (opcode == op::TEST_EQ));
                             pc += 1;
@@ -3412,7 +3490,7 @@ impl Vm {
                         }
                     }
                     op::TEST_IN | op::TEST_NOT_IN | op::TEST_IS | op::TEST_IS_NOT => {
-                        let a = reg!(wa!());
+                        let a = rd!(wa!());
                         // Identity needs no operation.
                         if opcode == op::TEST_IS || opcode == op::TEST_IS_NOT {
                             acc = Value::from_bool((a == acc) == (opcode == op::TEST_IS));
@@ -3668,13 +3746,13 @@ impl Vm {
                         pc += 1;
                     }
                     op::LIST_APPEND => {
-                        let l = reg!(wa!());
+                        let l = rd!(wa!());
                         tri!(self.list_push(l, acc));
                         pc += 1;
                     }
                     op::DICT_INSERT => {
-                        let d = reg!(wa!());
-                        let k = reg!(wb!());
+                        let d = rd!(wa!());
+                        let k = rd!(wb!());
                         op_unit!(
                             self.dict_set_top(d, k, acc),
                             3,
@@ -3748,7 +3826,7 @@ impl Vm {
                         op_result!(r, 5, Cont::None, ("_unreachable", &[]));
                     }
                     op::SET_ATTR => {
-                        let o = reg!(wa!());
+                        let o = rd!(wa!());
                         let slot = icb + (wx!() & 0xffff);
                         if let Ic::SetAttr {
                             version,
@@ -3853,7 +3931,7 @@ impl Vm {
                         pc += 2;
                     }
                     op::GET_ITEM => {
-                        let o = reg!(wa!());
+                        let o = rd!(wa!());
                         if o.is_obj_kind(ty::LIST as u8)
                             && let Some(i) = acc.as_int()
                             && let Ok(k) = u64::try_from(i)
@@ -3873,8 +3951,8 @@ impl Vm {
                         pc += 1;
                     }
                     op::SET_ITEM => {
-                        let o = reg!(wa!());
-                        let k = reg!(wb!());
+                        let o = rd!(wa!());
+                        let k = rd!(wb!());
                         op_unit!(self.op_setitem(o, k, acc), 3, ("_op_setitem", &[o, k, acc]));
                     }
                     op::CALL => {
