@@ -1808,6 +1808,11 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         1,
     ),
     (Row::Bounded, "B = b'a' * 30_000_000", "t = repr([B])", 1),
+    // The worst size for these rows: a result just under 32 MiB is first
+    // touched in one step, 14,520 minor page faults and 41 ms [M,
+    // performance review], where the rows above sit at 0.74-0.86 of the
+    // limit. Pinned so the oracle sees the worst case.
+    (Row::Bounded, "B = b'a' * 33_000_000", "t = repr([B])", 1),
     (
         Row::Bounded,
         "S = 'é\\x01' * 6_000_000",
