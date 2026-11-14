@@ -49,6 +49,7 @@ GATED = ["--toggle-collect=__libc_start_main*", "--toggle-collect=pthread_getatt
 ORDER = [
     "startup", "fib", "loop", "dict", "str", "json", "closure",
     "classes", "generators", "exceptions", "fmt", "sort", "interp", "held",
+    "aio", "bytearray", "floats",
 ]
 
 

@@ -204,10 +204,10 @@ fn timed_reports_preserve_samples_and_exclude_historical_engines() {
         .collect();
     assert_eq!(
         samples.len(),
-        42,
-        "14 programs, one warmup and two measured runs"
+        51,
+        "17 programs, one warmup and two measured runs"
     );
-    assert_eq!(samples.iter().filter(|s| s["warmup"] == false).count(), 28);
+    assert_eq!(samples.iter().filter(|s| s["warmup"] == false).count(), 34);
     assert!(
         samples
             .iter()

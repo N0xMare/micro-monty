@@ -1,10 +1,11 @@
 # Benchmarks
 
-The seven programs of `docs/spec.md` §12, plus seven that cover other common
-Python (classes, generators, exceptions, formatting, sorting and a small
-interpreter), each as a Python file and an equivalent JavaScript file for
-QuickJS. Each prints one checksum line, the same
-on every engine; `expected.txt` holds them.
+The seven programs of `docs/spec.md` §12, plus ten that cover other common
+Python (classes, generators, exceptions, formatting, sorting, a small
+interpreter, suspended generators, asyncio tasks, bytearray and float
+arithmetic), each as a Python file and an equivalent JavaScript file for
+QuickJS. Each prints one checksum line, the same on every engine;
+`expected.txt` holds them.
 
 | Name | Files | Work |
 |---|---|---|
@@ -22,13 +23,23 @@ on every engine; `expected.txt` holds them.
 | sort | `sort.*` | list comprehensions; 50k tuples sorted by key functions (lambda, tuple key, reverse, stable ties) |
 | interp | `interp.*` | tokenize, parse (recursive descent) and evaluate 300 statements of a tiny language, 25 rounds |
 | held | `held.*` | 70 rounds of 6k strings and a dict of them while 20k generators are suspended (half inside a call window), then each resumed to the end |
+| aio | `aio.*` | 150k awaits of a coroutine in a loop, 300 `asyncio.gather`s of 50 coroutines, 20 `create_task` tasks yielding 1,500 times each |
+| bytearray | `bytearray.*` | 600k `append`s, 80k `+=` of an 8-byte chunk with item writes, index reads, a stepped slice and `sum` |
+| floats | `floats.*` | 200k rounds of `**` (`x ** 2`, `(x / 4) ** 3`, `2.0 ** k`), negation and float compares, on exact dyadic values |
 
 `json` lives in `json_rows.*` so the script cannot shadow Python's `json`
-module. The checksums avoid floats, so Python and JavaScript print the same. The JS
+module. The checksums avoid floats, so Python and JavaScript print the same;
+`floats` keeps every value dyadic and exact, so its integers agree too. The JS
 twins use the nearest idiom where JavaScript has no equivalent: generator
 functions for generator expressions, comparators for key functions, a thrown
-error for a missing `Map` key, and a flooring `%` in `interp`'s operator table.
-The six added programs take 80–115 ms each on CPython 3.14 [M].
+error for a missing `Map` key, a flooring `%` in `interp`'s operator table,
+async functions and `Promise.all` for `aio` (`await null` for
+`asyncio.sleep(0)`), and an `Array` of numbers for `bytearray`.
+The first six added programs take 80–115 ms each on CPython 3.14 [M]; `aio`,
+`bytearray` and `floats` 170, 80 and 110 ms [M]. The last three were added
+because the Ir gates' workloads ran few of the functions marked
+`optimize(size)`: an `await` loop, `gather` and `bytearray` rose 8–21% with
+every gate green (size review of native A+B).
 
 ## Running
 
