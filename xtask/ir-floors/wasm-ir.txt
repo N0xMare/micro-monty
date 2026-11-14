@@ -1,0 +1,19 @@
+# wasm-ir: each count's floor, the lowest it has been (xtask/src/floors.rs).
+# Written by `cargo xtask wasm-ir --write-floors`; a floor rises only with an
+# accept line. name\tcount\tbuild\tkey
+aio	1047228915	b-62c78230ca3ddf3a	k-802dfb591cd8a0f4
+bytearray	2934717761	b-62c78230ca3ddf3a	k-4e91696f6fc58539
+classes	1931646304	b-62c78230ca3ddf3a	k-700ae6926533ab2d
+closure	982960059	b-62c78230ca3ddf3a	k-b9e2d3ec71167da1
+dict	1858324482	b-62c78230ca3ddf3a	k-5923cf5dc8d34131
+exceptions	1583968293	b-62c78230ca3ddf3a	k-c0d94f19e2bc806f
+fib	467175655	b-62c78230ca3ddf3a	k-92b339458113f952
+floats	2723883983	b-62c78230ca3ddf3a	k-6fe7d33847ec2a83
+fmt	2663231456	b-62c78230ca3ddf3a	k-9948e4d7b00f517c
+generators	3633054185	b-62c78230ca3ddf3a	k-9d76476bc418ad3e
+interp	3626388169	b-62c78230ca3ddf3a	k-ce6c72f182f1dcde
+json	1975683573	b-62c78230ca3ddf3a	k-6b62aa7310329090
+loop	1650708808	b-62c78230ca3ddf3a	k-0a235ba8243545a2
+sort	2374418827	b-62c78230ca3ddf3a	k-be417bd5b84690d7
+startup	852356	b-62c78230ca3ddf3a	k-490d43fccfbd0e7b
+str	807028448	b-62c78230ca3ddf3a	k-93731adc276263ca

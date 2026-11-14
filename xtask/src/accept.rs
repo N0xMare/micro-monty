@@ -5,18 +5,16 @@
 //! - `<names>`: comma-separated bench programs, or `geomean`; `v8-ir` may
 //!   put a guest before one (`plain/dict`, `bundle/geomean`), else the
 //!   name covers both guests.
-//! - `<ceiling>`: the highest ratio, head over base and head over anchor,
-//!   the line passes, such as `1.006`.
+//! - `<ceiling>`: the highest ratio, head over base and head over floor
+//!   ([`crate::floors`]), the line passes, such as `1.006`.
 //!
-//! In the commits since the base a line passes the failures it covers; in
-//! the commits from the anchor (the last `v*` tag) to the base it
-//! re-anchors the counts it names: their anchor count is the least from
-//! that commit on, so a later rise counts from the accepted level, while
-//! the counts it does not name keep the anchor's. `MM_*_ACCEPT` with the
-//! same text stands for a line while the tree has uncommitted changes; in
-//! a clean tree only committed lines count.
+//! In the commits since the base a line passes the failures it covers and
+//! lets the floors of the counts it names rise to the head's counts, if
+//! the rise over the floor is within its ceiling; it moves no other.
+//! `MM_*_ACCEPT` with the same text stands for a line while the tree has
+//! uncommitted changes; in a clean tree only committed lines count.
 
-use std::{collections::BTreeMap, path::Path};
+use std::path::Path;
 
 use crate::wasm_wall::git;
 
@@ -39,6 +37,11 @@ pub(crate) struct Accept {
 }
 
 impl Accept {
+    /// The highest ratio the line passes.
+    pub(crate) fn ceiling(&self) -> f64 {
+        self.ceiling
+    }
+
     /// Whether the line names `program` (or `geomean`) on `guest`.
     pub(crate) fn names(&self, guest: Option<&str>, program: &str) -> bool {
         self.names
@@ -48,12 +51,35 @@ impl Accept {
 }
 
 /// A count past its limit: on `guest` (v8-ir), `name` (a program or
-/// `geomean`) at `ratio` against the base or the anchor; `text` says so.
+/// `geomean`) at `ratio` against the base or the floor; `text` says so.
 pub(crate) struct Failure {
     pub(crate) guest: Option<String>,
     pub(crate) name: String,
     pub(crate) ratio: f64,
     pub(crate) text: String,
+}
+
+/// A gate's limits: how far a program's count (`program`, a ratio) and
+/// `startup`'s (`startup`, instructions) may rise.
+pub(crate) struct Limits {
+    pub(crate) program: f64,
+    pub(crate) startup: u64,
+}
+
+impl Limits {
+    /// Whether `name`'s count `head` is past the limit against `other`.
+    pub(crate) fn past(&self, name: &str, head: u64, other: u64) -> bool {
+        if name == "startup" {
+            head > other.saturating_add(self.startup)
+        } else {
+            ratio(head, other) > self.program
+        }
+    }
+}
+
+#[allow(clippy::cast_precision_loss, reason = "a ratio of counts")]
+fn ratio(head: u64, other: u64) -> f64 {
+    head as f64 / other.max(1) as f64
 }
 
 /// Parses `<names> <ceiling> <reason>`.
@@ -110,85 +136,6 @@ pub(crate) fn for_change(
             out.push(parse("", &value).map_err(|e| format!("{var}: {e}"))?);
         } else {
             println!("{var} is ignored in a clean tree: only a committed `{prefix}` line counts");
-        }
-    }
-    Ok(out)
-}
-
-/// The anchor: the latest `v*` tag reachable from `base`, as its name and
-/// commit. A tagless or shallow clone fails and says how to fetch it.
-pub(crate) fn tag_anchor(root: &Path, base: &str, gate: &str) -> Result<(String, String), String> {
-    let tag = git(
-        root,
-        &["describe", "--tags", "--abbrev=0", "--match", "v*", base],
-    )
-    .map_err(|_| {
-        format!(
-            "{gate}: no v* tag reachable from {base}, so no anchor: run `git fetch --tags \
-             --unshallow origin` (or `git fetch --tags origin`), or name one with --anchor REV"
-        )
-    })?;
-    let sha = git(
-        root,
-        &["rev-parse", "--verify", &format!("{tag}^{{commit}}")],
-    )?;
-    Ok((tag, sha))
-}
-
-/// Each count's anchor: its least over `history` (the anchor first, then
-/// the commits after it, the base last, each a commit and its counts),
-/// from the latest of `accepts` that names it on. `split` turns a count's
-/// key into its guest and program.
-pub(crate) fn least_since(
-    root: &Path,
-    history: &[(&str, &BTreeMap<String, u64>)],
-    accepts: &[Accept],
-    split: impl Fn(&str) -> (Option<String>, String),
-) -> Result<BTreeMap<String, u64>, String> {
-    let (Some(oldest), Some(newest)) = (history.first(), history.last()) else {
-        return Ok(BTreeMap::new());
-    };
-    // Each commit's position on the first-parent line from the anchor.
-    let mut position = BTreeMap::from([(oldest.0.to_owned(), 0_usize)]);
-    let list = git(
-        root,
-        &[
-            "rev-list",
-            "--first-parent",
-            "--reverse",
-            &format!("{}..{}", oldest.0, newest.0),
-        ],
-    )?;
-    for (i, sha) in list.lines().enumerate() {
-        position.insert(sha.to_owned(), i + 1);
-    }
-    let at = |sha: &str| position.get(sha).copied();
-    let mut out = BTreeMap::new();
-    for key in history.iter().flat_map(|(_, c)| c.keys()) {
-        if out.contains_key(key) {
-            continue;
-        }
-        let (guest, program) = split(key);
-        let start = accepts
-            .iter()
-            .filter(|a| a.names(guest.as_deref(), &program))
-            .filter_map(|a| at(&a.sha))
-            .max()
-            .unwrap_or(0);
-        // The build at `start` is the last side at or before it.
-        let from = history
-            .iter()
-            .filter_map(|(s, _)| at(s))
-            .filter(|&p| p <= start)
-            .max()
-            .unwrap_or(0);
-        let least = history
-            .iter()
-            .filter(|(s, _)| at(s).is_some_and(|p| p >= from))
-            .filter_map(|(_, c)| c.get(key).copied())
-            .min();
-        if let Some(n) = least {
-            out.insert(key.clone(), n);
         }
     }
     Ok(out)
@@ -280,45 +227,5 @@ mod tests {
         assert!(parse("abc", "dict 6% why").is_err());
         let error = verdict("g", "G:", "V", &[failure(None, "dict", 1.0051)], &[]).unwrap_err();
         assert!(error.contains("`G: dict 1.006 <reason>`"), "{error}");
-    }
-
-    #[test]
-    fn an_accept_re_anchors_only_what_it_names() {
-        let dir = std::env::temp_dir().join(format!("accept-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        git(&dir, &["init", "--quiet"]).unwrap();
-        let commit = |message: &str| {
-            let who = [
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@t",
-                "-c",
-                "core.hooksPath=/dev/null",
-            ];
-            let args = [
-                &who[..],
-                &["commit", "--quiet", "--allow-empty", "-m", message],
-            ]
-            .concat();
-            git(&dir, &args).unwrap();
-            git(&dir, &["rev-parse", "HEAD"]).unwrap()
-        };
-        let (a, b) = (commit("anchor"), commit("b"));
-        commit("c\n\nG: dict 1.004 a correctness cost");
-        let d = commit("base");
-        let c = |fib: u64, dict: u64| {
-            BTreeMap::from([("fib".to_owned(), fib), ("dict".to_owned(), dict)])
-        };
-        let (ca, cb, cd) = (c(100, 100), c(99, 103), c(101, 106));
-        let history = [(a.as_str(), &ca), (b.as_str(), &cb), (d.as_str(), &cd)];
-        let accepts = committed(&dir, "G:", &format!("{a}..{d}")).unwrap();
-        let least = least_since(&dir, &history, &accepts, |k| (None, k.to_owned())).unwrap();
-        // dict counts from the last build before the accepted commit, b;
-        // fib keeps its least since the anchor.
-        assert_eq!(least["dict"], 103);
-        assert_eq!(least["fib"], 99);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

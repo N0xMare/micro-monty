@@ -2874,21 +2874,46 @@ callgrind twice, on the shipped native `mm` (`target/<host>/release/mm`,
 built by `cargo xtask shipped-mm`; the script stops if it is missing). The
 *gated* count runs from glibc's `__libc_start_main` onward and leaves out glibc's `pthread_getattr_np`; the *whole-process*
 count includes everything. A change may raise the gated count of a
-program by at most 0.5% (`startup` by at most 2,900 instructions) over
-the base and over the anchor (its lowest count since the last `v*` tag),
+program by at most 0.5% (`startup` by at most 300 instructions; startup
+drift is not accepted, owner) over the base and over the program's floor,
 unless a commit says why with the table on a `Native-IR-Accepted:
 <programs> <ceiling> <reason>` line, which passes only those programs up
 to that ratio; a drop passes. `cargo xtask native-ir` checks it (in
-`check`, Linux), building base and anchor history with their own
-toolchain and, where their xtask has `shipped-mm`, their own recipe; the
-whole-process count is
-reported beside it. The two parts left out depend on where the binary's segments land, not
-on engine work: the dynamic loader's relocations, and `pthread_getattr_np`
+`check`, Linux), building the base with its own toolchain and, where its
+xtask has `shipped-mm`, its own recipe; the whole-process count is
+reported beside it. Each count runs the binary from a scratch path of one
+length (`/tmp/mm-native-ir-<run>/<job>/mm`) on a copy of the program
+beside it, with an empty environment: `startup` moves about 22
+instructions per environment variable, one per character of the binary's
+path, and more with the script's path [M], so a count is the same in
+every run and on every machine of one class: `71b9c5b5`'s `mm` run as
+`/tmp/xref/mm` under `env -i` reads 581,149 on `startup.py` on two
+machines (valgrind 3.24.0, glibc 2.41 [M]). The two parts left out
+depend on where the binary's segments land, not on engine work: the dynamic loader's relocations, and `pthread_getattr_np`
 parsing `/proc/self/maps`, which Rust's runtime calls from inside `main` to
 find the main thread's stack. That is why counting from `main` alone is not
 enough: one layout-only change moved `startup` +0.80% whole-process, +1.06%
 from `main` and +0.03% gated [M]. On the other programs the two counts
 differ by a constant of about 337K Ir, 0.10% of the smallest [M].
+
+**Floors.** Each Ir gate keeps, per count, its floor: the lowest it has
+been since the last `v*` tag, in `xtask/ir-floors/<gate>.txt` with the
+build that set it (a hash of the blob ids of what a shipped build reads)
+and its key (the counting method, the tools' versions, glibc and the CPU
+class valgrind shows, the program's source). The gates compare the head
+with the base and the floor and build no history (owner, 2026-11-14). The
+head's file must be what the head makes of the base's: a count below its
+floor lowers the floor in the same change, so an unrecorded gain does not
+become headroom; a floor rises only to the head's count and only with an
+accept line whose ceiling covers the rise; a new count is seeded at or
+below the head's. `--write-floors` writes the file. A floor whose key is
+not the run's is stale and is recounted on its build, found on the
+first-parent line since the tag. With `--base` at a tag (`just pretag`)
+the head is compared with the tag, and every floor is checked against the
+tag's count and the head's. When two landings both move a floor, the
+raise wins if one side is an accepted raise, else the lower count; the
+gate on the combined tree then sets it. What is lost against counting
+every commit is which commit moved a count.
 
 ## 13. Tests and conformance
 
@@ -2968,44 +2993,33 @@ opens a draft release.
   `cargo xtask bench` times the engines it finds and writes
   `bench/results/`; run it alone on an idle machine. Native Ir follows the
   gated-count rule (§12): `cargo xtask native-ir` (in `check`, Linux) fails
-  when a program's gated count rises past 0.5% (`startup` past 2,900
-  instructions) over the base's or the anchor's.
+  when a program's gated count rises past 0.5% (`startup` past 300
+  instructions) over the base's or its floor.
 - **wasm-ir** (in both tiers, Linux only, since it needs valgrind):
-  `cargo xtask wasm-ir` builds the working tree (or `--head REV`), the base
-  (`--base REV`, default `origin/main`) and an anchor, each in a worktree
-  under `target/wasm-ir/`, as shipped: the wasip1 `mm` precompiled by
-  `wasmtime compile --target x86_64-unknown-linux-gnu` (baseline ISA, so
-  every machine compiles the same code). It counts each bench program once
-  under callgrind: the instructions at addresses in wasmtime's perf map
-  (the guest's compiled code), plus the inclusive cost of wasmtime's
-  `memory.copy` and `memory.fill` libcalls (share: str 6.3%, json 4.2%,
-  dict 3.6%, fmt 3.1%, sort 2.2%, generators 1.4%, under 1% elsewhere, none
-  on fib, loop or closure [M]), so a loop turned into a bulk copy does not
-  read as a gain. The anchor is the latest `v*` tag the base descends
-  from, or the latest commit since it whose message has a
-  `Wasm-IR-Accepted:` line (`--anchor REV` names another); a checkout
-  without the tag fails and says to run `git fetch --tags` or pass
-  `--anchor`. The anchor's count for each program is the lowest among the
-  anchor, the base and every first-parent commit between them that
-  changed build inputs (crates, `Cargo.toml`, `Cargo.lock`,
-  `rust-toolchain.toml`, `.cargo`; tests, `mm-wasm-host` and `*.md`
-  excluded), so after a gain later rises count from the new level; this
-  bounds creep from commits that each stay under the limits. Limits,
-  against base and anchor alike: a program rising past 1.0%, the geomean
-  of the ratios (without `startup`) past 0.5%, or `startup` (about 0.9M
-  instructions) rising by more than 50,000 instructions; decreases always
-  pass. `MM_WASM_IR_ACCEPT=<reason>` passes an intended rise; the commit
-  message then carries the table and a `Wasm-IR-Accepted: <reason>` line.
-  A revision's counts are cached in `target/wasm-ir/cache/`, keyed by the
-  counting method, the ISA, the rustc, wasmtime, wasm-opt and valgrind
-  versions, wasm-opt's wasip1 arguments and features and the shipped
-  build's flags (not the package built or wasmtime's `compile` and `run`
-  flags, which a bump of the counting method covers), and
-  each program's count by a hash of its `bench/*.py` source. The first run
-  after a tag or an accepted commit builds the anchor, the changed commits
-  since it and the base (about 5–6 min in `check` on 16 cores); a cached
-  rerun of one program takes 7 s [M]. Calibration [M]: the 0.0.1
-  Cranelift spill fails it (fib 1.080, closure 1.102, geomean 1.042).
+  `cargo xtask wasm-ir` builds the working tree (or `--head REV`) and the
+  base (`--base REV`, default `origin/main`), the base in a worktree
+  outside the checkout with its own toolchain and, when its xtask has
+  `shipped-mm --target`, its own recipe, as shipped: the wasip1 `mm`
+  precompiled by `wasmtime compile --target x86_64-unknown-linux-gnu`
+  (baseline ISA, so every machine compiles the same code). It counts each
+  bench program once under callgrind: the instructions at addresses in
+  wasmtime's perf map (the guest's compiled code), plus the inclusive cost
+  of wasmtime's `memory.copy` and `memory.fill` libcalls (share: str 6.3%,
+  json 4.2%, dict 3.6%, fmt 3.1%, sort 2.2%, generators 1.4%, under 1%
+  elsewhere, none on fib, loop or closure [M]), so a loop turned into a
+  bulk copy does not read as a gain. Limits, against the base and the
+  floor (§12) alike: a program rising past 1.0%, the geomean of the ratios
+  (without `startup`) past 0.5%, or `startup` (about 0.9M instructions)
+  rising by more than 300 instructions; decreases always pass. An intended
+  rise carries the table and a `Wasm-IR-Accepted: <names> <ceiling>
+  <reason>` line in its commit message (`MM_WASM_IR_ACCEPT` with the same
+  text before committing), which passes only the names it lists up to the
+  ceiling and raises only their floors. A revision's counts are cached in
+  `target/wasm-ir/cache/`, keyed by the counting method, the wasmtime,
+  wasm-opt and valgrind versions, wasm-opt's wasip1 arguments and
+  features, the host, the recipe and the toolchain, and each program's count by a hash of its `bench/*.py` source.
+  Calibration [M]: the 0.0.1 Cranelift spill fails it (fib 1.080, closure
+  1.102, geomean 1.042).
 - **v8-ir** (release gate only, Linux): `cargo xtask v8-ir` counts V8's
   instructions on the bench programs (`startup` left out) in both
   `wasm32-unknown-unknown` guests, plain and bundle, which are built with
@@ -3017,13 +3031,12 @@ opens a draft release.
   whose xtask has `size --head` builds its guests with its own recipe, so
   a change to the `wasm-opt` flags or the `optimize(size)` marks is
   counted at its commit; older ones are built with the head's recipe.
-  Base and the anchor's least-of history work as wasm-ir's, with the last
-  `v*` tag as the anchor. An accept line `V8-IR-Accepted: <names>
-  <ceiling> <reason>` (programs or `geomean`, `plain/` or `bundle/` before
-  one for one guest) passes only those counts up to that ratio, and later
-  runs re-anchor only those; `MM_V8_IR_ACCEPT` stands for it in an
-  uncommitted tree only. Limits, on either guest
-  against base and anchor: a program rising past 0.5% or the geomean past
+  The floors (§12) are named `plain/<program>` and `bundle/<program>`.
+  An accept line `V8-IR-Accepted: <names> <ceiling> <reason>` (programs or
+  `geomean`, `plain/` or `bundle/` before one for one guest) passes only
+  those counts up to that ratio and raises only their floors;
+  `MM_V8_IR_ACCEPT` stands for it in an uncommitted tree only. Limits, on
+  either guest against base and floor: a program rising past 0.5% or the geomean past
   0.3%; decreases pass. Counts are cached per guest content, keyed by
   node's and valgrind's versions, the driver and the program's source, so
   only a guest whose bytes changed is counted again. Stability [M]: the

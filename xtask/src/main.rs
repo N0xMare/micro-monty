@@ -62,6 +62,7 @@ mod conformance;
 mod difffuzz;
 mod docs;
 mod durability;
+mod floors;
 mod gc_stress;
 mod handoffs;
 mod native_ir;
@@ -101,8 +102,8 @@ tasks:
                              last and alone; logs in target/check/logs/
       --serial               one stage at a time, output on the terminal
       --release-gate         the full gate: release builds, durability at
-                             1:1000, also wasm-host, overflow-wasip1 and the
-                             codemode check
+                             1:1000, also wasm-host, overflow-wasip1, v8-ir
+                             and the codemode check
                              (default: the landing tier, or the release gate
                              when the change touches parking, snapshots, the
                              GC, the wasm crates, the shipped recipe, the
@@ -152,8 +153,9 @@ tasks:
       --record               rewrite the results file without the entries no
                              run differed in (a whole run; never adds one)
       --report-only          compare reports only (gc-stress)
-  shipped-mm                 build `mm` natively as shipped (the binary the
-                             bench Ir rule measures) and print its path
+  shipped-mm [--target <t>]  build `mm` as shipped, natively (the binary the
+                             bench Ir rule measures) or for <t> (wasm-opt -Oz
+                             on wasm), and print its path
   shipped-build --target <t> --package <p>
                              build a package's binaries as shipped for a
                              target (release.yml's published natives)
@@ -173,41 +175,43 @@ tasks:
                              (target/wasm-wall/rounds/*.tsv, same base and
                              head); builds and times nothing
   native-ir [options]        bench/*.py's gated callgrind Ir on the shipped
-                             native mm ($MM, else built) against the base and
-                             the anchor (each built outside the checkout with
-                             its own toolchain and recipe, cached per commit):
-                             fails on a program past +0.5% or startup past
-                             +2,900 instructions, unless a `Native-IR-Accepted:
-                             <programs> <ceiling> <reason>` line covers it
-      --base <rev>           the revision to compare with (default origin/main)
-      --anchor <rev>         the anchor (default: the last v* tag)
+                             native mm ($MM, else built; empty environment,
+                             fixed paths) against the base (built outside the
+                             checkout with its own toolchain and recipe,
+                             cached per commit) and the floors in
+                             xtask/ir-floors/native-ir.txt: fails on a program
+                             past +0.5% or startup past +300 instructions,
+                             unless a `Native-IR-Accepted: <programs>
+                             <ceiling> <reason>` line covers it, or on a
+                             floor file that is not what the head makes of it
+      --base <rev>           the revision to compare with (default
+                             origin/main; at a v* tag the floors are checked
+                             against it)
+      --write-floors         write the floor file the head must have
       --plain                advisory: shipped against a plain release build
   v8-ir [options]            V8's instructions (node --no-liftoff, generated
                              code, the second of two runs) on bench/*.py in
                              both wasm32-unknown-unknown guests against a base
-                             and an anchor, as wasm-ir (in the release gate):
+                             and the floors, as wasm-ir (in the release gate):
                              fails on a program rising past 0.5% or a guest's
                              geomean past 0.3%, unless a `V8-IR-Accepted:
                              <names> <ceiling> <reason>` line covers it
       --base <rev>           the revision to compare with (default origin/main)
-      --anchor <rev>         the anchor (default: the last v* tag)
       --programs <a,b>       only these programs
       --head-built           the head's guests from target/size/head.tsv
+      --write-floors         write the floor file the head must have
   wasm-ir [options]          wasmtime guest instructions of bench/*.py against
-                             a base revision and an anchor (the last v* tag or
-                             accepted rise) under callgrind (in check): fails
-                             on a program rising past 1.0%, the geomean past
-                             0.5% or startup past 50,000 instructions;
-                             MM_WASM_IR_ACCEPT=<reason> passes a rise
+                             a base revision and the floors under callgrind
+                             (in check): fails on a program rising past 1.0%,
+                             the geomean past 0.5% or startup past 300
+                             instructions, unless a `Wasm-IR-Accepted:
+                             <names> <ceiling> <reason>` line covers it
       --base <rev>           the revision to compare with (default origin/main)
       --head <rev>           a revision instead of the working tree
-      --anchor <rev>         the anchor (default: the last v* tag, or the
-                             last Wasm-IR-Accepted commit since it; none
-                             fails); each program's least count from it
-                             to the base is what a rise counts from
       --programs <a,b,..>    only these programs (default all)
       --baselines <file>     only the head, against the counts stored in
                              <file> (bench/baselines-0.0.2.txt); advisory
+      --write-floors         write the floor file the head must have
   wasm-opt <target> <in> <out> [arg..]
                              binaryen's wasm-opt with <target>'s shipped
                              arguments (wasip1: -Oz and the inline cap;
@@ -253,7 +257,7 @@ fn main() -> ExitCode {
         Some("conformance") => conformance::run(&rest),
         Some("durability") => durability::run(&rest),
         Some("bench") => bench::run(&rest),
-        Some("shipped-mm") if rest.is_empty() => shipped_mm(),
+        Some("shipped-mm") => shipped_mm(&rest),
         Some("shipped-build") => shipped::shipped_build_cli(&rest),
         Some("wasm") => wasm::run(&rest),
         Some("wasm-host") if rest.is_empty() => wasm::host(),
@@ -615,12 +619,12 @@ fn check(args: &[String]) -> Result<(), String> {
             .after(&["mm"])
             .run(steps_cargo(&[&steps[..], &["--no-run"]].concat())),
     ];
-    // wasmtime's guest instructions against the base and the anchor
+    // wasmtime's guest instructions against the base and the floors
     // (its own worktrees and target directories, `shipped::refs_dir`).
     if cfg!(target_os = "linux") {
         stages.push(Stage::new("wasm-ir").run(task(&["wasm-ir", "--base", base])));
         // The bench programs' gated Ir on the shipped native `mm` against
-        // the base's and the anchor's (AGENTS.md's Ir rule).
+        // the base's and the floors (AGENTS.md's Ir rule).
         stages.push(Stage::new("native-ir").after(&["shipped-mm"]).run({
             let mut ir = task(&["native-ir", "--base", base]);
             ir.env("MM", &shipped_mm);
@@ -706,6 +710,13 @@ const RELEASE_GATE_PATHS: &[&str] = &[
     "crates/mm-wasm-",
     "xtask/src/wasm.rs",
     "xtask/src/shipped.rs",
+    // The code of the gates that run in the release gate only, and what
+    // they judge with; and v8-ir's floors, which only it checks.
+    "xtask/src/v8_ir.rs",
+    "xtask/src/replay_ir.rs",
+    "xtask/src/accept.rs",
+    "xtask/src/floors.rs",
+    "xtask/ir-floors/v8-ir.txt",
     "rust-toolchain.toml",
     "Cargo.lock",
     ".cargo/",

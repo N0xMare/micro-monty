@@ -1,8 +1,8 @@
 //! `cargo xtask wasm-ir`: wasmtime's guest instructions on the bench
-//! programs against a base revision and an anchor.
+//! programs against a base revision and the floors.
 //!
-//! Builds the working tree (or `--head`), `--base` (default `origin/main`)
-//! and the anchor, each revision checked out in a worktree outside this
+//! Builds the working tree (or `--head`) and `--base` (default
+//! `origin/main`), each other revision checked out in a worktree outside this
 //! checkout (`shipped::refs_dir`, so no revision reads this checkout's
 //! `.cargo/`), as shipped: `mm` for `wasm32-wasip1`, precompiled by
 //! `wasmtime compile --target` for this architecture's baseline ISA, not
@@ -17,34 +17,30 @@
 //! and the loader are left out. The output must equal the program's line
 //! in `bench/expected.txt`.
 //!
-//! A committed revision's counts are cached in `target/wasm-ir/cache/`,
-//! keyed by the counting method, the rustc, wasmtime, `wasm-opt` and
-//! valgrind versions, `wasm-opt`'s arguments and features and the shipped
-//! build's flags ([`key`]; the running xtask builds every revision with its
-//! toolchain and recipe, so a revision's own xtask and pin are not inputs,
-//! and a change of the recipe reads 1.0000). `--package mm-cli` and the
-//! `wasmtime compile` and `run` flags are not in it: change [`COUNTING`]
-//! when they change. Each program's count
+//! Another revision is built with its own toolchain and, when its xtask
+//! has `shipped-mm --target` ([`crate::shipped::SHIPPED_MM_TARGET`]), its
+//! own recipe, else this checkout's. A committed revision's counts are
+//! cached in `target/wasm-ir/cache/`, keyed by the counting method, the
+//! rustc, wasmtime, `wasm-opt` and valgrind versions, `wasm-opt`'s
+//! arguments and features and the shipped build's flags ([`key`]), the
+//! host, and that revision's recipe and toolchain, each program's count
 //! also by its source's hash (the programs are this checkout's `bench/`,
-//! whatever the revision). An unmoved base or anchor is neither built nor
-//! run again; an edited program or a changed tool or flag is.
+//! whatever the revision). `--package mm-cli` and the `wasmtime compile`
+//! and `run` flags are not in it: change [`COUNTING`] when they change.
 //!
-//! The anchor is the latest `v*` tag the base descends from, or, when a
-//! commit since that tag accepted a rise (a `Wasm-IR-Accepted:` line in its
-//! message), the latest such commit; `--anchor REV` names another. A
-//! checkout without the tag fails rather than go without an anchor. The
-//! anchor's count of a program is the least of the anchor's, the base's
-//! and every first-parent commit's between them that changed the build's
-//! sources (`INPUTS`), so a gain moves the anchor down with it and later
-//! rises count from there. Against both base and anchor, the gate fails when a program's count rises past
-//! 1.0% (`PROGRAM_LIMIT`), the geometric mean of the ratios past 0.5%
-//! (`GEOMEAN_LIMIT`), or `startup`'s count, about 0.9M, by more than
-//! `STARTUP_LIMIT` instructions; `startup` is left out of the geomean.
+//! Each count's floor, the lowest since the last tag, is in
+//! `xtask/ir-floors/wasm-ir.txt` ([`crate::floors`]). Against the base and
+//! the floor, the gate fails when a program's count rises past 1.0%
+//! (`PROGRAM_LIMIT`), the geometric mean of the ratios past 0.5%
+//! (`GEOMEAN_LIMIT`), or `startup`'s count, about 0.9M, by more than 300
+//! instructions ([`LIMITS`]); `startup` is left out of the geomean.
 //! Unrelated commits move the run loop's register allocation by up to
-//! about 1% either way; the anchor bounds a creep of commits each under the
-//! limits. Fewer instructions always pass, with the table printed.
-//! `MM_WASM_IR_ACCEPT=<reason>` passes an intended rise, whose commit
-//! message records the table and the reason on a `Wasm-IR-Accepted:` line.
+//! about 1% either way; the floor bounds a creep of commits each under the
+//! limits. Fewer instructions always pass, with the table printed, and
+//! lower the floor. An intended rise takes `Wasm-IR-Accepted: <names>
+//! <ceiling> <reason>` in its commit message (`MM_WASM_IR_ACCEPT` with the
+//! same text before committing), which passes only the names it lists up
+//! to the ceiling and raises their floors to the head's counts.
 //!
 //! Unlike `wasm-wall`, the count does not depend on load or on the host,
 //! so one run decides. It catches what wasm-opt and Cranelift do to the
@@ -64,41 +60,33 @@ use std::{
 };
 
 use crate::{
+    accept::{self, Failure, Limits},
     bench::{PROGRAMS, read_expected},
+    floors,
     wasm_wall::{build_mm, checkout, git, head_id},
     workspace_root,
 };
 
-/// The most one program's count may rise.
-const PROGRAM_LIMIT: f64 = 1.010;
+/// The limits: a program +1.0%; `startup` (about 0.9M) a few hundred
+/// instructions, since startup drift is not accepted (owner) and the
+/// guest's count is exact (head and base of one commit +0 [M]), so an
+/// intended rise takes a `startup` accept line (size review of A+B).
+const LIMITS: Limits = Limits {
+    program: 1.010,
+    startup: 300,
+};
+const PROGRAM_LIMIT: f64 = LIMITS.program;
 /// The most the geometric mean of the ratios (without `startup`) may rise.
 const GEOMEAN_LIMIT: f64 = 1.005;
-/// The most `startup`'s count may rise, in instructions: it is about 0.9M,
-/// where 1% is one new table entry.
-const STARTUP_LIMIT: u64 = 50_000;
 /// What a count holds, in the cache key: change it when that changes.
-const COUNTING: &str = "guest code and memory.copy/fill libcalls, 1";
+const COUNTING: &str = "guest code and memory.copy/fill libcalls, 2";
 /// wasmtime's libcalls for `memory.copy` and `memory.fill`.
 const BULK: [&str; 2] = [
     "wasmtime::runtime::vm::libcalls::raw::memory_copy",
     "wasmtime::runtime::vm::libcalls::raw::memory_fill",
 ];
-/// The line that marks a commit whose rise was accepted; it re-anchors.
+/// The line that accepts a rise ([`crate::accept`]).
 const ACCEPTED: &str = "Wasm-IR-Accepted:";
-/// What a revision's `mm` is built from (the running xtask builds every
-/// revision, so its flags are this checkout's): a commit that changes none
-/// of it counts as its parent does.
-const INPUTS: [&str; 8] = [
-    "crates",
-    "Cargo.toml",
-    "Cargo.lock",
-    "rust-toolchain.toml",
-    ".cargo",
-    ":(exclude)crates/*/tests/*",
-    ":(exclude)crates/mm-wasm-host",
-    ":(exclude)*.md",
-];
-
 /// One program's instructions: in guest code, and under the bulk libcalls.
 #[derive(Clone, Copy, Default)]
 struct Count {
@@ -124,9 +112,13 @@ struct Side {
     sha: Option<String>,
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "sides, floors, counts and the verdict in order"
+)]
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut base = "origin/main".to_owned();
-    let (mut head, mut anchor, mut only) = (None::<String>, None::<String>, None::<String>);
+    let (mut head, mut only, mut write) = (None::<String>, None::<String>, false);
     let mut baselines = None::<PathBuf>;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
@@ -138,8 +130,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         match arg.as_str() {
             "--base" => base = value("a revision")?,
             "--head" => head = Some(value("a revision")?),
-            "--anchor" => anchor = Some(value("a revision")?),
             "--programs" => only = Some(value("a list")?),
+            "--write-floors" => write = true,
             "--baselines" => baselines = Some(PathBuf::from(value("a file")?)),
             other => return Err(format!("wasm-ir: unknown option `{other}`")),
         }
@@ -176,12 +168,19 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         return against_baselines(&root, &tools, head_side, &programs, head.is_some(), &file);
     }
 
-    let base_sha = sha(&base)?;
-    let anchor = match &anchor {
-        Some(rev) => Some((rev.clone(), sha(rev)?)),
-        None => default_anchor(&root, &base_sha, ACCEPTED, "wasm-ir")?,
-    }
-    .filter(|(_, a)| *a != base_sha);
+    let base_sha = git(&root, &["merge-base", &base, "HEAD"])?;
+    let tag = git(
+        &root,
+        &[
+            "describe",
+            "--exact-match",
+            "--tags",
+            "--match",
+            "v*",
+            &base_sha,
+        ],
+    )
+    .is_ok();
     let mut sides = vec![
         head_side,
         Side {
@@ -191,22 +190,76 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             sha: Some(base_sha.clone()),
         },
     ];
-    if let Some((rev, a)) = &anchor {
-        sides.extend(anchor_sides(&root, rev, a, &base_sha)?);
+    // The floors (crate::floors), and the build of each stale one.
+    let bench = root.join("bench");
+    let mut keys = BTreeMap::new();
+    for &(name, stem) in &programs {
+        let path = bench.join(format!("{stem}.py"));
+        let source = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        keys.insert(
+            name.to_owned(),
+            floors::key(&tools.full_key(), &source_hash(&source)),
+        );
+    }
+    let stale = floors::stale(&root, "wasm-ir", &base_sha, tag, &keys)?;
+    for (s, _) in &stale {
+        sides.push(Side {
+            label: format!("floor-{}", short(s)),
+            target: "floor",
+            name: format!("{} (a floor's build)", short(s)),
+            sha: Some(s.clone()),
+        });
     }
     for side in &sides {
         println!("wasm-ir: {:<6} = {}", side.label, side.name);
     }
 
     let counts = measure(&root, &tools, &sides, &programs, head.is_some())?;
-    // The anchor's counts: the least from the anchor to the base.
-    let least = (sides.len() > 2).then(|| least(&counts[1..]));
-    let anchor_name = sides
-        .get(2)
-        .map(|side| format!("{} to the base", side.name));
-    let anchor = anchor_name.as_deref().zip(least.as_ref());
-    let failures = report(&programs, &counts[0], (&sides[1].name, &counts[1]), anchor);
-    verdict(&failures)
+    let total = |c: &Counts| -> BTreeMap<String, u64> {
+        c.iter().map(|(k, v)| (k.clone(), v.total())).collect()
+    };
+    let totals: Vec<BTreeMap<String, u64>> = counts.iter().map(total).collect();
+    let recounted = floors::recounted(&stale, &totals[2..]);
+    let head_build = match sides[0].sha.as_deref() {
+        Some(s) => floors::build_id(&root, Some(s))?,
+        None => floors::build_id(&root, None)?,
+    };
+    let var = "MM_WASM_IR_ACCEPT";
+    let accepts = accept::for_change(&root, ACCEPTED, &base_sha, var)?;
+    let raised = |name: &str, r: f64| {
+        accepts
+            .iter()
+            .any(|a| a.names(None, name) && r <= a.ceiling())
+    };
+    let (against, errors) = floors::judge(
+        &root,
+        "wasm-ir",
+        &floors::Sides {
+            base: &base_sha,
+            tag,
+            head: &totals[0],
+            base_counts: &totals[1],
+            keys: &keys,
+            head_build: &head_build,
+            recounted: &recounted,
+        },
+        &raised,
+        write,
+    )?;
+    let floor: Counts = against
+        .into_iter()
+        .map(|(k, n)| (k, Count { guest: n, bulk: 0 }))
+        .collect();
+    let failures = report(
+        &programs,
+        &counts[0],
+        (&sides[1].name, &counts[1]),
+        Some(("floor", &floor)),
+    );
+    floors::verdict(
+        accept::verdict("wasm-ir", ACCEPTED, var, &failures, &accepts),
+        &errors,
+    )
 }
 
 /// `--baselines FILE`: the head against counts stored in `FILE` (such as
@@ -258,6 +311,7 @@ fn against_baselines(
         (&file.display().to_string(), &stored),
         None,
     );
+    let past: Vec<&str> = past.iter().map(|f| f.text.as_str()).collect();
     if past.is_empty() {
         println!("\nwasm-ir: within the limits of the stored baselines");
     } else {
@@ -283,72 +337,6 @@ fn select(only: Option<&str>) -> Result<Vec<(&'static str, &'static str)>, Strin
                 .ok_or_else(|| format!("wasm-ir: no bench program `{n}`"))
         })
         .collect()
-}
-
-/// The anchor `rev` (commit `sha`) and the commits after it up to `base`
-/// that changed the build, as sides to count.
-fn anchor_sides(root: &Path, rev: &str, sha: &str, base: &str) -> Result<Vec<Side>, String> {
-    let short = |sha: &str| sha[..sha.len().min(10)].to_owned();
-    let mut sides = vec![Side {
-        label: "anchor".to_owned(),
-        target: "anchor",
-        name: format!("{rev} ({})", short(sha)),
-        sha: Some(sha.to_owned()),
-    }];
-    for c in changed_since(root, sha, base)? {
-        sides.push(Side {
-            label: format!("since-{}", short(&c)),
-            target: "anchor",
-            name: format!("{} since the anchor", short(&c)),
-            sha: Some(c),
-        });
-    }
-    Ok(sides)
-}
-
-/// Each program's least count over `counts`.
-fn least(counts: &[Counts]) -> Counts {
-    let mut out = Counts::new();
-    for c in counts {
-        for (name, &n) in c {
-            out.entry(name.clone())
-                .and_modify(|m: &mut Count| {
-                    if n.total() < m.total() {
-                        *m = n;
-                    }
-                })
-                .or_insert(n);
-        }
-    }
-    out
-}
-
-/// The first-parent commits after `anchor` up to `base`, `base` left out,
-/// whose `INPUTS` differ from the commit before them.
-pub(crate) fn changed_since(root: &Path, anchor: &str, base: &str) -> Result<Vec<String>, String> {
-    let list = git(
-        root,
-        &[
-            "rev-list",
-            "--first-parent",
-            "--reverse",
-            &format!("{anchor}..{base}"),
-        ],
-    )?;
-    let mut out = Vec::new();
-    let mut before = anchor.to_owned();
-    for sha in list.lines() {
-        let args = [
-            &["diff", "--name-only", before.as_str(), sha, "--"][..],
-            &INPUTS,
-        ]
-        .concat();
-        if sha != base && !git(root, &args)?.is_empty() {
-            out.push(sha.to_owned());
-        }
-        sha.clone_into(&mut before);
-    }
-    Ok(out)
 }
 
 /// FNV-1a of a bench program's source, which keys its cached counts.
@@ -381,11 +369,13 @@ fn tools() -> Result<Tools, String> {
         &version(&wasm_opt),
         &version(&valgrind),
     );
+    let host = floors::host(&valgrind);
     Ok(Tools {
         valgrind,
         wasmtime,
         isa,
         key,
+        host,
     })
 }
 
@@ -412,7 +402,17 @@ struct Tools {
     valgrind: PathBuf,
     wasmtime: PathBuf,
     isa: String,
+    /// What a stored baseline's `key` line holds ([`key`]).
     key: String,
+    /// [`floors::host`]: counts move with glibc and the CPU class.
+    host: String,
+}
+
+impl Tools {
+    /// The key a cached count and a floor are held under.
+    fn full_key(&self) -> String {
+        format!("{}; {}", self.key, self.host)
+    }
 }
 
 /// Each side's counts: cached ones first; only what is missing is built
@@ -438,12 +438,29 @@ fn measure(
         hashes.insert(name.to_owned(), source_hash(&source));
     }
     let mut counts: Vec<Counts> = Vec::new();
+    let mut keys: Vec<String> = Vec::new();
     let mut jobs: Vec<(usize, &str, &str, PathBuf)> = Vec::new();
     for (i, side) in sides.iter().enumerate() {
+        // Another revision is checked out and built outside this checkout,
+        // so it reads none of this checkout's `.cargo/`, with its own
+        // toolchain and, when its xtask can (`shipped-mm --target`), its
+        // own recipe; the key holds both.
+        let refs = crate::shipped::refs_dir("wasm-ir");
+        let (tree, target) = match &side.sha {
+            Some(s) if side.target != "head" || head_rev => {
+                let tree = refs.join(format!("{}-src", side.target));
+                checkout(root, &tree, s)?;
+                (tree, refs.join(side.target))
+            }
+            _ => (root.to_path_buf(), dir.join(side.target)),
+        };
+        let own = tree == root || own_recipe(root, side.sha.as_deref());
+        let recipe = crate::size::recipe_key(if own { &tree } else { root }, &tree)?;
+        let key = format!("{}; {recipe}", tools.full_key());
         let cached = side
             .sha
             .as_deref()
-            .map_or_default(|s| load(&cache, s, &tools.key, &hashes));
+            .map_or_default(|s| load(&cache, s, &key, &hashes));
         let missing: Vec<(&str, &str)> = programs
             .iter()
             .copied()
@@ -452,24 +469,18 @@ fn measure(
         if missing.is_empty() {
             println!("wasm-ir: {} counts cached", side.label);
         } else {
-            // Another revision is checked out and built outside this
-            // checkout, so it reads none of this checkout's `.cargo/`.
-            let refs = crate::shipped::refs_dir("wasm-ir");
-            let (tree, target) = match &side.sha {
-                Some(s) if side.target != "head" || head_rev => {
-                    let tree = refs.join(format!("{}-src", side.target));
-                    checkout(root, &tree, s)?;
-                    (tree, refs.join(side.target))
-                }
-                _ => (root.to_path_buf(), dir.join(side.target)),
+            let built = if own && tree != root {
+                build_itself(&tree, &tools.wasmtime, &tools.isa)?
+            } else {
+                build_mm(&tree, &target, &tools.wasmtime, Some(&tools.isa))?
             };
-            let built = build_mm(&tree, &target, &tools.wasmtime, Some(&tools.isa))?;
             // Sides share a target directory: each keeps its own module.
             let mm = dir.join(format!("{}.cwasm", side.label));
             fs::copy(&built, &mm).map_err(|error| format!("{}: {error}", mm.display()))?;
             jobs.extend(missing.into_iter().map(|(n, s)| (i, n, s, mm.clone())));
         }
         counts.push(cached);
+        keys.push(key);
     }
     let results = parallel(jobs.len(), |j| {
         let (i, name, stem, ref mm) = jobs[j];
@@ -486,50 +497,44 @@ fn measure(
     for ((i, name, _, _), result) in jobs.iter().zip(results) {
         counts[*i].insert((*name).to_owned(), result?);
     }
-    for (side, c) in sides.iter().zip(&counts) {
+    for ((side, c), key) in sides.iter().zip(&counts).zip(&keys) {
         if let Some(s) = &side.sha {
-            save(&cache, s, &tools.key, &hashes, c)?;
+            save(&cache, s, key, &hashes, c)?;
         }
     }
     Ok(counts)
 }
 
-/// The latest `v*` tag `base` descends from, or the latest commit since it
-/// whose message has an `accepted` line (a rise accepted); an error,
-/// naming `gate`, without such a tag.
-pub(crate) fn default_anchor(
-    root: &Path,
-    base: &str,
-    accepted: &str,
-    gate: &str,
-) -> Result<Option<(String, String)>, String> {
-    let Ok(tag) = git(
-        root,
-        &["describe", "--tags", "--abbrev=0", "--match", "v*", base],
-    ) else {
-        return Err(format!(
-            "{gate}: no v* tag reachable from {base}, so no anchor: fetch the \
-             tags (`git fetch --tags origin`) or name one with --anchor REV"
-        ));
-    };
-    let accepted = git(
-        root,
-        &[
-            "log",
-            "-1",
-            "--format=%H",
-            &format!("--grep=^{accepted}"),
-            &format!("{tag}..{base}"),
-        ],
-    )?;
-    if accepted.is_empty() {
-        let sha = git(
-            root,
-            &["rev-parse", "--verify", &format!("{tag}^{{commit}}")],
-        )?;
-        Ok(Some((tag, sha)))
-    } else {
-        Ok(Some((format!("accepted since {tag}"), accepted)))
+/// Whether commit `sha`'s xtask builds its own wasip1 `mm` with its own
+/// recipe (`cargo xtask shipped-mm --target`).
+fn own_recipe(root: &Path, sha: Option<&str>) -> bool {
+    let Some(sha) = sha else { return true };
+    let file = format!("{sha}:xtask/src/shipped.rs");
+    git(root, &["show", &file])
+        .unwrap_or_default()
+        .contains(crate::shipped::SHIPPED_MM_TARGET)
+}
+
+/// The tree at `tree` builds its shipped wasip1 `mm` with its own xtask
+/// (`cargo xtask shipped-mm --target wasm32-wasip1`, which prints the
+/// optimized module's path) and toolchain; precompiled for `isa`.
+fn build_itself(tree: &Path, wasmtime: &Path, isa: &str) -> Result<PathBuf, String> {
+    let output = crate::shipped::tree_cargo(tree)
+        .args(["xtask", "shipped-mm", "--target", "wasm32-wasip1"])
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|e| format!("cannot run cargo: {e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    match stdout.lines().last() {
+        Some(path) if output.status.success() => {
+            crate::wasm_wall::compile(Path::new(path.trim()), wasmtime, Some(isa))
+        }
+        _ => Err(format!(
+            "`cargo xtask shipped-mm --target wasm32-wasip1` failed in {}",
+            tree.display()
+        )),
     }
 }
 
@@ -587,31 +592,6 @@ fn save(
     fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))
 }
 
-/// Passes when nothing rose past a limit, or `MM_WASM_IR_ACCEPT` says why
-/// it did.
-fn verdict(failures: &[String]) -> Result<(), String> {
-    let accepted = env::var("MM_WASM_IR_ACCEPT").unwrap_or_default();
-    if failures.is_empty() {
-        println!("\nwasm-ir: within the limits");
-        Ok(())
-    } else if !accepted.trim().is_empty() {
-        println!(
-            "\nwasm-ir: past the limits ({}), accepted: {}",
-            failures.join("; "),
-            accepted.trim()
-        );
-        Ok(())
-    } else {
-        Err(format!(
-            "wasm-ir: more guest instructions: {}; if the rise is intended, \
-             rerun with MM_WASM_IR_ACCEPT=<reason> and put the table and a \
-             `{ACCEPTED} <reason>` line in the commit message (later runs \
-             anchor on that commit)",
-            failures.join("; ")
-        ))
-    }
-}
-
 /// `job(0..n)` on at most one thread per CPU (a count does not depend on
 /// load); the results in order.
 pub(crate) fn parallel<T: Send>(n: usize, job: impl Fn(usize) -> T + Sync) -> Vec<T> {
@@ -645,13 +625,13 @@ pub(crate) fn parallel<T: Send>(n: usize, job: impl Fn(usize) -> T + Sync) -> Ve
     done.into_iter().map(|(_, result)| result).collect()
 }
 
-/// Prints the table; returns the limits exceeded against base and anchor.
+/// Prints the table; returns the limits exceeded against base and floor.
 fn report(
     programs: &[(&str, &str)],
     head: &Counts,
     base: (&str, &Counts),
-    anchor: Option<(&str, &Counts)>,
-) -> Vec<String> {
+    floor: Option<(&str, &Counts)>,
+) -> Vec<Failure> {
     let at = |c: &Counts, name: &str| c.get(name).copied().unwrap_or_default();
     println!(
         "\nwasmtime instructions, guest code and memory.copy/fill, millions; \
@@ -661,8 +641,8 @@ fn report(
         "  {:<11} {:>10} {:>10} {:>9} {:>6}",
         "program", "base", "head", "head/base", "bulk"
     );
-    if anchor.is_some() {
-        let _ = write!(header, " {:>10} {:>11}", "anchor", "head/anchor");
+    if floor.is_some() {
+        let _ = write!(header, " {:>10} {:>11}", "floor", "head/floor");
     }
     println!("{header}");
     let show = |name: &str, h: u64, o: u64| -> String {
@@ -690,7 +670,7 @@ fn report(
             show(name, h.total(), b),
             percent(h.bulk, h.total())
         );
-        if let Some((_, a)) = anchor {
+        if let Some((_, a)) = floor.filter(|(_, a)| a.contains_key(name)) {
             let a = at(a, name).total();
             let _ = write!(
                 line,
@@ -701,36 +681,47 @@ fn report(
         }
         println!("{line}");
     }
-    let (geo_base, mut failures) = judge(programs, head, base, anchor.map(|a| a.1));
+    let (geo_base, mut failures) = judge(programs, head, base, floor.map(|a| a.1));
     let mut geo = format!("  geomean (without startup) head/base {geo_base:.4}");
-    if let Some(a) = anchor {
-        let (geo_anchor, more) = judge(programs, head, a, None);
-        let _ = write!(geo, ", head/anchor {geo_anchor:.4}");
+    if let Some(a) = floor {
+        let (geo_floor, more) = judge(programs, head, a, None);
+        let _ = write!(geo, ", head/floor {geo_floor:.4}");
         failures.extend(more);
     }
     println!(
-        "{geo}\n  (^ past +1.0%, v below -1.0%; startup in instructions, limit +{STARTUP_LIMIT})"
+        "{geo}\n  (^ past +1.0%, v below -1.0%; startup in instructions, limit +{})",
+        LIMITS.startup
     );
     failures
 }
 
 /// The geomean of `head`'s ratios to `other` without `startup`, and the
 /// limits it exceeds. A rise against the base that only returns to the
-/// anchor's level (`back`) still fails, and says so.
+/// floor's level (`back`) still fails, and says so.
 fn judge(
     programs: &[(&str, &str)],
     head: &Counts,
     (against, other): (&str, &Counts),
     back: Option<&Counts>,
-) -> (f64, Vec<String>) {
+) -> (f64, Vec<Failure>) {
     let total = |c: &Counts, name: &str| c.get(name).map_or(0, |c| c.total());
     let mut failures = Vec::new();
     let (mut product, mut n) = (1.0_f64, 0_i32);
     for &(name, _) in programs {
+        // A count the other side lacks (no floor yet) is not compared.
+        if !other.contains_key(name) {
+            continue;
+        }
         let (h, o) = (total(head, name), total(other, name));
+        let failure = |text: String| Failure {
+            guest: None,
+            name: name.to_owned(),
+            ratio: ratio(h, o),
+            text,
+        };
         if name == "startup" {
-            if h > o + STARTUP_LIMIT {
-                failures.push(format!("startup +{} against {against}", h - o));
+            if LIMITS.past(name, h, o) {
+                failures.push(failure(format!("startup +{} against {against}", h - o)));
             }
             continue;
         }
@@ -742,14 +733,19 @@ fn judge(
                 .map(|a| ratio(h, total(a, name)))
                 .filter(|&ra| ra <= PROGRAM_LIMIT)
                 .map_or(String::new(), |ra| {
-                    format!(" (head/anchor {ra:.4}: back to the anchor's level)")
+                    format!(" (head/floor {ra:.4}: back to the floor)")
                 });
-            failures.push(format!("{name} {r:.4} against {against}{note}"));
+            failures.push(failure(format!("{name} {r:.4} against {against}{note}")));
         }
     }
     let geomean = product.powf(1.0 / f64::from(n.max(1)));
     if geomean > GEOMEAN_LIMIT {
-        failures.push(format!("geomean {geomean:.4} against {against}"));
+        failures.push(Failure {
+            guest: None,
+            name: "geomean".to_owned(),
+            ratio: geomean,
+            text: format!("geomean {geomean:.4} against {against}"),
+        });
     }
     (geomean, failures)
 }
@@ -925,37 +921,6 @@ mod tests {
         )])
     }
 
-    /// A new git repository under the temporary directory.
-    fn repo(name: &str) -> PathBuf {
-        let dir = env::temp_dir().join(format!("wasm-ir-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        git(&dir, &["init", "--quiet"]).unwrap();
-        dir
-    }
-
-    /// Writes `file` and commits it; the commit's id.
-    fn commit(dir: &Path, file: &str) -> String {
-        let path = dir.join(file);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, git(dir, &["rev-list", "--all"]).unwrap_or_default()).unwrap();
-        git(dir, &["add", "--all"]).unwrap();
-        let who = [
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@t",
-            "-c",
-            "core.hooksPath=/dev/null",
-        ];
-        git(
-            dir,
-            &[&who[..], &["commit", "--quiet", "-m", file]].concat(),
-        )
-        .unwrap();
-        git(dir, &["rev-parse", "HEAD"]).unwrap()
-    }
-
     #[test]
     fn the_key_holds_how_a_revision_is_built() {
         let k = key(
@@ -986,46 +951,5 @@ mod tests {
         assert!(load(&cache, "abc", "key", &at("2222")).is_empty());
         assert!(load(&cache, "abc", "other key", &at("1111")).is_empty());
         fs::remove_dir_all(&cache).unwrap();
-    }
-
-    #[test]
-    fn a_checkout_without_the_tag_has_no_anchor() {
-        let dir = repo("tags");
-        let first = commit(&dir, "crates/a.rs");
-        let error = default_anchor(&dir, &first, ACCEPTED, "wasm-ir").unwrap_err();
-        assert!(error.contains("no v* tag"), "{error}");
-        git(&dir, &["tag", "v0.0.1"]).unwrap();
-        let head = commit(&dir, "crates/b.rs");
-        assert_eq!(
-            default_anchor(&dir, &head, ACCEPTED, "wasm-ir").unwrap(),
-            Some(("v0.0.1".to_owned(), first))
-        );
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn the_anchor_counts_every_build_since_it() {
-        let dir = repo("chain");
-        let tag = commit(&dir, "crates/a.rs");
-        commit(&dir, "docs/a.md");
-        let changed = commit(&dir, "crates/b.rs");
-        commit(&dir, "crates/x/tests/t.rs");
-        commit(&dir, "crates/x/README.md");
-        let base = commit(&dir, "Cargo.lock");
-        assert_eq!(changed_since(&dir, &tag, &base).unwrap(), vec![changed]);
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn creep_after_a_gain_fails_against_the_anchor() {
-        let programs = [("fib", "fib")];
-        // The tag; a 6% gain; then base and head each rise under the limits.
-        let (tag, gain, base, head) = (counts(1000), counts(940), counts(948), counts(952));
-        let fails = |other: &Counts| !judge(&programs, &head, ("x", other), None).1.is_empty();
-        assert!(
-            !fails(&base) && !fails(&tag),
-            "each step is under the limits"
-        );
-        assert!(fails(&least(&[base, tag, gain])), "1.3% over the gain");
     }
 }

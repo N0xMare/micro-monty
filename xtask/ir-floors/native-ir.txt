@@ -1,0 +1,19 @@
+# native-ir: each count's floor, the lowest it has been (xtask/src/floors.rs).
+# Written by `cargo xtask native-ir --write-floors`; a floor rises only with an
+# accept line. name\tcount\tbuild\tkey
+aio	664537601	b-62c78230ca3ddf3a	k-08087382ed553838
+bytearray	1707844281	b-62c78230ca3ddf3a	k-299111addedd243d
+classes	1303195391	b-62c78230ca3ddf3a	k-044fa7d8e81d1831
+closure	716723943	b-62c78230ca3ddf3a	k-37b38cb12b160a75
+dict	1169297020	b-62c78230ca3ddf3a	k-a983205f510a6805
+exceptions	984962162	b-62c78230ca3ddf3a	k-fbb6fe49f0d8e71b
+fib	309834963	b-62c78230ca3ddf3a	k-a61def225d6650ce
+floats	1602821733	b-62c78230ca3ddf3a	k-8f77718643dee387
+fmt	1581360721	b-62c78230ca3ddf3a	k-a0220630374f7ea8
+generators	2364405322	b-62c78230ca3ddf3a	k-510ff942ddbaa30a
+interp	2223532313	b-62c78230ca3ddf3a	k-4d01d67bd9caa182
+json	1159698988	b-62c78230ca3ddf3a	k-8b4872e7014e6084
+loop	1191617700	b-62c78230ca3ddf3a	k-eb59bbdfb3b13cc6
+sort	1433799226	b-62c78230ca3ddf3a	k-fe721e19d109ce03
+startup	533105	b-62c78230ca3ddf3a	k-9e040425fe300eff
+str	471709976	b-62c78230ca3ddf3a	k-3500f3d40849efbe

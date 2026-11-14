@@ -1,6 +1,6 @@
 //! `cargo xtask v8-ir`: V8's instructions on the bench programs, in the
-//! `wasm32-unknown-unknown` mm-wasm guests, against a base revision and an
-//! anchor (the 0.0.2 performance review, sections 14 and 15).
+//! `wasm32-unknown-unknown` mm-wasm guests, against a base revision and
+//! the floors (the 0.0.2 performance review, sections 14, 15 and 17).
 //!
 //! Each side's two guests (`mm_wasm_guest.wasm` and
 //! `mm_wasm_guest_bundle.wasm`) are got as shipped. A revision whose xtask
@@ -34,16 +34,15 @@
 //! guests of the commits built with it, and counts only those whose bytes
 //! changed.
 //!
-//! The anchor is the latest `v*` tag the base descends from; a count's
-//! anchor count is its least over the anchor, the base and every
-//! first-parent commit between them that changed the build, from the last
-//! accept line there that names it on ([`crate::accept`]). Against both, a
-//! program's count rising past 0.5% (`PROGRAM_LIMIT`) or the geometric
-//! mean of the ratios past 0.3% (`GEOMEAN_LIMIT`), on either guest, fails
-//! unless a `V8-IR-Accepted: <names> <ceiling> <reason>` line in a commit
-//! since the base covers it; a name is a program or `geomean`, with
-//! `plain/` or `bundle/` before it for one guest. Unrelated commits move a
-//! program by 0.00-0.06% [M]. Fewer instructions always pass.
+//! Each count's floor, the lowest since the last tag, is in
+//! `xtask/ir-floors/v8-ir.txt` as `<plain|bundle>/<program>`
+//! ([`crate::floors`]). Against the base and the floor, a program's count
+//! rising past 0.5% (`PROGRAM_LIMIT`) or the geometric mean of the ratios
+//! past 0.3% (`GEOMEAN_LIMIT`), on either guest, fails unless a
+//! `V8-IR-Accepted: <names> <ceiling> <reason>` line in a commit since the
+//! base covers it; a name is a program or `geomean`, with `plain/` or
+//! `bundle/` before it for one guest. Unrelated commits move a program by
+//! 0.00-0.06% [M]. Fewer instructions always pass, and lower the floor.
 
 use std::{
     collections::BTreeMap,
@@ -58,8 +57,8 @@ use std::{
 use crate::{
     accept::{self, Failure},
     bench::{PROGRAMS, read_expected},
-    size,
-    wasm_ir::{changed_since, source_hash, version},
+    floors, size,
+    wasm_ir::{source_hash, version},
     wasm_wall::{checkout, git, head_id},
     workspace_root,
 };
@@ -70,7 +69,7 @@ const PROGRAM_LIMIT: f64 = 1.005;
 const GEOMEAN_LIMIT: f64 = 1.003;
 /// What a count holds, in the cache key: change it when that changes.
 const COUNTING: &str = "V8 generated code, second of two runs, node --no-liftoff, 1";
-/// The line that marks a commit whose rise was accepted; it re-anchors.
+/// The line that accepts a rise ([`crate::accept`]); it raises the floors it names.
 const ACCEPTED: &str = "V8-IR-Accepted:";
 /// The guests counted, by their names in `size --head`'s list.
 const GUESTS: [&str; 2] = ["mm_wasm_guest.wasm", "mm_wasm_guest_bundle.wasm"];
@@ -86,9 +85,13 @@ struct Side {
     sha: Option<String>,
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "sides, floors, counts and the verdict in order"
+)]
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut base = "origin/main".to_owned();
-    let (mut anchor, mut only, mut head_built) = (None::<String>, None::<String>, false);
+    let (mut only, mut head_built, mut write) = (None::<String>, false, false);
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let mut value = |what: &str| {
@@ -98,9 +101,9 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         };
         match arg.as_str() {
             "--base" => base = value("a revision")?,
-            "--anchor" => anchor = Some(value("a revision")?),
             "--programs" => only = Some(value("a list")?),
             "--head-built" => head_built = true,
+            "--write-floors" => write = true,
             other => return Err(format!("v8-ir: unknown option `{other}`")),
         }
     }
@@ -128,36 +131,87 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         driver.extend(fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?);
     }
     let tools = format!(
-        "{COUNTING}; node {}; {}; driver {}",
+        "{COUNTING}; node {}; {}; {}; driver {}",
         version(&node),
         version(&valgrind),
+        floors::host(&valgrind),
         source_hash(&driver)
     );
-    let sides = sides(&root, &base, anchor.as_deref())?;
+    let base_sha = git(&root, &["merge-base", &base, "HEAD"])?;
+    let tag = git(
+        &root,
+        &[
+            "describe",
+            "--exact-match",
+            "--tags",
+            "--match",
+            "v*",
+            &base_sha,
+        ],
+    )
+    .is_ok();
+    // The floors (crate::floors), named `<plain|bundle>/<program>`, and
+    // the build of each stale one.
+    let mut keys = BTreeMap::new();
+    for &(name, stem) in &programs {
+        let path = root.join(format!("bench/{stem}.py"));
+        let source = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        for guest in GUESTS {
+            let k = floors::key(&tools, &source_hash(&source));
+            keys.insert(format!("{}/{name}", label(guest)), k);
+        }
+    }
+    let stale = floors::stale(&root, "v8-ir", &base_sha, tag, &keys)?;
+    let floor_commits: Vec<String> = stale.iter().map(|(s, _)| s.clone()).collect();
+    let sides = sides(&root, &base, &base_sha, &floor_commits)?;
     for side in &sides {
         println!("v8-ir: {:<6} = {}", side.label, side.name);
     }
     let counts = measure(
         &root, &valgrind, &node, &tools, &sides, &programs, head_built,
     )?;
-    // Each count's anchor: its least from the anchor to the base, from the
-    // last accept line there that names it on.
-    let least = match (sides.get(2), &sides[1].sha) {
-        (Some(Side { sha: Some(a), .. }), Some(b)) => {
-            let history: Vec<(&str, &Counts)> = sides[2..]
-                .iter()
-                .zip(&counts[2..])
-                .filter_map(|(s, c)| Some((s.sha.as_deref()?, c)))
-                .chain([(b.as_str(), &counts[1])])
-                .collect();
-            let accepts = accept::committed(&root, ACCEPTED, &format!("{a}..{b}"))?;
-            Some(accept::least_since(&root, &history, &accepts, split)?)
-        }
-        _ => None,
+    // Counts by floor name.
+    let named = |c: &Counts| -> Counts {
+        c.iter()
+            .filter_map(|(k, &n)| {
+                let (g, p) = split(k);
+                Some((format!("{}/{p}", g?), n))
+            })
+            .collect()
     };
-    let anchor_name = sides
-        .get(2)
-        .map(|side| format!("{} to the base", side.name));
+    let all: Vec<Counts> = counts.iter().map(named).collect();
+    let recounted = floors::recounted(&stale, &all[2..]);
+    let accepts = accept::for_change(&root, ACCEPTED, &base_sha, "MM_V8_IR_ACCEPT")?;
+    let raised = |name: &str, r: f64| {
+        let (g, p) = name.split_once('/').unwrap_or(("", name));
+        accepts
+            .iter()
+            .any(|a| a.names(Some(g), p) && r <= a.ceiling())
+    };
+    let (against, errors) = floors::judge(
+        &root,
+        "v8-ir",
+        &floors::Sides {
+            base: &base_sha,
+            tag,
+            head: &all[0],
+            base_counts: &all[1],
+            keys: &keys,
+            head_build: &floors::build_id(&root, None)?,
+            recounted: &recounted,
+        },
+        &raised,
+        write,
+    )?;
+    // The floors keyed as the counts are.
+    let floor: Counts = against
+        .into_iter()
+        .filter_map(|(k, n)| {
+            let (g, p) = k.split_once('/')?;
+            let guest = GUESTS.iter().find(|f| label(f) == g)?;
+            Some((format!("{guest}/{p}"), n))
+        })
+        .collect();
     let mut failures = Vec::new();
     for guest in GUESTS {
         failures.extend(report(
@@ -165,12 +219,13 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             &programs,
             &counts[0],
             (&sides[1].name, &counts[1]),
-            anchor_name.as_deref().zip(least.as_ref()),
+            Some(("floor", &floor)),
         ));
     }
-    let base = sides[1].sha.clone().unwrap_or_default();
-    let accepts = accept::for_change(&root, ACCEPTED, &base, "MM_V8_IR_ACCEPT")?;
-    accept::verdict("v8-ir", ACCEPTED, "MM_V8_IR_ACCEPT", &failures, &accepts)
+    floors::verdict(
+        accept::verdict("v8-ir", ACCEPTED, "MM_V8_IR_ACCEPT", &failures, &accepts),
+        &errors,
+    )
 }
 
 /// The short name of a guest in accept lines.
@@ -188,23 +243,10 @@ fn split(key: &str) -> (Option<String>, String) {
     (Some(label(guest).to_owned()), program.to_owned())
 }
 
-/// The head (the working tree), the base (the merge base with `base`),
-/// and the anchor (`anchor`, else the last `v*` tag) with every commit
-/// after it up to the base that changed the build.
-fn sides(root: &Path, base: &str, anchor: Option<&str>) -> Result<Vec<Side>, String> {
-    let sha = |rev: &str| {
-        git(
-            root,
-            &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
-        )
-    };
+/// The head (the working tree), the base (`base_sha`, the merge base with
+/// `base`) and each stale floor's build (`floors`).
+fn sides(root: &Path, base: &str, base_sha: &str, floors: &[String]) -> Result<Vec<Side>, String> {
     let short = |sha: &str| sha[..sha.len().min(10)].to_owned();
-    let base_sha = git(root, &["merge-base", base, "HEAD"])?;
-    let anchor = match anchor {
-        Some(rev) => Some((rev.to_owned(), sha(rev)?)),
-        None => Some(accept::tag_anchor(root, &base_sha, "v8-ir")?),
-    }
-    .filter(|(_, a)| *a != base_sha);
     let mut sides = vec![
         Side {
             label: "head".to_owned(),
@@ -215,25 +257,17 @@ fn sides(root: &Path, base: &str, anchor: Option<&str>) -> Result<Vec<Side>, Str
         Side {
             label: "base".to_owned(),
             tree: "base",
-            name: format!("{base} ({})", short(&base_sha)),
-            sha: Some(base_sha.clone()),
+            name: format!("{base} ({})", short(base_sha)),
+            sha: Some(base_sha.to_owned()),
         },
     ];
-    if let Some((rev, a)) = &anchor {
+    for c in floors {
         sides.push(Side {
-            label: "anchor".to_owned(),
-            tree: "anchor",
-            name: format!("{rev} ({})", short(a)),
-            sha: Some(a.clone()),
+            label: format!("floor-{}", short(c)),
+            tree: "floor",
+            name: format!("{} (a floor's build)", short(c)),
+            sha: Some(c.clone()),
         });
-        for c in changed_since(root, a, &base_sha)? {
-            sides.push(Side {
-                label: format!("since-{}", short(&c)),
-                tree: "anchor",
-                name: format!("{} since the anchor", short(&c)),
-                sha: Some(c),
-            });
-        }
     }
     Ok(sides)
 }
@@ -644,13 +678,13 @@ fn save(
 }
 
 /// Prints `guest`'s table; returns the limits exceeded against base and
-/// anchor.
+/// floor.
 fn report(
     guest: &str,
     programs: &[(&str, &str)],
     head: &Counts,
     base: (&str, &Counts),
-    anchor: Option<(&str, &Counts)>,
+    floor: Option<(&str, &Counts)>,
 ) -> Vec<Failure> {
     let at = |c: &Counts, name: &str| c.get(&format!("{guest}/{name}")).copied().unwrap_or(0);
     println!("\nV8 instructions in generated code, {guest}, second run, millions");
@@ -658,8 +692,8 @@ fn report(
         "  {:<11} {:>10} {:>10} {:>10}",
         "program", "base", "head", "head/base"
     );
-    if anchor.is_some() {
-        let _ = write!(header, " {:>10} {:>11}", "anchor", "head/anchor");
+    if floor.is_some() {
+        let _ = write!(header, " {:>10} {:>11}", "floor", "head/floor");
     }
     println!("{header}");
     let show = |r: f64| {
@@ -680,7 +714,7 @@ fn report(
             millions(h),
             show(ratio(h, b))
         );
-        if let Some((_, a)) = anchor {
+        if let Some((_, a)) = floor.filter(|(_, a)| a.contains_key(&format!("{guest}/{name}"))) {
             let a = at(a, name);
             let _ = write!(line, " {:>10.3} {:>11}", millions(a), show(ratio(h, a)));
         }
@@ -688,9 +722,13 @@ fn report(
     }
     let mut failures = Vec::new();
     let mut geo = String::from("  geomean");
-    for (against, other) in [Some(base), anchor].into_iter().flatten() {
+    for (against, other) in [Some(base), floor].into_iter().flatten() {
         let (mut product, mut n) = (1.0_f64, 0_i32);
         for &(name, _) in programs {
+            // A count the other side lacks (no floor yet) is not compared.
+            if !other.contains_key(&format!("{guest}/{name}")) {
+                continue;
+            }
             let r = ratio(at(head, name), at(other, name));
             product *= r;
             n += 1;

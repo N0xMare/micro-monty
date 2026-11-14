@@ -51,7 +51,9 @@ size:
 bench *args:
     cargo xtask bench {{ if args == "" { "--quick --engines cpython,micro-monty" } else { args } }}
 
-# The pre-tag checklist on the tree to tag, against the previous tag.
+# The pre-tag checklist on the tree to tag, against the previous tag: each
+# Ir gate compares the head with the tag and checks its floors against both.
+# Then, with the owner's approval (it runs on GitHub), `just release-dry-run`.
 pretag base=prev_tag:
     cargo xtask check --release-gate
     cargo check --manifest-path fuzz/Cargo.toml --features memory-probes --bins
@@ -62,3 +64,11 @@ pretag base=prev_tag:
     {{ if base == "none" { "true" } else { "cargo xtask native-ir --base " + base } }}
     cargo xtask native-ir --plain
     {{ if base == "none" { "true" } else { "cargo xtask v8-ir --base " + base } }}
+
+# release.yml as a dry run on GitHub (a manual dispatch builds every artifact
+# and uploads the bundle as a workflow artifact, with no release), on `ref`
+# as pushed. It runs on GitHub's runners: ask the owner first.
+release-dry-run ref="main":
+    gh workflow run release.yml --ref {{ref}}
+    sleep 5
+    gh run watch --exit-status "$(gh run list --workflow release.yml --branch {{ref}} --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId')"

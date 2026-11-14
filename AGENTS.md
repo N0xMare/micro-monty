@@ -44,13 +44,15 @@ just wasm                the facade on both wasm targets, round trip under wasmt
 just size                the shipped builds against the base, the release and its budget
 just bench [args]        bench checksums on CPython and mm (`--reps N` for timings)
 just pretag [base]       the pre-tag checklist against the previous `v*` tag
+just release-dry-run     release.yml dispatched on GitHub, no release (after
+                         pretag; it runs on GitHub, so only with the owner's go)
 ```
 
 Run `just --list` for the rest. Gates without a recipe are `cargo xtask`
 commands: `wasm-ir`, `v8-ir` (V8's instructions on both
-wasm32-unknown-unknown guests vs base and anchor; release gate, Linux),
+wasm32-unknown-unknown guests vs base and floors; release gate, Linux),
 `native-ir` (the gated bench Ir on the shipped native `mm` vs base and
-anchor; in `check`, Linux), `wasm-host`, `wasm-wall`, `gc-stress`,
+floors; in `check`, Linux), `wasm-host`, `wasm-wall`, `gc-stress`,
 `parse-diff`, `docs`, `difffuzz`, `handoffs` (writes
 `xtask/handoff-sites.txt`, the `need_py()` hand-off sites; `--check` is in
 `check`) and `shipped-mm` (`mm` built natively as shipped, the binary bench
@@ -116,7 +118,9 @@ to `target/check/logs/<stage>.log`.
   `generator.rs` or `aio.rs`; `crates/mm-core/src/gc*` or `snapshot.rs`;
   `crates/micro-monty/src/image.rs` or `tests/golden/`;
   `crates/mm-compile/src/encode.rs`; a `crates/mm-wasm-*` crate;
-  `xtask/src/wasm.rs` or `shipped.rs`; `rust-toolchain.toml`,
+  `xtask/src/wasm.rs` or `shipped.rs`; the release-gate-only Ir gates'
+  code (`xtask/src/v8_ir.rs`, `replay_ir.rs`, `accept.rs`, `floors.rs`)
+  and `xtask/ir-floors/v8-ir.txt`; `rust-toolchain.toml`,
   `Cargo.lock`, `.cargo/` or `.agents/setup`. A line of a `[profile.*]`
   table, an `optimize` mark (`size`, `speed` or `none`, bare or in
   `cfg_attr`) added, removed, edited or moved to another function (a
@@ -138,30 +142,44 @@ to `target/check/logs/<stage>.log`.
   and head it judged, and refuses a `--base` that already holds HEAD
   when the tree is clean. A facade API or snapshot format change also
   needs `cargo xtask wasm-host` (in the release gate).
-- Ir: drops always pass; rises are gated against the base and against an
-  anchor (each count's lowest since the last `v*` tag, so steps under a
-  limit cannot add up; the gates need the tags fetched). Three gates, on
-  Linux:
+- Ir: drops always pass; rises are gated against the base and against
+  each count's floor, the lowest it has been since the last `v*` tag, kept
+  in `xtask/ir-floors/<gate>.txt` with the build that set it and its count
+  key (counting method, tools, host, program source), so steps under a
+  limit cannot add up and no gate builds history. A change that lowers a
+  count lowers its floor in the same commit, and `check` fails a head below
+  its floor whose file is not lowered: `cargo xtask <gate> --write-floors`
+  writes it. A floor rises only to the head's count, with an accept line
+  that covers the rise. A stale floor (another key) is recounted on its
+  build. Two landings that both move a floor: take the raise when one side
+  is an accepted raise, else the lower count; the gate then sets it.
+  Startup drift is not accepted (owner): `startup` may move 300
+  instructions without a line. Three gates, on Linux:
   - `cargo xtask native-ir` (both tiers): the gated count
     `python3 bench/callgrind.py` prints first, on the shipped native `mm`
-    (`cargo xtask shipped-mm`). Fails on a program past +0.5% or `startup`
-    past +2,900 instructions. Base and anchor build with their own
-    toolchain and, when their xtask has `shipped-mm`, their own recipe.
+    (`cargo xtask shipped-mm`), run with an empty environment from a fixed
+    path. Fails on a program past +0.5% or `startup` past +300
+    instructions. The base builds with its own toolchain and, when its
+    xtask has `shipped-mm`, its own recipe.
   - `cargo xtask wasm-ir` (both tiers): the shipped wasip1 `mm`'s guest
     instructions under wasmtime. Fails on a program past +1.0%, the
-    geomean past +0.5% or `startup` past +50,000 instructions.
+    geomean past +0.5% or `startup` past +300 instructions. Other revisions
+    build with their own toolchain and, when their xtask has `shipped-mm
+    --target`, their own recipe.
   - `cargo xtask v8-ir` (release gate): V8's generated code on both
     `wasm32-unknown-unknown` guests. Fails on a program past +0.5% or a
     guest's geomean past +0.3%.
 
-  An intended rise says why in its commit, with the table. native-ir and
-  v8-ir take `Native-IR-Accepted:` / `V8-IR-Accepted: <names> <ceiling>
-  <reason>`, such as `Native-IR-Accepted: dict,startup 1.006 <reason>`:
-  it passes only the names it lists (programs or `geomean`; v8-ir may put
-  `plain/` or `bundle/` before one) up to the ceiling ratio, and later runs
-  re-anchor only those. `MM_IR_ACCEPT` / `MM_V8_IR_ACCEPT` with the same
-  text stand for the line in an uncommitted tree only. wasm-ir takes
-  `MM_WASM_IR_ACCEPT=<reason>` and a `Wasm-IR-Accepted:` line. Report the
+  An intended rise says why in its commit, with the table. Each gate takes
+  a line `<Prefix> <names> <ceiling> <reason>`: `Native-IR-Accepted:`,
+  `Wasm-IR-Accepted:` or `V8-IR-Accepted:`,
+  such as `Native-IR-Accepted: dict,startup 1.006 <reason>`. It passes
+  only the names it lists (programs or `geomean`; v8-ir may
+  put `plain/` or `bundle/` before one) up to the ceiling ratio, and
+  raises only their floors. `MM_IR_ACCEPT`, `MM_WASM_IR_ACCEPT` and
+  `MM_V8_IR_ACCEPT` with the same text stand for the line in an
+  uncommitted tree only. `just pretag` runs each against the previous tag
+  and checks the floors against the tag's counts. Report the
   whole-process count `bench/callgrind.py` prints second too.
 - Snapshots: keep code that writes or reads an image in the codec files
   (`micro-monty/src/image.rs`, `mm-engine/src/snapshot.rs`,

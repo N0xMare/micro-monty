@@ -125,13 +125,41 @@ fn shipped_guest_in(src: &Path, dir: &Path) -> Result<PathBuf, String> {
     )
 }
 
-/// Builds `mm` natively as shipped and prints its path,
-/// `target/<host>/release/mm`: the binary `bench/callgrind.py` measures by
-/// default.
-pub(crate) fn shipped_mm() -> Result<(), String> {
-    println!("{}", build_shipped_mm()?.display());
+/// `cargo xtask shipped-mm [--target <triple>]`: builds `mm` as shipped
+/// and prints its path: natively `target/<host>/release/mm`, the binary
+/// `bench/callgrind.py` measures by default; for a wasm target the module
+/// `wasm-opt -Oz` wrote. Another revision's gates build that revision's
+/// `mm` with this, so it is built with its own recipe
+/// ([`SHIPPED_MM_TARGET`]).
+pub(crate) fn shipped_mm(args: &[String]) -> Result<(), String> {
+    let path = match args {
+        [] => build_shipped_mm()?,
+        [flag, target] if flag == "--target" => {
+            let status = shipped_build(target)
+                .args(["--quiet", "--package", "mm-cli", "--bin", "mm"])
+                .status()
+                .map_err(|error| format!("cannot run cargo: {error}"))?;
+            if !status.success() {
+                return Err(format!("shipped release build of mm for {target} failed"));
+            }
+            let built = workspace_root().join(format!("target/{target}/release"));
+            if target.starts_with("wasm32") {
+                wasm::optimize(target, &built.join("mm.wasm"))?
+            } else {
+                built.join("mm")
+            }
+        }
+        _ => return Err("usage: cargo xtask shipped-mm [--target <triple>]".to_owned()),
+    };
+    println!("{}", path.display());
     Ok(())
 }
+
+/// The line by which a later gate knows a revision's xtask builds its
+/// `mm` for any target with its own recipe (`shipped-mm --target`): the
+/// gates grep a revision's `xtask/src/shipped.rs` for it. Keep it while
+/// that holds.
+pub(crate) const SHIPPED_MM_TARGET: &str = "shipped-mm --target: own recipe, prints the path";
 
 /// `mm` built natively as shipped ([`shipped_build`]): its path.
 fn build_shipped_mm() -> Result<PathBuf, String> {

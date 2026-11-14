@@ -421,8 +421,7 @@ fn pool(files: &[PathBuf]) -> Result<(), String> {
 fn build(src: &Path, target: &Path, wasmtime: &Path) -> Result<Build, String> {
     let cwasm = build_mm(src, target, wasmtime, None)?;
     let target_dir = target.to_string_lossy().into_owned();
-    let status = crate::shipped_build("wasm32-unknown-unknown")
-        .current_dir(src)
+    let status = crate::shipped::shipped_build_in("wasm32-unknown-unknown", src)
         .args([
             "--quiet",
             "--package",
@@ -470,8 +469,7 @@ pub(crate) fn build_mm(
     isa: Option<&str>,
 ) -> Result<PathBuf, String> {
     let target_dir = target.to_string_lossy().into_owned();
-    let status = crate::shipped_build("wasm32-wasip1")
-        .current_dir(src)
+    let status = crate::shipped::shipped_build_in("wasm32-wasip1", src)
         .args([
             "--quiet",
             "--package",
@@ -491,6 +489,12 @@ pub(crate) fn build_mm(
         "wasm32-wasip1",
         &target.join("wasm32-wasip1/release/mm.wasm"),
     )?;
+    compile(&mm, wasmtime, isa)
+}
+
+/// `wasmtime compile` of the module `mm` (for `isa`, else this host),
+/// beside it; the precompiled module's path.
+pub(crate) fn compile(mm: &Path, wasmtime: &Path, isa: Option<&str>) -> Result<PathBuf, String> {
     let cwasm = mm.with_extension("cwasm");
     let mut command = Command::new(wasmtime);
     command.arg("compile");
@@ -498,7 +502,7 @@ pub(crate) fn build_mm(
         command.args(["--target", isa]);
     }
     let status = command
-        .arg(&mm)
+        .arg(mm)
         .arg("-o")
         .arg(&cwasm)
         .status()
