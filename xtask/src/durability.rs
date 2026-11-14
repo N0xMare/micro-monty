@@ -96,6 +96,9 @@ const RESULTS: &str = "conformance/durability-results.txt";
 const SCRATCH_PER_JOB: u64 = 320 << 20;
 /// The tmpfs the jobs' scratch goes to when it has room.
 const TMPFS: &str = "/dev/shm";
+/// A run's scratch directory, under [`TMPFS`] or the system's temporary
+/// directory: this, then the pid of the xtask that made it.
+const SCRATCH_PREFIX: &str = "mm-durability-";
 /// The parked modes, and the columns each is compared in.
 /// `restore-vs-snapshot` compares the restore chain with the session that
 /// took the same snapshots and went on, not with the unparked run.
@@ -273,6 +276,19 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             .then_with(|| (a.spec != fine, &a.case).cmp(&(b.spec != fine, &b.case)))
     });
     let workers = thread::available_parallelism().map_or(1, usize::from);
+    // A run killed before its end leaves its scratch behind, on the
+    // tmpfs as memory no one can reclaim: remove those first, so the
+    // room check below sees what is really free.
+    if Path::new("/proc/self").is_dir() {
+        let alive = |pid: u32| Path::new(&format!("/proc/{pid}")).exists();
+        for (dir, bytes) in sweep(&[Path::new(TMPFS), &std::env::temp_dir()], alive) {
+            println!(
+                "durability: removed {} ({} MiB), left by a run that is gone",
+                dir.display(),
+                bytes >> 20
+            );
+        }
+    }
     let (scratch, place) = scratch_dir(workers.min(jobs.len()));
     let policy = match &every {
         _ if cross => format!(
@@ -608,13 +624,65 @@ fn write_times(path: &Path, timed: &[(String, f64, Outcome)]) {
     let _ = fs::write(path, text);
 }
 
+/// Removes the scratch directories in `bases` whose run is not `alive` (by
+/// the pid in its name), and returns each with the bytes it held. A
+/// directory of a live run, or any other entry, stays.
+fn sweep(bases: &[&Path], alive: impl Fn(u32) -> bool) -> Vec<(PathBuf, u64)> {
+    let mut removed = Vec::new();
+    for base in bases {
+        let Ok(entries) = fs::read_dir(base) else {
+            continue;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name();
+            let Some(pid) = name
+                .to_str()
+                .and_then(|n| n.strip_prefix(SCRATCH_PREFIX))
+                .and_then(|p| p.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            let dir = entry.path();
+            if alive(pid) || !dir.is_dir() {
+                continue;
+            }
+            let bytes = size_of(&dir);
+            if fs::remove_dir_all(&dir).is_ok() {
+                removed.push((dir, bytes));
+            }
+        }
+    }
+    removed
+}
+
+/// The bytes of the files under `dir`, without following links.
+fn size_of(dir: &Path) -> u64 {
+    let mut total = 0;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for entry in fs::read_dir(&d)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+        {
+            match entry.file_type() {
+                Ok(t) if t.is_dir() => stack.push(entry.path()),
+                Ok(t) if t.is_file() => total += entry.metadata().map_or(0, |m| m.len()),
+                _ => {}
+            }
+        }
+    }
+    total
+}
+
 /// Where the jobs' scratch directories go, and how the header says it: a
 /// directory on [`TMPFS`] when it has room for `jobs` jobs'
 /// [`SCRATCH_PER_JOB`] and the memory twice that (a tmpfs page is memory
 /// no one can reclaim; the jobs' own heaps need the rest), so the images a
 /// fine chain writes and reads (about 33 GB each way for own cases 466
-/// and 534 at 1:1000 [M]) never reach the disk; else the system's
-/// temporary directory.
+/// and 534 at 1:1000 [M]) never reach the disk; else one in the system's
+/// temporary directory. Either is named for this run ([`SCRATCH_PREFIX`]),
+/// so [`sweep`] finds it if the run is killed.
 fn scratch_dir(jobs: usize) -> (Option<PathBuf>, String) {
     let need = SCRATCH_PER_JOB * jobs as u64;
     let mib = |b: u64| format!("{} MiB", b >> 20);
@@ -638,7 +706,20 @@ fn scratch_dir(jobs: usize) -> (Option<PathBuf>, String) {
         let line = m.lines().find(|l| l.starts_with("MemAvailable:"))?;
         Some(line.split_whitespace().nth(1)?.parse::<u64>().ok()? * 1024)
     });
-    let disk = |why: String| (None, format!("on disk ({why})"));
+    let own = format!("{SCRATCH_PREFIX}{}", std::process::id());
+    let disk = |why: String| {
+        let dir = std::env::temp_dir().join(&own);
+        match fs::create_dir_all(&dir) {
+            Ok(()) => (
+                Some(dir.clone()),
+                format!("on disk, {} ({why})", dir.display()),
+            ),
+            Err(e) => (
+                None,
+                format!("on disk ({why}; cannot create {}: {e})", dir.display()),
+            ),
+        }
+    };
     let (Some(free), Some(memory)) = (tmpfs, memory) else {
         return disk(if !Path::new(TMPFS).is_dir() {
             format!("no {TMPFS}")
@@ -657,7 +738,7 @@ fn scratch_dir(jobs: usize) -> (Option<PathBuf>, String) {
             mib(2 * need)
         ));
     }
-    let dir = Path::new(TMPFS).join(format!("mm-durability-{}", std::process::id()));
+    let dir = Path::new(TMPFS).join(&own);
     match fs::create_dir_all(&dir) {
         Ok(()) => {
             let shown = format!(
@@ -773,5 +854,35 @@ fn run_job(
         }),
         file,
         spec,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "tests fail on a broken fixture")]
+
+    use super::*;
+
+    #[test]
+    fn a_sweep_removes_only_the_scratch_of_runs_that_are_gone() {
+        let base = std::env::temp_dir().join(format!("sweep-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let make = |name: &str, bytes: usize| {
+            let dir = base.join(name);
+            fs::create_dir_all(dir.join("tmpabc")).unwrap();
+            fs::write(dir.join("tmpabc/session.mmsnap"), vec![0_u8; bytes]).unwrap();
+            dir
+        };
+        let gone = make("mm-durability-41", 3_000);
+        let live = make("mm-durability-42", 10);
+        let other = make("mm-durability-x", 10);
+        let unrelated = make("tmp-41", 10);
+        let removed = sweep(&[&base, &base.join("missing")], |pid| pid == 42);
+        assert_eq!(removed, vec![(gone.clone(), 3_000)]);
+        assert!(!gone.exists());
+        assert!(live.exists() && other.exists() && unrelated.exists());
+        // Nothing is left to remove the second time.
+        assert_eq!(sweep(&[&base], |pid| pid == 42), Vec::new());
+        fs::remove_dir_all(&base).unwrap();
     }
 }
