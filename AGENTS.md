@@ -47,17 +47,23 @@ just pretag [base]       the pre-tag checklist against the previous `v*` tag
 ```
 
 Run `just --list` for the rest. Gates without a recipe are `cargo xtask`
-commands: `wasm-ir`, `wasm-host`, `wasm-wall`, `gc-stress`, `parse-diff`,
-`docs`, `difffuzz`, `handoffs` (writes `xtask/handoff-sites.txt`, the
-`need_py()` hand-off sites; `--check` is in `check`) and `shipped-mm`
-(`mm` built natively as shipped, the binary bench Ir measures).
+commands: `wasm-ir`, `v8-ir` (V8's instructions on both
+wasm32-unknown-unknown guests vs base and anchor; release gate, Linux),
+`native-ir` (the gated bench Ir on the shipped native `mm` vs the merge
+base; in `check`, Linux), `wasm-host`, `wasm-wall`, `gc-stress`,
+`parse-diff`, `docs`, `difffuzz`, `handoffs` (writes
+`xtask/handoff-sites.txt`, the `need_py()` hand-off sites; `--check` is in
+`check`) and `shipped-mm` (`mm` built natively as shipped, the binary bench
+Ir measures).
 
 "Shipped" means built as embedders ship it (spec §6): std rebuilt with
 `-Cpanic=immediate-abort` (`RUSTC_BOOTSTRAP=1` on the pinned stable) and
 `--cfg mm_shipped`, which turns on `#[optimize(size)]` through
-`cfg_attr(mm_shipped, …)`. `size`, `wasm`, `wasm-ir`, `wasm-host` and
-`shipped-mm` build that way, and the step-time oracle times
-`mm_shipped` codegen.
+`cfg_attr(mm_shipped, …)`. `size`, `wasm`, `wasm-ir`, `v8-ir`,
+`wasm-host`, `native-ir` and `shipped-mm` build that way, `shipped-cases`
+runs the own cases and Monty's corpus on the shipped `mm`, and the
+step-time oracle is built fully as shipped (std and libtest rebuilt, each
+test in its own process; a row over the limit prints `OVER`).
 
 `check` runs its stages at the same time (`xtask/src/check.rs`): `mm`,
 durability and the workspace tests at normal priority, the rest at `nice`

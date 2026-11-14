@@ -21,10 +21,9 @@ micro-monty = "0.0.1"   # or { git = "https://github.com/N0xMare/micro-monty" }
 ```
 
 Releases are `0.0.x`, and Cargo treats each one as incompatible with the
-next: `"0.0.1"` never upgrades to 0.0.2 on its own. There are no
-compatibility layers between releases: moving to a new one is a
-deliberate change, and its snapshots follow
-[Upgrading: drain old builds](#upgrading-drain-old-builds).
+next: `"0.0.1"` never upgrades to 0.0.2 on its own. With no compatibility
+layers between releases, moving is a deliberate change, and its snapshots
+follow [Upgrading: drain old builds](#upgrading-drain-old-builds).
 
 The crate is pure Rust: no C toolchain and no files beside it. The bundled
 stdlib is compiled in. It builds for `wasm32-wasip1` and
@@ -138,9 +137,6 @@ entropy, so the driving loop above is the whole integration.
   print(0)` costs 0.90M instructions for the whole process \[M\]. Sessions
   of one `Engine` (or its clones) share decoded stdlib bytecode, so keep one
   `Engine` for the process.
-- **Panics.** Built with unwinding, the facade catches an engine panic and
-  poisons only that session: every later call returns a `SystemError` and
-  `is_poisoned()` is true (see [Embedding guarantees](#embedding-guarantees)).
 
 ## Limits
 
@@ -196,10 +192,6 @@ if let Progress::Parked { reason: ParkReason::Fuel } = session.start(code) {
 }
 # }; Ok(()) }
 ```
-
-`Engine::environment()` describes the engine's limits for a model's
-prompt; `Session::environment()` the session's own (a restored session's
-memory limit may be smaller) and what is left of its fuel total.
 
 ## Output
 
@@ -278,11 +270,15 @@ Answer with one of:
   `kind(message)` in place. `HostErrorKind` covers 18 built-in classes, from
   `ValueError` to `FileNotFoundError`; `from_name` maps a class name. See
   [Host errors](#host-errors) for payloads and host-named classes.
-- `Resume::Future`: the call returns an awaitable. When every task is blocked
-  on futures the cell stops with `Progress::Waiting { calls }`. Deliver any
-  subset of results with `Resume::Batch(vec![(call, Ok(v)), (call, Err(e))])`;
-  the cell waits again for the rest. `asyncio.gather` over host calls this way
-  yields one batch for the host to run concurrently.
+- `Resume::Future`: the call returns an awaitable. When every task is
+  blocked on futures, or asleep while host calls are pending, the cell stops
+  with `Progress::Waiting { calls }` (while a task sleeps, `calls` also
+  lists calls nothing awaits). Answer any subset with
+  `Resume::Batch(vec![(call, Ok(v)), (call, Err(e))])`; the cell waits again
+  for the rest. A batch may answer any unsettled call of the cell, so put
+  every answer you have in it: a cell polling `f.done()` then sees `f` done,
+  as in CPython. `asyncio.gather` over host calls yields one batch to run
+  concurrently.
 
 Whether a host function is sync, async or both is your API decision; the
 engine supports both for every function. A refused answer
@@ -351,10 +347,9 @@ ambiguous for a function whose only parameter is itself a `dict`. On a
 method it applies after `self`.
 
 Host functions have `__name__`, `__qualname__`, `__module__` and `__doc__`,
-and `help(f)` prints the stub `stubs()` renders for it.
-
-`mm-cell-worker`'s cell protocol carries only untyped tool names; a host
-that wants typed functions or host classes embeds the crate.
+and `help(f)` prints the stub `stubs()` renders for it. `mm-cell-worker`'s
+cell protocol carries only untyped tool names; a host that wants typed
+functions or host classes embeds the crate.
 
 ### Host classes
 
@@ -384,16 +379,15 @@ A host class is an immutable value with named fields. In Python,
 index. Instances compare and hash by value, match `case Entry(path, size)`,
 and refuse assignment; they are `tuple` subclasses, like named tuples.
 
-An instance crosses the boundary in either direction as
-`HostValue::Object { class: "files.Entry", fields: [("path", ..), ("size", ..)] }`,
-with fields in the class's order. `class` is the module-qualified name, or the
-bare name for a class of the builtins module. Methods are typed host
-functions: `e.read()` reports
-`HostCall { name: "files.Entry.read", args: [Object {..}, ...], .. }`. An
-`Object` of an undefined class, or with other fields, raises `TypeError`
-where the host answer arrives. There are no proxy objects whose attribute
-access calls the host, so every value stays snapshot-safe: a handle (a job,
-a file revision) is a host class whose fields hold an id.
+An instance crosses the boundary in either direction as `HostValue::Object {
+class: "files.Entry", fields: [("path", ..), ("size", ..)] }`, with fields
+in the class's order. `class` is the module-qualified name, or the bare name
+for a class of the builtins module. Methods are typed host functions:
+`e.read()` reports `HostCall { name: "files.Entry.read", args: [Object {..},
+...], .. }`. An `Object` of an undefined class, or with other fields, raises
+`TypeError` where the host answer arrives. There are no proxy objects whose
+attribute access calls the host, so every value stays snapshot-safe: a
+handle (a job, a file revision) is a host class whose fields hold an id.
 
 ### Host errors
 
@@ -464,10 +458,8 @@ the same `HostModule` values: first `""` for the builtins, then one per host
 module, by name, each listing its constants, classes and functions in
 definition order. Typed functions and classes show their signatures and
 docstrings; untyped functions take `*args: Any, **kwargs: Any` and return
-`Any`; the OS hooks are left out. For the `files` module above, the text
-declares `class Entry` with `path: str`, `size: int`, `__init__` and
-`def read(self) -> bytes`, and `def listdir(*args: Any, **kwargs: Any) ->
-Any`. Use them in the model's prompt, or with an external type checker.
+`Any`; the OS hooks are left out. Use them in the model's prompt, or with
+an external type checker.
 
 ### The stdlib's OS hooks
 
@@ -561,7 +553,7 @@ let progress = session.run(&code, &mut tools)?;   // start + drive
   with `set_fuel` itself can turn it on too; a `Fuel` park with fuel left is
   such a yield. It changes no results and is not in a snapshot.
 
-Neither handler needs a feature or a dependency. `drive` takes
+Neither handler needs a feature or a dependency; `drive` takes
 `&mut dyn HostHandler`.
 
 ## Parking, deadlines and cancel
@@ -652,6 +644,8 @@ ran before a failure and are not undone.
 **Environment summary.** `Engine::environment()` returns a few lines for a
 prompt, generated from the build: the modules that import, what is never
 available, the asyncio surface, the limits and the calling conventions.
+`Session::environment()` gives the session's own limits (a restored
+session's memory limit may be smaller) and what is left of its fuel total.
 Add `Session::stubs()` for the host's own functions.
 
 **Long results.** A completion's `repr` and `str` are cut at the text limit
@@ -660,11 +654,9 @@ keeps the beginning, `TextCut::HeadTail` both ends around `... [N bytes
 omitted] ...`, and a list, tuple, dict or record keeps its shape
 (`[{'id': 0}, {'id': 1}, ...(+998 items)]`). `Completion::value` keeps the
 whole `HostValue`, so the host can store it and hand the model a reference.
-
-**Long exception reports.** `PyException::message` and `traceback` are
-bounded the same way (and rendering also stops when the deadline passes);
-`truncated` is `true` when either was cut. A report under the limit is
-exactly CPython's.
+`PyException::message` and `traceback` are bounded the same way (and
+rendering also stops when the deadline passes); `truncated` is `true` when
+either was cut. A report under the limit is exactly CPython's.
 
 ## Session templates
 
@@ -839,22 +831,18 @@ source is never re-run to rebuild state.
 
 ### Upgrading: drain old builds
 
-The engine never migrates a snapshot. An upgrade that changes nothing the
-build id covers keeps the id, and its old images restore on the new build.
-When the id changes, keep the old build available until its parked
-snapshots have drained, and treat a cell that no available build can
-resume like a crash (an unknown outcome the host reconciles).
+An upgrade that changes nothing the build id covers keeps the id, and its
+old images restore on the new build. When the id changes, drain:
 
 1. Store each image with its build id (bytes 10..42 of the image,
    `micro_monty::build_id()`, `mm_build_id`).
-2. On upgrade, compare the new build's id with the old one's. The same id
-   needs nothing more. Otherwise start new sessions on the new build and
-   keep the old build loaded or installed, keyed by build id.
+2. On upgrade, start new sessions on the new build and keep the old build
+   loaded or installed, keyed by build id.
 3. Restore each stored image on the build its id names. When every image of
    the old build has completed, been cancelled or been given up, retire it.
 4. An image whose build is no longer available (or that fails with
-   `SnapshotError::Incompatible`) is a crashed cell: report it as such, do
-   not retry it on another build and do not re-run its source.
+   `SnapshotError::Incompatible`) is a crashed cell, an unknown outcome the
+   host reconciles: do not retry it on another build or re-run its source.
 
 Ways to keep the old build:
 
@@ -867,10 +855,17 @@ Ways to keep the old build:
 - **Native, in-process:** a process links one micro-monty, so keep the old
   host binary (or the old `mm-cell-worker`) running or installed beside the
   new one, and route old images to it until they drain.
-- **Native snapshots through the old build's wasm guest.** Native and wasm
-  builds of the same source and features share a build id, so a native host
-  can drain old snapshots under `mm-wasm-host`, if it keeps each shipped
-  build's guest, built from the same revision and features.
+- **Native, through the old build's wasm guest:** native and wasm builds of
+  one revision and feature set share a build id, so a native host can drain
+  old snapshots under `mm-wasm-host` with each shipped build's guest.
+
+**Carrying an idle session instead.** Between cells, a host can move a
+session to a new build in ordinary cells, with no snapshot: export the
+globals as records on the old build and rebuild them on the new one.
+`conformance/codemode/real/carry.py` is the reference; its README says how,
+and what does not carry (lambdas, closures, class instances, coroutines,
+generators, tasks: drain those sessions). It carries 1,136 of 1,136 recorded
+code-mode cells from v0.0.1 with their output unchanged \[M\].
 
 ### Cross-target restore
 
@@ -886,9 +881,8 @@ one target restores on another with the same id:
 - Memory accounting charges native struct sizes, which differ between 32-
   and 64-bit targets, so a session near its limit on wasm32 can be
   `TooLarge` on a 64-bit target; leave headroom. Text and host-argument
-  limits clamp to the 32-bit range on wasm32.
-- On `wasm32-unknown-unknown`, set the wall clock and entropy again after
-  restoring.
+  limits clamp to the 32-bit range on wasm32. On `wasm32-unknown-unknown`,
+  set the wall clock and entropy again after restoring.
 
 ## Embedding guarantees
 
@@ -897,18 +891,18 @@ What a host running sessions in its own process can rely on, each tested.
 **Panics: build with `panic = "unwind"`.** No guest input should panic:
 clippy denies `unwrap`, `expect`, `panic!` and `todo!` in engine crates,
 and the libFuzzer targets in `fuzz/` look for the rest. If an engine bug
-panics anyway, then with unwinding the facade catches it, that session is
-poisoned, and every other session keeps working (`tests/panics.rs`). This
+panics anyway, then with unwinding the facade catches it and poisons that
+session (every later call returns a `SystemError`, `is_poisoned()` is
+true), and every other session keeps working (`tests/panics.rs`). This
 workspace's `panic = "abort"` and the shipped `panic=immediate-abort`
-(spec §6) kill the whole host instead, so an in-process embedder sets:
+(spec §6) kill the whole host instead. Builds for a wasm runtime or a child
+process, where that boundary contains the fault, can keep them; an
+in-process embedder sets:
 
 ```toml
 [profile.release]
 panic = "unwind"
 ```
-
-Builds for a wasm runtime or a child process, where that boundary contains
-the fault, can keep the abort builds.
 
 **A bounded Rust stack.** Running code keeps its nesting in the arena, and
 walks over nested data use explicit stacks, raising `RecursionError` at the
@@ -1071,25 +1065,25 @@ mm resume --json DIR
   --json` prints for an unparked run. `cargo xtask durability` drives this
   over every passing case.
 
-`TZ` sets the local time zone (a zoneinfo name, a path, or a POSIX rule;
-UTC without it), and `zoneinfo` reads `$TZDIR` or `/usr/share/zoneinfo`. `mm` defines no other host functions, so `open()`,
-`os.getenv` and the like raise. The `MM_GC_STRESS`, `MM_GC_YIELD` and
-`MM_STEP_MS` variables are for the engine's own test gates.
+`TZ` sets the local time zone (a zoneinfo name, a path, or a POSIX rule; UTC
+without it), and `zoneinfo` reads `$TZDIR` or `/usr/share/zoneinfo`. `mm`
+defines no other host functions, so `open()`, `os.getenv` and the like
+raise. The `MM_GC_STRESS`, `MM_GC_YIELD` and `MM_STEP_MS` variables are for
+the engine's own test gates.
 
 ## WebAssembly hosts
 
 `crates/mm-wasm-guest` builds micro-monty as a wasm module for
-`wasm32-unknown-unknown` or `wasm32-wasip1` speaking the `mm-wasm`
-interface (`crates/mm-wasm-abi`, `ABI_VERSION` 1): a host sizes an input
-buffer, calls exports such as `mm_session_new`, `mm_define`, `mm_start`,
-`mm_resume` and `mm_snapshot`, and answers the `mm_host` imports (clock,
-park poll, wall clock, entropy, output, time zones). The guest reads no
-WASI clock, randomness or files. micro-monty is 0.0.x with no compatibility
-layers: any change to the interface, a new option tag or optional export
-included, bumps `ABI_VERSION`, and a host and a guest must agree on it. A session's options (its limits, and the settings
-an image does not carry) are a tagged record that `mm_session_new` and
-`mm_session_restore` both take. Snapshots move between native and wasm
-sessions of the same build id.
+`wasm32-unknown-unknown` or `wasm32-wasip1` speaking the `mm-wasm` interface
+(`crates/mm-wasm-abi`, `ABI_VERSION` 1): a host sizes an input buffer, calls
+exports such as `mm_session_new`, `mm_define`, `mm_start`, `mm_resume` and
+`mm_snapshot`, and answers the `mm_host` imports (clock, park poll, wall
+clock, entropy, output, time zones). The guest reads no WASI clock,
+randomness or files. micro-monty is 0.0.x with no compatibility layers: any
+change to the interface, a new option tag or optional export included, bumps
+`ABI_VERSION`, and a host and a guest must agree on it. A session's options
+(its limits, and the settings an image does not carry) are a tagged record
+that `mm_session_new` and `mm_session_restore` both take.
 
 Two guests are shipped:
 
@@ -1103,21 +1097,18 @@ Two guests are shipped:
   memory \[M\]. Its data per instance falls from about 450 KB to about
   120 KB, and on V8/workerd each idle session uses about 340 KiB less memory
   \[S, measured 2026-11-09\]. A host must provide `mm_host.bundle_read` to
-  run it: without that import it fails to instantiate. Both guests of a
-  build have the same build id, so snapshots cross between them.
+  run it (both reference hosts below do): without that import it fails to
+  instantiate. Both guests of a build have the same build id, so snapshots
+  cross between them. **On V8 and Workers, use the bundle guest:** V8
+  copies a module's data segments into every instance.
 
-**On V8 and Workers, use the bundle guest.** V8 copies a module's data
-segments into every instance, and the bundle guest keeps the stdlib out of
-them. Both reference hosts below provide `mm_host.bundle_read`.
-
-The release workflow attaches both guests to each GitHub release
+Releases after v0.0.1 attach both guests
 (`mm_wasm_guest-wasm32-unknown-unknown.wasm` and
-`mm_wasm_guest_bundle-wasm32-unknown-unknown.wasm`; the v0.0.1 release
-predates this). `cargo xtask size` builds them as shipped (release,
-`panic=immediate-abort`, `wasm-opt -Oz` from binaryen, which `.agents/setup`
-installs) into `target/wasm32-unknown-unknown/shipped/mm_wasm_guest.wasm`
-and `target/mm-wasm-bundle/wasm32-unknown-unknown/shipped/mm_wasm_guest_bundle.wasm`;
-restore snapshots on the guests of the release that wrote them.
+`mm_wasm_guest_bundle-wasm32-unknown-unknown.wasm`); restore snapshots on
+the guests of the release that wrote them. `cargo xtask size` builds them
+as shipped (release, `panic=immediate-abort`, binaryen's `wasm-opt -Oz`)
+under `target/wasm32-unknown-unknown/shipped/` and
+`target/mm-wasm-bundle/wasm32-unknown-unknown/shipped/`.
 
 **wasmtime: `crates/mm-wasm-host`.** A synchronous reference host with an
 API close to `Session`: one `Session` owns one wasmtime store and instance,
@@ -1139,14 +1130,15 @@ let image = s.snapshot(None)?;
 let again = rt.restore(&image, &options)?;   // picks the loaded build by the image's id
 ```
 
-`RuntimeConfig` sets the store's linear-memory ceiling (default 784 MiB,
-for the default 256 MiB session limit), the park grace interrupt, an
-optional per-call budget, a precompiled `.cwasm` cache beside the module
-(on by default) and the pooling allocator. A park request
+`RuntimeConfig` sets the store's linear-memory ceiling (default 784 MiB, for
+the default 256 MiB session limit), the park grace interrupt, an optional
+per-call budget, a precompiled `.cwasm` cache beside the module (on by
+default) and the pooling allocator. A park request
 (`Session::park_handle()`) parks at the next safepoint check; the grace
 interrupt traps only when one native operation or collection outlasts it.
-After `Error::Trap`, restore the last image into a new session. `SessionOptions`' default host-argument
-depth is 1000, where the native `HostArgs` default is 100.
+After `Error::Trap`, restore the last image into a new session.
+`SessionOptions`' default host-argument depth is 1000, where the native
+`HostArgs` default is 100.
 
 **Node and Workers: `hosts/js`.** A TypeScript host for V8 that follows the
 wasmtime host call for call, with an async driver for code mode
@@ -1186,14 +1178,10 @@ of them, and the instance's memory must hold the sum of their bounds.
 ## Binary size
 
 Sizes of the shipped builds at v0.0.1 (`cargo xtask size`: release,
-`panic=immediate-abort`, `wasm-opt -Oz` on wasm) \[M\]:
-
-| Artifact | Bytes |
-|---|---:|
-| `hello.wasm` (the facade's example, `wasm32-unknown-unknown`) | 2,271,969 |
-| native `hello` (x86_64 Linux) | 2,490,336 |
-| `mm_wasm_guest.wasm` | 2,358,872 |
-| `mm_wasm_guest_bundle.wasm` | 2,357,307 |
+`panic=immediate-abort`, `wasm-opt -Oz` on wasm) \[M\]: `hello.wasm` (the
+facade's example, `wasm32-unknown-unknown`) 2,271,969 B, native `hello`
+(x86_64 Linux) 2,490,336 B, `mm_wasm_guest.wasm` 2,358,872 B and
+`mm_wasm_guest_bundle.wasm` 2,357,307 B.
 
 **Native embedders: link with `-Wl,-z,pack-relative-relocs`.** It takes
 35,960 B off native `hello` by shrinking `.rela.dyn` from 37,368 B to under
@@ -1231,24 +1219,23 @@ The default build bundles `json`, `re`, `collections`, `itertools`,
 `urllib.parse`, `pprint`, `shlex`, `difflib`, `struct`, `html` (with
 `html.parser`), `warnings`, `codecs`, `platform`, `tempfile`, `decimal`,
 `numbers`, `contextvars`, `fractions`, `statistics`, `tomllib`, `calendar`,
-`hmac`, `zlib` (checksums only), `zoneinfo`, `tokenize` and `token`,
-`xml.etree.ElementTree` (its own non-validating parser, no expat) and
-`email.utils` (the date functions only), plus
-`sys`, `math`, `cmath` and the builtins, which are always built. The
-engine's internal `_mm` is hidden: importing it raises `ModuleNotFoundError`.
+`hmac`, `zlib` (checksums only), `zoneinfo`, `tokenize` with `token`,
+`xml.etree.ElementTree` (its own non-validating parser, not expat) and
+`email.utils` (the date functions only), plus `sys`, `math`, `cmath` and
+the builtins, which are always built. The engine's internal `_mm` is
+hidden: importing it raises `ModuleNotFoundError`.
 
 Every bundled module has a `mod-*` feature on `micro-monty` (dots and
-underscores become `-`: `mod-html-entities`; `urllib.parse` is
-`mod-urllib`, and `token` and `html.parser` come with `mod-tokenize` and
-`mod-html`). `uuid`, `unicodedata`, `html.entities` and `ast` are opt-in;
-without one, importing it raises `ModuleNotFoundError: No module named
-'ast'. 'ast' is not enabled in this build of micro-monty`. Without
-`html.entities` (the default build), `html.unescape` resolves numeric
-references and HTML 4's 252 named references, but not names only HTML 5
-defines. `ast` is CPython's `ast` over micro-monty's own
-parser (`parse`, `dump`, `walk`, `NodeVisitor`, `NodeTransformer`,
-`literal_eval`, ...; no `unparse` and no `compile()` of a tree) and adds
-about 48 KB to `hello.wasm` \[M\]. To enable one, list it:
+underscores become `-`: `mod-html-entities`; `urllib.parse` is `mod-urllib`,
+and `token` and `html.parser` come with `mod-tokenize` and `mod-html`).
+`uuid`, `unicodedata`, `html.entities` and `ast` are opt-in; without one,
+importing it raises `ModuleNotFoundError: No module named 'ast'. 'ast' is
+not enabled in this build of micro-monty`. Without `html.entities` (the
+default build), `html.unescape` resolves numeric references and HTML 4's 252
+named references, but not names only HTML 5 defines. `ast` is CPython's
+`ast` over micro-monty's own parser (`parse`, `dump`, `walk`, `NodeVisitor`,
+`NodeTransformer`, `literal_eval`, ...; no `unparse` and no `compile()` of a
+tree) and adds about 48 KB to `hello.wasm` \[M\]. To enable one, list it:
 
 ```toml
 micro-monty = { version = "0.0.1", features = ["mod-uuid", "mod-ast"] }
@@ -1382,15 +1369,19 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
 - **Codecs** other than UTF-8 (and `utf-8-sig`), UTF-16, UTF-32, ASCII and
   Latin-1 raise `LookupError`.
 - **Missing names:** the builtins `input`, `breakpoint`, `exit`, `quit`,
-  `copyright`, `credits` and `license`; `sys.exit` and `sys.stdin`; the exceptions `BlockingIOError`,
-  `BrokenPipeError`, `ChildProcessError`, `ConnectionError` and its
-  subclasses, `InterruptedError`, `ProcessLookupError`,
-  `PythonFinalizationError` and `UnicodeTranslateError`; the module
-  `builtins`; `__builtins__`, `__spec__` and a module's `__doc__`;
-  `sys.modules`, `sys.getsizeof`, `sys.intern` and `sys.getrefcount`;
-  `function.__globals__` and `__code__`; `traceback`'s stack-walking
-  functions; `string.Formatter`; `re.Scanner`; `functools.Placeholder`; the
-  dunders of builtin types as type attributes (`dict.__or__`).
+  `copyright`, `credits` and `license`; `sys.exit` and `sys.stdin`; the
+  exceptions `BlockingIOError`, `BrokenPipeError`, `ChildProcessError`,
+  `ConnectionError` and its subclasses, `InterruptedError`,
+  `ProcessLookupError`, `PythonFinalizationError` and
+  `UnicodeTranslateError`; the module `builtins`; `__builtins__`, `__spec__`
+  and a module's `__doc__`; `sys.modules`, `sys.getsizeof`, `sys.intern` and
+  `sys.getrefcount`; `function.__globals__` and `__code__`; `traceback`'s
+  stack-walking functions; `string.Formatter`; `re.Scanner`;
+  `functools.Placeholder`; the dunders of builtin types as type attributes
+  (`dict.__or__`); `xml`'s DOM, SAX and expat, and ElementTree's
+  `iterparse`, `XMLPullParser`, C14N, `ElementInclude` and DTD validation
+  (`parse` and `write` of a file name need a host `open`); `email` beyond
+  `email.utils`'s date functions.
 - **Subclassing** `frozenset`, `complex`, `property`, `classmethod`,
   `staticmethod`, `zip`, `enumerate` or `super`; `map`, `filter` and
   `reversed` are functions, not types.
@@ -1407,10 +1398,16 @@ differs:
 - Event-loop policies, threads (`to_thread`, `run_in_executor`),
   subprocesses, streams, sockets and eager task factories are not
   available; they raise with the `Processes` or `Network` hint.
-  `asyncio.Future` is a function, not a type, and `run_forever()` raises.
-- Time is virtual, and host calls take none of it: `wait_for` and
-  `as_completed(timeout=)` fire only on `asyncio.sleep`s. Time out slow host
-  calls on the host side.
+  `asyncio.Future` is a function, not a type; futures, tasks and gathers
+  have no `__await__` or `__iter__` (`yield from fut` in a `types.coroutine`
+  generator raises `TypeError`); `run_forever()` raises.
+- Time is virtual, and host calls take none of it: every sleep and timeout
+  waits for the cell's pending host calls, so a timeout over a loop of host
+  calls never fires unless the loop sleeps (then output is CPython's). Time
+  out slow host calls on the host side. `sleep(0)` lets in no time and no
+  host answer: `while not t.done(): await asyncio.sleep(0)` never ends. A
+  host future awaited in a later cell than its own raises the scheduler's
+  `RuntimeError`.
 - `create_task` outside a running loop does not raise; the task runs in the
   next `asyncio.run`. Tasks left at the end of `asyncio.run`, the timers
   behind `call_later` and `wait_for` included, are cancelled in creation
@@ -1451,16 +1448,12 @@ differs:
   allocation fails wait for a full collection and run once more: copies,
   constructors over a container, slices and list comprehensions succeed
   where the result fits (three dropped `s.copy()` of a 2M-item set at 256
-  MiB, as in CPython \[M\]). Not yet retried, being fixed in 0.0.2, so they
-  can raise where CPython succeeds \[M\]: set and dict comprehensions and
-  `add`/`append` loops (on their own outgrown tables), `bytes(n)`,
-  `bytearray(n)`, a wide f-string field, `sorted` and `list.extend`. A
-  call's `**kw` is never run again (its merge raises on a duplicate key). A
-  retry's collection is charged, a unit per 64 bytes of `Limits::memory` up
-  to 2^20, so a loop that catches `MemoryError` pays for each. A snapshot
-  collects first, so it can flip an unretried outcome either way, and it
-  moves fuel totals (six `f(*big, **kw)`: 11% less with a snapshot at every
-  park \[M\]).
+  MiB, as in CPython \[M\]). A call's `**kw` is never run again (its merge
+  raises on a duplicate key). A retry's collection is charged, a unit per 64
+  bytes of `Limits::memory` up to 2^20, so a loop that catches `MemoryError`
+  pays for each. A snapshot collects first, so it can flip an unretried
+  outcome either way, and it moves fuel totals (six `f(*big, **kw)`: 11%
+  less with a snapshot at every park \[M\]).
 - **Fuel after a snapshot, long non-ASCII strs.** A snapshot's collection
   forgets the positions that make indexing a long non-ASCII str cheap, so
   the next walk is charged again, restored or not: `W[k]` for every 997th

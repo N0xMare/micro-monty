@@ -830,10 +830,10 @@ are the rules above. Where the code falls short, the clause says so under
    total. A reviewed `f(*big, **kw)` charged +28,672 units (+0.64%).
    Six such calls under `try` beside a 24 MB pad print `ok` six times
    unparked and `ok ME ok ME ok ME` with a snapshot at every park, and the
-   fuel falls 11% (6,867,483 → 6,107,194 units) [M, reviewer]. The
-   operations §9.2 lists as not yet retried behave the same way until
-   their fix (being fixed in 0.0.2), and even retried ones are charged per
-   collection asked for, which a snapshot can move (§9.2). Fuel totals also
+   fuel falls 11% (6,867,483 → 6,107,194 units) [M, reviewer]. Other
+   operations §9.2 does not retry behave the same way, and even retried
+   ones are charged per collection asked for, which a snapshot can move
+   (§9.2). Fuel totals also
    depend on snapshots when a cell indexes or searches a long non-ASCII str:
    every collection forgets the char positions, a snapshot collects first,
    and a restore starts without them, so the next walk after any
@@ -1572,10 +1572,7 @@ timer deadlines.
   `FORMAT` and `FORMAT_SPEC` of an int, float, str or bytes (a
   container's `repr` may run user code) and `CALL` of a builtin type whose constructor copies its
   argument (`list(l)`), the last three read at the fault exit
-  (`Vm::oom_retry_fault`). Not yet retried, being fixed in 0.0.2 [M,
-  reviewer]: set and dict comprehensions and `add`/`append` calls, which
-  fail on their own outgrown tables; `bytes(n)`, `bytearray(n)`, a wide
-  f-string field, `sorted` and `list.extend`.
+  (`Vm::oom_retry_fault`).
   User code never runs inside those natives (a dunder runs as a request),
   so it never runs twice. Nothing that drew items from a one-shot iterator
   runs again: `Vm::collect` marks the failure as a rerun's (`oom_rerun`)
@@ -2455,10 +2452,11 @@ The default module set is the facade's `default` features
 `mod-tempfile`, `mod-decimal`, `mod-numbers`, `mod-contextvars`,
 `mod-fractions`, `mod-statistics`, `mod-tomllib`, `mod-calendar`,
 `mod-hmac`, `mod-zlib`, `mod-zoneinfo`, `mod-tokenize` (with `token`;
-mm-engine feature `tokenize`), `mod-xml` and `mod-email`. Optional: `mod-uuid`, `mod-unicodedata`,
-`mod-html-entities` (32,470 bytes of bytecode [M]) and `mod-ast` (mm-engine
-feature `ast`; about 48 KB of `hello.wasm` [M]). `mm` enables all four, so
-`cargo xtask check` runs their own cases, conformance and durability.
+mm-engine feature `tokenize`), `mod-xml` and `mod-email`. Optional:
+`mod-uuid`, `mod-unicodedata`, `mod-html-entities` (32,470 bytes of bytecode
+[M]) and `mod-ast` (mm-engine feature `ast`; about 48 KB of `hello.wasm`
+[M]). `mm` enables all four, so `cargo xtask check` runs their own cases,
+conformance and durability.
 
 `mod-asyncio` and `mod-json` gate the engine's own modules (mm-engine
 features `asyncio` and `json`): their natives, prelude units and, for
