@@ -41,7 +41,7 @@ just conformance [args]  Monty's corpus on mm vs conformance/results (`--filter 
 just durability [args]   every passing case parked, snapshotted, restored: reports, fuel and
                          final-state digests vs conformance/durability-results.txt
 just wasm                the facade on both wasm targets, round trip under wasmtime
-just size                the shipped builds against xtask/size-ceilings.txt
+just size                the shipped builds against the base, the release and its budget
 just bench [args]        bench checksums on CPython and mm (`--reps N` for timings)
 just pretag [base]       the pre-tag checklist against the previous `v*` tag
 ```
@@ -132,9 +132,17 @@ to `target/check/logs/<stage>.log`.
   or means (spec §9.3). A change that moves the build id re-blesses the
   golden images in the same commit:
   `MM_BLESS=1 cargo test --release --locked -p micro-monty --test golden`.
-- Size: each artifact's ceiling is the sum of its lines in
-  `xtask/size-ceilings.txt`. Move one by appending a line (signed bytes and
-  why, with the measurement); never edit one.
+- Size: `cargo xtask size` compares each shipped artifact with the base
+  and the last `v*` tag, both built outside the checkout. A rise past the
+  base needs a git trailer `Size: <artifact> <±bytes> <why>` in the commit
+  that makes it; the trailers since the base must add up to the change
+  within 10% (at least 1 KiB), a reverted commit's trailer counts for
+  nothing, and an uncommitted rise always fails. A rise past the tag must
+  fit that release's budget in `xtask/size-budget.txt`, read from the
+  base, with signed bytes; only the owner adds budget lines, and one
+  lands before the growth it allows. A push is judged once, head against
+  base, on its net change, so an intended rise lands in its own push.
+  `xtask/size-ceilings.txt` is history; do not write ceiling lines.
 - Results that move on purpose are rerun and committed:
   `conformance/results/` (`cargo xtask conformance`), and
   `conformance/codemode/real/results/gate.jsonl` with a `why`. The

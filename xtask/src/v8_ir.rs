@@ -351,7 +351,7 @@ fn contents_of(
         }
         None => (root.to_path_buf(), true),
     };
-    let recipe = size::recipe_key(if own { &tree } else { root })?;
+    let recipe = size::recipe_key(if own { &tree } else { root }, &tree)?;
     let known = side
         .sha
         .as_deref()

@@ -2,8 +2,9 @@
 //! programs against a base revision and an anchor.
 //!
 //! Builds the working tree (or `--head`), `--base` (default `origin/main`)
-//! and the anchor, each revision checked out in a worktree under
-//! `target/wasm-ir/`, as shipped: `mm` for `wasm32-wasip1`, precompiled by
+//! and the anchor, each revision checked out in a worktree outside this
+//! checkout (`shipped::refs_dir`, so no revision reads this checkout's
+//! `.cargo/`), as shipped: `mm` for `wasm32-wasip1`, precompiled by
 //! `wasmtime compile --target` for this architecture's baseline ISA, not
 //! this host's CPU, so the code and the counts are the same on every
 //! machine. Each program runs once per build under `valgrind
@@ -353,20 +354,18 @@ fn measure(
         if missing.is_empty() {
             println!("wasm-ir: {} counts cached", side.label);
         } else {
-            let tree = match &side.sha {
+            // Another revision is checked out and built outside this
+            // checkout, so it reads none of this checkout's `.cargo/`.
+            let refs = crate::shipped::refs_dir("wasm-ir");
+            let (tree, target) = match &side.sha {
                 Some(s) if side.target != "head" || head_rev => {
-                    let tree = dir.join(format!("{}-src", side.target));
+                    let tree = refs.join(format!("{}-src", side.target));
                     checkout(root, &tree, s)?;
-                    tree
+                    (tree, refs.join(side.target))
                 }
-                _ => root.to_path_buf(),
+                _ => (root.to_path_buf(), dir.join(side.target)),
             };
-            let built = build_mm(
-                &tree,
-                &dir.join(side.target),
-                &tools.wasmtime,
-                Some(&tools.isa),
-            )?;
+            let built = build_mm(&tree, &target, &tools.wasmtime, Some(&tools.isa))?;
             // Sides share a target directory: each keeps its own module.
             let mm = dir.join(format!("{}.cwasm", side.label));
             fs::copy(&built, &mm).map_err(|error| format!("{}: {error}", mm.display()))?;

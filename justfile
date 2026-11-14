@@ -42,7 +42,8 @@ durability *args:
 wasm:
     cargo xtask wasm
 
-# The shipped builds against xtask/size-ceilings.txt.
+# The shipped builds against the base's and the release's (Size: trailers,
+# xtask/size-budget.txt).
 size:
     cargo xtask size
 

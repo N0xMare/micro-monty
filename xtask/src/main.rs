@@ -99,8 +99,9 @@ tasks:
       --landing-tier         the landing tier whatever the change touches
   size [--base <rev>]        build `hello` and the mm-wasm guests as shipped
                              (wasm-opt -Oz on wasm), and the base's (default
-                             origin/main) and the release's, in worktrees
-                             under target/size/ (cached per commit); a rise
+                             origin/main) and the release's, each with its
+                             own toolchain in a worktree outside the checkout
+                             (cached per commit); a rise
                              past the base needs committed trailers `Size:
                              <artifact> +<bytes> <why>` that sum to cover it, past the
                              release a budget in xtask/size-budget.txt
@@ -137,6 +138,9 @@ tasks:
       --report-only          compare reports only (gc-stress)
   shipped-mm                 build `mm` natively as shipped (the binary the
                              bench Ir rule measures) and print its path
+  shipped-build --target <t> --package <p>
+                             build a package's binaries as shipped for a
+                             target (release.yml's published natives)
   wasm                       build the facade as shipped (wasm-opt -Oz) for
                              wasm32-wasip1 and wasm32-unknown-unknown, report
                              hello.wasm sizes, run a snapshot round trip under
@@ -215,6 +219,7 @@ fn main() -> ExitCode {
         Some("durability") => durability::run(&rest),
         Some("bench") => bench::run(&rest),
         Some("shipped-mm") if rest.is_empty() => shipped_mm(),
+        Some("shipped-build") => shipped::shipped_build_cli(&rest),
         Some("wasm") => wasm::run(&rest),
         Some("wasm-host") if rest.is_empty() => wasm::host(),
         Some("wasm-wall") => wasm_wall::run(&rest),
@@ -435,8 +440,8 @@ fn check(args: &[String]) -> Result<(), String> {
             "memory_probes",
         ])),
         // The size gate in three stages: the base's and the release's
-        // builds, each in its own target directory under target/size/,
-        // beside the head's.
+        // builds, each in its own worktree and target directory outside
+        // the checkout (`shipped::refs_dir`), beside the head's.
         Stage::new("size-references").run(task(&["size", "--references"])),
         Stage::new("size-head")
             .after(&["mm"])
@@ -550,8 +555,8 @@ fn check(args: &[String]) -> Result<(), String> {
             .after(&["mm"])
             .run(steps_cargo(&[&steps[..], &["--no-run"]].concat())),
     ];
-    // wasmtime's guest instructions against origin/main, ±0.5% (its own
-    // worktree and target directories under target/wasm-ir/).
+    // wasmtime's guest instructions against origin/main and the anchor
+    // (its own worktrees and target directories, `shipped::refs_dir`).
     if cfg!(target_os = "linux") {
         stages.push(Stage::new("wasm-ir").run(task(&["wasm-ir"])));
         // The bench programs' gated Ir on the shipped native `mm` against

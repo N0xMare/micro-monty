@@ -8,7 +8,9 @@ name: Release
 #
 # Artifacts:
 # - `mm` and `mm-cell-worker` for macOS arm64/x86_64 and Linux x86_64/arm64,
-#   release profile (`panic = "abort"`, LTO, stripped). Linux builds run on
+#   built as shipped (`cargo xtask shipped-build`: release profile, std
+#   rebuilt with `-Cpanic=immediate-abort`, `--cfg mm_shipped`, LTO,
+#   stripped). Linux builds run on
 #   Ubuntu 22.04 (glibc 2.35); arm64 is cross-linked there and smoke-tested
 #   under qemu.
 # - The shipped wasm facade examples (`hello`, `roundtrip`) for
@@ -16,7 +18,7 @@ name: Release
 #   `cargo xtask wasm` (shipped build, `wasm-opt -Oz`, round trip under
 #   wasmtime).
 # - The shipped mm-wasm guests for wasm32-unknown-unknown, built by
-#   `cargo xtask size` (shipped build, `wasm-opt -Oz`, size budgets):
+#   `cargo xtask size --head` (shipped build, `wasm-opt -Oz`):
 #   `mm_wasm_guest` and the bundle guest `mm_wasm_guest_bundle`, which
 #   carries the prelude and stdlib bytecode as custom sections for the host
 #   to serve through `mm_host.bundle_read`.
@@ -61,10 +63,12 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
       # One invocation each: built together, cargo would unify the stdlib
       # features and give the worker mm's optional modules (and its build_id).
-      - name: Build mm and mm-cell-worker
+      # As shipped (std rebuilt, `--cfg mm_shipped`; owner, 2026-11-13), so
+      # the published natives are the code the gates count and time.
+      - name: Build mm and mm-cell-worker (shipped)
         run: |
-          cargo build --release --locked --target ${{ matrix.target }} -p mm-cli
-          cargo build --release --locked --target ${{ matrix.target }} -p mm-cell-worker
+          cargo xtask shipped-build --target ${{ matrix.target }} --package mm-cli
+          cargo xtask shipped-build --target ${{ matrix.target }} --package mm-cell-worker
       - name: Smoke test and build ids
         env:
           TARGET: ${{ matrix.target }}
@@ -113,9 +117,17 @@ jobs:
           install -m755 tools/wasmtime-v50.0.0-x86_64-linux/wasmtime "$HOME/.local/bin/wasmtime"
           rm -rf tools
       - name: cargo xtask wasm (shipped builds, wasm-opt -Oz, round trips)
-        run: cargo xtask wasm | tee wasm.log
-      - name: cargo xtask size (shipped guests, wasm-opt -Oz, size budgets)
-        run: cargo xtask size | tee size.log
+        run: |
+          set -o pipefail
+          cargo xtask wasm | tee wasm.log
+      # `--head` builds the shipped artifacts and writes their sizes; a tag
+      # checkout has no origin/main to judge them against (the gate ran
+      # before the tag). pipefail so a failed build fails the step.
+      - name: cargo xtask size --head (shipped guests, wasm-opt -Oz)
+        run: |
+          set -o pipefail
+          cargo xtask size --head | tee size.log
+          cat target/size/head.tsv | tee -a size.log
       - name: Collect modules and build ids
         run: |
           mkdir -p out

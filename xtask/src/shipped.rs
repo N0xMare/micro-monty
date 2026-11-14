@@ -85,8 +85,7 @@ pub(crate) fn shipped_example(target: &str, name: &str) -> Result<PathBuf, Strin
 
 /// [`shipped_example`] for the tree at `src`, built into `dir`.
 fn shipped_example_in(src: &Path, dir: &Path, target: &str, name: &str) -> Result<PathBuf, String> {
-    let status = shipped_cargo("rustc", target)
-        .current_dir(src)
+    let status = shipped_cargo("rustc", target, src)
         .env("CARGO_TARGET_DIR", dir)
         .args(["--package", "micro-monty", "--example", name])
         .args(["--", "-Copt-level=3"])
@@ -110,8 +109,7 @@ fn shipped_example_in(src: &Path, dir: &Path, target: &str, name: &str) -> Resul
 /// `test-hooks`, and returns the module `wasm-opt -Oz` wrote.
 fn shipped_guest_in(src: &Path, dir: &Path) -> Result<PathBuf, String> {
     let target = SIZE_TARGET_WASM;
-    let status = shipped_build(target)
-        .current_dir(src)
+    let status = shipped_build_in(target, src)
         .env("CARGO_TARGET_DIR", dir)
         .args(["--package", "mm-wasm-guest"])
         .status()
@@ -155,6 +153,37 @@ pub(crate) fn shipped_mm_binary() -> Result<PathBuf, String> {
     }
 }
 
+/// `cargo xtask shipped-build --target T --package P`: P's binaries built
+/// as shipped for T into `target/T/release/`, as release.yml publishes
+/// them (owner, 2026-11-13: the published natives are built as shipped).
+pub(crate) fn shipped_build_cli(args: &[String]) -> Result<(), String> {
+    let (mut target, mut package) = (None, None);
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        let value = args
+            .next()
+            .cloned()
+            .ok_or_else(|| format!("{arg} needs a value"));
+        match arg.as_str() {
+            "--target" => target = Some(value?),
+            "--package" | "-p" => package = Some(value?),
+            other => return Err(format!("shipped-build: unknown option `{other}`")),
+        }
+    }
+    let (Some(target), Some(package)) = (target, package) else {
+        return Err("usage: cargo xtask shipped-build --target <triple> --package <name>".into());
+    };
+    let status = shipped_build(&target)
+        .args(["--package", &package, "--bins"])
+        .status()
+        .map_err(|error| format!("cannot run cargo: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("shipped build of {package} for {target} failed"))
+    }
+}
+
 /// `cargo build --release` for `target` the way shipped binaries are built
 /// (docs/spec.md §6): std rebuilt with `-Cpanic=immediate-abort` (no panic
 /// messages, formatting or backtrace symbolization) and without unwind
@@ -164,17 +193,23 @@ pub(crate) fn shipped_mm_binary() -> Result<PathBuf, String> {
 /// off build scripts and proc macros. Tests, clippy and other builds use
 /// plain stable.
 pub(crate) fn shipped_build(target: &str) -> Command {
-    shipped_cargo("build", target)
+    shipped_cargo("build", target, &workspace_root())
+}
+
+/// [`shipped_build`] in the tree at `src`. Another revision's tree builds
+/// with its own toolchain: rustup's `cargo` reads its rust-toolchain.toml,
+/// where `$CARGO` is this checkout's toolchain.
+pub(crate) fn shipped_build_in(target: &str, src: &Path) -> Command {
+    shipped_cargo("build", target, src)
 }
 
 /// The `RUSTFLAGS` of shipped builds ([`shipped_build`]).
 pub(crate) const SHIPPED_RUSTFLAGS: &str =
     "-Zunstable-options -Cpanic=immediate-abort -Cforce-unwind-tables=no --cfg mm_shipped";
 
-/// [`shipped_build`] with another cargo `subcommand` (`rustc`).
-fn shipped_cargo(subcommand: &str, target: &str) -> Command {
-    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
-    let mut command = Command::new(cargo);
+/// [`shipped_build_in`] with another cargo `subcommand` (`rustc`).
+fn shipped_cargo(subcommand: &str, target: &str, src: &Path) -> Command {
+    let mut command = tree_cargo(src);
     command
         .env("RUSTC_BOOTSTRAP", "1")
         .env("RUSTFLAGS", SHIPPED_RUSTFLAGS)
@@ -185,7 +220,55 @@ fn shipped_cargo(subcommand: &str, target: &str) -> Command {
             "--locked",
             "-Zbuild-std=std,panic_abort",
         ])
-        .args(["--target", target])
-        .current_dir(workspace_root());
+        .args(["--target", target]);
     command
+}
+
+/// `cargo` for the tree at `src`, run there: `$CARGO` in this checkout,
+/// else rustup's `cargo` without this checkout's toolchain choice, so the
+/// tree's own rust-toolchain.toml picks it.
+pub(crate) fn tree_cargo(src: &Path) -> Command {
+    let mut command = if src == workspace_root() {
+        Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned()))
+    } else {
+        let mut c = Command::new("cargo");
+        c.env_remove("RUSTUP_TOOLCHAIN")
+            .env_remove("RUSTC")
+            .env_remove("RUSTDOC")
+            .env_remove("CARGO_TARGET_DIR")
+            .env_remove("CARGO_BUILD_TARGET_DIR");
+        c
+    };
+    command.current_dir(src);
+    command
+}
+
+/// Where the gates check out and build other revisions: outside this
+/// checkout, so cargo reads none of its `.cargo/config.toml` there (cargo
+/// merges every config file from the working directory up). It is
+/// `$MM_REFS_DIR`, else `~/.cache/micro-monty-refs/<checkout>-<hash>`.
+pub(crate) fn refs_dir(gate: &str) -> PathBuf {
+    let base = env::var_os("MM_REFS_DIR")
+        .filter(|v| !v.is_empty())
+        .map_or_else(
+            || {
+                let root = workspace_root();
+                let root = root.canonicalize().unwrap_or(root);
+                let name = root
+                    .file_name()
+                    .map_or_default(|n| n.to_string_lossy().into_owned());
+                let hash = crate::wasm_ir::source_hash(root.to_string_lossy().as_bytes());
+                let cache = env::var_os("XDG_CACHE_HOME")
+                    .filter(|v| !v.is_empty())
+                    .map_or_else(
+                        || PathBuf::from(env::var_os("HOME").unwrap_or_default()).join(".cache"),
+                        PathBuf::from,
+                    );
+                cache
+                    .join("micro-monty-refs")
+                    .join(format!("{name}-{hash}"))
+            },
+            PathBuf::from,
+        );
+    base.join(gate)
 }

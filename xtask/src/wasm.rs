@@ -223,8 +223,7 @@ pub(crate) fn shipped_bundle_guest(target: &str) -> Result<PathBuf, String> {
 
 /// [`shipped_bundle_guest`] for the tree at `src`, built into `dir`.
 pub(crate) fn bundle_guest_in(src: &Path, dir: &Path, target: &str) -> Result<PathBuf, String> {
-    let status = crate::shipped_build(target)
-        .current_dir(src)
+    let status = crate::shipped::shipped_build_in(target, src)
         .args(["--package", "mm-wasm-guest", "--features", "host-bundle"])
         .env("CARGO_TARGET_DIR", dir)
         .status()
@@ -271,15 +270,33 @@ fn leb(out: &mut Vec<u8>, mut n: usize) {
 /// `build/<package>-<hash>/out` layout, left by earlier toolchains, are
 /// stale and ignored.
 fn build_output(build: &Path, package: &str, file: &str) -> Result<Vec<u8>, String> {
-    let dir = build.join(package);
-    let entries =
-        fs::read_dir(&dir).map_err(|error| format!("cannot read {}: {error}", dir.display()))?;
-    let newest = entries
-        .filter_map(Result::ok)
-        .map(|e| e.path().join("out").join(file))
+    // Cargo 1.100 writes `build/<package>/<hash>/out`; 1.99 (the toolchain
+    // v0.0.1 pins, which the size gate's release reference builds with)
+    // wrote `build/<package>-<hash>/out`.
+    let mut outs = Vec::new();
+    if let Ok(entries) = fs::read_dir(build.join(package)) {
+        outs.extend(entries.filter_map(Result::ok).map(|e| e.path().join("out")));
+    }
+    let prefix = format!("{package}-");
+    if let Ok(entries) = fs::read_dir(build) {
+        outs.extend(
+            entries
+                .filter_map(Result::ok)
+                .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+                .map(|e| e.path().join("out")),
+        );
+    }
+    let newest = outs
+        .into_iter()
+        .map(|out| out.join(file))
         .filter_map(|p| Some((fs::metadata(&p).ok()?.modified().ok()?, p)))
         .max();
-    let (_, path) = newest.ok_or_else(|| format!("no {file} from {package}'s build script"))?;
+    let (_, path) = newest.ok_or_else(|| {
+        format!(
+            "no {file} from {package}'s build script under {}",
+            build.display()
+        )
+    })?;
     fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))
 }
 

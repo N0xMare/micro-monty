@@ -2,8 +2,9 @@
 //! base revision, on wasmtime and on V8.
 //!
 //! Builds the working tree and `--base` (default `origin/main`, checked out
-//! in a worktree under `target/wasm-wall/`) as shipped, each into its own
-//! target directory there: `mm` for `wasm32-wasip1`, precompiled for
+//! in a worktree outside this checkout, `shipped::refs_dir`, so it reads
+//! none of this checkout's `.cargo/`) as shipped, each into its own target
+//! directory: `mm` for `wasm32-wasip1`, precompiled for
 //! wasmtime, and the mm-wasm guest for `wasm32-unknown-unknown`. Then,
 //! in `--rounds` rounds, the two builds alternate first:
 //!
@@ -101,7 +102,9 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let wasmtime = crate::wasm::tool("WASMTIME", "wasmtime")
         .ok_or("wasm-wall needs wasmtime ($WASMTIME, ~/.local/bin, PATH); run .agents/setup")?;
     let dir = root.join("target/wasm-wall");
-    let tree = dir.join("base-src");
+    // The base outside this checkout, so it reads none of its `.cargo/`.
+    let refs = crate::shipped::refs_dir("wasm-wall");
+    let tree = refs.join("base-src");
     let sha = checkout(&root, &tree, &base)?;
     println!(
         "wasm-wall: head = working tree, base = {base} ({})",
@@ -109,7 +112,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     );
     let builds = [
         build(&root, &dir.join("head"), &wasmtime)?,
-        build(&tree, &dir.join("base"), &wasmtime)?,
+        build(&tree, &refs.join("base"), &wasmtime)?,
     ];
     let samples = measure(&root, &wasmtime, &builds, rounds)?;
     let header = format!("# base {sha}\n# head {}\n", head_id(&root)?);

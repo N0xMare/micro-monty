@@ -1002,18 +1002,27 @@ opt 3 (`cargo rustc -- -Copt-level=3`), as an embedder's binary is.
 
 `cargo xtask size [--base REV]` builds each artifact as shipped, and the
 same for two more revisions built on the same host, each in a worktree
-under `target/size/` and cached per commit and recipe: the base (the merge
-base with `REV`, default `origin/main`) and the release (the latest `v*`
-tag the base descends from). A revision whose xtask has `size --head`
-builds itself with its own recipe, so a change to the recipe, such as the
-`wasm-opt` flags, is charged like any other rise; an older one (v0.0.1) is
-built with this checkout's recipe. Any rise past the base, one
-byte or more, needs trailers `Size: <artifact> +<bytes> <why>` in the
-commits since the base, each giving its own commit's rise, whose bytes
-summed cover the rise; a rise with uncommitted changes always fails. A rise past the release must stay within
-that release's budget in `xtask/size-budget.txt` (`<tag> <artifact> <bytes>
+outside the checkout (so it reads none of the checkout's `.cargo/`) and
+cached per commit, recipe and toolchain: the base (the merge base with
+`REV`, default `origin/main`) and the release (the latest `v*` tag the
+base descends from; with none reachable the gate fails and names the
+fetch). A revision whose xtask has `size --head` builds itself with its
+own recipe, so a change to the recipe, such as the `wasm-opt` flags, is
+charged like any other rise; an older one (v0.0.1) is built with this
+checkout's recipe and its own toolchain. The head's artifact names must
+be the base's and the release's. Any rise past the base, one byte or
+more, needs git trailers `Size: <artifact> <±bytes> <why>` in the commits
+since the base, each giving its own commit's change, whose bytes summed
+cover the rise and exceed the change by at most a tenth (at least 1 KiB);
+a commit a later one reverts counts for nothing, and a rise with
+uncommitted changes, untracked build inputs included, always fails. A
+rise past the release must stay within that release's budget in
+`xtask/size-budget.txt` as the base holds it (`<tag> <artifact> <±bytes>
 <why>`, the last line holding, 0 without one), which only the owner
-extends, so small rises cannot add up over a release. The native artifact
+extends, so small rises cannot add up over a release; a budget line lands
+before the growth it allows, since the gate reads it from the base. A push
+is judged once, head against base, on its net change, so an intended rise
+lands in its own push (owner, 2026-11-13). The native artifact
 is gated only on `x86_64-unknown-linux-gnu`; other hosts report its size,
 because executable formats and code size differ per target. The ceilings
 until 2026-11-13 and the reasons for their raises stay in

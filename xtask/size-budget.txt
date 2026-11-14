@@ -1,6 +1,6 @@
 # Each release cycle's size budget, per shipped artifact (`cargo xtask
 # size`, docs/spec.md §6): how many bytes past the release a head may be.
-# `<tag> <artifact> <bytes> <why>`; the last line for a tag and artifact
+# `<tag> <artifact> <±bytes> <why>`; the last line for a tag and artifact
 # holds, and none means 0. Append only, never edit; only the owner adds
 # lines. Growth past the base needs a `Size:` line in its commit message
 # whatever the budget.
