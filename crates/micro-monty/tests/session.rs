@@ -3270,3 +3270,28 @@ n = 0; r = s0 & d0.keys(); print(len(r), n)
     assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{out}");
     assert_eq!(out, "1000 1000\n1000 1000\n");
 }
+
+/// `l.sort(key=k)` moves the list's items out while it sorts: when its key
+/// list did not fit, it raised with the list left empty (since before
+/// 4f7b0e3 [M, GC design review]); Python 3.14 keeps the items. They go
+/// back.
+#[test]
+fn a_sort_that_does_not_fit_keeps_its_items() {
+    let src = "\
+l = list(range(500_000, 0, -1))
+big = [None] * 1_500_000
+n = 0
+def k(x):
+    global n
+    n += 1
+    return x
+try:
+    l.sort(key=k)
+    print('fit', len(l), l[:2], n)
+except MemoryError:
+    print('MemoryError', len(l), l[:2], n)
+";
+    let (p, out) = run_with(Limits::new().with_memory(18 << 20), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{out}");
+    assert_eq!(out, "MemoryError 500000 [500000, 499999] 0\n");
+}

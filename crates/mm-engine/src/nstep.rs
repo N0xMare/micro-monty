@@ -304,10 +304,23 @@ impl Vm {
         } else {
             // Room for every key: growing by doubling would copy them all
             // in one step.
+            // A list that does not fit gets its items back (`list.sort`).
             let n = self.list_len(xs);
-            self.list_with_room(0, n)?
+            match self.list_with_room(0, n) {
+                Ok(k) => k,
+                Err(e) => {
+                    self.sort_reattach(xs, target);
+                    return Err(e);
+                }
+            }
         };
-        let state = self.nstate(op::SORT_KEYS, &[xs, keys, key, target], &[u64::from(rev)])?;
+        let state = match self.nstate(op::SORT_KEYS, &[xs, keys, key, target], &[u64::from(rev)]) {
+            Ok(s) => s,
+            Err(e) => {
+                self.sort_reattach(xs, target);
+                return Err(e);
+            }
+        };
         let n = self.native_step(op::SORT_KEYS, state, Value::UNDEFINED)?;
         self.next_request(n)
     }
@@ -348,8 +361,16 @@ impl Vm {
                         if chunk {
                             self.burn(KEY_CHUNK as u64);
                         }
-                        let f = self.prelude_fn("_invoke")?;
-                        let a = self.alloc_tuple(&[x])?;
+                        let call = self
+                            .prelude_fn("_invoke")
+                            .and_then(|f| Ok((f, self.alloc_tuple(&[x])?)));
+                        let (f, a) = match call {
+                            Ok(c) => c,
+                            Err(e) => {
+                                self.sort_reattach(xs, target);
+                                return Err(e);
+                            }
+                        };
                         let args = Args::of(&[key, a, Value::NONE]);
                         return Ok(Next::Invoke(f, args, Value::NONE, cont));
                     }
