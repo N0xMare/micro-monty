@@ -1339,6 +1339,11 @@ impl Vm {
     /// Charges the safepoints run since the last check and starts a new
     /// period. Those run after natives spent the fuel (a check comes only
     /// when the period ends) are overdraft, as the natives' excess is.
+    #[allow(
+        clippy::inline_always,
+        reason = "out of line (`execute` takes its address), every `safepoint` paid a call: 22 Ir a check [M]"
+    )]
+    #[inline(always)]
     pub(crate) fn charge_ticks(&mut self) {
         let used = self.ticks_used();
         if let Some(f) = self.fuel {
@@ -1424,18 +1429,23 @@ impl Vm {
         self.tick_period -= left - (self.ticks + self.tick_spare).max(0);
     }
 
-    /// Whether the check just made (`ran` safepoints after the last one) is
-    /// one every run of the cell makes at this safepoint, however a host
-    /// slices it: where the session's safepoints reach a multiple of
-    /// `TICKS`, after native work past 64 units (`Vm::burn`), or under GC
-    /// stress. The checks a park adds (fuel, deadline, a request, an
-    /// operator stopping before it starts, the resume of a park that went
-    /// ahead of a collection step) are not. Only a regular check starts or
-    /// steps a collection the heap's own trigger makes due (or a resume
-    /// runs the step a park left owed), and only one clears `burned` and
-    /// `long_work`, so parks move neither.
-    pub(crate) fn regular_check(&mut self, ran: u64) -> bool {
-        let regular = (ran > 0 && self.sp_phase == 0)
+    /// Whether the check being made is one every run of the cell makes at
+    /// this safepoint, however a host slices it: where the session's
+    /// safepoints reach a multiple of `TICKS`, after native work past 64
+    /// units (`Vm::burn`), or under GC stress. The checks a park adds
+    /// (fuel, deadline, a request, an operator stopping before it starts,
+    /// the resume of a park that went ahead of a collection step) are not.
+    /// Only a regular check starts or steps a collection the heap's own
+    /// trigger makes due (or a resume runs the step a park left owed), and
+    /// only one clears `burned` and `long_work`, so parks move neither.
+    /// Called before `charge_ticks` starts the next period: `burned` still
+    /// past 64 there would force the safepoint after this one to check too
+    /// (`Vm::reset_ticks`), a second check for every one native work forces
+    /// (bytearray `+=` in a loop: +6.1% Ir \[M\]).
+    pub(crate) fn regular_check(&mut self) -> bool {
+        // The phase `reset_ticks` is about to reach.
+        let used = i32::try_from(self.ticks_used()).unwrap_or(0);
+        let regular = (used > 0 && (self.sp_phase + used) % TICKS == 0)
             || self.burned > 64
             || self.gc_stress
             || self.gc_inc_stress;

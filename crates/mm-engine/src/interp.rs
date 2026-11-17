@@ -653,9 +653,8 @@ impl Vm {
     #[cold]
     #[inline(never)]
     fn safepoint(&mut self, st: &State) -> Option<ParkReason> {
-        let ran = self.ticks_used();
+        let regular = self.regular_check();
         self.charge_ticks();
-        let regular = self.regular_check(ran);
         self.afford = false;
         // What an earlier instruction's builtin consumed is not kept alive
         // for the GC (`Vm::fresh_consumed`).

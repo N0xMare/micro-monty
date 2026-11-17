@@ -190,6 +190,38 @@ fn a_deadline_parks_and_resume_continues() {
     assert_eq!(c.repr, "19999900000");
 }
 
+/// Native work past 64 units forces one check, not two: a loop whose
+/// `+=` copies 8 KiB an iteration parks about once an iteration with a
+/// deadline past at every check (on a clock that never moves). Step 2's
+/// order also forced the safepoint after each forced check: 2,002 parks.
+#[test]
+fn long_native_work_forces_one_check_an_iteration() {
+    let src = "\
+chunk = bytearray(b'x' * 8192)
+grown = bytearray()
+for i in range(1000):
+    grown += chunk
+    grown[-1] = i & 127
+(len(grown), grown[-1])";
+    let engine = Engine::new(EngineConfig::default());
+    let mut s = Session::new(&engine).expect("session");
+    let code = engine.compile(src, "forced.py").expect("compiles");
+    s.set_deadline_with(Box::new(|| 1), 1);
+    let mut p = s.start(&code);
+    let mut parks = 0;
+    while p
+        == (Progress::Parked {
+            reason: ParkReason::Deadline,
+        })
+    {
+        parks += 1;
+        s.set_deadline_with(Box::new(|| 1), 1);
+        p = s.resume(Resume::Continue).expect("resumes");
+    }
+    assert_eq!(outcome(&p), "complete Some(\"(8192000, 103)\")");
+    assert!((1_000..=1_100).contains(&parks), "{parks} parks");
+}
+
 #[test]
 fn native_work_observes_control_without_a_fuel_limit() {
     for (setup, operation, check) in [
