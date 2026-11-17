@@ -856,7 +856,10 @@ impl Worker {
     }
 
     /// The batch the cell waits on, once the host delivered every result of
-    /// it; its results are accepted at the engine's next event.
+    /// it, with every other result delivered for a call still outstanding:
+    /// the engine lists a call nothing awaits only while a task sleeps, and
+    /// a cell may poll it (`f.done()`) while it waits on another. Its
+    /// results are accepted at the engine's next event.
     fn complete_batch(&mut self) -> Result<Option<Resume>, Lost> {
         let Some(running) = self.running.as_mut() else {
             return Ok(None);
@@ -867,7 +870,14 @@ impl Worker {
         if !pending.iter().all(|id| running.results.contains_key(id)) {
             return Ok(None);
         }
-        let pending = running.waiting.take().unwrap_or_default();
+        let mut pending = running.waiting.take().unwrap_or_default();
+        let unlisted: Vec<u64> = running
+            .results
+            .keys()
+            .filter(|id| running.futures.contains(id) && !pending.contains(id))
+            .copied()
+            .collect();
+        pending.extend(unlisted);
         let mut batch = Vec::with_capacity(pending.len());
         for id in &pending {
             let Some(result) = running.results.remove(id) else {

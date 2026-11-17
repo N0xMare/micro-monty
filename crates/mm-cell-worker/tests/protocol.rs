@@ -483,16 +483,9 @@ fn the_private_function_called_from_sync_code_dispatches_at_once() {
     );
     worker.deliver(0, first, Ok(CellValue::Int(0)));
     worker.deliver(0, second, Ok(CellValue::Int(1)));
+    // The batch for `second` carries `first`'s result too: it was
+    // delivered for a call still outstanding.
     assert_eq!(worker.recv(), accepted(0, second));
-    // The first result was already delivered: the next wait completes at
-    // once and the cell consumes it.
-    assert_eq!(
-        worker.recv(),
-        WorkerFrame::Waiting {
-            cell: 0,
-            calls: vec![first]
-        }
-    );
     assert_eq!(worker.recv(), accepted(0, first));
     assert_eq!(worker.recv(), text(0, "1 0\n"));
     assert_eq!(result(worker.finish(0).1), Ok("None".to_owned()));
@@ -854,5 +847,40 @@ fn a_host_future_from_an_earlier_cell_raises_instead_of_losing_the_worker() {
         }
     ));
     assert_eq!(worker.run(2, "1 + 1").1, Ok("2".to_owned()));
+    assert_eq!(worker.shutdown(), Some(0));
+}
+
+#[test]
+fn a_batch_carries_every_result_of_an_outstanding_call() {
+    // `f` is not awaited, so the engine lists only `g`; the host delivers
+    // both, and the batch for `g` must carry `f`'s result too, so the cell
+    // sees `f` done as CPython does (False before this).
+    let mut worker = Worker::configured();
+    worker.start(
+        0,
+        "f = _plakous_host_0({'q': 'a'})\ng = _plakous_host_0({'q': 'b'})\nawait g\nf.done()",
+        Some(bootstrap()),
+    );
+    let (f, _, _) = worker.nested_call(0);
+    let (g, _, _) = worker.nested_call(0);
+    assert_eq!(
+        worker.recv(),
+        WorkerFrame::Waiting {
+            cell: 0,
+            calls: vec![g]
+        }
+    );
+    worker.deliver(0, f, Ok(CellValue::Null));
+    worker.deliver(0, g, Ok(CellValue::Null));
+    let mut seen = [worker.recv(), worker.recv()];
+    seen.sort_by_key(|frame| format!("{frame:?}"));
+    let mut want = [accepted(0, f), accepted(0, g)];
+    want.sort_by_key(|frame| format!("{frame:?}"));
+    assert_eq!(seen, want);
+    let (text, outcome) = worker.finish(0);
+    assert_eq!(
+        (text.as_str(), result(outcome)),
+        ("", Ok("True".to_owned()))
+    );
     assert_eq!(worker.shutdown(), Some(0));
 }
