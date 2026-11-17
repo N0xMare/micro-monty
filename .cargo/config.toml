@@ -1,2 +1,9 @@
 [alias]
 xtask = "run --quiet --package xtask --"
+
+# The gates compare shipped builds across machines. Cargo also applies the
+# config of every parent directory, so name rustc's default linker driver
+# here: a user-level `linker` (clang, say) then cannot change the native
+# artifacts (`hello` was 22 KB larger linked through clang [M]).
+[target.x86_64-unknown-linux-gnu]
+linker = "cc"
