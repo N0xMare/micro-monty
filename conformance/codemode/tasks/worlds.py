@@ -14,6 +14,7 @@ import json
 import math
 import random
 import sqlite3
+import threading
 import urllib.parse
 
 from ptc import ToolError, tool
@@ -95,6 +96,10 @@ def _db() -> sqlite3.Connection:
 
 
 DB = _db()
+# `run.py` runs solutions on a thread per core over this one connection. An
+# error and another thread's query read the connection's error state at the
+# same time, which raised SystemError or moved outcomes at 128 threads [M].
+DB_LOCK = threading.Lock()
 
 SCHEMA_DOC = (
     'Tables: customers(id INTEGER, name TEXT, email TEXT, region TEXT, tier TEXT, signup_date TEXT '
@@ -112,12 +117,13 @@ def _query_database(args, state):
     sql = args['sql']
     if not sql.lstrip().lower().startswith(('select', 'with')):
         raise ToolError('only SELECT queries are allowed', 'PermissionError')
-    try:
-        cur = DB.execute(sql)
-    except sqlite3.Error as e:
-        raise ToolError(f'SQL error: {e}', 'ValueError') from None
-    cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, row)) for row in cur.fetchall()]
+    with DB_LOCK:
+        try:
+            cur = DB.execute(sql)
+        except sqlite3.Error as e:
+            raise ToolError(f'SQL error: {e}', 'ValueError') from None
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
 def _not_found(what):
