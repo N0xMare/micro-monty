@@ -87,6 +87,8 @@ pub const fn hash_bytes_const(data: &[u8]) -> u64 {
     folded_mul(h ^ data.len() as u64, K.rotate_left(32))
 }
 
+/// The high and low halves of `a * b`'s 128-bit product, xor-ed.
+#[cfg(not(target_arch = "wasm32"))]
 #[inline]
 fn folded_mul(a: u64, b: u64) -> u64 {
     let p = u128::from(a) * u128::from(b);
@@ -96,6 +98,26 @@ fn folded_mul(a: u64, b: u64) -> u64 {
     )]
     let (lo, hi) = (p as u64, (p >> 64) as u64);
     lo ^ hi
+}
+
+/// [`folded_mul`] where no 64x64-bit multiply gives 128 bits: wasm32
+/// compiles a `u128` product to a call of compiler-builtins' `__multi3`,
+/// a full 128x128-bit multiply through memory. The same value from four
+/// 32x32-bit products: a restore checks every hashed str's hash against
+/// [`hash_bytes`] and the dunder table is hashed at compile time with the
+/// 128-bit product, so the wasm conformance run and the cross-target
+/// durability run fail if the two forms ever differ.
+#[cfg(target_arch = "wasm32")]
+#[inline]
+fn folded_mul(a: u64, b: u64) -> u64 {
+    let (a_lo, a_hi) = (a & 0xFFFF_FFFF, a >> 32);
+    let (b_lo, b_hi) = (b & 0xFFFF_FFFF, b >> 32);
+    // No sum overflows: (2^32 - 1)^2 + 2 * (2^32 - 1) = 2^64 - 1.
+    let low = a_lo * b_lo;
+    let mid = a_hi * b_lo + (low >> 32);
+    let cross = a_lo * b_hi + (mid & 0xFFFF_FFFF);
+    let high = a_hi * b_hi + (mid >> 32) + (cross >> 32);
+    a.wrapping_mul(b) ^ high
 }
 
 /// Positions in non-ASCII strings remembered by [`Heap::str_offset`] and
