@@ -1691,17 +1691,25 @@ impl Vm {
             Some(op::LIST_EXTEND) => self.seq_items_left(st.acc).is_some(),
             // A builtin type called as a constructor that copies its
             // argument (`list(l)`, `dict(x, **kw)`); a builtin called
-            // directly retries in `call_native`.
+            // directly retries in `call_native`, one called through `*` or
+            // `**` here (`max(*a)` retries when its arguments do not fit,
+            // `Vm::oom_retry_expansion`).
             Some(o @ (op::CALL | op::CALL_EX)) => {
                 let f = self
                     .stack
                     .get(st.base + operand(bc, st.pc, 0))
                     .copied()
                     .unwrap_or(Value::NONE);
+                let builtin = if o == op::CALL_EX && f.is_obj_kind(ty::BOUND as u8) {
+                    self.vslot(f, 1).as_native()
+                } else if o == op::CALL_EX {
+                    f.as_native()
+                } else {
+                    None
+                };
                 (o == op::CALL_EX && f.is_obj_kind(ty::FUNC as u8))
-                    || self
-                        .type_of_typeobj(f)
-                        .and_then(|t| self.ctor_of(t))
+                    || builtin
+                        .or_else(|| self.type_of_typeobj(f).and_then(|t| self.ctor_of(t)))
                         .and_then(crate::native)
                         .is_some_and(Self::native_pure)
             }
@@ -1720,6 +1728,23 @@ impl Vm {
         let retry = self.oom_retry_if(true, Self::op_at(st));
         self.oom_wait = false;
         retry
+    }
+
+    /// A `CALL_EX` at `pc` of a callee other than a Python function did not
+    /// fit its arguments (the stack they are laid out on, or the tuple of
+    /// keyword names): nothing ran and nothing changed, so it runs again
+    /// once a collection has ended, as [`Vm::oom_retry_fault`] reruns.
+    /// When it is not retried (its rerun did not fit either), the refused
+    /// size is taken too: the fault exit asks again for a callee that
+    /// changes nothing, and with the mark already consumed it would retry
+    /// the call for ever instead of raising.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn oom_retry_expansion(&mut self, st: &State, pc: usize) -> Raised {
+        if st.ci != self.tramp && !self.oom_retry_if(true, (u64::from(st.ci) << 32) | pc as u64) {
+            let _ = self.heap.take_refused();
+        }
+        Raised
     }
 
     /// A chunked step's new table did not fit (`MemoryError` pending) where
@@ -1800,8 +1825,13 @@ impl Vm {
 
     fn oom_retry_if(&mut self, pure: bool, at: u64) -> bool {
         self.fresh_consumed();
+        // A retry of unknown instruction (`at` is `u64::MAX`: a binary
+        // operator, `SET_ITEM`, a builtin called directly) is the rerun of
+        // such a mark only: one failing in the same tick as an earlier
+        // instruction's successful rerun (a slice, a spread), whose mark
+        // names that instruction, is a first failure.
         let rerun = core::mem::replace(&mut self.oom_rerun, u64::MAX) == self.op_stamp()
-            && (at == u64::MAX || [u64::MAX, at].contains(&self.oom_rerun_at));
+            && [u64::MAX, at].contains(&self.oom_rerun_at);
         let retry = !rerun
             && pure
             && self.exc_type(self.exc) == T::MemoryError

@@ -5049,13 +5049,16 @@ impl Vm {
         let kwnames = if names.is_empty() {
             Value::NONE
         } else {
-            self.alloc_tuple(&names)?
+            self.alloc_tuple(&names)
+                .map_err(|_| self.oom_retry_expansion(st, call_pc))?
         };
         // Arguments go above this frame; the callee's frame starts after
-        // them.
+        // them, and `call_value_at` lays a bound method's out again above
+        // that: the stack grows here, once, for all of it.
         let scratch = st.base + nregs_here;
         let n = npos + vals.len();
-        self.ensure_stack(scratch + n + 64)?;
+        self.ensure_stack(scratch + 2 * n + 65)
+            .map_err(|_| self.oom_retry_expansion(st, call_pc))?;
         // A copy's unit per 8 items, as the tuple a function gets.
         self.burn(npos as u64 / 8);
         Self::read_slots(&self.heap, sr, 0, &mut self.stack[scratch..scratch + npos]);

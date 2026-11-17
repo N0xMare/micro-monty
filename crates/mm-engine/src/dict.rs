@@ -542,39 +542,43 @@ impl Vm {
     /// entries of `d`), so the spread's rerun after a collection refuses
     /// none of its own; true. False, changing nothing, when `d`'s last
     /// entries are not those keys (the failure came from elsewhere). Out
-    /// of the dispatch loop, which the spread's insert loop is in.
+    /// of the dispatch loop, which the spread's insert loop is in. It
+    /// walks both tables in place: memory is short here, and a copy of
+    /// the keys would be charged nowhere.
     #[cold]
     #[inline(never)]
     pub(crate) fn kwargs_unput(&mut self, d: Value, src: Value) -> bool {
         if !d.is_obj_kind(ty::DICT as u8) || !src.is_obj_kind(ty::DICT as u8) {
             return false;
         }
-        let keys: Vec<Value> = self
-            .dict_items_vec(src)
-            .into_iter()
-            .map(|(k, _)| k)
-            .collect();
-        let n = keys
-            .iter()
-            .take_while(|&&k| Vm::is_str(k) && self.dict_get_str(d, k).is_some())
+        let n = self
+            .dict_keys_from(src, 0)
+            .take_while(|&k| Vm::is_str(k) && self.dict_get_str(d, k).is_some())
             .count();
         self.burn(n as u64);
-        let mut last = Vec::new();
-        for i in (0..self.dict_used(d)).rev() {
-            if last.len() == n {
-                break;
-            }
-            if let Some((k, _)) = self.dict_entry(d, i) {
-                last.push(k);
-            }
+        // The first of `d`'s last `n` entries.
+        let mut start = self.dict_used(d);
+        let mut seen = 0;
+        while seen < n && start > 0 {
+            start -= 1;
+            seen += usize::from(self.dict_entry(d, start).is_some());
         }
-        if !last.iter().rev().eq(keys.iter().take(n)) {
+        if seen < n
+            || !self
+                .dict_keys_from(d, start)
+                .eq(self.dict_keys_from(src, 0).take(n))
+        {
             return false;
         }
         for _ in 0..n {
             self.dict_pop_last(d);
         }
         true
+    }
+
+    /// The keys of `d`'s live entries from entry `from` on, read in place.
+    fn dict_keys_from(&self, d: Value, from: usize) -> impl Iterator<Item = Value> + '_ {
+        (from..self.dict_used(d)).filter_map(move |i| self.dict_entry(d, i).map(|(k, _)| k))
     }
 
     /// Number of live entries of a dict.

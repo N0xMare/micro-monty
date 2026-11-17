@@ -3669,13 +3669,12 @@ fn min_max(vm: &mut Vm, a: CallArgs, want: Ordering, name: &str) -> Result<Value
         };
         return fold_start(vm, kind, it, Value::UNDEFINED, vm.kwarg(&a, 1));
     }
-    let start = a.base as usize;
-    let args = vm.stack.get(start..start + a.n as usize).unwrap_or(&[]);
-    let res = NativeValues::copy(&mut vm.heap, args);
-    // One unit per item compared, as a fold charges an iterable.
+    // One unit per item compared, as a fold charges an iterable. The items
+    // are read where the call laid them out, which nothing below moves (a
+    // user comparison hands the whole call to its twin): a copy of a
+    // million `*` arguments was 8 MB more, refused where the call fit.
     vm.burn(u64::from(a.n));
-    let items = vm.hx_o(res)?;
-    let Some(mut best) = items.first().copied() else {
+    let Some(mut best) = (a.n > 0).then(|| vm.arg_o(&a, 0)) else {
         let d = vm.kwarg(&a, 1);
         if d != Value::UNDEFINED {
             return Ok(d);
@@ -3686,7 +3685,8 @@ fn min_max(vm: &mut Vm, a: CallArgs, want: Ordering, name: &str) -> Result<Value
         ));
     };
     let sym = if want == Ordering::Less { "<" } else { ">" };
-    for &x in &items[1..] {
+    for i in 1..a.n {
+        let x = vm.arg_o(&a, i);
         // CPython compares item < best for min and item > best for max.
         if vm.order(x, best, sym)? == Some(want) {
             best = x;

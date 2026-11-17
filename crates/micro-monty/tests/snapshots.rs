@@ -208,9 +208,19 @@ print(sorted(range(5), key=lambda v: -v))
 }
 
 fn hopping(src: &str, name: &str, fuel: u64, every: usize) -> (String, String, usize) {
-    let e = engine();
+    hopping_in(&engine(), src, name, fuel, every)
+}
+
+/// [`hopping`] in engine `e`.
+fn hopping_in(
+    e: &Engine,
+    src: &str,
+    name: &str,
+    fuel: u64,
+    every: usize,
+) -> (String, String, usize) {
     let out = Arc::new(Mutex::new(String::new()));
-    let mut s = Session::new(&e).expect("session");
+    let mut s = Session::new(e).expect("session");
     attach(&mut s, &out);
     s.set_fuel(Some(fuel));
     let mut p = s.start(&e.compile(src, name).expect("compiles"));
@@ -239,6 +249,33 @@ fn hopping(src: &str, name: &str, fuel: u64, every: usize) -> (String, String, u
     }
     let text = out.lock().expect("output lock").clone();
     (text, outcome(&p), parks)
+}
+
+/// A `**` spread that did not fit runs again after a collection, then its
+/// call (`Vm::oom_rerun_at` names the instruction that is the rerun). A
+/// restore at every park writes images while that mark is set, naming the
+/// spread or the `CALL_EX`: a restore that dropped it took the call's
+/// failure for the rerun's and raised (`['ok', 'MemoryError', 'ok',
+/// 'MemoryError']` [M, reviewer]). python3.14 prints four oks.
+#[test]
+fn a_spread_rerun_mark_survives_a_restore() {
+    let src = "\
+N = 200_000
+base = {'k%d' % i: i for i in range(N)}
+def f(**kw):
+    return len(kw)
+out = []
+for i in range(4):
+    try:
+        out.append('ok' if f(**base) == N else 'bad')
+    except MemoryError:
+        out.append('MemoryError')
+print(out, len(base))
+";
+    let e = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(48 << 20)));
+    let (restored, _, parks) = hopping_in(&e, src, "rerun.py", 10_007, 1);
+    assert!(parks > 1, "{parks} parks");
+    assert_eq!(restored, "['ok', 'ok', 'ok', 'ok'] 200000\n");
 }
 
 /// Whether an operation that ran out of memory runs again after a

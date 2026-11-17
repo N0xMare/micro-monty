@@ -1446,10 +1446,12 @@ fn iterator_buffers_stay_budgeted_until_their_results_are_allocated() {
         let source = format!(
             "try:\n    result = {expression}\nexcept MemoryError:\n    print('bounded')\nelse:\n    print({check})\nprint(list(iter(range(3))))"
         );
-        for memory in [8 << 20, 16 << 20] {
+        // At 8 MiB the list fits once a collection has run: its twin's call
+        // (`_invoke`) is retried as a builtin's.
+        for memory in [7 << 20, 16 << 20] {
             let (p, out) = run_with(Limits::new().with_memory(memory), &source);
             assert!(matches!(p, Progress::Complete(_)), "{expression}: {p:?}");
-            let expected = if memory == 8 << 20 {
+            let expected = if memory == 7 << 20 {
                 "bounded"
             } else {
                 success
@@ -3408,6 +3410,122 @@ print(out)
     let (p, out) = run_with(Limits::new().with_memory(80 << 20), src);
     assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{out}");
     assert_eq!(out, "{250000}\n");
+}
+
+/// A builtin called through `*` or `**` beside garbage: a call whose
+/// arguments did not fit on the stack runs again after a collection, as
+/// does a builtin that changes nothing (`str.format`) failing inside, and
+/// `max(*a)` reads its arguments where they lie instead of copying 8 MB of
+/// them. Each raised at 56 or 72 MiB [M, reviewer]; python3.14's results.
+#[test]
+fn a_builtin_called_through_a_spread_beside_garbage_waits_for_a_collection() {
+    for (mib, call, want) in [
+        (56, "max(*big)", "999999"),
+        (72, "max(*big)", "999999"),
+        (72, "len('{k7}'.format(**kwbig))", "1"),
+    ] {
+        let src = format!(
+            "big = list(range(1_000_000))
+kwbig = {{'k%d' % i: i for i in range(200_000)}}
+def one():
+    g = [None] * 3_000_000
+    g = None
+    return {call}
+print(one())
+"
+        );
+        let (p, out) = run_with(Limits::new().with_memory(mib << 20), &src);
+        assert!(
+            matches!(p, Progress::Complete(_)),
+            "{call} at {mib} MiB: {p:?}\n{out}"
+        );
+        assert_eq!(out, format!("{want}\n"), "{call} at {mib} MiB");
+    }
+}
+
+/// A call through `*` whose arguments truly do not fit raises once its
+/// rerun after a collection does not fit either: the fault exit, which
+/// asks again for a builtin that changes nothing (`str.format`), must not
+/// take that for a first failure. Retried for ever, it parked for fuel at
+/// every slice without ending [M, reviewer]; python3.14 prints 1 (it has
+/// the memory).
+#[test]
+fn a_spread_call_that_does_not_fit_after_its_rerun_raises() {
+    let src = "import gc
+big = list(range(1_000_000))
+gc.collect()
+try:
+    print(len('{}'.format(*big)))
+except MemoryError:
+    print('MemoryError')
+";
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(24 << 20)));
+    let code = engine.compile(src, "fmtpos.py").expect("compiles");
+    let mut session = Session::new(&engine).expect("session");
+    let out = Arc::new(Mutex::new(String::new()));
+    let sink = Arc::clone(&out);
+    session.set_output(Box::new(move |s: &str| {
+        sink.lock().expect("output lock").push_str(s);
+    }));
+    // Several times what the cell spends, so a retry loop parks instead
+    // of hanging the test.
+    session.set_fuel(Some(50_000_000));
+    let p = session.start(&code);
+    let text = out.lock().expect("output lock").clone();
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{text}");
+    assert_eq!(text, "MemoryError\n");
+}
+
+/// A binary operator failing in the same tick as an earlier instruction's
+/// successful rerun (the slice `small[:]` did not fit, ran again after a
+/// collection) waits for a collection of its own: the slice's mark names
+/// its instruction, the operator's retry names none. It raised before
+/// [M, reviewer]; python3.14 prints ok.
+#[test]
+fn an_operator_after_a_rerun_in_the_same_tick_waits_for_its_own_collection() {
+    let src = "import gc
+small = list(range(40))
+keep = [None] * 60000
+src = [None] * 4096
+SIZES = (4096, 2048, 1024, 512, 256, 128, 96, 80, 64, 56, 48, 44, 42, 41, 40)
+def fill():
+    i = 0
+    for size in SIZES:
+        try:
+            for _ in range(400):
+                keep[i] = src[:size]
+                i += 1
+        except MemoryError:
+            pass
+    for size in SIZES:
+        try:
+            for _ in range(400):
+                keep[i] = [None] * size
+                i += 1
+        except MemoryError:
+            pass
+def attempt():
+    g1 = [None] * 40
+    g2 = [None] * 40
+    fill()
+    g1 = g2 = None
+    try:
+        x = small[:]
+        t = [None] * 40
+        t = None
+        y = [None] * 40
+        out = 'ok'
+    except MemoryError:
+        out = 'MemoryError'
+    for i in range(len(keep)):
+        keep[i] = None
+    gc.collect()
+    return out
+print(attempt())
+";
+    let (p, out) = run_with(Limits::new().with_memory(6 << 20), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}\n{out}");
+    assert_eq!(out, "ok\n");
 }
 
 /// An f-string field formatting a container beside garbage runs again

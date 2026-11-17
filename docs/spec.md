@@ -1599,9 +1599,12 @@ timer deadlines.
   operand first (an in-place operator on a dict or set, or on an instance
   of a subclass of one), an f-string's `BUILD_STRING`, a starred display's
   `LIST_TO_TUPLE`, `UNPACK_EX` from a list or tuple, `LIST_EXTEND` from a
-  list or tuple or an iterator over one, `CALL_EX` of a Python function
-  or of a builtin type whose constructor copies its argument
-  (`dict(x, **kw)`), a call's keyword and `**` spread (`DICT_UPDATE` modes
+  list or tuple or an iterator over one, `CALL_EX` of a Python function,
+  of a builtin type whose constructor copies its argument
+  (`dict(x, **kw)`) or of a builtin that changes nothing before its result
+  is allocated (`'{k}'.format(**kw)`), and any `CALL_EX` whose arguments
+  did not fit on the stack before its callee started (`max(*a)`,
+  `Vm::oom_retry_expansion`), a call's keyword and `**` spread (`DICT_UPDATE` modes
   2 and 1: a failed insert writes nothing, and a spread first takes out
   the keys it put in, so its rerun refuses none of its own), `SET_ITEM` (stores are
   idempotent, and a list slice builds its new buffer before installing it),
@@ -1628,7 +1631,9 @@ timer deadlines.
   slices end, and whether a later instruction runs again does not depend
   on the slices. A rerun's mark also names its instruction (`oom_rerun_at`,
   in the image): the next instruction in the same tick (`f(**d)`'s
-  `CALL_EX` after its spread) retries as its own. The hooks sit outside the dispatch loop's arms
+  `CALL_EX` after its spread; a binary operator, `SET_ITEM` or directly
+  called builtin after a slice's rerun, whose own retry names no
+  instruction and takes only such a mark for its rerun) retries as its own. The hooks sit outside the dispatch loop's arms
   (`Vm::op_binop`, `Vm::op_setitem`, `Vm::oom_retry_fault`), so its code is
   unchanged. A size the heap refuses before the native allocates
   (`Heap::would_fit`, `list(range(n))`) is retried as a block that did not
