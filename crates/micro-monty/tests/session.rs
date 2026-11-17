@@ -717,6 +717,22 @@ fn a_growing_series_beside_kept_small_objects_reuses_its_space() {
     }
 }
 
+/// A growing series whose blocks each outlive a few collections (a window
+/// of the last 40) beside a kept small object per round. A sweep once listed
+/// the free space after every live block, its room included, so the next
+/// kept object landed in the room, and once the block died it was again a
+/// few units too short for its successor: this needed 66,432 KiB, and now
+/// 10,304 [M].
+#[test]
+fn a_live_medium_block_keeps_its_room_across_a_sweep() {
+    let src = "from collections import deque\nwin = deque(maxlen=40)\nkeep = []\n\
+               for n in range(64, 16000):\n    win.append([None] * n)\n    keep.append((n,))\n\
+               print(len(keep), len(win[-1]))\n";
+    let (p, out) = run_with(Limits::new().with_memory(16 << 20), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    assert_eq!(out, "15936 15999\n");
+}
+
 /// Heavy churn of mixed sizes (small tuples and dicts, medium lists, byte
 /// blocks up to 20 KB) beside a growing series stays near `CPython`'s peak:
 /// `CPython` peaks at 12.6 MB traced and 24.6 MB resident; it completes at

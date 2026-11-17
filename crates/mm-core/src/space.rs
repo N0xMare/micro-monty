@@ -23,7 +23,11 @@
 //! needs that) and its memory is returned as soon as it dies.
 //!
 //! Free blocks of 2..=`SMALL_MAX` units sit on exact-size lists, bigger ones
-//! on power-of-two bins searched first-fit; the link is unit 1 of the block.
+//! on classes of the sizes `medium_room` rounds to (`med_class`); the link
+//! is unit 1 of the block. A medium request tries the first few blocks of
+//! its own class, then the next non-empty class, where every block fits,
+//! and walks the rest of its own class only when no bigger block is listed:
+//! a class of blocks each slightly too short is otherwise not walked whole.
 //! A one-unit free block is a hole, reclaimed by coalescing at the next sweep.
 //! A small block (up to `SMALL_MAX` units) is placed from its exact list,
 //! the smallest bigger small block (split), the free run (a medium free
@@ -39,7 +43,10 @@
 //! short for the next, and the heap committed a block per round until
 //! `MemoryError` with under 2 MB live. Sweep rebuilds every list from
 //! scratch, coalescing adjacent free blocks, makes the first medium one the
-//! run and releases segments with nothing live.
+//! run and releases segments with nothing live. A free run after a live
+//! medium block that fits in the block's room stays a hole, and in the bump
+//! segment the bump region starts past it, so a block that outlives a
+//! collection keeps its room (see `walk`).
 
 use alloc::{boxed::Box, vec, vec::Vec};
 
@@ -59,8 +66,13 @@ pub(crate) const MAX_SEGS: usize = 1 << (32 - SEG_BITS);
 const SMALL_MAX: usize = 63;
 /// Blocks of at least this many units get a dedicated segment (128 KiB).
 pub(crate) const LARGE_UNITS: usize = SEG_UNITS / 8;
-/// Medium bins: bin `b` holds free blocks of `2^(b+6) .. 2^(b+7)` units.
-const MED_BINS: usize = 12;
+/// Medium free-list classes: 64 per doubling from 64 units to
+/// `LARGE_UNITS`, the sizes `medium_room` rounds to, then one class for
+/// free blocks of `LARGE_UNITS` and more ([`med_class`]).
+const MED_CLASSES: usize = 8 * 64 + 1;
+/// How many blocks of its own class a medium placement tries before it
+/// takes a block of a higher class, where every block fits.
+const OWN_CLASS_WALK: usize = 4;
 /// Fewest units a normal segment has (32 KiB): the bytes space's first
 /// segment ([`Store::FIRST`]).
 pub(crate) const FIRST_UNITS: usize = 1 << 12;
@@ -437,13 +449,25 @@ struct Lists {
     small: [u32; SMALL_MAX + 1],
     /// Bit `n` set iff `small[n]` is non-empty.
     mask: u64,
-    medium: [u32; MED_BINS],
+    /// Heads of the medium classes. Allocated at the first sweep or medium
+    /// block listed: 2 KiB inline made every move of the heap copy it, +1.4%
+    /// startup Ir, and filled at `Lists::new` +0.7% [M].
+    medium: Vec<u32>,
+    /// Bit `c` set iff medium class `c` is non-empty.
+    medium_mask: [u64; MED_CLASSES.div_ceil(64)],
     /// Units on the lists (holes excluded).
     free_units: u64,
 }
 
-fn med_bin(units: usize) -> usize {
-    (units.ilog2() as usize).saturating_sub(6).min(MED_BINS - 1)
+/// The class of a medium free block of `units >= 64`: class `c` holds the
+/// sizes from one `medium_room` size up to the next, so a block of a
+/// higher class fits any request of class `c`.
+fn med_class(units: usize) -> usize {
+    let shift = units.ilog2() as usize - 6;
+    if shift >= 8 {
+        return MED_CLASSES - 1;
+    }
+    shift * 64 + (units >> shift) - 64
 }
 
 impl Lists {
@@ -451,28 +475,81 @@ impl Lists {
         Lists {
             small: [NIL; SMALL_MAX + 1],
             mask: 0,
-            medium: [NIL; MED_BINS],
+            medium: Vec::new(),
+            medium_mask: [0; MED_CLASSES.div_ceil(64)],
             free_units: 0,
         }
+    }
+
+    /// Empties every list. The medium heads are allocated here at the first
+    /// sweep, so that the sweep's walk lists medium blocks inline
+    /// ([`Lists::file_inline`]).
+    fn clear(&mut self) {
+        self.small = [NIL; SMALL_MAX + 1];
+        self.mask = 0;
+        if self.medium.is_empty() {
+            self.medium = vec![NIL; MED_CLASSES];
+        } else {
+            self.medium.fill(NIL);
+        }
+        self.medium_mask = [0; MED_CLASSES.div_ceil(64)];
+        self.free_units = 0;
     }
 
     /// Turns `[off, off + units)` of segment `idx` into a free block and lists
     /// it. Free-block contents are not snapshot-visible, so this does not set
     /// the dirty flag.
+    #[inline]
     fn file<S: Store>(&mut self, s: &mut Seg<S>, idx: usize, off: usize, units: usize) {
+        if units > SMALL_MAX {
+            self.file_medium(s, idx, off, units);
+        } else {
+            self.file_inline(s, idx, off, units);
+        }
+    }
+
+    /// [`Lists::file`] for a medium block. Out of line: inlined, it grew
+    /// every caller that lists only small rests (`split_small`, fmt +0.3%
+    /// Ir [M]).
+    #[inline(never)]
+    fn file_medium<S: Store>(&mut self, s: &mut Seg<S>, idx: usize, off: usize, units: usize) {
+        if self.medium.is_empty() {
+            self.medium = vec![NIL; MED_CLASSES];
+        }
+        self.file_inline(s, idx, off, units);
+    }
+
+    /// [`Lists::file`] with every size inline, for the sweep's walk. The
+    /// walk's loop is short of registers: a call or a branchier filing in it
+    /// made Cranelift spill on every live object, the walk +17% wasm32
+    /// instructions (str +0.6% wasm-ir, +0.9% v8-ir) [M]. The medium heads
+    /// must be allocated ([`Lists::clear`]); without them a medium block
+    /// stays a hole.
+    #[allow(
+        clippy::inline_always,
+        reason = "the walk's loop spilled around anything else: str +0.6% wasm-ir [M]"
+    )]
+    #[inline(always)]
+    fn file_inline<S: Store>(&mut self, s: &mut Seg<S>, idx: usize, off: usize, units: usize) {
         s.data.write(off, u64::from(S::free_len(units)) << 32);
         if units < 2 {
             return;
         }
-        let a = addr_of(idx, off);
         let head = if units <= SMALL_MAX {
             self.mask |= 1 << units;
             &mut self.small[units]
         } else {
-            &mut self.medium[med_bin(units)]
+            let c = med_class(units);
+            let Some(head) = self.medium.get_mut(c) else {
+                return;
+            };
+            if let Some(bits) = self.medium_mask.get_mut(c / 64) {
+                *bits |= 1 << (c % 64);
+            }
+            head
         };
         s.data.write(off + 1, u64::from(*head));
-        *head = a;
+        *head = addr_of(idx, off);
         self.free_units += units as u64;
     }
 
@@ -504,31 +581,77 @@ impl Lists {
 
     /// Takes a medium free block of at least `n` units off the lists;
     /// returns its address and size. The caller uses or lists the rest.
+    /// First fit among the first `OWN_CLASS_WALK` blocks of `n`'s class,
+    /// then the first block of the next non-empty class, then first fit
+    /// in the rest of `n`'s class: the walk was over every size of a
+    /// doubling, past many blocks a few units too short [M].
     fn take_fit<S: Store>(&mut self, segs: &mut [Seg<S>], n: usize) -> Option<(u32, usize)> {
-        let first = if n < 64 { 0 } else { med_bin(n) };
-        for b in first..MED_BINS {
-            let mut prev = NIL;
-            let mut cur = self.medium[b];
-            while cur != NIL {
-                let (seg, off) = split(cur);
-                let block_seg = segs.get(seg)?;
-                let m = S::units_for(header_len(block_seg.data.read(off)?));
-                let next = link(block_seg.data.read(off + 1)?);
-                if m >= n {
-                    if prev == NIL {
-                        self.medium[b] = next;
-                    } else {
-                        let (prev_seg, prev_off) = split(prev);
-                        segs.get_mut(prev_seg)?
-                            .data
-                            .write(prev_off + 1, u64::from(next));
-                    }
-                    self.free_units -= m as u64;
-                    return Some((cur, m));
-                }
-                prev = cur;
-                cur = next;
+        if n < 64 {
+            let c = self.next_class(0)?;
+            return self.take_in(segs, c, n, 1);
+        }
+        let own = med_class(n);
+        if let Some(found) = self.take_in(segs, own, n, OWN_CLASS_WALK) {
+            return Some(found);
+        }
+        if let Some(c) = self.next_class(own + 1) {
+            return self.take_in(segs, c, n, 1);
+        }
+        self.take_in(segs, own, n, usize::MAX)
+    }
+
+    /// The first non-empty medium class from `c` on.
+    fn next_class(&self, c: usize) -> Option<usize> {
+        let mut w = c / 64;
+        let mut bits = *self.medium_mask.get(w)? & (u64::MAX << (c % 64));
+        loop {
+            if bits != 0 {
+                return Some(w * 64 + bits.trailing_zeros() as usize);
             }
+            w += 1;
+            bits = *self.medium_mask.get(w)?;
+        }
+    }
+
+    /// Takes the first of the first `limit` blocks of class `c` that has at
+    /// least `n` units.
+    fn take_in<S: Store>(
+        &mut self,
+        segs: &mut [Seg<S>],
+        c: usize,
+        n: usize,
+        limit: usize,
+    ) -> Option<(u32, usize)> {
+        if *self.medium_mask.get(c / 64)? & (1 << (c % 64)) == 0 {
+            return None;
+        }
+        let mut prev = NIL;
+        let mut cur = *self.medium.get(c)?;
+        for _ in 0..limit {
+            if cur == NIL {
+                return None;
+            }
+            let (seg, off) = split(cur);
+            let block_seg = segs.get(seg)?;
+            let m = S::units_for(header_len(block_seg.data.read(off)?));
+            let next = link(block_seg.data.read(off + 1)?);
+            if m >= n {
+                if prev == NIL {
+                    *self.medium.get_mut(c)? = next;
+                    if next == NIL {
+                        *self.medium_mask.get_mut(c / 64)? &= !(1 << (c % 64));
+                    }
+                } else {
+                    let (prev_seg, prev_off) = split(prev);
+                    segs.get_mut(prev_seg)?
+                        .data
+                        .write(prev_off + 1, u64::from(next));
+                }
+                self.free_units -= m as u64;
+                return Some((cur, m));
+            }
+            prev = cur;
+            cur = next;
         }
         None
     }
@@ -1073,7 +1196,7 @@ impl<S: Store> Space<S> {
     pub(crate) fn sweep(&mut self, lazy: bool) -> Sweep {
         // The run's rest has a free-block header; the walk below lists it.
         self.run = (0, 0, 0);
-        self.lists = Lists::new();
+        self.lists.clear();
         self.pending.clear();
         // A small space sweeps at once: its sweep is short, and listing all
         // of its free blocks keeps allocation as it was.
@@ -1188,6 +1311,14 @@ impl<S: Store> Space<S> {
 /// everything between the end of one live object and the start of the next
 /// (dead objects and old free blocks alike) is one free run, and a dead
 /// object's start bit is cleared word by word from the bitmaps.
+///
+/// A live medium block keeps its room (`medium_room`): a run after it no
+/// longer than the room stays an unlisted hole, and in the bump segment the
+/// bump region starts after the room. Listed, the room took the next kept
+/// small object, and a block that outlived one collection was again a few
+/// units too short for its successor once it died. The hole is reused with
+/// the block. A longer run is listed whole: carving the room off its front
+/// would leave it a few units short of an exact fit.
 fn walk<S: Store>(
     lists: &mut Lists,
     s: &mut Seg<S>,
@@ -1200,7 +1331,11 @@ fn walk<S: Store>(
     let used = s.used;
     // `[free, next live object)` is free space.
     let mut free = 0;
-    let mut live = 0;
+    // The free units before `free`: the live units are `free - gaps`. (A
+    // running sum of live units would be one more value the loop keeps.)
+    let mut gaps = 0;
+    // The units of the last live block: a medium one keeps its room.
+    let mut last = 0;
     'words: for w in 0..top.div_ceil(64) {
         let (Some(st), Some(&mk)) = (s.starts.get(w).copied(), marks.get(w)) else {
             break;
@@ -1224,19 +1359,56 @@ fn walk<S: Store>(
                 break 'words;
             }
             if off > free {
-                lists.file(s, idx, free, off - free);
+                gaps += off - free;
+                file_after(lists, s, idx, free, off - free, last);
             }
-            live += units;
             free = off + units;
+            last = units;
         }
     }
+    let live = free - gaps;
     out.freed_units += used.saturating_sub(live) as u64;
     if free < top {
         if is_bump {
-            s.top = free;
+            // The bump region starts after the last live block's room.
+            let room = if last > SMALL_MAX {
+                medium_room(last).saturating_sub(last)
+            } else {
+                0
+            };
+            let hole = room.min(top - free);
+            if hole > 0 {
+                s.data.write(free, u64::from(S::free_len(hole)) << 32);
+            }
+            s.top = free + hole;
         } else {
-            lists.file(s, idx, free, top - free);
+            file_after(lists, s, idx, free, top - free, last);
         }
     }
     live
+}
+
+/// Lists the free run `[free, free + units)` of segment `idx` unless it
+/// follows a live medium block of `last` units and fits in its room, where
+/// it stays a hole. Inline, as is the filing: the walk's loop makes no call.
+#[allow(
+    clippy::inline_always,
+    reason = "the walk's loop spilled around a call: str +0.6% wasm-ir [M]"
+)]
+#[inline(always)]
+fn file_after<S: Store>(
+    lists: &mut Lists,
+    s: &mut Seg<S>,
+    idx: usize,
+    free: usize,
+    units: usize,
+    last: usize,
+) {
+    // A room is under `last / 64` units (`medium_room`), and a small block's
+    // is 0, so one shift rejects nearly every run before the exact test.
+    if units <= last >> 6 && units <= medium_room(last).saturating_sub(last) {
+        s.data.write(free, u64::from(S::free_len(units)) << 32);
+    } else {
+        lists.file_inline(s, idx, free, units);
+    }
 }

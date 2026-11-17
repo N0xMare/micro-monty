@@ -1157,7 +1157,12 @@ tags           1 SmallInt (i48) | 2 Ref (u32 offset, optional kind byte)
   room rounded up to one of 64 sizes per doubling (except when bumped in a
   segment that is not yet full-size, where the room would only fill more),
   the rest a hole that is reused with it once it dies, so a slightly longer
-  block fits where a temporary was (`prefix + str(i)`). An object's `id()`
+  block fits where a temporary was (`prefix + str(i)`). A live block keeps
+  that room across a sweep (a free run after it no longer than the room is
+  not listed). Bigger free blocks sit on classes of the same 64 sizes per
+  doubling; a placement tries a few blocks of its own class, then the next
+  non-empty class, where every block fits, and walks the rest of its own
+  class only when no bigger free block is listed. An object's `id()`
   does not change while it lives; which address a new object gets depends
   on when collections run (§5.1, clause 4).
 - Header (one word): `type:16 | flags:8 | nvals:8 | len:32`. `nvals` counts the
