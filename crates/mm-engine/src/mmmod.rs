@@ -416,6 +416,19 @@ pub(crate) fn mm_os_function(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> 
         .unwrap_or(Value::NONE))
 }
 
+/// `_mm.exc_name(e)`: the `name` a `NameError` or `AttributeError` keeps,
+/// as CPython's `AttributeError.__reduce__` reads it, past any `name` its
+/// class defines; `None` for other values.
+#[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+#[cfg_attr(mm_shipped, optimize(size))]
+pub(crate) fn mm_exc_name(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let e = vm.arg_o(&a, 0);
+    if !e.is_obj_kind(ty::EXC as u8) {
+        return Ok(Value::NONE);
+    }
+    Ok(vm.exc_name_attr(e, "name").unwrap_or(Value::NONE))
+}
+
 /// `_mm.exc_same_meta(a, b)`: CPython's `is_same_exception_metadata` for
 /// `except*`: the same cause and context, and the same traceback (entries
 /// here, as tracebacks are per-exception lists). CPython also compares a

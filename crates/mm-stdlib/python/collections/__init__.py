@@ -810,7 +810,13 @@ class OrderedDict(dict):
     def copy(self):
         return self.__class__(self)
 
-    __copy__ = copy
+    def __reduce__(self):
+        # CPython's `odict_reduce`, which `copy.copy` reads as well (an
+        # OrderedDict has no `__copy__`): the class called with nothing,
+        # the instance's attributes, then each item stored with `[]`.
+        getstate = getattr(type(self), '__getstate__', None)
+        state = getstate(self) if getstate is not None else self.__dict__ or None
+        return type(self), (), state, None, iter(self.items())
 
     @classmethod
     def fromkeys(cls, iterable, value=None):

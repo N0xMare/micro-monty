@@ -1320,6 +1320,7 @@ const DEFS: &[Def] = &[
     // The prelude's `_exc_match_any`'s; in `_mm`, not a `p!` native,
     // because those are bound at startup (1,464 instructions [M]).
     m!("_mm", "exc_match_part", 4, 4, NO, NO, mm_exc_match_part),
+    m!("_mm", "exc_name", 1, 1, NO, NO, crate::mmmod::mm_exc_name),
     m!(
         "_mm",
         "make_class",

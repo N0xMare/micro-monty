@@ -146,6 +146,14 @@ hashes are pre-release history, kept in the private archive
   e54f65f]); a user class's MRO is read in place, so an `except` or
   `isinstance` over a class chain thousands deep is no longer one step of
   110 to 258 ms.
+- `copy.copy` and `copy.deepcopy` keep an `AttributeError`'s `name` (it
+  was `None` on the copy; `obj` is not copied, as in CPython) and set an
+  exception's state with `setattr`, as `BaseException.__setstate__` does.
+  A shallow copy of an `OrderedDict` subclass instance keeps its
+  attributes: `OrderedDict` has CPython's `__reduce__` and no `__copy__`,
+  so the copy is the class called with nothing, the attributes, then each
+  item of `items()` stored with `[]` (0.0.2's known issue, among the
+  smaller differences). The build id moves.
 
 ### Known issues
 

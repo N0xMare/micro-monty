@@ -5,7 +5,7 @@
 # `__getstate__`/`__dict__`, and the list/dict items of builtin subclasses.
 
 import sys
-from _mm import backing as _backing
+from _mm import backing as _backing, exc_name as _exc_name
 
 
 class Error(Exception):
@@ -239,7 +239,17 @@ def _reduce(x):
     # (`set_reduce`): the class called with the arguments or the items,
     # then the instance's attributes.
     if isinstance(x, BaseException):
-        return (cls, x.args, getattr(x, '__dict__', None) or None)
+        state = getattr(x, '__dict__', None) or None
+        if isinstance(x, AttributeError):
+            # `AttributeError.__reduce__`: its `name` (never its `obj`)
+            # and its `args` are state too; the `name` it keeps, not one
+            # its class defines.
+            state = dict(state or ())
+            name = _exc_name(x)
+            if name is not None:
+                state['name'] = name
+            state['args'] = x.args
+        return (cls, x.args, state)
     if isinstance(x, set):
         getstate = getattr(cls, "__getstate__", None)
         state = getstate(x) if getstate is not None else getattr(x, '__dict__', None)
@@ -287,6 +297,11 @@ def _reconstruct(x, memo, func, args,
             state = deepcopy(state, memo)
         if hasattr(y, '__setstate__'):
             y.__setstate__(state)
+        elif isinstance(y, BaseException):
+            # CPython's `BaseException.__setstate__` sets each item as an
+            # attribute.
+            for key, value in state.items():
+                setattr(y, key, value)
         else:
             if isinstance(state, tuple) and len(state) == 2:
                 state, slotstate = state
