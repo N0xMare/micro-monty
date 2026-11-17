@@ -2008,8 +2008,7 @@ impl Vm {
             )),
             "__dict__" => Some(self.inst_dict(obj)?),
             "value" if self.instance_of(obj, self.type_obj(T::StopIteration)) => {
-                let args = self.tuple_items(self.vslot(obj, exc_slot::ARGS));
-                Some(args.first().copied().unwrap_or(Value::NONE))
+                Some(self.stop_value(obj))
             }
             n @ ("errno" | "strerror" | "filename" | "filename2")
                 if self.instance_of(obj, self.type_obj(T::OSError)) =>
@@ -2050,9 +2049,9 @@ impl Vm {
             return Some(v);
         }
         let args = self.vslot(e, exc_slot::ARGS);
-        Some(match self.tuple_items(args)[..] {
-            [] => Value::NONE,
-            [a] => a,
+        Some(match self.tuple_len(args) {
+            0 => Value::NONE,
+            1 => self.vslot_o(args, 0),
             _ => args,
         })
     }
@@ -2060,8 +2059,9 @@ impl Vm {
     /// `OSError`'s `errno`, `strerror`, `filename` and `filename2`, from
     /// its arguments as CPython's constructor reads them (2 to 5 of them).
     pub(crate) fn os_error_attr(&self, obj: Value, name: &str) -> Value {
-        let args = self.tuple_items(self.vslot(obj, exc_slot::ARGS));
-        if !(2..=5).contains(&args.len()) {
+        let args = self.vslot(obj, exc_slot::ARGS);
+        let n = self.tuple_len(args);
+        if !(2..=5).contains(&n) {
             return Value::NONE;
         }
         let i = match name {
@@ -2070,7 +2070,11 @@ impl Vm {
             "filename" => 2,
             _ => 4,
         };
-        args.get(i).copied().unwrap_or(Value::NONE)
+        if i < n {
+            self.vslot_o(args, i as u32)
+        } else {
+            Value::NONE
+        }
     }
 
     /// `obj.name = v` for instances of user classes; may leave a call
@@ -2448,6 +2452,9 @@ impl Vm {
                 let fl = if self.truthy(v) { fl | 1 } else { fl & !1 };
                 self.set_raw(r, exc_slot::FLAGS, fl);
             }
+            // A tuple is kept as it is, as CPython's `PySequence_Tuple`
+            // keeps one: no copy of its items.
+            "args" if v.is_obj_kind(ty::TUPLE as u8) => self.set_slot(r, exc_slot::ARGS, v),
             "args" => {
                 let items = match self.collect(v) {
                     Ok(items) => items,

@@ -2448,19 +2448,21 @@ impl Vm {
         }
         // Defaults for positional parameters.
         let defaults = self.vslot(func, fn_slot::DEFAULTS);
-        let dvals = if defaults.is_obj_kind(ty::TUPLE as u8) {
-            self.tuple_items(defaults)
+        let nd = if defaults.is_obj_kind(ty::TUPLE as u8) {
+            self.tuple_len(defaults)
         } else {
-            Vec::new()
+            0
         };
-        // __defaults__ may contain more entries than positional parameters.
-        let dvals = &dvals[dvals.len().saturating_sub(argc)..];
-        let first_default = argc - dvals.len();
+        // __defaults__ may contain more entries than positional parameters:
+        // the last `argc` are read, without copying the rest.
+        let skip = nd.saturating_sub(argc);
+        let first_default = argc - (nd - skip);
         let mut missing: Vec<String> = Vec::new();
         for i in 0..argc {
             if self.stack[base + i] == Value::UNDEFINED {
                 if i >= first_default {
-                    self.stack[base + i] = dvals[i - first_default];
+                    let k = skip + i - first_default;
+                    self.stack[base + i] = self.vslot_o(defaults, k as u32);
                 } else {
                     missing.push(names[i].clone());
                 }

@@ -478,10 +478,11 @@ impl Vm {
     /// An `ImportError`'s `name`, `path`, `name_from` or `msg` when its
     /// instance dict has none: `msg` is the one argument, the rest `None`.
     pub(crate) fn import_attr(&self, e: Value, attr: &str) -> Value {
-        let args = self.tuple_items(self.vslot_o(e, exc_slot::ARGS));
-        match (attr, &args[..]) {
-            ("msg", [m]) => *m,
-            _ => Value::NONE,
+        let args = self.vslot_o(e, exc_slot::ARGS);
+        if attr == "msg" && self.tuple_len(args) == 1 {
+            self.vslot_o(args, 0)
+        } else {
+            Value::NONE
         }
     }
 
@@ -512,15 +513,21 @@ impl Vm {
         {
             return v;
         }
-        let args = self.tuple_items(self.vslot_o(e, exc_slot::ARGS));
+        let args = self.vslot_o(e, exc_slot::ARGS);
+        let n = self.tuple_len(args);
         if attr == "msg" {
-            return args.first().copied().unwrap_or(Value::NONE);
+            return if n == 0 {
+                Value::NONE
+            } else {
+                self.vslot_o(args, 0)
+            };
         }
-        let info = match &args[..] {
-            [_, i] if i.is_obj_kind(ty::TUPLE as u8) => self.tuple_items(*i),
-            _ => Vec::new(),
-        };
-        if !(4..=6).contains(&info.len()) {
+        let info = self.vslot_o(args, 1);
+        if n != 2 || !info.is_obj_kind(ty::TUPLE as u8) {
+            return Value::NONE;
+        }
+        let len = self.tuple_len(info);
+        if !(4..=6).contains(&len) {
             return Value::NONE;
         }
         let i = match attr {
@@ -532,7 +539,11 @@ impl Vm {
             "end_offset" => 5,
             _ => 6,
         };
-        info.get(i).copied().unwrap_or(Value::NONE)
+        if i < len {
+            self.vslot_o(info, i as u32)
+        } else {
+            Value::NONE
+        }
     }
 
     /// `str()` of a `SyntaxError` carrying a filename or line number:
@@ -1227,13 +1238,13 @@ impl Vm {
         out
     }
 
-    /// The sub-exceptions of an `ExceptionGroup` (the prelude class keeps
-    /// them in `_mm_excs`), `None` for other exceptions.
+    /// The tuple of sub-exceptions of an `ExceptionGroup` (the prelude
+    /// class keeps them in `_mm_excs`), `None` for other exceptions.
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn group_items(&self, e: Value) -> Option<Vec<Value>> {
+    fn group_items(&self, e: Value) -> Option<Value> {
         let k = self.find_interned("_mm_excs")?;
         let t = self.inst_get(e, k)?;
-        t.is_obj_kind(ty::TUPLE as u8).then(|| self.tuple_items(t))
+        t.is_obj_kind(ty::TUPLE as u8).then_some(t)
     }
 
     /// `exc`'s chain at exception-group depth `depth`. The recursion into
@@ -1323,9 +1334,13 @@ impl Vm {
             }
             let last = self.final_line(ex);
             emit(out, &last, d, '|');
-            let n = items.len().min(MAX_WIDTH + 1);
+            // The first `MAX_WIDTH` are shown: read without a copy of the
+            // rest.
+            let len = self.tuple_len(items);
+            let n = len.min(MAX_WIDTH + 1);
             *need_close = false;
-            for (j, &sub) in items.iter().take(n).enumerate() {
+            for j in 0..n {
+                let sub = self.vslot_o(items, j as u32);
                 let last_exc = j + 1 == n;
                 if last_exc {
                     *need_close = true;
@@ -1336,7 +1351,7 @@ impl Vm {
                 out.push_str(if j == 0 { "+-" } else { "  " });
                 if j >= MAX_WIDTH {
                     out.push_str("+---------------- ... ----------------\n");
-                    let more = items.len() - MAX_WIDTH;
+                    let more = len - MAX_WIDTH;
                     let text = format!(
                         "and {more} more exception{}\n",
                         if more > 1 { "s" } else { "" }

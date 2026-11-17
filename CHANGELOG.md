@@ -131,6 +131,15 @@ hashes are pre-release history, kept in the private archive
   returned and the timer's task failed unseen: the timer never fired,
   `wait_for(x, nan)` returned or ended in `RuntimeError`, and
   `as_completed` raised `TimeoutError` at once.
+- An exception's fields read from its `args` (`OSError.errno`,
+  `StopIteration.value`, `SystemExit.code`, `ImportError.msg`,
+  `SyntaxError`'s), a call's `__defaults__`, and `isinstance` and
+  `issubclass` with a tuple read the items they need from the tuple in
+  place; with millions of items each was one uncharged step (0.0.2's
+  known issue "Steps past the 50 ms bound": 73 ms a field read, 85 ms a
+  call, up to 2.0 s for `isinstance` [M, on e54f65f]). A tuple longer
+  than a native walk goes to the prelude, a visit per item under fuel.
+  `e.args = t` keeps `t` itself, as CPython does.
 
 ### Known issues
 

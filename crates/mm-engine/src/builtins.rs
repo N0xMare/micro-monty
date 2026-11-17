@@ -3518,7 +3518,13 @@ fn any_class(
                 break Ok(Some(true));
             }
         } else if c.is_obj_kind(ty::TUPLE as u8) {
-            todo.extend(vm.tuple_items(c).into_iter().rev());
+            // Pushed without a copy of the tuple; one longer than the walk
+            // has left goes to the prelude, a visit per item.
+            let n = vm.tuple_len(c);
+            if n > left as usize {
+                break Ok(None);
+            }
+            todo.extend((0..n).rev().map(|k| vm.vslot_o(c, k as u32)));
         } else {
             break Err(vm.err(T::TypeError, msg));
         }
@@ -3563,8 +3569,12 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     fn meta_check(&mut self, v: Value, c: Value, name: Dn) -> Result<Option<Value>, Raised> {
         if c.is_obj_kind(ty::TUPLE as u8) {
-            for x in self.tuple_items(c) {
-                if self.has_check(x, name) {
+            // A tuple past a walk's visits goes to the prelude too, without
+            // a look at its items (`any_class` would hand it on).
+            let n = self.tuple_len(c);
+            for k in 0..n {
+                let x = self.vslot_o(c, k as u32);
+                if n > crate::dict::WALK as usize || self.has_check(x, name) {
                     let f = if name == Dn::Instancecheck {
                         "_isinstance_any"
                     } else {

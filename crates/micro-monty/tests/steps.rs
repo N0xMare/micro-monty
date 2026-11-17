@@ -2635,6 +2635,30 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "for _ in range(1_000_000):\n    loop.call_soon(cb).cancel()\nawait asyncio.sleep(0)",
         1,
     ),
+    // One item of a guest-sized tuple, read without copying the tuple: an
+    // exception's fields from `args` (an `OSError`'s, a `SyntaxError`'s
+    // from its 8M-item location tuple: 73 and 563 ms a read on e54f65f
+    // [M]), `args` assigned a tuple (117 ms), a function's last
+    // `__defaults__` (85 ms a call), and `isinstance` against a tuple
+    // whose first item matches (2.0 s [M]).
+    (
+        Row::Bounded,
+        "t = (0,) * 8_000_000\ne = OSError(1, 'x')",
+        "e.args = t\nn = e.errno\nn = SyntaxError('m', t).filename",
+        8,
+    ),
+    (
+        Row::Bounded,
+        "t = (0,) * 8_000_000\ndef f(a=1, *, b=2): return a\nf.__defaults__ = t",
+        "n = f(b=3)",
+        8,
+    ),
+    (
+        Row::Bounded,
+        "t = (int,) * 8_000_000",
+        "b = isinstance(1, t)",
+        1,
+    ),
 ];
 
 /// How many more times a bounded row over the limit runs. This host has
