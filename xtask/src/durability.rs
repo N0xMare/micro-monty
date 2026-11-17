@@ -87,8 +87,9 @@ const MM_TIMEOUT_SECS: u64 = 20;
 /// on 16 cores [M], so 15 minutes left too little room.
 const CASE_TIMEOUT: Duration = Duration::from_mins(30);
 /// The differences the gate allows: `FILE<TAB>MODE<TAB>COLUMNS<TAB>reason`
-/// per line, `COLUMNS` a comma-separated subset of `report`, `fuel` and
-/// `digest`; `#` starts a comment.
+/// per line, `COLUMNS` a comma-separated subset of `report`, `fuel`,
+/// `digest` and `refused` (a `cross` chain ended at a restore the other
+/// target refused for memory); `#` starts a comment.
 const RESULTS: &str = "conformance/durability-results.txt";
 /// The most one job holds in its scratch directory at once: the case and
 /// one image, which the chain rewrites in place and the default 256 MiB
@@ -104,7 +105,7 @@ const SCRATCH_PREFIX: &str = "mm-durability-";
 /// took the same snapshots and went on, not with the unparked run.
 const NATIVE_MODES: [&str; 4] = ["parks", "snapshot", "restore", "restore-vs-snapshot"];
 const CROSS_MODES: [&str; 4] = ["cross", "wasm", "wasm-parks", "wasm-snapshot"];
-const COLUMNS: [&str; 3] = ["report", "fuel", "digest"];
+const COLUMNS: [&str; 4] = ["report", "fuel", "digest", "refused"];
 
 /// A recorded difference: the columns and why.
 struct Recorded {
@@ -377,7 +378,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         for (mode, columns) in &o.diffs {
             let allowed = recorded.get(&(o.file.clone(), mode.clone()));
             for column in columns {
-                if report_only && column != "report" {
+                if report_only && column != "report" && column != "refused" {
                     continue;
                 }
                 let entry = seen.entry((o.file.clone(), mode.clone())).or_default();
@@ -407,7 +408,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         outcomes.iter().filter(|o| o.status == "pass").count(),
         started.elapsed().as_secs_f64()
     );
-    let columns: &[&str] = if report_only { &COLUMNS[..1] } else { &COLUMNS };
+    let columns: &[&str] = if report_only {
+        &COLUMNS[..1]
+    } else {
+        &COLUMNS[..3]
+    };
     for mode in modes {
         let runs = outcomes
             .iter()

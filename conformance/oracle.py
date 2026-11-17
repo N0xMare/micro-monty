@@ -47,7 +47,7 @@ native mm and MODULE under wasmtime, starting with `--alternate-first`
 modes also run on MODULE ("wasm", "wasm-parks", "wasm-snapshot"); the
 reference run stays native. It prints
   {"file", "status": "pass"|"differs"|"crash"|"timeout"|"skip", "parks", "every",
-   "diffs": {MODE: ["report"|"fuel"|"digest", ...]}, "fuel": {MODE: parked - unparked}, "reason"}
+   "diffs": {MODE: ["report"|"fuel"|"digest"|"refused", ...]}, "fuel": {MODE: parked - unparked}, "reason"}
 
 Prints one JSON object per case on stdout:
   {"file", "status": "pass"|"fail"|"error"|"skip", "kind", "reason",
@@ -922,7 +922,10 @@ def wasm_command(wasmtime, module, scratch, args, zone=None):
 
 
 def durability_diffs(plain, got):
-    """The columns in which run `got` differs from the unparked run `plain`."""
+    """The columns in which run `got` differs from the unparked run `plain`;
+    a chain that ended at a refused restore has nothing else to compare."""
+    if got.get('refused'):
+        return ['refused']
     return [column for column, same in (
         ('report', report_of(got) == report_of(plain)),
         ('fuel', got.get('fuel') == plain.get('fuel')),
@@ -990,11 +993,11 @@ def run_durability_case(path, mm, every, max_parks, timeout, alternate=None):
             except MmAbnormal as abnormal:
                 # The targets charge different bytes for the same state
                 # (step 4), so a park near the memory limit may not fit on
-                # the other one: the chain ends there, a difference in every
-                # column that only an entry allows.
+                # the other one: the chain ends there, in its own column
+                # (`refused`), which only an entry allows.
                 if not (alternate and parks and CROSS_TOO_LARGE in abnormal.detail):
                     raise
-                line = {'stdout': parks[-1].get('stdout'), 'error': CROSS_TOO_LARGE}
+                line = {'refused': True}
                 break
             if 'park' not in line:
                 break
