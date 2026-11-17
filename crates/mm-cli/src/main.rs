@@ -663,12 +663,15 @@ fn write_image(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
 
 fn read_image(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
     let mut file = std::fs::File::open(path)?;
-    let mut bytes = Vec::new();
+    let len = file.metadata().map_or(0, |m| m.len());
+    let mut bytes = Vec::with_capacity(usize::try_from(len).unwrap_or(0));
     let mut piece = vec![0; IMAGE_PIECE];
     loop {
-        match file.read(&mut piece)? {
-            0 => return Ok(bytes),
-            n => bytes.extend_from_slice(&piece[..n]),
+        match file.read(&mut piece) {
+            Ok(0) => return Ok(bytes),
+            Ok(n) => bytes.extend_from_slice(&piece[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
         }
     }
 }
