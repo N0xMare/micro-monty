@@ -48,6 +48,7 @@ pub mod bytecode;
 mod compiler;
 mod encode;
 mod error;
+pub mod live;
 pub mod pack;
 pub mod symtable;
 

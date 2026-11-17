@@ -2,8 +2,10 @@
 //! `Engine::compile` (parse, compile, the rendered `CompileError` and its
 //! warnings) must never panic or overflow the stack, every error is a
 //! Python exception type, and what compiles verifies (`Code::verify`, the
-//! check a restored snapshot's code must pass) and survives its own
-//! encoding (`Program::encode`, `Program::decode`) unchanged.
+//! check a restored snapshot's code must pass), has a live table that is
+//! right on every path (`Code::check_live`, docs/spec.md §8.3) and
+//! survives its own encoding (`Program::encode`, `Program::decode`)
+//! unchanged.
 //!
 //! The input is the `parse` target's (`parse_input::source`), so the two
 //! share corpora; it runs on the same 8 MiB thread.
@@ -52,6 +54,9 @@ fn check(src: String) {
                 .expect("compiles as in Engine::compile");
                 for (i, c) in program.codes.iter().enumerate() {
                     assert!(c.verify(), "code {i} does not verify for {src:?}");
+                    if let Err(e) = c.check_live() {
+                        panic!("code {i} ({}): {e} for {src:?}", c.qualname);
+                    }
                 }
                 let bytes = program.encode();
                 let back = Program::decode(&bytes).expect("own encoding decodes");

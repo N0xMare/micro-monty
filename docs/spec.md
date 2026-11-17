@@ -1388,10 +1388,14 @@ The table retains its high-water capacity inside the arena budget.
   coroutine's copy, does not depend on whether an earlier collection ran.
   The table adds no instruction and no operand. Its top is a count of at
   most 255 with no reserved value, so a unit that uses every register needs
-  no mark for it. One kind of frame keeps more than it reads: a frame of
-  the prelude or of a bundled module, whose code carries no table (it is
-  stripped with the positions), keeps every register, those a returned
-  callee's frame overlaid included, until it returns. A running
+  no mark for it. `Code::check_live` checks the table against the bytecode
+  on every path, run or not (no instruction reads a dead register, and a
+  register becomes live only by a store); the compiler's fuzz target and a
+  test over the conformance cases, the prelude and the bundled modules run
+  it, and nothing a session runs does. One kind of frame keeps more than it
+  reads: a frame of the prelude or of a bundled module, whose code carries
+  no table (it is stripped with the positions), keeps every register, those
+  a returned callee's frame overlaid included, until it returns. A running
   generator's or coroutine's copy holds nothing at a collection that takes
   roots from an idle heap, and a coroutine's copy suspended by `send` only
   what its frame reads again (above); a mark already running keeps what a

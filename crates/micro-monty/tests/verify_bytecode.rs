@@ -1,7 +1,12 @@
 //! The snapshot reader's bytecode verifier accepts everything the compiler
 //! produces: the prelude and every conformance case that compiles.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test")]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test"
+)]
 
 use std::path::Path;
 
@@ -52,6 +57,102 @@ fn compiler_output_verifies() {
         }
     }
     assert!(n > 1000, "only {n} code objects checked");
+}
+
+/// Every code object of `program` passes the static check of its live
+/// table (`Code::check_live`); adds the code objects and instructions
+/// checked to `counts`.
+fn check_live(program: &mm_compile::bytecode::Program, from: &str, counts: &mut (usize, usize)) {
+    for c in &program.codes {
+        match c.check_live() {
+            Ok(n) => {
+                assert!(n > 0, "{from}: code {} has no live table", c.qualname);
+                // The unset chains grow with the code, not faster.
+                assert!(
+                    c.unset.len() <= c.bytecode.len(),
+                    "{from}: code {}: {} unset links for {} words",
+                    c.qualname,
+                    c.unset.len(),
+                    c.bytecode.len()
+                );
+                *counts = (counts.0 + 1, counts.1 + n);
+            }
+            Err(e) => panic!(
+                "{from}: code {}: {e}\n{}",
+                c.qualname,
+                mm_compile::bytecode::disassemble(c)
+            ),
+        }
+    }
+}
+
+/// The live table of everything the compiler produces is right on every
+/// path, run or not (docs/spec.md §8.3): the conformance cases that
+/// compile, and the prelude and the bundled modules compiled as their
+/// build scripts compile them, with the table those strip.
+#[test]
+fn compiler_output_has_a_sound_live_table() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let sources = |dir: &str| {
+        let mut files: Vec<_> = std::fs::read_dir(root.join(dir))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|x| x == "py"))
+            .collect();
+        files.sort();
+        files
+    };
+    let opts = |last_expr_value| mm_compile::Options { last_expr_value };
+    for dir in [
+        "conformance/own",
+        "conformance/monty",
+        "crates/mm-stdlib/python",
+    ] {
+        let mut counts = (0, 0);
+        for path in sources(dir) {
+            let Ok(src) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(module) = mm_parse::parse(&src) else {
+                continue;
+            };
+            // A cell (its last expression's value kept) and a module.
+            for last in [true, false] {
+                if let Ok(program) = mm_compile::compile(&module, opts(last)) {
+                    check_live(&program, &path.display().to_string(), &mut counts);
+                }
+            }
+        }
+        println!(
+            "{dir}: {} code objects, {} instructions",
+            counts.0, counts.1
+        );
+        assert!(
+            counts.0 > 100,
+            "{dir}: only {} code objects checked",
+            counts.0
+        );
+    }
+    // The prelude: each statement a unit, as `mm-engine/build.rs` has it.
+    let src = std::fs::read_to_string(root.join("crates/mm-engine/src/prelude.py")).unwrap();
+    let prelude = mm_parse::parse(&src).expect("the prelude parses");
+    let mut counts = (0, 0);
+    for stmt in &prelude.body {
+        let unit = mm_compile::ast::Module {
+            body: vec![stmt.clone()],
+        };
+        let program = mm_compile::compile(&unit, opts(false)).expect("the prelude compiles");
+        check_live(&program, "prelude.py", &mut counts);
+    }
+    println!(
+        "prelude: {} code objects, {} instructions",
+        counts.0, counts.1
+    );
+    assert!(
+        counts.0 > 100,
+        "prelude: only {} code objects checked",
+        counts.0
+    );
 }
 
 #[test]
