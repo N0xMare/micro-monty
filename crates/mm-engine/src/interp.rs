@@ -296,7 +296,12 @@ impl Vm {
             Some(st) => {
                 // A collection step the park went ahead of runs first, and
                 // a park can follow it before any code runs.
-                if self.gc_owed
+                // An operator that parked before starting, after long
+                // native work (`long_work`), would stop before starting
+                // for a regular check (`Vm::stop_before`), and that check
+                // would take the run it may now have: it comes here, at
+                // the same instruction, as an unparked run makes it.
+                if (self.gc_owed || (self.fuel_wanted != 0 && self.long_work))
                     && let Some(r) = self.safepoint(&st)
                 {
                     self.saved = Some(st);
@@ -479,7 +484,10 @@ impl Vm {
                         // An operator parked before starting (`fuel_short`):
                         // `st.pc` is still the instruction. Charge the
                         // safepoints run since the last check, as one does.
-                        self.charge_ticks();
+                        // Through a pointer, as `oom_retry_fault` above:
+                        // inlined, step 2's `reset_ticks` moved the dispatch
+                        // loop's wasm code (fib +1.26%, closure +0.99% [M]).
+                        core::hint::black_box(Vm::charge_ticks as fn(&mut Vm))(self);
                         self.saved = Some(st);
                         return Exit::Parked(ParkReason::Fuel);
                     }
@@ -645,7 +653,9 @@ impl Vm {
     #[cold]
     #[inline(never)]
     fn safepoint(&mut self, st: &State) -> Option<ParkReason> {
+        let ran = self.ticks_used();
         self.charge_ticks();
+        let regular = self.regular_check(ran);
         self.afford = false;
         // What an earlier instruction's builtin consumed is not kept alive
         // for the GC (`Vm::fresh_consumed`).
@@ -656,6 +666,7 @@ impl Vm {
         let request = self.gc_pending || stress;
         let due = request
             || (!self.gc_off
+                && (regular || self.gc_owed)
                 && (self.gc_inc_stress
                     || self.heap.marking()
                     || self.heap.sweeping()
@@ -690,9 +701,13 @@ impl Vm {
             && !self.gc_inc_stress;
         let before = yields.then(|| (self.heap.marking(), self.heap.stats().collections));
         if request {
-            // A collection asked for in steps (`gc_wait`) runs its next
-            // step; any other request collects in full.
-            let step = self.gc_pending && self.gc_wait != 0;
+            // A collection asked for in steps (`gc_wait`) and not ended runs
+            // its next step; any other request collects in full. An ended
+            // wait stays set until a `gc_waiting` call clears it, which a
+            // park inside a retry's wait skips (the resume reruns the
+            // `CALL` straight after the owed steps): it must not make this
+            // a step, or parks would move collections.
+            let step = self.gc_pending && self.gc_wait > self.heap.stats().collections;
             self.gc_requested_done();
             self.gc(st, if step { Gc::Step } else { Gc::Full });
         } else if due {

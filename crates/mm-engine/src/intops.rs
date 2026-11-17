@@ -449,10 +449,7 @@ impl Vm {
         self.burned = self.burned.saturating_add(units);
         if self.burned > 64 || self.fuel == Some(0) {
             self.long_work |= units > 64;
-            let left = (self.ticks + self.tick_spare).max(0);
-            self.ticks = self.ticks.min(1);
-            self.tick_spare = self.tick_spare.min(1);
-            self.tick_period -= left - (self.ticks + self.tick_spare).max(0);
+            self.force_check();
         }
     }
 

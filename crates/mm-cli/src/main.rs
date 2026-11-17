@@ -555,7 +555,10 @@ fn exec_json(
 
 /// The final-state digest (`--digest`): the checksum that ends the
 /// session's image, taken with the fuel and its total cleared so it covers
-/// the state alone, or why there is no image.
+/// the state alone, or why there is no image. Clearing the fuel keeps the
+/// tick state the slicing must not move: `Vm::reset_ticks` folds the ticks
+/// run into the safepoint phase and keeps `burned` and `long_work`, and the
+/// period it starts follows from the phase alone.
 fn final_digest(session: &mut Session) -> String {
     session.set_fuel(None);
     session.set_fuel_total(None);

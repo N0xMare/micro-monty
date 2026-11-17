@@ -842,14 +842,14 @@ are the rules above. Where the code falls short, the clause says so under
    with snapshots and no restore, +826 more with restores [M];
    `docs/user-guide.md`, "Other differences from CPython").
    Address-derived values are an exception today: which address a new
-   object gets depends on when collections run, and that depends on slice
-   boundaries, snapshots, GC stress and the session's limits. So `id()`
-   values, default `repr`s (`<... object at 0x...>`) and the order of sets
-   of identity-hashed objects can differ between runs sliced differently
-   [M, reviewer]. What holds: `id` is unique among live
-   objects, `id(x)` is the same for `x`'s whole life across parks and
-   restores, `is` is unaffected, and containers with value-hashed keys keep
-   their order.
+   object gets depends on when collections run, and that depends on
+   snapshots, GC stress and the session's limits (not on where fuel
+   slices or deadlines end, §8.6). So `id()` values, default `repr`s
+   (`<... object at 0x...>`) and the order of sets of identity-hashed
+   objects can differ between runs snapshotted differently [E]. What
+   holds: `id` is unique among live objects, `id(x)` is the same for
+   `x`'s whole life across parks and restores, `is` is unaffected, and
+   containers with value-hashed keys keep their order.
 5. **A long operation parks between steps and resumes where it stopped.**
    A step ends in one of three ways: with the operation's value; with its
    progress saved in an `NSTATE` object and a request to the prelude's
@@ -1433,8 +1433,9 @@ host futures are core and stay without it.
 
 ### 8.6 Safepoints
 
-Backward jumps and calls count one tick each; every `TICKS` (256) ticks,
-or every tick once less fuel than that is left, they check one flag word:
+Backward jumps and calls count one tick each; where the ticks the
+session has run reach a multiple of `TICKS` (256), or at every tick once
+less fuel than that is left, they check one flag word:
 fuel exhausted, deadline poll due, GC requested, park requested (yield
 window, `Cancel`, host preempt), host results pending. The common path is
 one branch, so a park request or deadline is seen within 256 safepoints
@@ -1458,10 +1459,18 @@ reached. `CHECK` charges nothing: natives that charged more than 64 units
 since the last check, in one charge or many small ones (`Vm::burn` counts
 them, `burned`), or spent the fuel, left the tick counter at most 1, and
 only then does `CHECK` run the safepoint. Fuel totals do not change: a
-check charges only the safepoints that ran. `burned` is not in the image:
-every park runs a check, which clears it, and a restore at a host call
-starts it at 0, which can delay that one check by at most 64 units but
-changes nothing a run charges or prints. It is a rare opcode, so the
+check charges only the safepoints that ran.
+
+**Regular checks.** The checks every run of a cell makes at the same
+safepoints, however a host slices it (`Vm::regular_check`): where the
+session's ticks reach a multiple of `TICKS` (the phase, `sp_phase`,
+carries across parks and is in the image), after native work past 64
+units, for a collection step a park left owed, and under GC stress. A
+park adds checks (fuel, deadline, a request, an operator stopping before
+it starts) but moves none: only a regular check starts or steps a
+collection the heap's trigger makes due, and only one clears `burned` and
+`long_work`, which are in the image too. So a park, or a restore at one,
+does not move where a collection starts or what fuel a run spends. It is a rare opcode, so the
 dispatch loop is unchanged; loop bodies of the bench programs hold none. A
 park lands between two instructions with `acc` and the registers in the
 frame, as at any safepoint, so the snapshot format does not change.

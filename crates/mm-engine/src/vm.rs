@@ -699,6 +699,11 @@ pub struct Vm {
     /// next safepoint check runs the collection: the hot check reads one
     /// counter. Zero unless `gc_pending`.
     pub(crate) tick_spare: i32,
+    /// The safepoint ticks the session has run, mod `TICKS`, as of the last
+    /// check. A period ends where this wraps (`Vm::reset_ticks`), so the
+    /// regular checks fall at the same safepoints however a host slices the
+    /// run: a fuel, deadline or requested park adds a check, never moves one.
+    pub(crate) sp_phase: i32,
     /// Native fuel charges beyond the fuel left since the last
     /// [`Vm::set_fuel`] (`burn` saturates the budget at zero).
     pub(crate) fuel_overdraft: u64,
@@ -713,14 +718,15 @@ pub struct Vm {
     /// the next operator that would park for fuel runs.
     pub(crate) afford: bool,
     /// A native charged more than 64 units at once since the last
-    /// safepoint (`Vm::burn`; cleared by `reset_ticks`).
+    /// regular check (`Vm::burn`; cleared by `Vm::regular_check`).
     pub(crate) long_work: bool,
-    /// Fuel units `burn` has charged since the last safepoint check
-    /// (cleared by `reset_ticks`). Past 64 the next `CHECK` or back edge
+    /// Fuel units `burn` has charged since the last regular check (cleared
+    /// by `Vm::regular_check`). Past 64 the next `CHECK` or back edge
     /// checks, as after one long charge: else a straight-line body of small
     /// native charges reached a check only once per 256 back edges, however
-    /// long it was. Not in the image: a restore at a host call starts it
-    /// at 0, delaying that one check by at most 64 units.
+    /// long it was. Like `long_work`, it is in the image and outlives the
+    /// checks a park adds, so the checks it forces fall where they would in
+    /// one unparked run.
     pub(crate) burned: u64,
     /// An operator stopped before starting, for the safepoint long native
     /// work since the last one has made due (`Vm::stop_before`).
@@ -1055,6 +1061,7 @@ impl Vm {
             ticks: TICKS,
             tick_period: TICKS,
             tick_spare: 0,
+            sp_phase: 0,
             fuel_overdraft: 0,
             saved: None,
             gc_pending: false,
@@ -1322,7 +1329,7 @@ impl Vm {
     }
 
     /// The safepoints run since the last check.
-    fn ticks_used(&self) -> u64 {
+    pub(crate) fn ticks_used(&self) -> u64 {
         let left = (self.ticks + self.tick_spare).max(0);
         u64::from((self.tick_period - left).unsigned_abs())
     }
@@ -1369,24 +1376,32 @@ impl Vm {
         }
     }
 
-    /// Starts a new period of safepoints before the next check: `TICKS`,
-    /// or the fuel left if that is less.
+    /// Starts a new period of safepoints before the next check: to the
+    /// next multiple of `TICKS` safepoints the session has run
+    /// (`sp_phase`), or the fuel left if that is less. Native work past 64
+    /// units since the last regular check still forces the next safepoint
+    /// to check (`Vm::burn`).
     pub(crate) fn reset_ticks(&mut self) {
         let was = self.op_stamp();
         self.tick_epoch = self.tick_epoch.wrapping_add(1);
+        // `ticks_used() <= tick_period <= TICKS - sp_phase`.
+        let used = i32::try_from(self.ticks_used()).unwrap_or(0);
+        self.sp_phase = (self.sp_phase + used) % TICKS;
+        let to_boundary = TICKS - self.sp_phase;
         let p = match self.fuel {
             _ if self.gc_stress || self.gc_inc_stress => 1,
-            Some(f) => i32::try_from(f.min(TICKS.unsigned_abs().into())).unwrap_or(TICKS),
-            None => TICKS,
+            Some(f) => i32::try_from(f.min(to_boundary.unsigned_abs().into())).unwrap_or(TICKS),
+            None => to_boundary,
         };
         self.tick_period = p.max(1);
         self.ticks = self.tick_period;
         self.tick_spare = 0;
-        self.long_work = false;
-        self.burned = 0;
         if self.gc_pending {
             self.tick_spare = self.ticks;
             self.ticks = 0;
+        }
+        if self.burned > 64 {
+            self.force_check();
         }
         // Marks of the instruction running now stay its own.
         let now = self.op_stamp();
@@ -1396,6 +1411,37 @@ impl Vm {
         if self.consumed_at == was {
             self.consumed_at = now;
         }
+    }
+
+    /// Makes the next safepoint check. The ticks this skips do not run, so
+    /// the period shrinks with them: the check charges only those that did.
+    pub(crate) fn force_check(&mut self) {
+        let left = (self.ticks + self.tick_spare).max(0);
+        self.ticks = self.ticks.min(1);
+        self.tick_spare = self.tick_spare.min(1);
+        self.tick_period -= left - (self.ticks + self.tick_spare).max(0);
+    }
+
+    /// Whether the check just made (`ran` safepoints after the last one) is
+    /// one every run of the cell makes at this safepoint, however a host
+    /// slices it: where the session's safepoints reach a multiple of
+    /// `TICKS`, after native work past 64 units (`Vm::burn`), or under GC
+    /// stress. The checks a park adds (fuel, deadline, a request, an
+    /// operator stopping before it starts, the resume of a park that went
+    /// ahead of a collection step) are not. Only a regular check starts or
+    /// steps a collection the heap's own trigger makes due (or a resume
+    /// runs the step a park left owed), and only one clears `burned` and
+    /// `long_work`, so parks move neither.
+    pub(crate) fn regular_check(&mut self, ran: u64) -> bool {
+        let regular = (ran > 0 && self.sp_phase == 0)
+            || self.burned > 64
+            || self.gc_stress
+            || self.gc_inc_stress;
+        if regular {
+            self.burned = 0;
+            self.long_work = false;
+        }
+        regular
     }
 
     /// Asks for a collection at the next safepoint.

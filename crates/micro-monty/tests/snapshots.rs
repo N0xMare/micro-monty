@@ -2198,3 +2198,86 @@ fn sleeps_wait_for_pending_host_calls() {
         }
     }
 }
+
+/// Where a cell's regular fuel checks fall does not depend on restores
+/// or slices (`Vm::regular_check`): cells holding several host futures,
+/// and native work forcing checks, run plain, with a snapshot and restore
+/// at every stop, and in fuel slices, spend the same fuel and end with the
+/// same fuel left. A restore used to start `burned` at 0, so the check it
+/// forces fell elsewhere and the fuel left at the end differed (12
+/// futures: 99,786 plain, 99,807 restored).
+#[test]
+fn fuel_checks_fall_where_they_would_unparked() {
+    let e = engine();
+    let bodies = [
+        "print(await asyncio.gather(fut(1), fut(2)))",
+        "fs = [fut(i) for i in range(6)]\n    print([await f for f in fs])",
+        "fs = [fut(i) for i in range(12)]\n    print(await asyncio.gather(*fs))",
+        "s = 0\n    for i in range(3000):\n        s += len(str(i) * 40)\n    print(s, await fut(1))",
+    ];
+    for body in bodies {
+        let src = format!("import asyncio\nasync def main():\n    {body}\nasyncio.run(main())\n");
+        let code = e.compile(&src, "futs.py").expect("compiles");
+        let mut seen = Vec::new();
+        for (restore, slice) in [
+            (false, None),
+            (true, None),
+            (false, Some(37)),
+            (true, Some(211)),
+        ] {
+            let out = Arc::new(Mutex::new(String::new()));
+            let mut s = Session::new(&e).expect("session");
+            s.define(&HostModule::untyped("", &["fut"]))
+                .expect("defines");
+            attach(&mut s, &out);
+            s.set_fuel_total(Some(10_000_000));
+            s.set_fuel(Some(slice.unwrap_or(100_000)));
+            let mut answers = Vec::new();
+            let mut p = s.start(&code);
+            loop {
+                if restore && !matches!(p, Progress::Complete(_) | Progress::Error(_)) {
+                    s = e
+                        .restore(&s.snapshot().expect("snapshot"))
+                        .expect("restores");
+                    attach(&mut s, &out);
+                }
+                if let Some(n) = slice {
+                    s.set_fuel(Some(n));
+                }
+                let resume = match &p {
+                    Progress::HostCall { call, args, .. } => {
+                        let HostValue::Int(n) = args[0] else {
+                            panic!("{args:?}")
+                        };
+                        answers.push((*call, Ok(HostValue::Int(n * 10))));
+                        Resume::Future
+                    }
+                    Progress::Waiting { calls } => Resume::Batch(
+                        answers
+                            .iter()
+                            .filter(|(c, _)| calls.contains(c))
+                            .cloned()
+                            .collect(),
+                    ),
+                    Progress::Parked { .. } => Resume::Continue,
+                    _ => break,
+                };
+                p = s.resume(resume).expect("resumes");
+            }
+            assert_eq!(outcome(&p), "complete Some(\"None\")", "{body}");
+            let spent = 10_000_000 - s.fuel_total().expect("a total");
+            let left = slice.is_none().then(|| s.fuel());
+            seen.push((restore, slice, spent, left));
+        }
+        let (_, _, spent, left) = seen[0];
+        for &(restore, slice, s2, l2) in &seen[1..] {
+            assert_eq!(
+                s2, spent,
+                "{body}: fuel spent, restore {restore}, slice {slice:?}"
+            );
+            if let Some(l2) = l2 {
+                assert_eq!(Some(l2), left, "{body}: fuel left, restore {restore}");
+            }
+        }
+    }
+}

@@ -33,6 +33,9 @@
 //! - `handoffs`: the native-to-Python hand-off sites (`need_py()` calls)
 //!   by file and function, written to (`--check`: compared with)
 //!   `xtask/handoff-sites.txt`.
+//! - `overflow-wasip1`: every case on `mm` for `wasm32-wasip1` built with
+//!   overflow checks, under wasmtime; fails on a panic or trap (release
+//!   gate).
 //! - `difffuzz`: the differential fuzzer against CPython
 //!   (`fuzz/difffuzz/difffuzz.py`).
 //! - `check`: every local gate (fmt, clippy, tests, docs, package,
@@ -59,6 +62,7 @@ mod durability;
 mod gc_stress;
 mod handoffs;
 mod native_ir;
+mod overflow;
 mod package;
 mod shipped;
 mod size;
@@ -93,7 +97,8 @@ tasks:
                              last and alone; logs in target/check/logs/
       --serial               one stage at a time, output on the terminal
       --release-gate         the full gate: release builds, durability at
-                             1:1000, also wasm-host and the codemode check
+                             1:1000, also wasm-host, overflow-wasip1 and the
+                             codemode check
                              (default: the landing tier, or the release gate
                              when the change touches parking, snapshots, the
                              GC, the wasm crates, the shipped recipe, the
@@ -199,6 +204,10 @@ tasks:
                              cases pass (not in check: about 85 minutes)
   handoffs [--check]         write (--check: compare) xtask/handoff-sites.txt,
                              the need_py() hand-off sites by file and function
+  overflow-wasip1            every own, corpus, codemode and breadth case on mm
+                             for wasm32-wasip1 built with overflow checks
+                             (target/check/overflow-wasip1); fails on a panic
+                             or trap
   difffuzz [options]         generated programs on mm and CPython 3.14;
                              divergences, minimized, go to
                              fuzz/difffuzz/divergences/
@@ -236,6 +245,7 @@ fn main() -> ExitCode {
         Some("docs") if rest.is_empty() => docs::run(),
         Some("difffuzz") => difffuzz::run(&rest),
         Some("handoffs") => handoffs::run(&rest),
+        Some("overflow-wasip1") if rest.is_empty() => overflow::run(),
         _ => Err(USAGE.to_owned()),
     };
     match result {
@@ -248,7 +258,8 @@ fn main() -> ExitCode {
 }
 
 /// Every local gate, as stages that run at the same time where they can
-/// (`check.rs`); `--release-gate` adds `wasm-host` and the codemode check.
+/// (`check.rs`); `--release-gate` adds `wasm-host`, `overflow-wasip1` and the
+/// codemode check.
 ///
 /// Three things order the stages. Builds in one target directory take
 /// turns on cargo's lock, so the debug gates build in `target/check/debug`
@@ -583,6 +594,17 @@ fn check(args: &[String]) -> Result<(), String> {
         );
     }
     if release_gate {
+        // Next to the other wasip1 stage, but off the critical path: it
+        // needs no `mm`, builds in its own target directory and runs at
+        // `nice` 10.
+        let at = stages
+            .iter()
+            .position(|s| s.name == "conformance-wasip1")
+            .map_or(stages.len(), |i| i + 1);
+        stages.insert(
+            at,
+            Stage::new("overflow-wasip1").run(task(&["overflow-wasip1"])),
+        );
         stages.push(
             Stage::new("wasm-host")
                 .after(&["size"])

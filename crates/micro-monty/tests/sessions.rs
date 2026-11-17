@@ -1015,11 +1015,22 @@ fn an_uncaught_exception_report_stops_at_the_text_limit_and_the_deadline() {
     );
     assert!(e.truncated);
     assert!(e.message.starts_with("frozenset({"));
-    // An ordinary report is whole, as before.
+    // An ordinary report is whole, as before, with the deadline past when
+    // it is made. (The cell may also reach a regular check, where the
+    // past deadline parks it; each resume sets it past again.)
     c.session.set_text_limit(1 << 20);
     c.session.set_deadline(Some(Instant::now()));
-    let Progress::Error(e) = c.start("def f():\n    raise ValueError('boom', 2)\nf()\n") else {
-        panic!()
+    let mut p = c.start("def f():\n    raise ValueError('boom', 2)\nf()\n");
+    while p
+        == (Progress::Parked {
+            reason: ParkReason::Deadline,
+        })
+    {
+        c.session.set_deadline(Some(Instant::now()));
+        p = c.session.resume(Resume::Continue).expect("resumes");
+    }
+    let Progress::Error(e) = p else {
+        panic!("{p:?}")
     };
     assert!(!e.truncated);
     assert_eq!(e.message, "('boom', 2)");

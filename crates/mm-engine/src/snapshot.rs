@@ -677,6 +677,12 @@ impl Vm {
         put_opt_u64(out, self.fuel);
         put_u32(out, self.ticks.cast_unsigned());
         put_u32(out, self.tick_period.cast_unsigned());
+        // Where the regular checks fall and what forces the next one
+        // (`Vm::regular_check`): a restored session checks where the one
+        // that went on does.
+        put_u32(out, self.sp_phase.cast_unsigned());
+        put_u64(out, self.burned);
+        put_bool(out, self.long_work);
         put_bool(out, self.slow);
         put_u64(out, self.seq);
         put_u64(out, self.vclock.to_bits());
@@ -1870,7 +1876,16 @@ impl Vm {
         };
         let ticks = need(r.u32(), "registers")?.cast_signed();
         let tick_period = need(r.u32(), "registers")?.cast_signed();
-        if !(1..=crate::vm::TICKS).contains(&tick_period) || !(0..=tick_period).contains(&ticks) {
+        let sp_phase = need(r.u32(), "registers")?.cast_signed();
+        let burned = need(r.u64(), "registers")?;
+        let long_work = need(r.bool(), "registers")?;
+        // A period ends at the next multiple of `TICKS` at the latest, and
+        // `long_work` comes from a charge past 64 units (`Vm::burn`).
+        if !(0..crate::vm::TICKS).contains(&sp_phase)
+            || !(1..=crate::vm::TICKS - sp_phase).contains(&tick_period)
+            || !(0..=tick_period).contains(&ticks)
+            || (long_work && burned <= 64)
+        {
             return Err(SnapError::Corrupt("registers"));
         }
         let slow = need(r.bool(), "registers")?;
@@ -2189,13 +2204,14 @@ impl Vm {
             ticks,
             tick_period,
             tick_spare: 0,
+            sp_phase,
             fuel_overdraft: 0,
             saved,
             gc_pending: false,
             fuel_wanted,
             afford: false,
-            long_work: false,
-            burned: 0,
+            long_work,
+            burned,
             check_before: false,
             long_build: false,
             text_over: core::cell::Cell::new(0),
