@@ -1,6 +1,6 @@
 //! The `snapshot_restore` fuzz target's input decoding and driver, shared with
 //! the regression test that replays its seeds
-//! (`crates/micro-monty/tests/snapshots.rs`), so a seed means the same
+//! (`crates/micro-monty/tests/fuzzed_images.rs`), so a seed means the same
 //! edit to the same image in both.
 
 use micro_monty::{
