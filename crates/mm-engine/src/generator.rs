@@ -16,6 +16,17 @@ use alloc::{format, string::String};
 use mm_compile::bytecode::{instr_len, op, operand};
 use mm_core::Value;
 
+/// The pcs a frame suspended at `pc` waits at: the suspending instruction
+/// (a `throw` raises there) and the one after it (a resume runs there).
+pub(crate) fn suspend_pcs(code: &mm_compile::bytecode::Code, pc: u64) -> [u32; 2] {
+    let at = u32::try_from(pc).unwrap_or(u32::MAX);
+    let len = code
+        .bytecode
+        .get(at as usize)
+        .map_or(1, |&w| instr_len(op_of(w)));
+    [at, at.saturating_add(u32::try_from(len).unwrap_or(1))]
+}
+
 /// Generator slots.
 pub(crate) mod g {
     pub const FUNC: u32 = 0;
@@ -411,6 +422,71 @@ impl Vm {
         }
         self.exc = exc;
         Ok(Resumed::Fault)
+    }
+
+    /// Empties the saved copies of the generators and coroutines whose
+    /// frames are on a stack (each running frame's and each caller
+    /// record's `coro`, of the running stack and every task's): the frame
+    /// on the stack replaced the copy, which holds what the last yield or
+    /// suspension saved and is read again only after the next one has
+    /// written it whole. A generator's copy is cleared of every register,
+    /// a coroutine's dropped (its next suspension by `send` allocates one).
+    /// Called before a collection step that can take roots from an idle
+    /// heap (`Vm::gc`), which costs a walk of the caller records then and
+    /// nothing per resume. A mark already running needs none: what such a
+    /// copy holds was reachable when the mark began and is marked anyway.
+    pub(crate) fn clear_running(&mut self, st: &State) {
+        self.clear_copy(st.coro);
+        if let Some(c) = self.saved.as_ref().map(|s| s.coro) {
+            self.clear_copy(c);
+        }
+        // By index: the copies are cleared through the heap.
+        for i in 0..self.specials.len() {
+            self.clear_copy(self.specials[i].coro);
+        }
+        for t in 0..self.tasks.len() {
+            let Some(task) = &self.tasks[t] else {
+                continue;
+            };
+            let (c, n) = (
+                task.st.as_ref().map_or(Value::NONE, |s| s.coro),
+                task.specials.len(),
+            );
+            self.clear_copy(c);
+            for i in 0..n {
+                let c = self.tasks[t]
+                    .as_ref()
+                    .map_or(Value::NONE, |task| task.specials[i].coro);
+                self.clear_copy(c);
+            }
+        }
+    }
+
+    /// [`Vm::clear_running`] for one frame's `coro`, if it is a running
+    /// generator or coroutine.
+    fn clear_copy(&mut self, c: Value) {
+        use crate::aio::coro;
+        if c.is_obj_kind(ty::CORO as u8) {
+            if let Some(r) = c.as_obj()
+                && self.raw(r, coro::STATE) & 3 == coro::RUNNING
+                && self.slot(r, coro::ARGS) != Value::NONE
+            {
+                self.set_slot(r, coro::ARGS, Value::NONE);
+            }
+            return;
+        }
+        if !Vm::is_gen(c) || self.gen_state(c) != g::RUNNING {
+            return;
+        }
+        let n = self
+            .codes
+            .get(self.gen_raw(c, g::CODE) as usize)
+            .map_or(0, |code| code.code.nregs);
+        if let Some(b) = self.vslot(c, g::REGS).as_obj() {
+            for reg in 0..n {
+                let _ = self.heap.set(b, reg, crate::interp::DEAD);
+            }
+        }
     }
 
     /// `YIELD`: saves the running generator frame (suspended at `pc`).

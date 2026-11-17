@@ -54,6 +54,18 @@ hashes are pre-release history, kept in the private archive
   during iteration`, and a kept `NameError` raised again loses its "Did
   you mean" suggestion. A `MemoryError` from `reset` now means the
   session was reset with only `__name__` unset.
+- The dead-register regression listed in 0.0.2's known issues is fixed
+  for every shape but a suspended generator's: a register is a root only
+  from the store that fills it (docs/spec.md §8.3), so what an ended
+  statement or a returned callee's frame left in a register keeps
+  nothing alive. That covers a call's or a display's slots not yet
+  stored to, the targets of an unpack or a method load that runs Python
+  code first, and the saved frame of a running generator or of a
+  coroutine suspended by `send`. `n = len(load())` and then
+  `m = len(load())`, with `load()` returning three 50 MB bytearrays and
+  20,000 statements between them, prints `ok 3 3` at fuel 4,707,521
+  unparked, parked and with a snapshot at every park, where 0.0.2 raised
+  `MemoryError` at 4,974,841 unparked [M]. The build id moves.
 
 ### Known issues
 
@@ -72,6 +84,13 @@ hashes are pre-release history, kept in the private archive
   loop, as in 0.0.2: every sink call that crosses an epoch tick counts
   one, and the next park check can be 65 `print` calls away (64 MiB
   limit; a 3 ms sink traps after about 49 calls) [M].
+- A generator suspended at a yield keeps the dead temporaries its yield
+  saved until it resumes: they stay roots meanwhile, so a large one can
+  raise `MemoryError` where CPython completes, and whether it does can
+  depend on where a snapshot's collection fell. The shape above inside a
+  generator, suspended at a yield before the second `load()`, raises
+  `MemoryError` at fuel 4,974,844 unparked and parked and prints `ok 3 3`
+  at 4,707,524 with a snapshot at every park [M].
 
 ## 0.0.2 (2026-11-18)
 

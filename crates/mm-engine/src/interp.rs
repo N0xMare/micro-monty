@@ -158,14 +158,9 @@ fn clear_dead(
 /// Clears the registers of the frame at `base` (of `code`, its registers
 /// ending before `end` at the latest) that are dead at each of `pcs`
 /// (`Code::dead_at`).
-fn clear_frame(stack: &mut [Value], code: &Code, base: usize, end: usize, pcs: &[u32]) {
+pub(crate) fn clear_frame(stack: &mut [Value], code: &Code, base: usize, end: usize, pcs: &[u32]) {
     let end = (base + code.nregs as usize).min(end).min(stack.len());
-    let mut dead = [u64::MAX; 4];
-    for &pc in pcs {
-        for (all, at) in dead.iter_mut().zip(code.dead_at(pc)) {
-            *all &= at;
-        }
-    }
+    let dead = dead_where(code, pcs);
     if dead == [0; 4] {
         return;
     }
@@ -176,6 +171,18 @@ fn clear_frame(stack: &mut [Value], code: &Code, base: usize, end: usize, pcs: &
             *v = DEAD;
         }
     }
+}
+
+/// The registers of `code` dead at every one of `pcs`, as
+/// `Code::dead_at`'s bits.
+pub(crate) fn dead_where(code: &Code, pcs: &[u32]) -> [u64; 4] {
+    let mut dead = [u64::MAX; 4];
+    for &pc in pcs {
+        for (all, at) in dead.iter_mut().zip(code.dead_at(pc)) {
+            *all &= at;
+        }
+    }
+    dead
 }
 
 /// A called frame's header.
@@ -785,6 +792,12 @@ impl Vm {
     /// A full collection, one step of an incremental one, or a full one
     /// swept at once.
     fn gc(&mut self, st: &State, kind: Gc) {
+        // A step that can take roots from an idle heap: a full collection,
+        // or a step with one due or no sweep left (`Heap::collect_step`).
+        let idle = !self.heap.marking() && (self.heap.should_collect() || !self.heap.sweeping());
+        if !matches!(kind, Gc::Step) || idle {
+            self.clear_running(st);
+        }
         clear_dead(&mut self.stack, &self.specials, &self.codes, st, self.depth);
         for task in self.tasks.iter_mut().flatten() {
             if let Some(s) = &task.st {

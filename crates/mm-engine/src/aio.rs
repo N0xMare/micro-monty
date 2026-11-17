@@ -756,7 +756,12 @@ impl Vm {
         let mut at = pc;
         loop {
             let c = st.coro;
-            let nregs = self.codes[st.ci as usize].code.nregs as usize;
+            // The saved copy is cleared now, not by a collection: this path
+            // (a coroutine driven by `send`) runs once per suspension.
+            let code = &self.codes[st.ci as usize].code;
+            let nregs = code.nregs as usize;
+            let pcs = crate::generator::suspend_pcs(code, at as u64);
+            crate::interp::clear_frame(&mut self.stack, code, st.base, st.base + nregs, &pcs);
             let mut buf = self.vslot(c, coro::ARGS);
             let len = buf
                 .as_obj()
