@@ -1,7 +1,7 @@
 //! Repository tasks, run as `cargo xtask <task>`.
 //!
 //! - `size`: builds the facade's `hello` example as shipped (build-std,
-//!   immediate abort, no unwind tables; `wasm-opt -Oz` on wasm) for
+//!   immediate abort, no unwind tables; `wasm-opt` on wasm) for
 //!   `wasm32-unknown-unknown` and natively, and the mm-wasm guests, and
 //!   the same for the base and the release they descend from; fails when
 //!   one grows past the base without a reason in a commit message, or past
@@ -22,8 +22,11 @@
 //!   string, which CPython and mm refuse
 //!   (`null_bytes_are_refused_where_the_oracle_differs`).
 //! - `wasm`: shipped builds of the facade for `wasm32-wasip1` and
-//!   `wasm32-unknown-unknown` (`wasm-opt -Oz` included), their sizes, and a
+//!   `wasm32-unknown-unknown` (`wasm-opt` included), their sizes, and a
 //!   snapshot round trip under wasmtime when it is installed.
+//! - `wasm-opt`: binaryen's `wasm-opt` with the shipped arguments
+//!   for a target (`wasm::wasm_opt_args`, their one owner) for scripts
+//!   outside xtask.
 //! - `wasm-wall`: wasm wall time of the bench programs against a base
 //!   revision, on wasmtime and V8.
 //! - `wasm-ir`: wasmtime's guest instructions on the bench programs
@@ -111,7 +114,7 @@ tasks:
                              origin/main; a stack's parent while the parent
                              is gated or waits to be pushed)
   size [--base <rev>]        build `hello` and the mm-wasm guests as shipped
-                             (wasm-opt -Oz on wasm), and the base's (default
+                             (wasm-opt on wasm), and the base's (default
                              origin/main) and the release's, each with its
                              own toolchain in a worktree outside the checkout
                              (cached per commit); a rise
@@ -154,7 +157,7 @@ tasks:
   shipped-build --target <t> --package <p>
                              build a package's binaries as shipped for a
                              target (release.yml's published natives)
-  wasm                       build the facade as shipped (wasm-opt -Oz) for
+  wasm                       build the facade as shipped (wasm-opt) for
                              wasm32-wasip1 and wasm32-unknown-unknown, report
                              hello.wasm sizes, run a snapshot round trip under
                              wasmtime
@@ -203,6 +206,12 @@ tasks:
                              fails); each program's least count from it
                              to the base is what a rise counts from
       --programs <a,b,..>    only these programs (default all)
+      --baselines <file>     only the head, against the counts stored in
+                             <file> (bench/baselines-0.0.2.txt); advisory
+  wasm-opt <target> <in> <out> [arg..]
+                             binaryen's wasm-opt with <target>'s shipped
+                             arguments (wasip1: -Oz and the inline cap;
+                             unknown-unknown: -Oz), plus <arg>s
   gc-stress                  collect at every safepoint (MM_GC_STRESS=1): own
                              cases must print what they print without, the
                              corpus keep its results, durability on the own
@@ -252,6 +261,7 @@ fn main() -> ExitCode {
         Some("wasm-ir") => wasm_ir::run(&rest),
         Some("native-ir") => native_ir::run(&rest),
         Some("v8-ir") => v8_ir::run(&rest),
+        Some("wasm-opt") => wasm::wasm_opt_command(&rest),
         Some("gc-stress") => gc_stress::run(&rest),
         Some("package") if rest.is_empty() => package::run(),
         Some("docs") if rest.is_empty() => docs::run(),

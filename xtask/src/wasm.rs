@@ -2,8 +2,9 @@
 //!
 //! Builds `micro-monty` and its examples as shipped
 //! ([`crate::shipped_build`]) for `wasm32-wasip1` and
-//! `wasm32-unknown-unknown`, runs binaryen's `wasm-opt -Oz` on the `hello`
-//! and `roundtrip` examples ([`optimize`]), reports `hello`'s size on each
+//! `wasm32-unknown-unknown`, runs binaryen's `wasm-opt` with the shipped
+//! arguments ([`wasm_opt_args`]) on the `hello` and `roundtrip` examples
+//! ([`optimize`]), reports `hello`'s size on each
 //! before and after, and, when wasmtime is found (`$WASMTIME`,
 //! `~/.local/bin/wasmtime`, else `wasmtime` on `PATH`), runs the optimized
 //! `roundtrip` example on both: a cell parked on fuel, snapshotted,
@@ -27,7 +28,7 @@ const TARGETS: [&str; 2] = ["wasm32-wasip1", "wasm32-unknown-unknown"];
 /// (`rustc --print cfg --target wasm32-unknown-unknown`, plus the two
 /// LLVM implies). The stripped module carries no `target_features`
 /// section, so wasm-opt is told; it must not use any other feature.
-const WASM_FEATURES: [&str; 8] = [
+pub(crate) const WASM_FEATURES: [&str; 8] = [
     "--enable-bulk-memory",
     "--enable-bulk-memory-opt",
     "--enable-call-indirect-overlong",
@@ -37,6 +38,48 @@ const WASM_FEATURES: [&str; 8] = [
     "--enable-reference-types",
     "--enable-sign-ext",
 ];
+
+/// `wasm-opt`'s arguments for a shipped module of `target`, besides
+/// [`WASM_FEATURES`]: the one place they are chosen. Everything that ships
+/// or measures wasm runs them through [`wasm_opt`]: `size`, `wasm`,
+/// `wasm-host`, `wasm-ir`, `wasm-wall`, the release workflow (through
+/// `size` and `wasm`) and, through `cargo xtask wasm-opt TARGET ...`,
+/// hosts/js/scripts/build-guests.py and xtask/size_map.py.
+///
+/// `wasm32-wasip1` (`mm`, `hello`, the wasip1 guests: modules run by
+/// wasmtime) gets `-Oz` with nothing inlined into a function past 16 KiB.
+/// At binaryen's default (400 KiB) `-Oz` inlines into the run loop
+/// (`Vm::dispatch`, about 36 KB of wasm before `wasm-opt`) whatever is
+/// small or called once, until Cranelift spills its registers, and
+/// unrelated commits flip what it inlines, moving the guest's instruction
+/// counts by about 1% either way. Under the cap nothing is inlined into the
+/// loop: wasmtime runs fib in 4.9% and closure in 7.5% fewer guest
+/// instructions (bench geomean 0.975) [M, binaryen 133, rustc 1.100].
+/// Every cap from 256 B to 32 KiB gives the same run loop; 40 KiB is the
+/// edge and 48 KiB is back at the default's loop. 16 KiB is the middle of
+/// that plateau. It holds only while the loop is bigger than the cap: a
+/// new binaryen or a run loop shrunk below 16 KiB can move it. [`BINARYEN`]
+/// stops the build on another binaryen until the plateau is measured again
+/// (each cap in place of 16384 here, then `cargo xtask wasm-ir --programs
+/// fib,loop,closure,classes`, whose cache key holds these arguments).
+///
+/// `wasm32-unknown-unknown` (the mm-wasm guests and examples V8 and
+/// Workers run) keeps plain `-Oz`: counted in V8's TurboFan code the cap
+/// makes all 12 bench programs worse, geomean 1.0154 (loop 1.045,
+/// generators 1.040) [M, performance review].
+pub(crate) fn wasm_opt_args(target: &str) -> Result<&'static [&'static str], String> {
+    match target {
+        "wasm32-wasip1" => Ok(&["-Oz", "--inline-max-combined-binary-size=16384"]),
+        "wasm32-unknown-unknown" => Ok(&["-Oz"]),
+        other => Err(format!(
+            "no shipped wasm-opt arguments for target `{other}`"
+        )),
+    }
+}
+
+/// The binaryen [`wasm_opt_args`]' cap was measured on (`wasm-opt
+/// --version`'s start; `.agents/setup` and the release workflow install it).
+const BINARYEN: &str = "wasm-opt version 133 ";
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     if !args.is_empty() {
@@ -54,12 +97,12 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
                  `rustup target add {target}`)"
             ));
         }
-        optimize(&example(&root, target, "roundtrip"))?;
+        optimize(target, &example(&root, target, "roundtrip"))?;
         // `hello` as `cargo xtask size` builds it (its own crate at opt 3).
         let shipped = crate::shipped_example(target, "hello")?;
         let hello = example(&root, target, "hello");
         println!(
-            "wasm: {target} hello.wasm {} bytes, {} after wasm-opt -Oz",
+            "wasm: {target} hello.wasm {} bytes, {} after wasm-opt",
             file_size(&hello)?,
             file_size(&shipped)?
         );
@@ -91,7 +134,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     if !status.success() {
         return Err("shipped build of the mm-wasm-alloc realloc example failed".to_owned());
     }
-    let realloc = optimize(&example(&root, "wasm32-unknown-unknown", "realloc"))?;
+    let realloc = optimize(
+        "wasm32-unknown-unknown",
+        &example(&root, "wasm32-unknown-unknown", "realloc"),
+    )?;
     invoke_main(&wasmtime, &realloc, "mm-wasm-alloc realloc")
 }
 
@@ -141,9 +187,9 @@ pub(crate) fn host() -> Result<(), String> {
             ));
         }
         let module = root.join(format!("target/{target}/release/mm_wasm_guest.wasm"));
-        let shipped = optimize(&module)?;
+        let shipped = optimize(target, &module)?;
         println!(
-            "wasm-host: {target} mm_wasm_guest.wasm {} bytes, {} after wasm-opt -Oz",
+            "wasm-host: {target} mm_wasm_guest.wasm {} bytes, {} after wasm-opt",
             file_size(&module)?,
             file_size(&shipped)?
         );
@@ -167,7 +213,10 @@ pub(crate) fn host() -> Result<(), String> {
     if !status.success() {
         return Err("shipped build of mm-wasm-guest with mod-uuid failed".to_owned());
     }
-    let old = optimize(&alt.join("wasm32-unknown-unknown/release/mm_wasm_guest.wasm"))?;
+    let old = optimize(
+        "wasm32-unknown-unknown",
+        &alt.join("wasm32-unknown-unknown/release/mm_wasm_guest.wasm"),
+    )?;
     let host_cargo = |args: &[&str]| {
         let mut command = Command::new(&cargo);
         command
@@ -234,7 +283,7 @@ pub(crate) fn bundle_guest_in(src: &Path, dir: &Path, target: &str) -> Result<Pa
         ));
     }
     let release = dir.join(format!("{target}/release"));
-    let optimized = optimize(&release.join("mm_wasm_guest.wasm"))?;
+    let optimized = optimize(target, &release.join("mm_wasm_guest.wasm"))?;
     let mut module = fs::read(&optimized)
         .map_err(|error| format!("cannot read {}: {error}", optimized.display()))?;
     for (name, package, file) in [
@@ -300,36 +349,74 @@ fn build_output(build: &Path, package: &str, file: &str) -> Result<Vec<u8>, Stri
     fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))
 }
 
-/// The last step of a shipped wasm build: `wasm-opt -Oz` (binaryen,
-/// installed by `.agents/setup`; `$WASM_OPT`, `~/.local/bin`, else `PATH`)
-/// writes `module` optimized for size to [`shipped_path`], which it returns.
-/// The cargo output stays as it is, so a rebuild with nothing to do
-/// optimizes the same input again.
-pub(crate) fn optimize(module: &Path) -> Result<PathBuf, String> {
-    let wasm_opt = tool("WASM_OPT", "wasm-opt").ok_or(
-        "wasm-opt (binaryen) not found ($WASM_OPT, ~/.local/bin, PATH); run .agents/setup",
-    )?;
+/// The last step of a shipped wasm build: [`wasm_opt`] writes `module`,
+/// built for `target`, optimized to [`shipped_path`], which it returns. The
+/// cargo output stays as it is, so a rebuild with nothing to do optimizes
+/// the same input again.
+pub(crate) fn optimize(target: &str, module: &Path) -> Result<PathBuf, String> {
     let shipped = shipped_path(module);
     if let Some(dir) = shipped.parent() {
         fs::create_dir_all(dir)
             .map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
     }
-    let output = Command::new(&wasm_opt)
-        .arg("-Oz")
-        .args(WASM_FEATURES)
-        .arg(module)
-        .arg("-o")
-        .arg(&shipped)
+    wasm_opt(target, module, &shipped, &[])?;
+    Ok(shipped)
+}
+
+/// `wasm-opt` (binaryen [`BINARYEN`], installed by `.agents/setup`;
+/// `$WASM_OPT`, `~/.local/bin`, else `PATH`) with `target`'s shipped
+/// arguments ([`wasm_opt_args`], [`WASM_FEATURES`]) and `extra` (such as
+/// `-g`), from `input` to `output`.
+pub(crate) fn wasm_opt(
+    target: &str,
+    input: &Path,
+    output: &Path,
+    extra: &[String],
+) -> Result<(), String> {
+    let args = wasm_opt_args(target)?;
+    let wasm_opt = tool("WASM_OPT", "wasm-opt").ok_or(
+        "wasm-opt (binaryen) not found ($WASM_OPT, ~/.local/bin, PATH); run .agents/setup",
+    )?;
+    let version = Command::new(&wasm_opt)
+        .arg("--version")
         .output()
-        .map_err(|error| format!("cannot run {}: {error}", wasm_opt.display()))?;
-    if !output.status.success() {
+        .map_or_default(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    if !version.starts_with(BINARYEN) {
         return Err(format!(
-            "wasm-opt -Oz {} failed: {}",
-            module.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
+            "{} is `{}`, not binaryen 133, which the shipped inline cap was \
+             measured on: measure the plateau again on it before changing \
+             BINARYEN (xtask/src/wasm.rs, wasm_opt_args), or run .agents/setup",
+            wasm_opt.display(),
+            version.lines().next().unwrap_or("").trim()
         ));
     }
-    Ok(shipped)
+    let run = Command::new(&wasm_opt)
+        .args(args)
+        .args(WASM_FEATURES)
+        .args(extra)
+        .arg(input)
+        .arg("-o")
+        .arg(output)
+        .output()
+        .map_err(|error| format!("cannot run {}: {error}", wasm_opt.display()))?;
+    if !run.status.success() {
+        return Err(format!(
+            "wasm-opt {} {} failed: {}",
+            args.join(" "),
+            input.display(),
+            String::from_utf8_lossy(&run.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+/// `cargo xtask wasm-opt TARGET INPUT OUTPUT [ARG...]`: [`wasm_opt`] for
+/// the scripts that build wasm outside xtask.
+pub(crate) fn wasm_opt_command(args: &[String]) -> Result<(), String> {
+    let [target, input, output, extra @ ..] = args else {
+        return Err("usage: cargo xtask wasm-opt TARGET INPUT OUTPUT [ARG...]".to_owned());
+    };
+    wasm_opt(target, Path::new(input), Path::new(output), extra)
 }
 
 /// Where [`optimize`] writes `module`: `shipped/` beside cargo's output

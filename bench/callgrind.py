@@ -2,6 +2,7 @@
 """Instruction counts (callgrind Ir) for the bench programs, per engine.
 
     python3 bench/callgrind.py [--engine NAME=CMD ...] [--programs a,b] [--keep DIR]
+                               [--baselines FILE]
 
 Each engine is a command prefix that takes a program path, for example
 `cpython=python3.14` or `mm=target/release/mm run`. Defaults: CPython 3.14
@@ -24,7 +25,10 @@ its output must match `expected.txt` both times:
 Runs go in parallel (Ir does not depend on load). Prints a Markdown table of
 millions of instructions for each and, with two or more engines, each
 engine's ratio to the first. `--keep DIR` keeps the callgrind files for
-callgrind_annotate.
+callgrind_annotate. `--baselines FILE` puts the counts stored in FILE (its
+`native` lines, such as bench/baselines-0.0.2.txt's) first, as the engine
+the others' ratios are to; without `--engine` it then runs only the shipped
+`mm`.
 """
 
 import argparse
@@ -56,6 +60,17 @@ def expected():
                 continue
             name, _, rest = line.partition(": ")
             out[name] = rest.rstrip("\n")
+    return out
+
+
+def baselines(path):
+    """The `native PROGRAM GATED WHOLE` lines of a baselines file."""
+    out = {}
+    with open(path) as f:
+        for line in f:
+            p = line.rstrip("\n").split("\t")
+            if len(p) == 4 and p[0] == "native":
+                out[p[1]] = (int(p[2]), int(p[3]))
     return out
 
 
@@ -92,12 +107,17 @@ def main():
     ap.add_argument("--engine", action="append", default=[])
     ap.add_argument("--programs", default=",".join(ORDER))
     ap.add_argument("--keep")
+    ap.add_argument("--baselines")
     a = ap.parse_args()
     engines = [e.split("=", 1) for e in a.engine] or [
         ["cpython", os.environ.get("PYTHON", "python3.14")],
         ["mm", shlex.quote(shipped_mm()) + " run"],
-    ]
+    ][1 if a.baselines else 0:]
     programs = a.programs.split(",")
+    stored = baselines(a.baselines) if a.baselines else {}
+    missing = [p for p in programs if a.baselines and p not in stored]
+    if missing:
+        sys.exit(f"{a.baselines}: no native counts for {', '.join(missing)}")
     want = expected()
     outdir = a.keep or tempfile.mkdtemp(prefix="callgrind-")
     os.makedirs(outdir, exist_ok=True)
@@ -114,6 +134,10 @@ def main():
                 bad = True
             ir[engine, program, gated] = total
     names = [e for e, _ in engines]
+    if a.baselines:
+        names.insert(0, "baseline")
+        for p in programs:
+            ir["baseline", p, True], ir["baseline", p, False] = stored[p]
     for gated, title in ((True, "Gated: from __libc_start_main, without pthread_getattr_np"),
                          (False, "Whole process")):
         print(f"{title} (millions of Ir):\n")

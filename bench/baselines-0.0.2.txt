@@ -1,0 +1,50 @@
+# The 0.0.2 plan's speed baselines, counted once. The revisions are not in
+# this repository; they are in its archive, N0xMare/micro-monty-archive:
+# 7ac25ef there as 8a397c20 and 4b32aa2 as 1f1a137c (same code; the
+# history was rewritten). Compare a checkout with them:
+#
+#   cargo xtask wasm-ir --baselines bench/baselines-0.0.2.txt
+#   python3 bench/callgrind.py --baselines bench/baselines-0.0.2.txt
+#
+# Both are built with rustc 1.100.0 (RUSTUP_TOOLCHAIN over each revision's
+# 1.99 pin), the toolchain this repository moved to after them.
+#
+# wasm-ir: 7ac25ef's `mm` for wasm32-wasip1, built as shipped then (plain
+# `wasm-opt -Oz`, no inline cap), precompiled for x86_64's baseline ISA;
+# instructions in guest code and under the memory.copy/fill libcalls
+# (`cargo xtask wasm-ir`). Built with today's wasip1 cap, 7ac25ef counts
+# 1.2% more on the geomean (fib 1.017, closure 1.009) [M].
+# Columns: program, guest, bulk.
+key	wasm-ir	guest code and memory.copy/fill libcalls, 1; x86_64-unknown-linux-gnu; wasmtime 50.0.0 (ebe5e8df1 2026-10-20); wasm-opt version 133 (version_133); -Oz; valgrind-3.19.0
+wasm-ir	startup	889177	65241
+wasm-ir	fib	457004306	71288
+wasm-ir	loop	1625082528	70814
+wasm-ir	dict	1836264443	78602920
+wasm-ir	str	744019186	51757181
+wasm-ir	json	1944025973	79487196
+wasm-ir	closure	970886324	74278
+wasm-ir	classes	1887891623	14576784
+wasm-ir	generators	3467308869	72853170
+wasm-ir	exceptions	1543841780	13082322
+wasm-ir	fmt	2513058440	80971012
+wasm-ir	sort	2334477670	53042850
+wasm-ir	interp	3620269113	31078029
+#
+# native: 4b32aa2's shipped native `mm` (`cargo xtask shipped-mm`: std
+# rebuilt with immediate abort, `--cfg mm_shipped`), x86_64; callgrind Ir
+# as bench/callgrind.py counts it. The plan's fmt target is gated fmt.
+# Columns: program, gated, whole process.
+key	native	rustc 1.100.0 (0ef1bc386 2026-11-09); glibc 2.36; valgrind-3.19.0
+native	startup	580387	763017
+native	fib	309630583	309813213
+native	loop	1193434639	1193617255
+native	dict	1159496668	1159679284
+native	str	473192787	473375417
+native	json	1170041027	1170223657
+native	closure	716960671	717143301
+native	classes	1303937728	1304120358
+native	generators	2373646677	2373829307
+native	exceptions	985376559	985559189
+native	fmt	1579639918	1579822548
+native	sort	1439659120	1439841736
+native	interp	2245940423	2246123053

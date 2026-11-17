@@ -27,11 +27,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 UU = 'wasm32-unknown-unknown'
-WASM_FEATURES = ['--enable-bulk-memory', '--enable-bulk-memory-opt',
-                 '--enable-call-indirect-overlong', '--enable-multivalue',
-                 '--enable-mutable-globals', '--enable-nontrapping-float-to-int',
-                 '--enable-reference-types', '--enable-sign-ext']
-WASM_OPT = os.environ.get('WASM_OPT') or str(Path.home() / '.local/bin/wasm-opt')
 
 # docs/user-guide.md, "Smaller module sets for code-mode agents", the code-mode list.
 CORE35 = ['json', 're', 'collections', 'itertools', 'functools', 'datetime', 'random',
@@ -73,13 +68,15 @@ def variant(name, wt_name, mods, out):
     subprocess.run(['cargo', 'build', '--release', '--locked', '-Zbuild-std=std,panic_abort',
                     '--target', UU, '--package', 'mm-wasm-guest'], cwd=wt, env=shipped_env(),
                    check=True)
-    subprocess.run([WASM_OPT, '-Oz', *WASM_FEATURES,
-                    str(wt / 'target' / UU / 'release/mm_wasm_guest.wasm'), '-o',
-                    str(out / f'{name}.wasm')], check=True)
+    # The shipped wasm-opt arguments for UU (xtask/src/wasm.rs, `wasm_opt_args`).
+    subprocess.run(['cargo', 'xtask', 'wasm-opt', UU,
+                    str(wt / 'target' / UU / 'release/mm_wasm_guest.wasm'),
+                    str(out / f'{name}.wasm')], cwd=ROOT, check=True)
 
 
 def main():
-    out = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / 'hosts/js/guests'
+    # Absolute: `cargo xtask wasm-opt` runs from ROOT.
+    out = (Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / 'hosts/js/guests').resolve()
     out.mkdir(parents=True, exist_ok=True)
     subprocess.run(['cargo', 'xtask', 'size'], cwd=ROOT, check=True)
     shutil.copy(ROOT / 'target' / UU / 'shipped/mm_wasm_guest.wasm',

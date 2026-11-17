@@ -32,6 +32,16 @@ hashes are pre-release history, kept in the private archive
 
 ### Changed
 
+- Shipped `wasm32-wasip1` modules (`mm`, `hello`, `roundtrip`, the wasip1
+  guests) go through `wasm-opt -Oz` with inlining capped at 16 KiB per
+  function: wasmtime runs fib in 4.9% and closure in 7.5% fewer guest
+  instructions (bench geomean 0.975), and `mm.wasm` grows 729 B [M].
+  `wasm32-unknown-unknown` modules, what V8 runs, are byte-identical. The
+  arguments have one owner, xtask's `wasm_opt_args`, and one entry,
+  `cargo xtask wasm-opt TARGET IN OUT`, which
+  `hosts/js/scripts/build-guests.py` now runs, so building the guests
+  needs binaryen 133 exactly and a built xtask.
+
 - A host record's fields read as its fields whatever their names: a field
   named `count` or `index` returned the tuple method before. Each field is
   a property, as in a namedtuple, and the class has `__match_args__`, so

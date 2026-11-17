@@ -438,8 +438,10 @@ fn build(src: &Path, target: &Path, wasmtime: &Path) -> Result<Build, String> {
             src.display()
         ));
     }
-    let guest =
-        crate::wasm::optimize(&target.join("wasm32-unknown-unknown/release/mm_wasm_guest.wasm"))?;
+    let guest = crate::wasm::optimize(
+        "wasm32-unknown-unknown",
+        &target.join("wasm32-unknown-unknown/release/mm_wasm_guest.wasm"),
+    )?;
     let manifest = src.join("crates/mm-wasm-guest/Cargo.toml");
     let bundle = if fs::read_to_string(&manifest).is_ok_and(|m| m.contains("host-bundle")) {
         Some(crate::wasm::bundle_guest_in(
@@ -485,7 +487,10 @@ pub(crate) fn build_mm(
             src.display()
         ));
     }
-    let mm = crate::wasm::optimize(&target.join("wasm32-wasip1/release/mm.wasm"))?;
+    let mm = crate::wasm::optimize(
+        "wasm32-wasip1",
+        &target.join("wasm32-wasip1/release/mm.wasm"),
+    )?;
     let cwasm = mm.with_extension("cwasm");
     let mut command = Command::new(wasmtime);
     command.arg("compile");

@@ -998,11 +998,16 @@ clippy and every other build stay on plain stable; `cargo xtask wasm`
 builds its examples as shipped too. Native binaries stay
 position-independent (the worker runs untrusted code). Shipped wasm modules
 then go through binaryen's `wasm-opt -Oz` (version 133, installed by
-`.agents/setup`) with exactly the features rustc enables, into
-`target/<target>/release/shipped/`. It saves about 145 KB on `hello.wasm`
-and costs 8–13% wall time on the dispatch-heavy bench programs (fib, loop,
-closure) under wasmtime [M]; every `wasm-opt` level measured slower than
-none, and `-O3` is within a few percent of `-Oz` and 14 KB larger [M].
+`.agents/setup`) with exactly the features rustc enables and, on
+`wasm32-wasip1` only, inlining capped at 16 KiB per function
+(xtask/src/wasm.rs `wasm_opt_args`, the arguments' one owner), into
+`target/<target>/release/shipped/`. It saves about 145 KB
+on `hello.wasm`; plain `-Oz`, before the cap, cost 8–13% wall time on the
+dispatch-heavy bench programs (fib, loop, closure) under wasmtime [M], and
+the cap takes 4.9% of fib's and 7.5% of closure's guest instructions back
+(bench geomean 0.975) [M]; every `wasm-opt` level
+measured slower than none, and `-O3` is within a few percent of `-Oz` and
+14 KB larger [M].
 `optimize_for_size` std, PGO (native `mm` −8% to −22% instructions, `hello`
 +28% bytes) and BOLT were measured and not taken [M].
 
@@ -2806,7 +2811,10 @@ opens a draft release.
   pass. `MM_WASM_IR_ACCEPT=<reason>` passes an intended rise; the commit
   message then carries the table and a `Wasm-IR-Accepted: <reason>` line.
   A revision's counts are cached in `target/wasm-ir/cache/`, keyed by the
-  counting method and the wasmtime, wasm-opt and valgrind versions, and
+  counting method, the ISA, the rustc, wasmtime, wasm-opt and valgrind
+  versions, wasm-opt's wasip1 arguments and features and the shipped
+  build's flags (not the package built or wasmtime's `compile` and `run`
+  flags, which a bump of the counting method covers), and
   each program's count by a hash of its `bench/*.py` source. The first run
   after a tag or an accepted commit builds the anchor, the changed commits
   since it and the base (about 5–6 min in `check` on 16 cores); a cached

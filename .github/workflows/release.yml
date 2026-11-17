@@ -15,10 +15,10 @@ name: Release
 #   under qemu.
 # - The shipped wasm facade examples (`hello`, `roundtrip`) for
 #   wasm32-wasip1 and wasm32-unknown-unknown, built and checked by
-#   `cargo xtask wasm` (shipped build, `wasm-opt -Oz`, round trip under
-#   wasmtime).
+#   `cargo xtask wasm` (shipped build, `wasm-opt` with the shipped arguments,
+#   xtask/src/wasm.rs `wasm_opt_args`; round trip under wasmtime).
 # - The shipped mm-wasm guests for wasm32-unknown-unknown, built by
-#   `cargo xtask size --head` (shipped build, `wasm-opt -Oz`):
+#   `cargo xtask size --head` (shipped build, `wasm-opt` as above):
 #   `mm_wasm_guest` and the bundle guest `mm_wasm_guest_bundle`, which
 #   carries the prelude and stdlib bytecode as custom sections for the host
 #   to serve through `mm_host.bundle_read`.
@@ -116,14 +116,14 @@ jobs:
           tar -xJf tools/wasmtime.tar.xz -C tools wasmtime-v50.0.0-x86_64-linux/wasmtime
           install -m755 tools/wasmtime-v50.0.0-x86_64-linux/wasmtime "$HOME/.local/bin/wasmtime"
           rm -rf tools
-      - name: cargo xtask wasm (shipped builds, wasm-opt -Oz, round trips)
+      - name: cargo xtask wasm (shipped builds, wasm-opt, round trips)
         run: |
           set -o pipefail
           cargo xtask wasm | tee wasm.log
       # `--head` builds the shipped artifacts and writes their sizes; a tag
       # checkout has no origin/main to judge them against (the gate ran
       # before the tag). pipefail so a failed build fails the step.
-      - name: cargo xtask size --head (shipped guests, wasm-opt -Oz)
+      - name: cargo xtask size --head (shipped guests, wasm-opt)
         run: |
           set -o pipefail
           cargo xtask size --head | tee size.log

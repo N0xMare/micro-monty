@@ -73,7 +73,7 @@ const SIZE_TARGET_WASM: &str = "wasm32-unknown-unknown";
 const SIZE_TARGET_NATIVE: &str = "x86_64-unknown-linux-gnu";
 
 /// Builds the facade's example `name` as shipped for `target` and returns
-/// its path; on wasm, the module `wasm-opt -Oz` wrote ([`wasm::optimize`]).
+/// its path; on wasm, the module `wasm-opt` wrote ([`wasm::optimize`]).
 /// The example's own crate is compiled at opt 3, as an embedder's binary
 /// is: it belongs to the facade's package, whose release profile is `z`,
 /// and fat LTO optimizes the whole program at the root crate's level
@@ -98,7 +98,7 @@ fn shipped_example_in(src: &Path, dir: &Path, target: &str, name: &str) -> Resul
     }
     let release = dir.join(format!("{target}/release/examples"));
     if target.starts_with("wasm32") {
-        wasm::optimize(&release.join(format!("{name}.wasm")))
+        wasm::optimize(target, &release.join(format!("{name}.wasm")))
     } else {
         Ok(release.join(name))
     }
@@ -106,7 +106,7 @@ fn shipped_example_in(src: &Path, dir: &Path, target: &str, name: &str) -> Resul
 
 /// Builds the mm-wasm guest (`crates/mm-wasm-guest`) of the tree at `src`
 /// as shipped for `wasm32-unknown-unknown` into `dir`, without
-/// `test-hooks`, and returns the module `wasm-opt -Oz` wrote.
+/// `test-hooks`, and returns the module `wasm-opt` wrote.
 fn shipped_guest_in(src: &Path, dir: &Path) -> Result<PathBuf, String> {
     let target = SIZE_TARGET_WASM;
     let status = shipped_build_in(target, src)
@@ -119,7 +119,10 @@ fn shipped_guest_in(src: &Path, dir: &Path) -> Result<PathBuf, String> {
             "shipped release build of mm-wasm-guest for {target} failed"
         ));
     }
-    wasm::optimize(&dir.join(format!("{target}/release/mm_wasm_guest.wasm")))
+    wasm::optimize(
+        target,
+        &dir.join(format!("{target}/release/mm_wasm_guest.wasm")),
+    )
 }
 
 /// Builds `mm` natively as shipped and prints its path,
@@ -203,9 +206,12 @@ pub(crate) fn shipped_build_in(target: &str, src: &Path) -> Command {
     shipped_cargo("build", target, src)
 }
 
-/// The `RUSTFLAGS` of shipped builds ([`shipped_build`]).
+/// The `RUSTFLAGS` and cargo arguments of shipped builds ([`shipped_build`];
+/// `wasm-ir`'s cache key holds them).
 pub(crate) const SHIPPED_RUSTFLAGS: &str =
     "-Zunstable-options -Cpanic=immediate-abort -Cforce-unwind-tables=no --cfg mm_shipped";
+pub(crate) const SHIPPED_CARGO: [&str; 3] =
+    ["--release", "--locked", "-Zbuild-std=std,panic_abort"];
 
 /// [`shipped_build_in`] with another cargo `subcommand` (`rustc`).
 fn shipped_cargo(subcommand: &str, target: &str, src: &Path) -> Command {
@@ -214,12 +220,8 @@ fn shipped_cargo(subcommand: &str, target: &str, src: &Path) -> Command {
         .env("RUSTC_BOOTSTRAP", "1")
         .env("RUSTFLAGS", SHIPPED_RUSTFLAGS)
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .args([
-            subcommand,
-            "--release",
-            "--locked",
-            "-Zbuild-std=std,panic_abort",
-        ])
+        .arg(subcommand)
+        .args(SHIPPED_CARGO)
         .args(["--target", target]);
     command
 }

@@ -7,8 +7,8 @@ mm-wasm guest exactly as `cargo xtask size` does (xtask/src/main.rs
 (`strip = false`, `debug = "line-tables-only"`) and the wasm linker writes a
 map. The script then checks that the code is the shipped code (wasm: the
 code section is byte-identical to the shipped pre-`wasm-opt` module, and
-`wasm-opt -Oz -g` on the DWARF-stripped module gives the shipped size plus
-the name section; native: `.text`/`.rodata` sizes equal the shipped binary's)
+the shipped `wasm-opt` arguments plus `-g` on the DWARF-stripped module give
+the shipped size plus the name section; native: `.text`/`.rodata` sizes equal the shipped binary's)
 and attributes every byte:
 
 - code per function (name section / ELF symbols), per crate and per
@@ -53,16 +53,6 @@ TARGET_DIR = ROOT / "target" / "size-map"
 UU = "wasm32-unknown-unknown"
 WASI = "wasm32-wasip1"
 NATIVE = "x86_64-unknown-linux-gnu"
-WASM_FEATURES = [
-    "--enable-bulk-memory",
-    "--enable-bulk-memory-opt",
-    "--enable-call-indirect-overlong",
-    "--enable-multivalue",
-    "--enable-mutable-globals",
-    "--enable-nontrapping-float-to-int",
-    "--enable-reference-types",
-    "--enable-sign-ext",
-]
 
 
 def tool(var, name):
@@ -126,11 +116,11 @@ def build_guest(target_dir=TARGET_DIR):
     return target_dir / UU / "release" / "mm_wasm_guest.wasm"
 
 
-def wasm_opt(src, dst, names):
-    cmd = [tool("WASM_OPT", "wasm-opt"), "-Oz", *WASM_FEATURES, str(src), "-o", str(dst)]
-    if names:
-        cmd.insert(2, "-g")
-    run(cmd)
+def wasm_opt(target, src, dst, names):
+    # The shipped arguments for target, from their one owner (xtask/src/wasm.rs
+    # `wasm_opt_args`).
+    cmd = ["cargo", "xtask", "wasm-opt", target, str(src), str(dst)] + (["-g"] if names else [])
+    run(cmd, cwd=ROOT)
 
 
 # --------------------------------------------------------------------------
@@ -1354,7 +1344,7 @@ def removal_builds(out):
                 continue
             if target == UU:
                 shipped = path.parent.parent / "shipped-removal.wasm"
-                wasm_opt(path, shipped, names=False)
+                wasm_opt(UU, path, shipped, names=False)
                 size = shipped.stat().st_size
             else:
                 size = path.stat().st_size
@@ -1561,7 +1551,8 @@ def main():
     ap.add_argument("--markdown", action="store_true", help="only render size-map.md from the JSON")
     ap.add_argument("--out", default=str(TARGET_DIR / "report"))
     args = ap.parse_args()
-    out = Path(args.out)
+    # Absolute: `cargo xtask wasm-opt` runs from ROOT.
+    out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     report_path = out / "size-map.json"
     report = json.loads(report_path.read_text()) if report_path.exists() else {}
@@ -1584,7 +1575,7 @@ def main():
             nodwarf = out / f"{stem}.pre.wasm"
             nodwarf.write_bytes(strip_custom(pre.read_bytes(), keep=lambda n: not n.startswith(".debug")))
             named = out / f"{stem}.named.wasm"
-            wasm_opt(nodwarf, named, names=True)
+            wasm_opt(WASI if "wasip1" in label else UU, nodwarf, named, names=True)
             analyze_wasm(label, pre, named, shipped, out, report)
             ship_pre = shipped.parent.parent / ("examples/hello.wasm" if "hello" in label else "mm_wasm_guest.wasm")
             if ship_pre.exists():

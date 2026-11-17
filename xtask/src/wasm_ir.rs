@@ -18,10 +18,16 @@
 //! in `bench/expected.txt`.
 //!
 //! A committed revision's counts are cached in `target/wasm-ir/cache/`,
-//! keyed by the counting method and the wasmtime, `wasm-opt` and valgrind
-//! versions, each program's count also by its source's hash (the programs
-//! are this checkout's `bench/`, whatever the revision), so an unmoved base
-//! or anchor is neither built nor run again, and an edited program is.
+//! keyed by the counting method, the rustc, wasmtime, `wasm-opt` and
+//! valgrind versions, `wasm-opt`'s arguments and features and the shipped
+//! build's flags ([`key`]; the running xtask builds every revision with its
+//! toolchain and recipe, so a revision's own xtask and pin are not inputs,
+//! and a change of the recipe reads 1.0000). `--package mm-cli` and the
+//! `wasmtime compile` and `run` flags are not in it: change [`COUNTING`]
+//! when they change. Each program's count
+//! also by its source's hash (the programs are this checkout's `bench/`,
+//! whatever the revision). An unmoved base or anchor is neither built nor
+//! run again; an edited program or a changed tool or flag is.
 //!
 //! The anchor is the latest `v*` tag the base descends from, or, when a
 //! commit since that tag accepted a rise (a `Wasm-IR-Accepted:` line in its
@@ -121,6 +127,7 @@ struct Side {
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut base = "origin/main".to_owned();
     let (mut head, mut anchor, mut only) = (None::<String>, None::<String>, None::<String>);
+    let mut baselines = None::<PathBuf>;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let mut value = |what: &str| {
@@ -133,28 +140,12 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             "--head" => head = Some(value("a revision")?),
             "--anchor" => anchor = Some(value("a revision")?),
             "--programs" => only = Some(value("a list")?),
+            "--baselines" => baselines = Some(PathBuf::from(value("a file")?)),
             other => return Err(format!("wasm-ir: unknown option `{other}`")),
         }
     }
     let programs = select(only.as_deref())?;
-    if !cfg!(target_os = "linux") {
-        return Err("wasm-ir needs valgrind, which runs on Linux only".to_owned());
-    }
-    let valgrind = crate::wasm::tool("VALGRIND", "valgrind")
-        .ok_or("wasm-ir needs valgrind ($VALGRIND, PATH); run .agents/setup")?;
-    let wasmtime = crate::wasm::tool("WASMTIME", "wasmtime")
-        .ok_or("wasm-ir needs wasmtime ($WASMTIME, ~/.local/bin, PATH); run .agents/setup")?;
-    let wasm_opt = crate::wasm::tool("WASM_OPT", "wasm-opt")
-        .ok_or("wasm-ir needs wasm-opt ($WASM_OPT, ~/.local/bin, PATH); run .agents/setup")?;
-    let isa = format!("{}-unknown-linux-gnu", env::consts::ARCH);
-    let key = [
-        COUNTING.to_owned(),
-        isa.clone(),
-        version(&wasmtime),
-        version(&wasm_opt),
-        version(&valgrind),
-    ]
-    .join("; ");
+    let tools = tools()?;
     let root = workspace_root();
     let sha = |rev: &str| {
         git(
@@ -164,6 +155,27 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     };
     let short = |sha: &str| sha[..sha.len().min(10)].to_owned();
 
+    let head_side = match &head {
+        Some(rev) => {
+            let s = sha(rev)?;
+            Side {
+                label: "head".to_owned(),
+                target: "head",
+                name: format!("{rev} ({})", short(&s)),
+                sha: Some(s),
+            }
+        }
+        None => Side {
+            label: "head".to_owned(),
+            target: "head",
+            name: format!("working tree ({})", head_id(&root)?),
+            sha: None,
+        },
+    };
+    if let Some(file) = baselines {
+        return against_baselines(&root, &tools, head_side, &programs, head.is_some(), &file);
+    }
+
     let base_sha = sha(&base)?;
     let anchor = match &anchor {
         Some(rev) => Some((rev.clone(), sha(rev)?)),
@@ -171,23 +183,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     }
     .filter(|(_, a)| *a != base_sha);
     let mut sides = vec![
-        match &head {
-            Some(rev) => {
-                let s = sha(rev)?;
-                Side {
-                    label: "head".to_owned(),
-                    target: "head",
-                    name: format!("{rev} ({})", short(&s)),
-                    sha: Some(s),
-                }
-            }
-            None => Side {
-                label: "head".to_owned(),
-                target: "head",
-                name: format!("working tree ({})", head_id(&root)?),
-                sha: None,
-            },
-        },
+        head_side,
         Side {
             label: "base".to_owned(),
             target: "base",
@@ -202,12 +198,6 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         println!("wasm-ir: {:<6} = {}", side.label, side.name);
     }
 
-    let tools = Tools {
-        valgrind,
-        wasmtime,
-        isa,
-        key,
-    };
     let counts = measure(&root, &tools, &sides, &programs, head.is_some())?;
     // The anchor's counts: the least from the anchor to the base.
     let least = (sides.len() > 2).then(|| least(&counts[1..]));
@@ -217,6 +207,66 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let anchor = anchor_name.as_deref().zip(least.as_ref());
     let failures = report(&programs, &counts[0], (&sides[1].name, &counts[1]), anchor);
     verdict(&failures)
+}
+
+/// `--baselines FILE`: the head against counts stored in `FILE` (such as
+/// `bench/baselines-0.0.2.txt`, a release plan's speed baselines counted
+/// once from revisions outside this repository): its `key` line and its
+/// `wasm-ir PROGRAM GUEST BULK` lines, tab-separated. Prints the table;
+/// advisory, so it fails only when the head cannot be counted.
+fn against_baselines(
+    root: &Path,
+    tools: &Tools,
+    head: Side,
+    programs: &[(&str, &str)],
+    head_rev: bool,
+    file: &Path,
+) -> Result<(), String> {
+    let text = fs::read_to_string(file).map_err(|error| format!("{}: {error}", file.display()))?;
+    let mut key = String::new();
+    let mut stored = Counts::new();
+    for line in text.lines() {
+        let f: Vec<&str> = line.split('\t').collect();
+        match f.as_slice() {
+            ["key", "wasm-ir", k] => (*k).clone_into(&mut key),
+            ["wasm-ir", name, guest, bulk] => {
+                let parse = |n: &str| {
+                    n.parse()
+                        .map_err(|_| format!("{}: bad count in `{line}`", file.display()))
+                };
+                let count = Count {
+                    guest: parse(guest)?,
+                    bulk: parse(bulk)?,
+                };
+                stored.insert((*name).to_owned(), count);
+            }
+            _ => {}
+        }
+    }
+    if let Some((name, _)) = programs.iter().find(|(n, _)| !stored.contains_key(*n)) {
+        return Err(format!("{}: no wasm-ir count for {name}", file.display()));
+    }
+    println!("wasm-ir: head   = {}", head.name);
+    println!("wasm-ir: base   = {} ({key})", file.display());
+    if key != tools.key {
+        println!("wasm-ir: the head is counted with {}", tools.key);
+    }
+    let counts = measure(root, tools, &[head], programs, head_rev)?;
+    let past = report(
+        programs,
+        &counts[0],
+        (&file.display().to_string(), &stored),
+        None,
+    );
+    if past.is_empty() {
+        println!("\nwasm-ir: within the limits of the stored baselines");
+    } else {
+        println!(
+            "\nwasm-ir: past the limits of the stored baselines (advisory): {}",
+            past.join("; ")
+        );
+    }
+    Ok(())
 }
 
 /// The bench programs `only` names (a comma-separated list), or all.
@@ -307,6 +357,54 @@ pub(crate) fn source_hash(bytes: &[u8]) -> String {
         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     });
     format!("{h:016x}")
+}
+
+/// The tools a count runs, found, and the cache key they make.
+fn tools() -> Result<Tools, String> {
+    if !cfg!(target_os = "linux") {
+        return Err("wasm-ir needs valgrind, which runs on Linux only".to_owned());
+    }
+    let valgrind = crate::wasm::tool("VALGRIND", "valgrind")
+        .ok_or("wasm-ir needs valgrind ($VALGRIND, PATH); run .agents/setup")?;
+    let wasmtime = crate::wasm::tool("WASMTIME", "wasmtime")
+        .ok_or("wasm-ir needs wasmtime ($WASMTIME, ~/.local/bin, PATH); run .agents/setup")?;
+    let wasm_opt = crate::wasm::tool("WASM_OPT", "wasm-opt")
+        .ok_or("wasm-ir needs wasm-opt ($WASM_OPT, ~/.local/bin, PATH); run .agents/setup")?;
+    let isa = format!("{}-unknown-linux-gnu", env::consts::ARCH);
+    // Every revision builds with xtask's toolchain (rustup's
+    // `RUSTUP_TOOLCHAIN`, which cargo passes on), not its own pin.
+    let rustc = env::var_os("RUSTC").map_or_else(|| PathBuf::from("rustc"), PathBuf::from);
+    let key = key(
+        &isa,
+        &version(&rustc),
+        &version(&wasmtime),
+        &version(&wasm_opt),
+        &version(&valgrind),
+    );
+    Ok(Tools {
+        valgrind,
+        wasmtime,
+        isa,
+        key,
+    })
+}
+
+/// The cache key: the counting method, the ISA, the tools' versions, and
+/// how xtask builds a revision.
+fn key(isa: &str, rustc: &str, wasmtime: &str, wasm_opt: &str, valgrind: &str) -> String {
+    [
+        COUNTING,
+        isa,
+        wasmtime,
+        wasm_opt,
+        &crate::wasm::wasm_opt_args("wasm32-wasip1").map_or_default(|a| a.join(" ")),
+        &crate::wasm::WASM_FEATURES.join(" "),
+        crate::shipped::SHIPPED_RUSTFLAGS,
+        &crate::shipped::SHIPPED_CARGO.join(" "),
+        rustc,
+        valgrind,
+    ]
+    .join("; ")
 }
 
 /// The tools a count runs, and the cache key they make.
@@ -856,6 +954,27 @@ mod tests {
         )
         .unwrap();
         git(dir, &["rev-parse", "HEAD"]).unwrap()
+    }
+
+    #[test]
+    fn the_key_holds_how_a_revision_is_built() {
+        let k = key(
+            "isa",
+            "rustc 1",
+            "wasmtime 1",
+            "wasm-opt version 133",
+            "valgrind-3",
+        );
+        for part in crate::wasm::wasm_opt_args("wasm32-wasip1")
+            .unwrap()
+            .iter()
+            .chain(&crate::wasm::WASM_FEATURES)
+            .chain(&crate::shipped::SHIPPED_CARGO)
+            .chain(&[crate::shipped::SHIPPED_RUSTFLAGS])
+        {
+            assert!(k.contains(part), "{part} not in {k}");
+        }
+        assert!(k.contains("rustc 1"), "{k}");
     }
 
     #[test]
