@@ -107,11 +107,16 @@ impl<'a> Compiler<'a> {
             let next = self.label();
             let mut names = Vec::new();
             capture_names(&c.pattern, &mut names);
-            let mut slots = Vec::with_capacity(names.len());
-            for name in names {
-                let r = self.slots(1)?;
-                slots.push((name, r));
-            }
+            // One run, the first capture at the head of the unset chain:
+            // the pattern stores them in this order, each taking the head,
+            // so no link is made anew (`set`).
+            // (`slots` takes one register for none.)
+            let slots = if names.is_empty() {
+                Vec::new()
+            } else {
+                let base = self.slots(names.len())?;
+                (base..=u8::MAX).zip(names).map(|(r, n)| (n, r)).collect()
+            };
             let mut pc = PatCtx {
                 stores: Vec::new(),
                 slots,
@@ -343,8 +348,9 @@ impl<'a> Compiler<'a> {
                 self.jump(op::JUMP, ok);
                 self.bind(next);
                 // The next alternative stores the captures again: what
-                // this one stored before it failed is dead.
-                for name in control.iter().flatten() {
+                // this one stored before it failed is dead. Unset in
+                // reverse, so the first it stores is at the head.
+                for name in control.iter().flatten().rev() {
                     if let Some(&(_, r)) = pc.slots.iter().find(|(n, _)| n == name) {
                         self.set(r, r);
                         self.unset(r);

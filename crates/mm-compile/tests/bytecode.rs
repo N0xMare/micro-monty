@@ -248,3 +248,47 @@ fn call_windows_leave_a_reserved_slot_before_the_arguments() {
     assert_eq!(calls, 3, "{listing}");
     assert!(listing.contains("LOAD_METHOD"), "{listing}");
 }
+
+#[test]
+fn the_unset_table_grows_with_the_code_for_many_captures() {
+    // A case of 80 captures, as a sequence, an or-pattern whose first
+    // alternative fails after storing them, a class pattern, a mapping
+    // with a rest and `as` captures: each capture stored takes the head of
+    // the unset chain, so no link is made anew per capture (a first cut
+    // made k(k-1)/2 links for k captures, 3,335 for this sequence).
+    let names: Vec<String> = (0..80).map(|i| format!("a{i}")).collect();
+    let list = names.join(", ");
+    // A mapping takes a key register per capture too: 40 of them.
+    let keys: Vec<String> = names[..40].iter().map(|n| format!("'{n}': {n}")).collect();
+    let cases = [
+        format!("[0, {list}]"),
+        format!("[1, {list}, 9] | [2, {list}]"),
+        format!("C({list})"),
+        format!("{{{}, **rest}}", keys.join(", ")),
+        format!(
+            "[{}]",
+            names
+                .iter()
+                .map(|n| format!("(0 as {n})"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    ];
+    for case in cases {
+        let src = format!("def f(v):\n    match v:\n        case {case}:\n            return 0\n");
+        let module = mm_parse::parse(&src).expect("parses");
+        let program =
+            compile(&module, Options::default()).unwrap_or_else(|e| panic!("{case}: {e:?}"));
+        let f = program
+            .codes
+            .iter()
+            .find(|c| &*c.qualname == "f")
+            .expect("f");
+        assert!(
+            f.unset.len() <= f.bytecode.len(),
+            "{case}: {} unset links for {} words",
+            f.unset.len(),
+            f.bytecode.len()
+        );
+    }
+}
