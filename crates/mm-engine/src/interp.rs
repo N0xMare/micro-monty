@@ -111,13 +111,11 @@ pub(crate) fn walk_frames(
 }
 
 /// What a cleared dead register holds: `UNDEFINED`, or in debug builds a
-/// poison no program makes, which the dispatch loop's operand reads assert
-/// they never see (`rd!`).
+/// poison no program makes (a native function no table has, which is not
+/// a reference and reads back from an image as it is), which the dispatch
+/// loop's operand reads assert they never see (`rd!`).
 pub(crate) const DEAD: Value = if cfg!(debug_assertions) {
-    match Value::int(-0x5EAD_DEAD_0BAD) {
-        Some(v) => v,
-        None => Value::UNDEFINED,
-    }
+    Value::native(u32::MAX)
 } else {
     Value::UNDEFINED
 };
