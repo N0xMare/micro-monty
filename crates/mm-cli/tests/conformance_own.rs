@@ -128,18 +128,31 @@ fn libm_differs(py: &Path) -> Option<String> {
     })
 }
 
-/// CPython, with the main thread's stack at its hard limit on macOS: the
-/// 8 MiB default (64 MiB is the hard limit) is too small for CPython
-/// 3.14's own recursion guard on the deep cases (324), where Linux passes.
+/// The address space CPython gets on Linux, in KiB (8 GiB). Every case's
+/// output is the same under it as without it [M].
+const ORACLE_AS_KIB: u64 = 8 << 20;
+
+/// CPython under the host's limits for it. On Linux its address space is
+/// capped at [`ORACLE_AS_KIB`]: a case that asks CPython for more memory
+/// than a host should have (517's `getrandbits(2**40)`, 128 GiB) expects
+/// `MemoryError`, which CPython raises only where the kernel refuses the
+/// request. With 125 GiB of RAM and 32 GiB of swap the kernel granted it,
+/// and CPython filled 114 GiB before the OOM killer stopped it [M]. On
+/// macOS the main thread's stack is at its hard limit: the 8 MiB default
+/// (64 MiB is the hard limit) is too small for CPython 3.14's own recursion
+/// guard on the deep cases (324), where Linux passes.
 fn oracle(py: &Path) -> Command {
-    if cfg!(target_os = "macos") {
-        let mut c = Command::new("/bin/sh");
-        c.args(["-c", "ulimit -s hard && exec \"$0\" \"$@\""])
-            .arg(py);
-        c
+    let limit = if cfg!(target_os = "macos") {
+        "ulimit -s hard".to_owned()
+    } else if cfg!(target_os = "linux") {
+        format!("ulimit -v {ORACLE_AS_KIB}")
     } else {
-        Command::new(py)
-    }
+        return Command::new(py);
+    };
+    let mut c = Command::new("/bin/sh");
+    c.args(["-c", &format!("{limit} && exec \"$0\" \"$@\"")])
+        .arg(py);
+    c
 }
 
 /// `f` on every item, spread over every core; the results in item order.
