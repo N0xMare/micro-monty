@@ -545,12 +545,27 @@ impl Code {
     /// The registers dead at `pc`, register `r` as bit `r % 64` of word
     /// `r / 64`: those from the entry's top up and its unset ones, which no
     /// instruction there or after reads before writing. None for code
-    /// without the table. A chain's links go down the table, so a
-    /// malformed one (a restored image's) ends instead of looping.
+    /// without the table.
     #[must_use]
     pub fn dead_at(&self, pc: u32) -> [u64; 4] {
+        self.dead_in(self.live_index(pc))
+    }
+
+    /// Where `pc` falls in the live table, as [`Code::dead_in`] takes it:
+    /// two pcs with the same index have the same dead registers.
+    #[must_use]
+    pub fn live_index(&self, pc: u32) -> usize {
+        self.live.partition_point(|e| e.pc <= pc)
+    }
+
+    /// [`Code::dead_at`] of a pc at live index `i` ([`Code::live_index`]).
+    /// A chain's links go down the table, so a malformed one (a restored
+    /// image's) ends instead of looping, and a compiled one names each
+    /// register at most once: the walk stops after 256 links, so a forged
+    /// chain costs no more than a real one.
+    #[must_use]
+    pub fn dead_in(&self, i: usize) -> [u64; 4] {
         let mut dead = [0; 4];
-        let i = self.live.partition_point(|e| e.pc <= pc);
         let Some(e) = i.checked_sub(1).and_then(|i| self.live.get(i)) else {
             return dead;
         };
@@ -563,7 +578,10 @@ impl Code {
             };
         }
         let mut at = e.unset as usize;
-        while let Some(u) = at.checked_sub(1).and_then(|i| self.unset.get(i)) {
+        for _ in 0..256 {
+            let Some(u) = at.checked_sub(1).and_then(|i| self.unset.get(i)) else {
+                break;
+            };
             dead[usize::from(u.reg) / 64] |= 1 << (u.reg % 64);
             at = (u.next as usize).min(at - 1);
         }

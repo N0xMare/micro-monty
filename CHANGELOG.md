@@ -55,17 +55,18 @@ hashes are pre-release history, kept in the private archive
   you mean" suggestion. A `MemoryError` from `reset` now means the
   session was reset with only `__name__` unset.
 - The dead-register regression listed in 0.0.2's known issues is fixed
-  for every shape but a suspended generator's: a register is a root only
-  from the store that fills it (docs/spec.md §8.3), so what an ended
-  statement or a returned callee's frame left in a register keeps
-  nothing alive. That covers a call's or a display's slots not yet
-  stored to, the targets of an unpack or a method load that runs Python
-  code first, and the saved frame of a running generator or of a
-  coroutine suspended by `send`. `n = len(load())` and then
-  `m = len(load())`, with `load()` returning three 50 MB bytearrays and
-  20,000 statements between them, prints `ok 3 3` at fuel 4,707,521
-  unparked, parked and with a snapshot at every park, where 0.0.2 raised
-  `MemoryError` at 4,974,841 unparked [M]. The build id moves.
+  for every shape but a suspended generator's, which is worse than in
+  0.0.2 in one case (Known issues): a register is a root only from the
+  store that fills it (docs/spec.md §8.3), so what an ended statement or
+  a returned callee's frame left in a register keeps nothing alive. That
+  covers a call's or a display's slots not yet stored to, the targets of
+  an unpack or a method load that runs Python code first, and the saved
+  frame of a running generator or of a coroutine suspended by `send`.
+  `n = len(load())` and then `m = len(load())`, with `load()` returning
+  three 50 MB bytearrays and 20,000 statements between them, prints
+  `ok 3 3` at fuel 4,707,521 unparked, parked and with a snapshot at
+  every park, where 0.0.2 raised `MemoryError` at 4,974,841 unparked
+  [M]. The build id moves.
 
 ### Known issues
 
@@ -89,8 +90,15 @@ hashes are pre-release history, kept in the private archive
   raise `MemoryError` where CPython completes, and whether it does can
   depend on where a snapshot's collection fell. The shape above inside a
   generator, suspended at a yield before the second `load()`, raises
-  `MemoryError` at fuel 4,974,844 unparked and parked and prints `ok 3 3`
-  at 4,707,524 with a snapshot at every park [M].
+  `MemoryError` at fuel 4,974,844 unparked and parked and prints
+  `ok 3 3` at 4,707,524 with a snapshot at every park [M]. It is worse
+  than in 0.0.2 where an incremental collection is in progress at the
+  yield: 0.0.2 cleared the running frame at every collection step, mark
+  and lazy-sweep slices included, and this release only at a step that
+  takes roots, so the yield saves the dead temporary. A generator that
+  drops 95 MB before its yield beside 100 MB of live data prints its
+  result at fuel 5,570,145 on 0.0.2, unparked and parked, and raises
+  `MemoryError` at 8,137,672 here in every mode [M].
 
 ## 0.0.2 (2026-11-18)
 

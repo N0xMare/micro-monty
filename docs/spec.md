@@ -1372,34 +1372,39 @@ The table retains its high-water capacity inside the arena budget.
   allocated and no instruction has stored to yet (a call window's reserved
   `R[r+1]`, which the caller never stores to, the arguments and display
   items still to come, a handler's registers before its first instruction,
-  an or-pattern's captures before each alternative). A collection first
-  clears the other registers of each frame, up to the frame above: of the
-  running frame at its pc, and of a caller the ones dead at its call pc
-  and at its return pc alike. An instruction that runs Python code before
-  it stores to its target registers (an unpack of an iterator,
+  an or-pattern's captures before each alternative). A collection step
+  that takes roots (a full collection, the start, each rescan pass and the
+  remark of an incremental mark; not a lazy-sweep slice or a mark slice)
+  first clears the other registers of each frame, up to the frame above:
+  of the running frame at its pc, and of a caller the ones dead at its
+  call pc and at its return pc alike. An instruction that runs Python code
+  before it stores to its target registers (an unpack of an iterator,
   `LOAD_METHOD` through a descriptor or `__getattr__`) first clears them
   itself, since they are temporaries it fills only once that code returns.
   So a register is a root only from the store that fills it: what an ended
   statement, an earlier use of the register or a returned callee's frame
-  left there keeps nothing alive, and which objects a collection finds
-  through a frame with the table on the stack, or a coroutine's copy, does
-  not depend on whether an earlier collection ran. The table adds no instruction and
-  no operand. Its top is a count of at most 255 with no reserved value, so
-  a unit that uses every register needs no mark for it. One kind of frame
-  keeps more than it reads: a frame of the prelude or of a bundled module,
-  whose code carries no table (it is stripped with the positions), keeps
-  every register, those a returned callee's frame overlaid included, until
-  it returns. A running generator's or coroutine's copy holds nothing at a
-  collection that takes roots from an idle heap, and a coroutine's copy
-  suspended by `send` only what its frame reads again (above); a mark
-  already running keeps what a copy held when it began, as it keeps
-  everything reachable then. A suspended generator's copy keeps every
-  register as the yield saved it until it yields again, so a dead
-  temporary saved at a yield stays a root until then, and whether a
-  collection ran while the generator was running decides whether the copy
-  holds it, so a program's report and fuel can depend on where a snapshot
-  falls. Noting each yield for the next collection closed this at about 30
-  V8 instructions a yield and was left out; a later release closes it.
+  left there keeps nothing alive, and which objects a step that takes
+  roots finds through a frame with the table on the stack, or in a
+  coroutine's copy, does not depend on whether an earlier collection ran.
+  The table adds no instruction and no operand. Its top is a count of at
+  most 255 with no reserved value, so a unit that uses every register needs
+  no mark for it. One kind of frame keeps more than it reads: a frame of
+  the prelude or of a bundled module, whose code carries no table (it is
+  stripped with the positions), keeps every register, those a returned
+  callee's frame overlaid included, until it returns. A running
+  generator's or coroutine's copy holds nothing at a collection that takes
+  roots from an idle heap, and a coroutine's copy suspended by `send` only
+  what its frame reads again (above); a mark already running keeps what a
+  copy held when it began, as it keeps everything reachable then. A
+  suspended generator's copy keeps every register as the yield saved it
+  until it yields again, so a dead temporary saved at a yield stays a root
+  until then. Whether the copy holds it depends on whether a step that
+  takes roots ran while the generator was running, after the temporary
+  died: a mark or lazy-sweep slice does not clear, so a yield while an
+  incremental collection is in progress saves it. So a program's report
+  and fuel can depend on where a snapshot falls, and a program can raise
+  `MemoryError` where a build that cleared at every collection step
+  completed. A later release closes this.
 
 ### 8.4 Exceptions
 

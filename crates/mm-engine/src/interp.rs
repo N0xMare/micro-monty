@@ -125,7 +125,9 @@ pub(crate) const DEAD: Value = if cfg!(debug_assertions) {
 /// header of the frame above it. They hold what an earlier use of the
 /// register left, which no instruction reads before writing it, and would
 /// otherwise keep it alive: the collector traces every register below the
-/// running frame's top. Done whenever roots are taken.
+/// running frame's top. Done whenever roots are taken, and only then
+/// (`Vm::gc`'s `roots`). The headers are read in place, as `walk_frames`
+/// reads them, and a malformed one ends the walk.
 fn clear_dead(
     stack: &mut [Value],
     specials: &[Frame],
@@ -137,21 +139,42 @@ fn clear_dead(
         return;
     };
     let pc = u32::try_from(st.pc).unwrap_or(u32::MAX);
-    clear_frame(stack, &code.code, st.base, stack.len(), &[pc]);
-    let Some(frames) = walk_frames(stack, specials, codes, st.base, depth) else {
-        return;
-    };
-    let mut above = st.base;
-    for f in frames {
-        let Some(c) = codes.get(f.code as usize) else {
+    let dead = code.code.dead_at(pc);
+    clear_bits(stack, &code.code, st.base, stack.len(), dead);
+    let (mut base, mut sp) = (st.base, specials.len());
+    for _ in 0..depth {
+        let f = match header(stack, codes, base) {
+            Some(Header::Plain(f)) => f,
+            Some(Header::Special) => {
+                let Some(i) = sp.checked_sub(1) else {
+                    return;
+                };
+                sp = i;
+                specials[sp]
+            }
+            None => return,
+        };
+        let (Some(c), true) = (codes.get(f.code as usize), (f.base as usize) < base) else {
             return;
         };
+        let c = &c.code;
         // A caller waits in the instruction at its call pc, before its
-        // return pc, or reruns the one at it.
-        let pcs = [f.call_pc, f.ret_pc.saturating_sub(1), f.ret_pc];
-        let base = f.base as usize;
-        clear_frame(stack, &c.code, base, above.saturating_sub(HDR), &pcs);
-        above = base;
+        // return pc, or reruns the one at it. The three almost always
+        // share a live entry: one set then.
+        let at = [f.call_pc, f.ret_pc.saturating_sub(1), f.ret_pc].map(|pc| c.live_index(pc));
+        let dead = if at[0] == at[1] && at[1] == at[2] {
+            c.dead_in(at[0])
+        } else {
+            let mut dead = [u64::MAX; 4];
+            for i in at {
+                for (all, d) in dead.iter_mut().zip(c.dead_in(i)) {
+                    *all &= d;
+                }
+            }
+            dead
+        };
+        clear_bits(stack, c, f.base as usize, base.saturating_sub(HDR), dead);
+        base = f.base as usize;
     }
 }
 
@@ -159,15 +182,22 @@ fn clear_dead(
 /// ending before `end` at the latest) that are dead at each of `pcs`
 /// (`Code::dead_at`).
 pub(crate) fn clear_frame(stack: &mut [Value], code: &Code, base: usize, end: usize, pcs: &[u32]) {
+    clear_bits(stack, code, base, end, dead_where(code, pcs));
+}
+
+/// Clears the registers of the frame at `base` set in `dead` (as
+/// `Code::dead_at`'s bits), its registers ending before `end` at the
+/// latest: a store per dead register, none for the others.
+fn clear_bits(stack: &mut [Value], code: &Code, base: usize, end: usize, dead: [u64; 4]) {
     let end = (base + code.nregs as usize).min(end).min(stack.len());
-    let dead = dead_where(code, pcs);
-    if dead == [0; 4] {
-        return;
-    }
-    // At most 255 registers, as the bits.
     let regs = stack.get_mut(base..end).unwrap_or_default();
-    for (r, v) in regs.iter_mut().enumerate().take(256) {
-        if dead[r / 64] >> (r % 64) & 1 != 0 {
+    for (w, mut bits) in dead.into_iter().enumerate() {
+        while bits != 0 {
+            let r = w * 64 + bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let Some(v) = regs.get_mut(r) else {
+                return;
+            };
             *v = DEAD;
         }
     }
@@ -243,6 +273,28 @@ enum Unwound {
 /// An exception left the instruction at `st.pc`.
 struct Fault {
     reraise: bool,
+}
+
+/// Runs collection `kind` on `heap`; whether a collection completed
+/// (a `Gc::Step` may end before).
+#[inline(never)]
+fn collect(
+    heap: &mut mm_core::Heap,
+    kind: Gc,
+    roots: &mut dyn FnMut(&mut mm_core::Tracer<'_>),
+    weak: &mut dyn FnMut(&mut mm_core::Tracer<'_>),
+) -> bool {
+    match kind {
+        Gc::Step => heap.collect_step(roots, weak).is_some(),
+        Gc::Full => {
+            heap.collect_weak(roots, weak);
+            true
+        }
+        Gc::Swept => {
+            heap.collect_swept(roots, weak);
+            true
+        }
+    }
 }
 
 /// What [`Vm::gc`] runs.
@@ -798,16 +850,19 @@ impl Vm {
         if !matches!(kind, Gc::Step) || idle {
             self.clear_running(st);
         }
-        clear_dead(&mut self.stack, &self.specials, &self.codes, st, self.depth);
-        for task in self.tasks.iter_mut().flatten() {
-            if let Some(s) = &task.st {
-                clear_dead(&mut task.stack, &task.specials, &self.codes, s, task.depth);
-            }
-        }
         let top = (st.base + self.codes[st.ci as usize].code.nregs as usize).min(self.stack.len());
         self.prune_fresh();
         let fresh = &mut self.fresh;
+        let depth = self.depth;
         let mut roots = |t: &mut mm_core::Tracer<'_>| {
+            // Only a step that takes roots clears: a lazy-sweep slice and a
+            // mark step between root scans read no register.
+            clear_dead(&mut self.stack, &self.specials, &self.codes, st, depth);
+            for task in self.tasks.iter_mut().flatten() {
+                if let Some(s) = &task.st {
+                    clear_dead(&mut task.stack, &task.specials, &self.codes, s, task.depth);
+                }
+            }
             t.values(&self.stack[..top]);
             t.values(&[
                 st.acc,
@@ -913,18 +968,8 @@ impl Vm {
             }
         };
         let mut weak = |t: &mut mm_core::Tracer<'_>| Vm::sweep_fresh(fresh, t);
-        match kind {
-            Gc::Step => {
-                if self.heap.collect_step(&mut roots, &mut weak).is_none() {
-                    return;
-                }
-            }
-            Gc::Full => {
-                self.heap.collect_weak(&mut roots, &mut weak);
-            }
-            Gc::Swept => {
-                self.heap.collect_swept(&mut roots, &mut weak);
-            }
+        if !collect(&mut self.heap, kind, &mut roots, &mut weak) {
+            return;
         }
         // Registers above a frame's top are dead (a callee's frame starts
         // at its caller's argument window, below the caller's dead

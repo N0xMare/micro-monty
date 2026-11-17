@@ -763,6 +763,26 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "for i in range(6_000_000):\n    t = [i]",
         1,
     ),
+    // Collections beside 1,000 tasks, each blocked under 500 coroutine
+    // frames (500,000 frames, about 244 MB): every collection step cleared
+    // the dead registers of every frame of every task, and a step ran
+    // 57.6-63.6 ms past a 1 ms deadline [M, plain release, one cpu]; now
+    // only a step that takes roots clears, a live entry per frame.
+    (
+        Row::Bounded,
+        "import asyncio",
+        "async def leaf(ev):\n    await ev.wait()\n    return 1\n\
+         async def rec(n, ev):\n    if n == 0:\n        return await leaf(ev)\n    \
+         return await rec(n - 1, ev)\n\
+         async def main():\n    ev = asyncio.Event()\n    \
+         tasks = [asyncio.create_task(rec(500, ev)) for _ in range(1000)]\n    \
+         await asyncio.sleep(0)\n    keep = []\n    i = 0\n    \
+         while i < 1_000_000:\n        i += 1\n        keep.append([i, i + 1, i + 2])\n        \
+         if len(keep) > 400_000:\n            keep = keep[200_000:]\n    \
+         ev.set()\n    return sum(await asyncio.gather(*tasks))\n\
+         r = asyncio.run(main())",
+        1,
+    ),
     // Scattered writes into a 199 MiB heap: the marks do not converge and
     // give up, and the next ones ran in full (65-67 ms on f305b88; 264-280
     // ms over 3M writes); they are now held, a slice per step (spec §9.2):
