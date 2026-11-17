@@ -1352,16 +1352,38 @@ The table retains its high-water capacity inside the arena budget.
   compiler.
 - Generators and coroutines own a copy of their frame. Resuming copies it
   onto the stack, and yielding back, with one validated block access each
-  way. The saved copy holds every register, so a suspended generator keeps
-  its dead temporaries alive until it runs again (below).
+  way. The saved copy holds every register as the frame left it, so a
+  suspended generator, or a coroutine driven by `send`, keeps what its
+  dead registers held when it stopped until it runs again (below).
 - The VM keeps `pc`, the frame base and the accumulator in locals during
   dispatch and writes them back at safepoints, so a park is "stop the loop".
-- GC roots are the live registers of every frame on the stack. Each
-  statement's position entries carry its live top (its mark and its own
-  temporaries; outside statements, the unit's), and a collection first
-  clears each frame's registers from its live top to the frame above, so an
-  ended statement's temporaries and a returned callee's frame keep nothing
-  alive.
+- GC roots are the live registers of every frame on the stack. A code
+  object's live table (`Code::live`) says for each instruction which
+  registers hold a value when it starts: those below the allocated top at
+  that instruction, without the unset ones, which the compiler has
+  allocated and no instruction has stored to yet (a call window's reserved
+  `R[r+1]`, which the caller never stores to, the arguments and display
+  items still to come, a handler's registers before its first
+  instruction, an or-pattern's captures before each alternative). A
+  collection first clears the other registers of each frame, up to the
+  frame above: of the running frame at its pc, and of a caller the ones
+  dead at its call pc and at its return pc alike. So a register is a root
+  only from the store that fills it: what an ended statement, an earlier
+  use of the register or a returned callee's frame left there keeps
+  nothing alive, and which objects a collection finds through such a
+  frame does not depend on whether an earlier collection ran. The table
+  adds no instruction and no operand. Its top is a count of at most 255
+  with no reserved value, so a unit that uses every register needs no
+  mark for it. Three kinds of frame keep more than they read:
+  - a frame of the prelude or of a bundled module, whose code carries no
+    table (it is stripped with the positions), keeps every register,
+    those a returned callee's frame overlaid included, until it returns;
+  - a suspended generator or coroutine keeps its saved copy (above);
+  - a frame waiting in an instruction that runs Python code before it
+    stores to registers (`LOAD_METHOD` through a descriptor, an unpack of
+    an iterator) keeps what those registers held while that code runs:
+    as a caller it is cleared only of what is dead after the instruction
+    too.
 
 ### 8.4 Exceptions
 

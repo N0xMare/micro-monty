@@ -16,8 +16,8 @@
 
 use crate::ast::{Anchor, Pos};
 use crate::bytecode::{
-    Code, ExcEntry, FORMATS, Konst, ParamSpec, PosEntry, Program, RegName, instr_len, layout_of,
-    opcode, operand_plan, word_bytes,
+    Code, ExcEntry, FORMATS, Konst, LiveEntry, ParamSpec, PosEntry, Program, RegName, Unset,
+    instr_len, layout_of, opcode, operand_plan, word_bytes,
 };
 use alloc::{collections::BTreeMap, string::String, sync::Arc, vec::Vec};
 
@@ -235,6 +235,8 @@ impl<P: Strings> Out<'_, P> {
             && c.freenames.is_empty()
             && c.exc_table.is_empty()
             && c.positions.is_empty()
+            && c.live.is_empty()
+            && c.unset.is_empty()
             && c.reg_names.is_empty());
         let flags = [
             c.is_module,
@@ -328,7 +330,17 @@ impl<P: Strings> Out<'_, P> {
                 self.u32(x);
             }
             self.bool(e.no_carets);
+        }
+        self.len(c.live.len());
+        for e in &c.live {
+            self.u32(e.pc);
             self.byte(e.top);
+            self.u32(e.unset);
+        }
+        self.len(c.unset.len());
+        for u in &c.unset {
+            self.byte(u.reg);
+            self.u32(u.next);
         }
         self.len(c.reg_names.len());
         for r in &c.reg_names {
@@ -743,6 +755,8 @@ impl<'a> In<'a> {
             freenames: Vec::new(),
             exc_table: Vec::new(),
             positions: Vec::new(),
+            live: Vec::new(),
+            unset: Vec::new(),
             reg_names: Vec::new(),
             n_ics: 0,
             is_module: flag(0),
@@ -783,7 +797,19 @@ impl<'a> In<'a> {
                     right_col: r.u32()?,
                 },
                 no_carets: r.bool()?,
+            })
+        })?;
+        c.live = self.list(|r| {
+            Some(LiveEntry {
+                pc: r.u32()?,
                 top: r.byte()?,
+                unset: r.u32()?,
+            })
+        })?;
+        c.unset = self.list(|r| {
+            Some(Unset {
+                reg: r.byte()?,
+                next: r.u32()?,
             })
         })?;
         c.reg_names = self.list(|r| {

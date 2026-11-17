@@ -582,6 +582,8 @@ fn host_program(
             c.bytecode.shrink_to_fit();
             c.consts.shrink_to_fit();
             c.positions.shrink_to_fit();
+            c.live.shrink_to_fit();
+            c.unset.shrink_to_fit();
         }
     }
     let p = Arc::new(HostProgram {
@@ -631,7 +633,7 @@ pub(crate) fn rebuild_host_program(
 /// spec codec, the generator or the compiler change the probe's code, the
 /// test `the_codegen_probe_matches_its_recorded_hash` fails and prints the
 /// new value to set here, which changes the build id.
-pub(crate) const CODEGEN_PROBE: u64 = 0x7397_efcf_0621_909c;
+pub(crate) const CODEGEN_PROBE: u64 = 0xaef9_9e8e_85d3_a81a;
 
 /// What [`CODEGEN_PROBE`] hashes, or why the probe definition does not
 /// generate or compile (a bug).

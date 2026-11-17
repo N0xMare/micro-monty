@@ -20,7 +20,7 @@ use crate::vm::{
 use alloc::{format, string::String, sync::Arc, vec::Vec};
 use core::sync::atomic::Ordering;
 use mm_compile::ast::BinOp;
-use mm_compile::bytecode::{instr_len, op, operand};
+use mm_compile::bytecode::{Code, instr_len, op, operand};
 use mm_core::Value;
 
 /// Why the dispatch loop returned.
@@ -123,12 +123,11 @@ pub(crate) const DEAD: Value = if cfg!(debug_assertions) {
 };
 
 /// Clears the dead registers of the frames on `stack`, the running one
-/// (`st`, `depth` frames above the bottom) and its callers: in each, those
-/// from its live top at its pc (`Code::live_top`, its statement's) up to
-/// the header of the frame above it. They hold what ended statements and
-/// returned callees left, which no instruction reads before writing it, and
-/// would otherwise keep it alive: the collector traces every register
-/// below the running frame's top. Done whenever roots are taken.
+/// (`st`, `depth` frames above the bottom) and its callers, each up to the
+/// header of the frame above it. They hold what an earlier use of the
+/// register left, which no instruction reads before writing it, and would
+/// otherwise keep it alive: the collector traces every register below the
+/// running frame's top. Done whenever roots are taken.
 fn clear_dead(
     stack: &mut [Value],
     specials: &[Frame],
@@ -139,12 +138,8 @@ fn clear_dead(
     let Some(code) = codes.get(st.ci as usize) else {
         return;
     };
-    let code = &code.code;
-    let end = (st.base + code.nregs as usize).min(stack.len());
-    let live = st.base + code.live_top(u32::try_from(st.pc).unwrap_or(u32::MAX));
-    if let Some(dead) = stack.get_mut(live..end) {
-        dead.fill(DEAD);
-    }
+    let pc = u32::try_from(st.pc).unwrap_or(u32::MAX);
+    clear_frame(stack, &code.code, st.base, stack.len(), &[pc]);
     let Some(frames) = walk_frames(stack, specials, codes, st.base, depth) else {
         return;
     };
@@ -153,20 +148,35 @@ fn clear_dead(
         let Some(c) = codes.get(f.code as usize) else {
             return;
         };
-        let c = &c.code;
         // A caller waits in the instruction at its call pc, before its
         // return pc, or reruns the one at it.
-        let top = [f.call_pc, f.ret_pc.saturating_sub(1), f.ret_pc]
-            .map(|pc| c.live_top(pc))
-            .into_iter()
-            .max()
-            .unwrap_or(c.nregs as usize);
+        let pcs = [f.call_pc, f.ret_pc.saturating_sub(1), f.ret_pc];
         let base = f.base as usize;
-        let end = (base + c.nregs as usize).min(above.saturating_sub(HDR));
-        if let Some(dead) = stack.get_mut(base + top..end) {
-            dead.fill(DEAD);
-        }
+        clear_frame(stack, &c.code, base, above.saturating_sub(HDR), &pcs);
         above = base;
+    }
+}
+
+/// Clears the registers of the frame at `base` (of `code`, its registers
+/// ending before `end` at the latest) that are dead at each of `pcs`
+/// (`Code::dead_at`).
+fn clear_frame(stack: &mut [Value], code: &Code, base: usize, end: usize, pcs: &[u32]) {
+    let end = (base + code.nregs as usize).min(end).min(stack.len());
+    let mut dead = [u64::MAX; 4];
+    for &pc in pcs {
+        for (all, at) in dead.iter_mut().zip(code.dead_at(pc)) {
+            *all &= at;
+        }
+    }
+    if dead == [0; 4] {
+        return;
+    }
+    // At most 255 registers, as the bits.
+    let regs = stack.get_mut(base..end).unwrap_or_default();
+    for (r, v) in regs.iter_mut().enumerate().take(256) {
+        if dead[r / 64] >> (r % 64) & 1 != 0 {
+            *v = DEAD;
+        }
     }
 }
 

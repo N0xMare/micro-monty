@@ -3,7 +3,7 @@
 
 #![allow(clippy::expect_used, clippy::panic, reason = "tests")]
 
-use mm_compile::bytecode::{FORMATS, NAMES, assemble, disassemble, op};
+use mm_compile::bytecode::{FORMATS, NAMES, assemble, disassemble, op, opcode, operand};
 use mm_compile::{Options, compile};
 
 const SRC: &str = "\
@@ -91,6 +91,58 @@ fn compiled_words_verify_and_jumps_land_on_instruction_starts() {
     assert!(fused >= 1, "no fused pair");
     assert!(seen_for_prep, "no FOR_PREP");
     assert!(program.codes.iter().any(|c| !c.exc_table.is_empty()));
+}
+
+#[test]
+fn the_live_table_names_the_registers_a_collection_clears() {
+    // While `load()` runs, the slot its result goes to and both call
+    // windows' reserved registers hold nothing; `len`'s window is live from
+    // its callee down, and past the inner window nothing is.
+    let module = mm_parse::parse("def load():\n    return []\nn = len(load())\n").expect("parses");
+    let program = compile(&module, Options::default()).expect("compiles");
+    let code = &program.codes[0];
+    let bc = &code.bytecode;
+    let calls: Vec<usize> = (0..bc.len())
+        .filter(|&pc| code.is_instr_start(pc) && opcode(bc, pc) == op::CALL)
+        .collect();
+    let [inner, outer] = calls[..] else {
+        panic!("two calls:\n{}", disassemble(code));
+    };
+    let (f, g) = (operand(bc, inner, 0), operand(bc, outer, 0));
+    // The registers dead at `pc`, up to the frame's last.
+    let dead = |pc: usize| {
+        let bits = code.dead_at(u32::try_from(pc).expect("pc"));
+        (0..code.nregs as usize)
+            .filter(|r| bits[r / 64] >> (r % 64) & 1 != 0)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(f, g + 3, "{}", disassemble(code));
+    assert_eq!(code.nregs as usize, f + 2);
+    assert_eq!(dead(inner), [g + 1, g + 2, f + 1]);
+    assert_eq!(dead(outer), [g + 1, f, f + 1]);
+    // The statement over, all of its registers are.
+    assert_eq!(dead(outer + 2), (g..f + 2).collect::<Vec<_>>());
+
+    let module = mm_parse::parse(SRC).expect("parses");
+    for code in &compile(&module, Options::default())
+        .expect("compiles")
+        .codes
+    {
+        assert!(code.live.first().is_some_and(|e| e.pc == 0));
+        assert!(code.live.windows(2).all(|w| w[0].pc < w[1].pc));
+        for e in &code.live {
+            assert!(code.is_instr_start(e.pc as usize), "{e:?}");
+            assert!(u32::from(e.top) <= code.nregs, "{e:?}");
+            assert!(e.unset as usize <= code.unset.len(), "{e:?}");
+        }
+        // A chain goes down the table, so it ends.
+        for (i, u) in code.unset.iter().enumerate() {
+            assert!(
+                u.next as usize <= i && u32::from(u.reg) < code.nregs,
+                "{u:?}"
+            );
+        }
+    }
 }
 
 #[test]

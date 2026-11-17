@@ -180,6 +180,8 @@ fn compile_module(path: &Path) -> Result<Program, String> {
     // Bundled frames never appear in tracebacks: drop what only they use.
     for code in program.codes.iter_mut().map(std::sync::Arc::make_mut) {
         code.positions.clear();
+        code.live.clear();
+        code.unset.clear();
         code.reg_names.clear();
         code.doc = None;
         code.first_line = 0;

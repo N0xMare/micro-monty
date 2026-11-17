@@ -99,8 +99,7 @@ impl<'a> Compiler<'a> {
     pub(super) fn match_stmt(&mut self, subject: &'a Expr, cases: &'a [MatchCase]) -> R<()> {
         self.u().block_depth += 1;
         self.expr(subject)?;
-        let subj = self.temp()?;
-        self.emit_r(op::STAR, subj);
+        let subj = self.spill()?;
         let end = self.label();
         let n = cases.len();
         for (i, c) in cases.iter().enumerate() {
@@ -110,7 +109,7 @@ impl<'a> Compiler<'a> {
             capture_names(&c.pattern, &mut names);
             let mut slots = Vec::with_capacity(names.len());
             for name in names {
-                let r = self.temp()?;
+                let r = self.slots(1)?;
                 slots.push((name, r));
             }
             let mut pc = PatCtx {
@@ -163,10 +162,9 @@ impl<'a> Compiler<'a> {
     #[inline(never)]
     #[cfg_attr(mm_shipped, optimize(size))]
     fn len_check(&mut self, subj: u8, n: usize, at_least: bool, fail: Label, pos: Pos) -> R<()> {
-        let len = self.temp()?;
         self.emit_r(op::LDAR, subj);
         self.match_op(kind::LEN, 0, 0, pos);
-        self.emit_r(op::STAR, len);
+        let len = self.spill()?;
         let k = i16::try_from(n).map_err(|_| too_many("patterns this long"))?;
         self.emit(op::LDA_SMI);
         self.word(k.cast_unsigned());
@@ -179,8 +177,7 @@ impl<'a> Compiler<'a> {
     #[inline(never)]
     #[cfg_attr(mm_shipped, optimize(size))]
     fn none_check(&mut self, fail: Label) -> R<u8> {
-        let vals = self.temp()?;
-        self.emit_r(op::STAR, vals);
+        let vals = self.spill()?;
         self.emit(op::LDA_NONE);
         self.emit_r(op::TEST_IS_NOT, vals);
         self.fail_unless(fail);
@@ -202,9 +199,10 @@ impl<'a> Compiler<'a> {
         }
         let n = items.len();
         let cnt = u16::try_from(n).map_err(|_| too_many("patterns this long"))?;
-        let vb = self.temps(n)?;
+        let vb = self.slots(n)?;
         self.emit_r(op::LDAR, vals);
         self.emit_ru(op::UNPACK_SEQ, vb, cnt);
+        self.set(vb, u8::MAX);
         for (i, x) in items.iter().enumerate() {
             self.subpattern(x, vb + u8::try_from(i).unwrap_or(0), fail, pc)?;
         }
@@ -344,6 +342,14 @@ impl<'a> Compiler<'a> {
             if !last {
                 self.jump(op::JUMP, ok);
                 self.bind(next);
+                // The next alternative stores the captures again: what
+                // this one stored before it failed is dead.
+                for name in control.iter().flatten() {
+                    if let Some(&(_, r)) = pc.slots.iter().find(|(n, _)| n == name) {
+                        self.set(r, r);
+                        self.unset(r);
+                    }
+                }
             }
         }
         self.bind(ok);
@@ -401,7 +407,7 @@ impl<'a> Compiler<'a> {
         if wild_star {
             // `[a, *_, b]`: index the items, as CPython does.
             let si = star.unwrap_or(0);
-            let r = self.temp()?;
+            let r = self.slots(1)?;
             for (i, x) in items.iter().enumerate() {
                 if is_wildcard(x) {
                     continue;
@@ -422,7 +428,7 @@ impl<'a> Compiler<'a> {
             self.release(m);
             return Ok(());
         }
-        let base = self.temps(n)?;
+        let base = self.slots(n)?;
         self.at_pos(p.pos);
         self.emit_r(op::LDAR, subj);
         match star {
@@ -439,6 +445,8 @@ impl<'a> Compiler<'a> {
                 self.byte(after);
             }
         }
+        // The unpack stores every item.
+        self.set(base, u8::MAX);
         for (i, x) in items.iter().enumerate() {
             let r = base + u8::try_from(i).unwrap_or(0);
             self.subpattern(x, r, fail, pc)?;
@@ -489,10 +497,10 @@ impl<'a> Compiler<'a> {
             self.release(m);
             return Ok(());
         }
-        let keys_r = self.temp()?;
+        let keys_r = self.slots(1)?;
         if n > 0 {
             self.len_check(subj, n, true, fail, p.pos)?;
-            let kb = self.temps(n)?;
+            let kb = self.slots(n)?;
             for (i, k) in keys.iter().enumerate() {
                 self.expr(k)?;
                 self.emit_r(op::STAR, kb + u8::try_from(i).unwrap_or(0));
@@ -513,8 +521,7 @@ impl<'a> Compiler<'a> {
         if let Some(name) = rest {
             self.emit_r(op::LDAR, keys_r);
             self.match_op(kind::REST, subj, 0, p.pos);
-            let r = self.temp()?;
-            self.emit_r(op::STAR, r);
+            let r = self.spill()?;
             self.capture(name, r, p.pos, pc)?;
         }
         self.release(m);
@@ -545,7 +552,7 @@ impl<'a> Compiler<'a> {
             }
         }
         let m = self.mark();
-        let base = self.temps(2)?;
+        let base = self.slots(2)?;
         self.expr(cls)?;
         self.emit_r(op::STAR, base);
         let k = self.konst(Konst::Names(kwd_attrs.to_vec()))?;

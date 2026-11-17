@@ -374,15 +374,32 @@ pub struct PosEntry {
     pub anchor: crate::ast::Anchor,
     /// No carets for this instruction (CPython's full-line call rule).
     pub no_carets: bool,
-    /// The registers live over this entry's instructions are those below
-    /// `top` ([`NO_TOP`]: all of them): the statement's mark and its own
-    /// temporaries. A collection clears the rest (docs/spec.md §8.1).
-    pub top: u8,
 }
 
-/// [`PosEntry::top`] of instructions outside any statement: every
-/// register is live.
-pub const NO_TOP: u8 = u8::MAX;
+/// The registers that hold a value over the instructions from `pc` up to
+/// the next entry: those below `top`, without the ones on the `unset`
+/// chain. No instruction there or after reads another before writing it,
+/// so a collection clears the rest (docs/spec.md §8.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LiveEntry {
+    /// First pc this entry covers.
+    pub pc: u32,
+    /// The end of the registers allocated at the instruction.
+    pub top: u8,
+    /// The allocated registers nothing has stored to yet (a call window's
+    /// reserved register, its arguments to come): 1 + the index in
+    /// [`Code::unset`] of the first, or 0 for none.
+    pub unset: u32,
+}
+
+/// A link of a chain of unset registers ([`LiveEntry::unset`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Unset {
+    /// The register.
+    pub reg: u8,
+    /// 1 + the index of the next link, which is below this one's, or 0.
+    pub next: u32,
+}
 
 /// The variable a register holds over `start..end`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -458,6 +475,11 @@ pub struct Code {
     pub exc_table: Vec<ExcEntry>,
     /// Position table, sorted by `pc`.
     pub positions: Vec<PosEntry>,
+    /// Which registers hold a value at each pc, sorted by `pc`. Empty for
+    /// code that keeps every register (the prelude, bundled modules).
+    pub live: Vec<LiveEntry>,
+    /// The links of the entries' chains of unset registers.
+    pub unset: Vec<Unset>,
     /// Names of registers that hold different variables over different pc
     /// ranges (inlined comprehension variables), for error messages.
     pub reg_names: Vec<RegName>,
@@ -489,6 +511,8 @@ impl Code {
             + self.consts.capacity() * size_of::<Konst>()
             + self.exc_table.capacity() * size_of::<ExcEntry>()
             + self.positions.capacity() * size_of::<PosEntry>()
+            + self.live.capacity() * size_of::<LiveEntry>()
+            + self.unset.capacity() * size_of::<Unset>()
             + self.reg_names.capacity() * size_of::<RegName>()) as u64;
         bytes += strings(&self.names) + strings(&self.varnames) + strings(&self.freenames);
         bytes += self
@@ -518,14 +542,32 @@ impl Code {
         i.checked_sub(1).and_then(|i| self.positions.get(i))
     }
 
-    /// The end of the registers live at `pc`: those an instruction there or
-    /// after it may read before writing.
+    /// The registers dead at `pc`, register `r` as bit `r % 64` of word
+    /// `r / 64`: those from the entry's top up and its unset ones, which no
+    /// instruction there or after reads before writing. None for code
+    /// without the table. A chain's links go down the table, so a
+    /// malformed one (a restored image's) ends instead of looping.
     #[must_use]
-    pub fn live_top(&self, pc: u32) -> usize {
-        match self.position(pc) {
-            Some(p) if p.top != NO_TOP => usize::from(p.top).min(self.nregs as usize),
-            _ => self.nregs as usize,
+    pub fn dead_at(&self, pc: u32) -> [u64; 4] {
+        let mut dead = [0; 4];
+        let i = self.live.partition_point(|e| e.pc <= pc);
+        let Some(e) = i.checked_sub(1).and_then(|i| self.live.get(i)) else {
+            return dead;
+        };
+        let top = usize::from(e.top);
+        for (w, word) in dead.iter_mut().enumerate() {
+            *word = match top.saturating_sub(w * 64) {
+                0 => u64::MAX,
+                n @ 1..64 => u64::MAX << n,
+                _ => 0,
+            };
         }
+        let mut at = e.unset as usize;
+        while let Some(u) = at.checked_sub(1).and_then(|i| self.unset.get(i)) {
+            dead[usize::from(u.reg) / 64] |= 1 << (u.reg % 64);
+            at = (u.next as usize).min(at - 1);
+        }
+        dead
     }
 
     /// The name of the variable in register `reg` at `pc`.

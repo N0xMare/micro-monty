@@ -157,6 +157,8 @@ fn compile_one(stmt: &Stmt) -> Result<Program, String> {
 fn strip(p: &mut Program) {
     for code in p.codes.iter_mut().map(std::sync::Arc::make_mut) {
         code.positions.clear();
+        code.live.clear();
+        code.unset.clear();
         code.reg_names.clear();
         code.first_line = 0;
     }

@@ -12,7 +12,10 @@ use crate::ast::{
     Anchor, BinOp, BoolOp, ClassDef, CmpOp, Comprehension, Const, Expr, ExprKind, FPart, FuncDef,
     Handler, Keyword, Module, Pos, Stmt, StmtKind, UnaryOp, WithItem,
 };
-use crate::bytecode::{Code, ExcEntry, Konst, NO_TOP, ParamSpec, PosEntry, Program, RegName, op};
+use crate::bytecode::{
+    Code, ExcEntry, Konst, LiveEntry, ParamSpec, PosEntry, Program, RegName, Unset, op,
+    operand_plan,
+};
 use crate::error::CompileError;
 use crate::symtable::{self, Binding, ScopeId, ScopeKind, SymTable};
 use alloc::{
@@ -190,9 +193,10 @@ enum FBlock<'a> {
     },
 }
 
-/// A comprehension clause's loop: head and exit labels, the clause, and
-/// for `async for` its `StopAsyncIteration` handler.
-type CompLoop<'a> = (Label, Label, &'a Comprehension, Option<Label>);
+/// A comprehension clause's loop: head and exit labels, the clause, for
+/// `async for` its `StopAsyncIteration` handler, and the register of an
+/// inner clause's iterator.
+type CompLoop<'a> = (Label, Label, &'a Comprehension, Option<Label>, Option<u8>);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Access {
@@ -226,10 +230,9 @@ struct Unit<'a> {
     regs: Vec<(ScopeId, BTreeMap<String, usize>)>,
     next_reg: u32,
     max_reg: u32,
-    /// The end of the registers the current statement's own code
-    /// allocated (outside statements, the unit's): its mark, or past its
-    /// highest temporary.
-    hi: u32,
+    /// The allocated registers nothing has stored to yet (`slots`): the
+    /// head of their chain in `code.unset`, as [`LiveEntry::unset`].
+    unset: u32,
     labels: Vec<Option<u32>>,
     /// Jump operands to patch: word, bit shift, label.
     fixups: Vec<(usize, u8, usize)>,
@@ -356,7 +359,7 @@ impl<'a> Compiler<'a> {
             regs: Vec::new(),
             next_reg: 0,
             max_reg: 0,
-            hi: 0,
+            unset: 0,
             labels: Vec::new(),
             fixups: Vec::new(),
             handlers: Vec::new(),
@@ -415,7 +418,6 @@ impl<'a> Compiler<'a> {
             let nvars = u32::try_from(unit.code.varnames.len()).unwrap_or(250);
             unit.next_reg = nvars;
             unit.max_reg = nvars;
-            unit.hi = nvars;
         }
         self.units.push(unit);
         if !is_module {
@@ -444,14 +446,6 @@ impl<'a> Compiler<'a> {
         }
         for &(at, shift, l) in &u.fixups {
             u.code.bytecode[at] |= u.labels[l].unwrap_or(0) << shift;
-        }
-        // Code outside statements (a prologue, an epilogue, a lambda's or
-        // a cell's last expression) keeps what it allocated live.
-        let top = u8::try_from(u.hi).unwrap_or(NO_TOP);
-        for p in &mut u.code.positions {
-            if p.top == NO_TOP {
-                p.top = top;
-            }
         }
         for &(start, end, l, depth) in &u.raw_exc {
             if start < end {
@@ -555,9 +549,19 @@ impl<'a> Compiler<'a> {
                 pos: u.cur.pos,
                 anchor: u.cur.anchor,
                 no_carets: u.cur.no_carets,
-                top: NO_TOP,
             });
             u.last_loc = Some(u.cur);
+        }
+        // The registers that hold a value when this instruction starts: the
+        // allocated ones (at most 255, `temp`) without the unset.
+        let top = u8::try_from(u.next_reg).unwrap_or(u8::MAX);
+        if u.code
+            .live
+            .last()
+            .is_none_or(|e| e.top != top || e.unset != u.unset)
+        {
+            let unset = u.unset;
+            u.code.live.push(LiveEntry { pc, top, unset });
         }
         u.lay = crate::bytecode::layout_of(opcode);
         u.at = u.code.bytecode.len();
@@ -580,6 +584,18 @@ impl<'a> Compiler<'a> {
     }
 
     fn byte(&mut self, b: u8) {
+        // A register the instruction names holds a value once it has run:
+        // the instruction stores to it, or it was set already. The `BUILD`
+        // instructions only read theirs, and with no items name one they
+        // do not read.
+        let u = self.ur();
+        let opcode = u.code.bytecode[u.at].to_le_bytes()[0];
+        if u.unset != 0
+            && operand_plan(opcode) >> (9 * u.nops) & 7 == 1
+            && !(op::BUILD_LIST..=op::BUILD_STRING).contains(&opcode)
+        {
+            self.set(b, b);
+        }
         self.put(u32::from(b));
     }
 
@@ -759,7 +775,6 @@ impl<'a> Compiler<'a> {
             .ok_or_else(|| too_many("expressions needing more than 255 registers"))?;
         u.next_reg += 1;
         u.max_reg = u.max_reg.max(u.next_reg);
-        u.hi = u.hi.max(u.next_reg);
         Ok(r)
     }
 
@@ -776,9 +791,100 @@ impl<'a> Compiler<'a> {
         self.ur().next_reg
     }
 
+    /// `n` temporaries that hold nothing until an instruction names each
+    /// (`byte`): a call window, a display's items. A collection before
+    /// then clears what an earlier use of the register left (docs/spec.md
+    /// §8.3). Only for registers the code after stores to before a jump
+    /// back can reach it again.
+    #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
+    fn slots(&mut self, n: usize) -> R<u8> {
+        let base = self.temps(n)?;
+        // `temps` allocates one register for none.
+        for r in (base..=u8::MAX).take(n.max(1)).rev() {
+            self.unset(r);
+        }
+        Ok(base)
+    }
+
+    /// The `n` slots of a call window: the callee, the register reserved
+    /// for the callee's frame header, which stays unset, and the
+    /// arguments. The reserved one goes last on the chain, so the stores
+    /// to the others take its head.
+    #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
+    fn window(&mut self, n: usize) -> R<u8> {
+        let base = self.temps(n.max(2))?;
+        self.unset(base + 1);
+        for r in (base..=u8::MAX).take(n).skip(2).rev() {
+            self.unset(r);
+        }
+        self.unset(base);
+        Ok(base)
+    }
+
+    /// Puts register `r` at the head of the unset chain.
+    fn unset(&mut self, r: u8) {
+        let u = self.u();
+        let next = u.unset;
+        u.code.unset.push(Unset { reg: r, next });
+        u.unset = u32::try_from(u.code.unset.len()).unwrap_or(0);
+    }
+
+    /// Stores the accumulator in a new temporary. The `STAR` is emitted
+    /// with the register still free, so the register is dead until that
+    /// instruction has run.
+    #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
+    fn spill(&mut self) -> R<u8> {
+        let t = self.temp()?;
+        self.u().next_reg -= 1;
+        self.emit_r(op::STAR, t);
+        self.u().next_reg += 1;
+        Ok(t)
+    }
+
+    /// Takes registers `lo..=hi` off the unset chain. Entries already
+    /// written share its links, so the links kept in front of the last
+    /// one taken are made anew.
+    #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
+    fn set(&mut self, lo: u8, hi: u8) {
+        let u = self.u();
+        // How many links the chain has up to the last one taken, and the
+        // link after that one.
+        let (mut at, mut n, mut last, mut rest) = (u.unset, 0, 0, 0);
+        while let Some(l) = at.checked_sub(1).map(|i| u.code.unset[i as usize]) {
+            n += 1;
+            if (lo..=hi).contains(&l.reg) {
+                (last, rest) = (n, l.next);
+            }
+            at = l.next;
+        }
+        let mut kept = Vec::new();
+        at = u.unset;
+        for _ in 0..last {
+            let l = u.code.unset[at as usize - 1];
+            if !(lo..=hi).contains(&l.reg) {
+                kept.push(l.reg);
+            }
+            at = l.next;
+        }
+        if last > 0 {
+            u.unset = rest;
+        }
+        for reg in kept.into_iter().rev() {
+            self.unset(reg);
+        }
+    }
+
     #[cfg_attr(mm_shipped, optimize(size))]
     fn release(&mut self, m: u32) {
-        self.u().next_reg = m;
+        let u = self.u();
+        u.next_reg = m;
+        if u.unset != 0 {
+            self.set(u8::try_from(m).unwrap_or(u8::MAX), u8::MAX);
+        }
     }
 
     // ----------------------------------------------- exception ranges
@@ -941,28 +1047,7 @@ impl<'a> Compiler<'a> {
     fn stmt(&mut self, s: &'a Stmt) -> R<()> {
         self.enter(s.pos)?;
         let m = self.mark();
-        // The statement's instructions get position entries of their own,
-        // whose live top is the statement's highest register: a collection
-        // clears its temporaries, and a returned callee's frame above
-        // them, once it has ended (docs/spec.md §8.1). Its nested
-        // statements set theirs first.
-        let u = self.u();
-        let hi = core::mem::replace(&mut u.hi, m);
-        let first = u.code.positions.len();
-        u.last_loc = None;
         self.stmt_inner(s)?;
-        let u = self.u();
-        let top = u8::try_from(u.hi).unwrap_or(NO_TOP);
-        for p in &mut u.code.positions[first..] {
-            if p.top == NO_TOP {
-                p.top = top;
-            }
-        }
-        // A statement that reaches the last register keeps every register
-        // live, and so do the statements around it: `NO_TOP` is also what an
-        // entry not yet stamped holds, which they would overwrite.
-        u.hi = if top == NO_TOP { u.hi.max(hi) } else { hi };
-        u.last_loc = None;
         self.release(m);
         self.depth -= 1;
         Ok(())
@@ -977,8 +1062,7 @@ impl<'a> Compiler<'a> {
                 if targets.len() == 1 {
                     return self.store(&targets[0]);
                 }
-                let t = self.temp()?;
-                self.emit_r(op::STAR, t);
+                let t = self.spill()?;
                 for (i, target) in targets.iter().enumerate() {
                     if i > 0 {
                         self.emit_r(op::LDAR, t);
@@ -1051,8 +1135,7 @@ impl<'a> Compiler<'a> {
                     self.expr(iter)?;
                     self.at(iter);
                     self.emit(op::GET_AITER);
-                    let it = self.temp()?;
-                    self.emit_r(op::STAR, it);
+                    let it = self.spill()?;
                     end_async = Some(self.anext_step(it, top, s.pos));
                 } else if let Some((f, args)) = range_call(iter) {
                     // `for _ in range(...)`: counters in registers when
@@ -1061,7 +1144,7 @@ impl<'a> Compiler<'a> {
                     // range call has its arguments from `it + 1`; the
                     // generic `CALL` wants them from `it + 2` (`it + 1` is
                     // its reserved slot), so the fallback shifts them up.
-                    let it = self.temps(5)?;
+                    let it = self.slots(5)?;
                     self.expr(f)?;
                     self.emit_r(op::STAR, it);
                     self.call_args(it + 1, args, &[])?;
@@ -1077,10 +1160,18 @@ impl<'a> Compiler<'a> {
                         self.emit_rr(op::MOV, it + k, it + k + 1);
                     }
                     self.emit_rbu(op::CALL, it, n, ic);
+                    // The loop keeps the counters only: the arguments
+                    // shifted past them are spent.
+                    self.set(it + 3, it + 4);
+                    self.unset(it + 4);
+                    self.unset(it + 3);
                     self.emit(op::GET_ITER);
                     self.emit_r(op::STAR, it);
                     self.emit(op::LDA_NONE);
                     self.emit_r(op::STAR, it + 1);
+                    // The third counter, which `FOR_PREP` stores on its
+                    // way to the loop: here it drops the call's leftover.
+                    self.emit_r(op::STAR, it + 2);
                     self.bind_top(top);
                     self.at(iter);
                     self.jump_r(op::FOR_RANGE, it, els);
@@ -1088,8 +1179,7 @@ impl<'a> Compiler<'a> {
                     self.expr(iter)?;
                     self.at(iter);
                     self.emit(op::GET_ITER);
-                    let it = self.temp()?;
-                    self.emit_r(op::STAR, it);
+                    let it = self.spill()?;
                     self.bind_top(top);
                     self.at(iter);
                     self.jump_r(op::FOR_ITER, it, els);
@@ -1178,8 +1268,7 @@ impl<'a> Compiler<'a> {
                     .iter()
                     .any(|b| !matches!(b, FBlock::Loop { .. }))
                 {
-                    let t = self.temp()?;
-                    self.emit_r(op::STAR, t);
+                    let t = self.spill()?;
                     self.unwind(0, s.pos)?;
                     self.emit_r(op::LDAR, t);
                 }
@@ -1192,13 +1281,12 @@ impl<'a> Compiler<'a> {
                 let mut decos = Vec::new();
                 for d in &f.decorators {
                     self.expr(d)?;
-                    let r = self.temp()?;
-                    self.emit_r(op::STAR, r);
+                    let r = self.spill()?;
                     decos.push((r, d));
                 }
                 self.make_function(f, &f.name)?;
                 // One call frame serves every decorator.
-                let base = if decos.is_empty() { 0 } else { self.temps(3)? };
+                let base = if decos.is_empty() { 0 } else { self.window(3)? };
                 for (r, d) in decos.into_iter().rev() {
                     self.emit_r(op::STAR, base + 2);
                     self.emit_rr(op::MOV, r, base);
@@ -1228,8 +1316,7 @@ impl<'a> Compiler<'a> {
                     }
                     (Some(e), Some(c)) => {
                         self.expr(e)?;
-                        let t = self.temp()?;
-                        self.emit_r(op::STAR, t);
+                        let t = self.spill()?;
                         self.expr(c)?;
                         self.at_pos(s.pos);
                         self.emit_rb(op::RAISE, 2, t);
@@ -1290,8 +1377,7 @@ impl<'a> Compiler<'a> {
                 self.emit(op::IMPORT_NAME);
                 self.word(n);
                 self.byte(0);
-                let m = self.temp()?;
-                self.emit_r(op::STAR, m);
+                let m = self.spill()?;
                 for a in names {
                     let k = self.name(&a.name)?;
                     self.at_pos(s.pos);
@@ -1430,8 +1516,8 @@ impl<'a> Compiler<'a> {
         // Exceptional path: run the body with the exception handled, re-raise.
         self.bind(fin);
         let m = self.mark();
-        let old = self.temp()?;
-        let exc = self.temp()?;
+        let old = self.slots(2)?;
+        let exc = old + 1;
         let cleanup = self.label();
         self.emit_r(op::PUSH_EXC, old);
         self.emit_r(op::STAR, exc);
@@ -1478,8 +1564,8 @@ impl<'a> Compiler<'a> {
 
         self.bind(h);
         let m = self.mark();
-        let old = self.temp()?;
-        let exc = self.temp()?;
+        let old = self.slots(2)?;
+        let exc = old + 1;
         let cleanup = self.label();
         if let Some(first) = handlers.first() {
             self.at_pos(first.pos);
@@ -1535,13 +1621,14 @@ impl<'a> Compiler<'a> {
             self.jump(op::JUMP, end);
             if let (Some(l), Some(n)) = (unbind, &hd.name) {
                 self.bind(l);
-                let raised = self.temp()?;
-                self.emit_r(op::STAR, raised);
+                let raised = self.spill()?;
                 self.emit(op::LDA_NONE);
                 self.store_name(n)?;
                 self.delete_name(n)?;
                 self.emit_r(op::LDAR, raised);
                 self.jump(op::JUMP, cleanup);
+                // The clauses after this one do not read it.
+                self.unset(raised);
             }
             self.bind(next);
         }
@@ -1574,9 +1661,8 @@ impl<'a> Compiler<'a> {
 
         self.bind(h);
         let m = self.mark();
-        let old = self.temp()?;
-        let state = self.temp()?;
-        let spare = self.temp()?;
+        let old = self.slots(3)?;
+        let (state, spare) = (old + 1, old + 2);
         let cleanup = self.label();
         if let Some(first) = handlers.first() {
             self.at_pos(first.pos);
@@ -1682,7 +1768,7 @@ impl<'a> Compiler<'a> {
         self.enter(pos)?;
         let m = self.mark();
         self.expr(&first.ctx)?;
-        let exit = self.temp()?;
+        let exit = self.slots(1)?;
         self.at(&first.ctx);
         self.emit_rb(op::WITH_ENTER, exit, u8::from(is_async));
         if is_async {
@@ -1721,15 +1807,14 @@ impl<'a> Compiler<'a> {
         self.jump(op::JUMP, end);
         // Exceptional path: the exception is in acc.
         self.bind(h);
-        let old = self.temp()?;
+        let old = self.slots(1)?;
         let cleanup = self.label();
         self.at(&first.ctx);
         self.emit_r(op::PUSH_EXC, old);
         self.push_handler(cleanup);
         if is_async {
-            let e = self.temp()?;
             let suppress = self.label();
-            self.emit_r(op::STAR, e);
+            let e = self.spill()?;
             self.emit_rb(op::WITH_EXIT, exit, 3);
             self.emit(op::AWAIT);
             self.jump(op::JUMP_IF_TRUE, suppress);
@@ -1763,11 +1848,10 @@ impl<'a> Compiler<'a> {
         let mut decos = Vec::new();
         for d in &c.decorators {
             self.expr(d)?;
-            let r = self.temp()?;
-            self.emit_r(op::STAR, r);
+            let r = self.spill()?;
             decos.push((r, d));
         }
-        let base = self.temps(4)?;
+        let base = self.slots(4)?;
         self.at_pos(c.pos);
         let k = self.konst(Konst::Str(c.name.clone()))?;
         self.emit_u(op::LDA_CONST, k);
@@ -1810,10 +1894,9 @@ impl<'a> Compiler<'a> {
             for k in &c.keywords {
                 let mm = self.mark();
                 if let Some(n) = &k.name {
-                    let kr = self.temp()?;
                     let ck = self.konst(Konst::Str(n.clone()))?;
                     self.emit_u(op::LDA_CONST, ck);
-                    self.emit_r(op::STAR, kr);
+                    let kr = self.spill()?;
                     self.expr(&k.value)?;
                     self.emit_rr(op::DICT_INSERT, kw, kr);
                 } else {
@@ -1828,7 +1911,7 @@ impl<'a> Compiler<'a> {
         // The namespace: `__module__` and `__qualname__`.
         let qual = self.qualname(&c.name);
         let mm = self.mark();
-        let t = self.temps(4)?;
+        let t = self.slots(4)?;
         self.at_pos(c.pos);
         let k1 = self.konst(Konst::Str("__module__".to_string()))?;
         self.emit_u(op::LDA_CONST, k1);
@@ -1851,7 +1934,7 @@ impl<'a> Compiler<'a> {
         let freenames = self.codes[idx]
             .as_ref()
             .map_or_default(|c| c.freenames.clone());
-        let f = self.temps(3)?;
+        let f = self.window(3)?;
         // The closure tuple's temp is dead after MAKE_FUNCTION: release it
         // so the call window below stays the top of the temps.
         let mf = self.mark();
@@ -1875,7 +1958,7 @@ impl<'a> Compiler<'a> {
         self.at_pos(c.span);
         self.emit_rbu(op::CALL, f, 1, ic);
         self.emit_r(op::BUILD_CLASS, base);
-        let b = if decos.is_empty() { 0 } else { self.temps(3)? };
+        let b = if decos.is_empty() { 0 } else { self.window(3)? };
         for (r, d) in decos.into_iter().rev() {
             self.emit_r(op::STAR, b + 2);
             self.emit_rr(op::MOV, r, b);
@@ -1933,8 +2016,7 @@ impl<'a> Compiler<'a> {
             ExprKind::Name(n) => {
                 self.at(target);
                 self.load_name(n)?;
-                let t = self.temp()?;
-                self.emit_r(op::STAR, t);
+                let t = self.spill()?;
                 self.expr(value)?;
                 self.at_pos(pos);
                 self.emit_rb(op::INPLACE, bop as u8, t);
@@ -1947,8 +2029,7 @@ impl<'a> Compiler<'a> {
                 self.emit_r(op::LDAR, o);
                 self.at(target);
                 self.emit_uu(op::GET_ATTR, n, ic);
-                let t = self.temp()?;
-                self.emit_r(op::STAR, t);
+                let t = self.spill()?;
                 self.expr(value)?;
                 self.at_pos(pos);
                 self.emit_rb(op::INPLACE, bop as u8, t);
@@ -1960,13 +2041,12 @@ impl<'a> Compiler<'a> {
             }
             ExprKind::Subscript(obj, idx) => {
                 let o = self.operand(obj, None)?;
-                let i = self.temp()?;
+                let i = self.slots(1)?;
                 self.subscript_index(idx)?;
                 self.emit_r(op::STAR, i);
                 self.at(target);
                 self.emit_r(op::GET_ITEM, o);
-                let t = self.temp()?;
-                self.emit_r(op::STAR, t);
+                let t = self.spill()?;
                 self.expr(value)?;
                 self.at_pos(pos);
                 self.emit_rb(op::INPLACE, bop as u8, t);
@@ -1988,8 +2068,7 @@ impl<'a> Compiler<'a> {
             ExprKind::Name(n) => self.store_name(n),
             ExprKind::Attribute(obj, attr) => {
                 let m = self.mark();
-                let v = self.temp()?;
-                self.emit_r(op::STAR, v);
+                let v = self.spill()?;
                 let o = self.operand(obj, None)?;
                 self.emit_r(op::LDAR, v);
                 let n = self.name(attr)?;
@@ -2002,10 +2081,9 @@ impl<'a> Compiler<'a> {
             }
             ExprKind::Subscript(obj, idx) => {
                 let m = self.mark();
-                let v = self.temp()?;
-                self.emit_r(op::STAR, v);
+                let v = self.spill()?;
                 let o = self.operand(obj, None)?;
-                let i = self.temp()?;
+                let i = self.slots(1)?;
                 self.subscript_index(idx)?;
                 self.emit_r(op::STAR, i);
                 self.emit_r(op::LDAR, v);
@@ -2020,7 +2098,7 @@ impl<'a> Compiler<'a> {
                     .iter()
                     .position(|e| matches!(e.kind, ExprKind::Starred(_)));
                 let n = items.len();
-                let base = self.temps(n)?;
+                let base = self.slots(n)?;
                 self.at(target);
                 match star {
                     None => {
@@ -2048,6 +2126,8 @@ impl<'a> Compiler<'a> {
                         self.byte(after);
                     }
                 }
+                // The unpack stores every target.
+                self.set(base, u8::MAX);
                 for (k, item) in items.iter().enumerate() {
                     let r = base + u8::try_from(k).unwrap_or(0);
                     self.emit_r(op::LDAR, r);
@@ -2153,7 +2233,7 @@ impl<'a> Compiler<'a> {
         if !kwdefaults.is_empty() {
             let mm = self.mark();
             let n = kwdefaults.len();
-            let base = self.temps(2 * n)?;
+            let base = self.slots(2 * n)?;
             for (k, (pname, d)) in kwdefaults.iter().enumerate() {
                 let kr = base + u8::try_from(2 * k).unwrap_or(0);
                 let c = self.konst(Konst::Str(symtable::mangle(&private, pname).into_owned()))?;
@@ -2165,8 +2245,7 @@ impl<'a> Compiler<'a> {
             let k = u16::try_from(n).map_err(|_| too_many("this many defaults"))?;
             self.emit_ru(op::BUILD_DICT, base, k);
             self.release(mm);
-            let r = self.temp()?;
-            self.emit_r(op::STAR, r);
+            let r = self.spill()?;
             parts.push(r);
             flags |= 2;
         }
@@ -2180,7 +2259,7 @@ impl<'a> Compiler<'a> {
             flags |= 4;
         }
         // Move the parts to consecutive registers.
-        let base = self.temps(parts.len().max(1))?;
+        let base = self.slots(parts.len().max(1))?;
         for (k, r) in parts.iter().enumerate() {
             self.emit_rr(op::MOV, *r, base + u8::try_from(k).unwrap_or(0));
         }
@@ -2199,7 +2278,7 @@ impl<'a> Compiler<'a> {
     fn closure(&mut self, freenames: &[Arc<str>]) -> R<u8> {
         let mm = self.mark();
         let n = freenames.len();
-        let base = self.temps(n)?;
+        let base = self.slots(n)?;
         for (k, fname) in freenames.iter().enumerate() {
             let u = self.ur();
             if u.is_class
@@ -2220,9 +2299,7 @@ impl<'a> Compiler<'a> {
         let k = u16::try_from(n).map_err(|_| too_many("this many free variables"))?;
         self.emit_ru(op::BUILD_TUPLE, base, k);
         self.release(mm);
-        let r = self.temp()?;
-        self.emit_r(op::STAR, r);
-        Ok(r)
+        self.spill()
     }
 
     #[cfg_attr(mm_shipped, optimize(size))]
@@ -2276,9 +2353,7 @@ impl<'a> Compiler<'a> {
             return Ok(r);
         }
         self.expr(e)?;
-        let t = self.temp()?;
-        self.emit_r(op::STAR, t);
-        Ok(t)
+        self.spill()
     }
 
     /// Evaluates each expression into consecutive temps and builds a
@@ -2287,7 +2362,7 @@ impl<'a> Compiler<'a> {
     fn build_seq(&mut self, items: &[&'a Expr], opcode: u8) -> R<u8> {
         let m = self.mark();
         let n = items.len();
-        let base = self.temps(n.max(1))?;
+        let base = self.slots(n.max(1))?;
         for (k, e) in items.iter().enumerate() {
             self.expr(e)?;
             self.emit_r(op::STAR, base + u8::try_from(k).unwrap_or(0));
@@ -2295,9 +2370,7 @@ impl<'a> Compiler<'a> {
         let k = u16::try_from(n).map_err(|_| too_many("displays this large"))?;
         self.emit_ru(opcode, base, k);
         self.release(m);
-        let r = self.temp()?;
-        self.emit_r(op::STAR, r);
-        Ok(r)
+        self.spill()
     }
 
     fn expr(&mut self, e: &'a Expr) -> R<()> {
@@ -2343,8 +2416,7 @@ impl<'a> Compiler<'a> {
     fn chain_step(&mut self, e: &'a Expr) -> R<()> {
         match &e.kind {
             ExprKind::BinOp(_, bop, b) => {
-                let t = self.temp()?;
-                self.emit_r(op::STAR, t);
+                let t = self.spill()?;
                 self.expr(b)?;
                 self.at(e);
                 self.binop(*bop, t);
@@ -2356,8 +2428,7 @@ impl<'a> Compiler<'a> {
                 self.emit_uu(op::GET_ATTR, n, ic);
             }
             ExprKind::Subscript(_, idx) => {
-                let t = self.temp()?;
-                self.emit_r(op::STAR, t);
+                let t = self.spill()?;
                 self.subscript_index(idx)?;
                 self.at(e);
                 self.emit_r(op::GET_ITEM, t);
@@ -2496,8 +2567,7 @@ impl<'a> Compiler<'a> {
                 self.expr(v)?;
                 self.at(e);
                 self.emit(op::GET_YIELD_FROM_ITER);
-                let it = self.temp()?;
-                self.emit_r(op::STAR, it);
+                let it = self.spill()?;
                 self.emit(op::LDA_NONE);
                 let (top, exit) = (self.label(), self.label());
                 self.bind_top(top);
@@ -2556,7 +2626,7 @@ impl<'a> Compiler<'a> {
     fn subscript_index(&mut self, idx: &'a Expr) -> R<()> {
         if let ExprKind::Slice(lo, hi, step) = &idx.kind {
             let m = self.mark();
-            let base = self.temps(3)?;
+            let base = self.slots(3)?;
             for (k, part) in [lo, hi, step].into_iter().enumerate() {
                 match part {
                     Some(p) => self.expr(p)?,
@@ -2573,7 +2643,7 @@ impl<'a> Compiler<'a> {
         {
             // `a[1:2, ::3]`: a tuple whose items may be slices.
             let m = self.mark();
-            let base = self.temps(items.len())?;
+            let base = self.slots(items.len())?;
             for (k, x) in items.iter().enumerate() {
                 self.subscript_index(x)?;
                 self.emit_r(op::STAR, base + u8::try_from(k).unwrap_or(0));
@@ -2597,8 +2667,7 @@ impl<'a> Compiler<'a> {
             let last = i + 1 == rest.len();
             let mut saved = None;
             if !last {
-                let t = self.temp()?;
-                self.emit_r(op::STAR, t);
+                let t = self.spill()?;
                 saved = Some(t);
             }
             self.at(e);
@@ -2663,7 +2732,7 @@ impl<'a> Compiler<'a> {
             let refs: Vec<&'a Expr> = items.iter().collect();
             let m = self.mark();
             let n = refs.len();
-            let base = self.temps(n.max(1))?;
+            let base = self.slots(n.max(1))?;
             for (k, x) in refs.iter().enumerate() {
                 self.expr(x)?;
                 self.emit_r(op::STAR, base + u8::try_from(k).unwrap_or(0));
@@ -2679,7 +2748,7 @@ impl<'a> Compiler<'a> {
         } else {
             (op::BUILD_LIST, op::LIST_APPEND, op::LIST_EXTEND)
         };
-        let acc = self.temp()?;
+        let acc = self.slots(1)?;
         self.at(e);
         self.emit_ru(start, acc, 0);
         self.emit_r(op::STAR, acc);
@@ -2709,7 +2778,7 @@ impl<'a> Compiler<'a> {
         if !has_spread && items.len() <= LARGE_DISPLAY / 2 {
             let m = self.mark();
             let n = items.len();
-            let base = self.temps((2 * n).max(1))?;
+            let base = self.slots((2 * n).max(1))?;
             for (k, (key, value)) in items.iter().enumerate() {
                 let kr =
                     base + u8::try_from(2 * k).map_err(|_| too_many("dict displays this large"))?;
@@ -2726,14 +2795,14 @@ impl<'a> Compiler<'a> {
             self.release(m);
             return Ok(());
         }
-        let d = self.temp()?;
+        let d = self.slots(1)?;
         self.at(e);
         self.emit_ru(op::BUILD_DICT, d, 0);
         self.emit_r(op::STAR, d);
         for (key, value) in items {
             if let Some(key) = key {
                 let m = self.mark();
-                let kr = self.temp()?;
+                let kr = self.slots(1)?;
                 self.expr(key)?;
                 self.emit_r(op::STAR, kr);
                 self.expr(value)?;
@@ -2766,7 +2835,7 @@ impl<'a> Compiler<'a> {
         let Some(first) = self.ur().code.varnames.first().cloned() else {
             return Ok(false);
         };
-        let base = self.temps(4)?;
+        let base = self.window(4)?;
         self.expr(func)?;
         self.emit_r(op::STAR, base);
         self.load_name("__class__")?;
@@ -2790,7 +2859,7 @@ impl<'a> Compiler<'a> {
         {
             return Ok(false);
         }
-        let base = self.temps(3)?;
+        let base = self.window(3)?;
         self.expr(func)?;
         self.emit_r(op::STAR, base);
         if self.ur().is_class {
@@ -2865,7 +2934,7 @@ impl<'a> Compiler<'a> {
             Some(self.konst(Konst::Names(names))?)
         };
         if let ExprKind::Attribute(_, attr) = &func.kind {
-            let base = self.temps(nargs + 3)?;
+            let base = self.window(nargs + 3)?;
             let n = self.name(attr)?;
             let ic = self.ic()?;
             self.at(func);
@@ -2873,6 +2942,8 @@ impl<'a> Compiler<'a> {
             self.byte(base);
             self.word(n);
             self.word(ic);
+            // `LOAD_METHOD` stores self too; `base + 1` stays reserved.
+            self.set(base + 2, base + 2);
             self.call_args(base + 3, args, kws)?;
             let ic = self.ic()?;
             self.at(e);
@@ -2881,7 +2952,7 @@ impl<'a> Compiler<'a> {
                 Some(k) => self.emit_rbu(op::CALL_METHOD_KW, base, argc, k),
             }
         } else {
-            let base = self.temps(nargs + 2)?;
+            let base = self.window(nargs + 2)?;
             self.emit_r(op::STAR, base);
             self.call_args(base + 2, args, kws)?;
             let ic = self.ic()?;
@@ -2907,7 +2978,7 @@ impl<'a> Compiler<'a> {
     /// in the accumulator.
     #[cfg_attr(mm_shipped, optimize(size))]
     fn call_ex(&mut self, e: &'a Expr, args: &'a [Expr], kws: &'a [Keyword]) -> R<()> {
-        let base = self.temps(3)?;
+        let base = self.slots(3)?;
         self.emit_r(op::STAR, base);
         // Positional arguments as a tuple, or as a list that `CALL_EX`
         // copies into the callee's `*args`, with no tuple in between.
@@ -2943,10 +3014,9 @@ impl<'a> Compiler<'a> {
             for k in kws {
                 if let Some(n) = &k.name {
                     let m = self.mark();
-                    let kr = self.temp()?;
                     let c = self.konst(Konst::Str(n.clone()))?;
                     self.emit_u(op::LDA_CONST, c);
-                    self.emit_r(op::STAR, kr);
+                    let kr = self.spill()?;
                     self.expr(&k.value)?;
                     self.emit_rb(op::DICT_UPDATE, d, 2);
                     // DICT_UPDATE mode 2: insert R[kr] = acc, rejecting duplicates.
@@ -2979,15 +3049,14 @@ impl<'a> Compiler<'a> {
         // Long f-strings in groups, each joined to the text so far, so
         // they need few registers.
         let m = self.mark();
-        let text = self.temp()?;
+        let text = self.slots(1)?;
         for (g, group) in parts.chunks(FSTRING_GROUP).enumerate() {
             if g > 0 {
                 self.emit_r(op::STAR, text);
             }
             self.fstring_parts(e, group)?;
             if g > 0 {
-                let t = self.temp()?;
-                self.emit_r(op::STAR, t);
+                let t = self.spill()?;
                 self.at(e);
                 self.emit_ru(op::BUILD_STRING, text, 2);
                 self.release(u32::from(t));
@@ -3005,7 +3074,7 @@ impl<'a> Compiler<'a> {
         // A lone field is its formatted str, joined to nothing (CPython's
         // `FORMAT_SIMPLE` or `FORMAT_WITH_SPEC` alone): no copy of a long one.
         let lone = matches!(parts, [FPart::Field { .. }]);
-        let base = self.temps(n.max(1))?;
+        let base = self.slots(n.max(1))?;
         for (k, p) in parts.iter().enumerate() {
             let r = base + u8::try_from(k).map_err(|_| too_many("f-strings this large"))?;
             match p {
@@ -3031,8 +3100,7 @@ impl<'a> Compiler<'a> {
                             self.byte(conv);
                         }
                         Some(spec) => {
-                            let v = self.temp()?;
-                            self.emit_r(op::STAR, v);
+                            let v = self.spill()?;
                             self.fstring(e, spec)?;
                             self.at_pos(*pos);
                             self.emit_rb(op::FORMAT_SPEC, v, conv);
@@ -3071,7 +3139,7 @@ impl<'a> Compiler<'a> {
                 e.pos,
             ));
         };
-        let result = self.temp()?;
+        let result = self.slots(1)?;
         self.expr(&first.iter)?;
         self.at(&first.iter);
         self.emit(if first.is_async {
@@ -3079,8 +3147,7 @@ impl<'a> Compiler<'a> {
         } else {
             op::GET_ITER
         });
-        let it0 = self.temp()?;
-        self.emit_r(op::STAR, it0);
+        let it0 = self.spill()?;
         self.at(e);
         let build = match kind {
             CompKind::List(_) => op::BUILD_LIST,
@@ -3111,7 +3178,7 @@ impl<'a> Compiler<'a> {
         let saved_bound = self.ur().bound.len();
         for (i, n) in sc.names.iter().enumerate() {
             if matches!(sc.bindings[i], Binding::Local | Binding::Cell) {
-                let r = self.temp()?;
+                let r = self.slots(1)?;
                 self.u().set_reg(scope, n, r);
                 vars.push((r, n.clone(), sc.bindings[i] == Binding::Cell));
             }
@@ -3144,7 +3211,7 @@ impl<'a> Compiler<'a> {
             }
             CompKind::Dict(k, v) => {
                 let m = self.mark();
-                let kr = self.temp()?;
+                let kr = self.slots(1)?;
                 self.expr(k)?;
                 self.emit_r(op::STAR, kr);
                 self.expr(v)?;
@@ -3183,9 +3250,7 @@ impl<'a> Compiler<'a> {
             } else {
                 op::GET_ITER
             });
-            let t = self.temp()?;
-            self.emit_r(op::STAR, t);
-            t
+            self.spill()?
         };
         let (top, end) = (self.label(), self.label());
         let handler = if g.is_async {
@@ -3209,13 +3274,13 @@ impl<'a> Compiler<'a> {
             self.jump(op::JUMP_LOOP, top);
             self.bind(skip);
         }
-        Ok((top, end, g, handler))
+        Ok((top, end, g, handler, (k > 0).then_some(it)))
     }
 
     /// The loop ends of [`Self::comp_head`]'s clauses, innermost first.
     #[cfg_attr(mm_shipped, optimize(size))]
     fn comp_tails(&mut self, tops: Vec<CompLoop<'a>>) {
-        for (top, end, g, handler) in tops.into_iter().rev() {
+        for (top, end, g, handler, it) in tops.into_iter().rev() {
             self.at(&g.iter);
             self.jump(op::JUMP_LOOP, top);
             if let Some(h) = handler {
@@ -3223,6 +3288,11 @@ impl<'a> Compiler<'a> {
                 self.emit(op::END_ASYNC_FOR);
             }
             self.bind(end);
+            // An inner clause's iterator is spent until the clause runs
+            // again, which stores a new one.
+            if let Some(it) = it {
+                self.unset(it);
+            }
         }
     }
 
@@ -3262,7 +3332,7 @@ impl<'a> Compiler<'a> {
         let Some(first) = gens.first() else {
             return Err(CompileError::syntax("empty generator".to_string(), e.pos));
         };
-        let base = self.temps(3)?;
+        let base = self.window(3)?;
         // The function: `.0` is its iterator parameter.
         let idx = self.codes.len();
         self.codes.push(None);
