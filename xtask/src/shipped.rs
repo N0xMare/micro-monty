@@ -246,29 +246,30 @@ pub(crate) fn tree_cargo(src: &Path) -> Command {
 /// Where the gates check out and build other revisions: outside this
 /// checkout, so cargo reads none of its `.cargo/config.toml` there (cargo
 /// merges every config file from the working directory up). It is
-/// `$MM_REFS_DIR`, else `~/.cache/micro-monty-refs/<checkout>-<hash>`.
+/// `<checkout>-<hash>` under `$MM_REFS_DIR`, else under
+/// `~/.cache/micro-monty-refs`: per checkout either way, as two gates
+/// (`check --base`) switch their base trees and cache its counts by
+/// commit there, unlocked.
 pub(crate) fn refs_dir(gate: &str) -> PathBuf {
+    let root = workspace_root();
+    let root = root.canonicalize().unwrap_or(root);
+    let name = root
+        .file_name()
+        .map_or_default(|n| n.to_string_lossy().into_owned());
+    let hash = crate::wasm_ir::source_hash(root.to_string_lossy().as_bytes());
     let base = env::var_os("MM_REFS_DIR")
         .filter(|v| !v.is_empty())
         .map_or_else(
             || {
-                let root = workspace_root();
-                let root = root.canonicalize().unwrap_or(root);
-                let name = root
-                    .file_name()
-                    .map_or_default(|n| n.to_string_lossy().into_owned());
-                let hash = crate::wasm_ir::source_hash(root.to_string_lossy().as_bytes());
-                let cache = env::var_os("XDG_CACHE_HOME")
+                env::var_os("XDG_CACHE_HOME")
                     .filter(|v| !v.is_empty())
                     .map_or_else(
                         || PathBuf::from(env::var_os("HOME").unwrap_or_default()).join(".cache"),
                         PathBuf::from,
-                    );
-                cache
+                    )
                     .join("micro-monty-refs")
-                    .join(format!("{name}-{hash}"))
             },
             PathBuf::from,
         );
-    base.join(gate)
+    base.join(format!("{name}-{hash}")).join(gate)
 }

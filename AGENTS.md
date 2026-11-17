@@ -120,8 +120,13 @@ to `target/check/logs/<stage>.log`.
   `Cargo.lock`, `.cargo/` or `.agents/setup`. A line of a `[profile.*]`
   table, an `optimize(size)` mark added or removed, or no merge base does
   the same. `--landing-tier` forces the landing tier; say why in the commit
-  if you use it. A facade API or snapshot format change also needs
-  `cargo xtask wasm-host` (in the release gate).
+  if you use it. `--base <rev>` measures a stack from its parent instead of
+  `origin/main` (the tier's paths, size, the Ir gates), so a stack can be
+  gated while its parent is gated or waits to be pushed; it is pushed
+  once the parent is main. `check` prints the base and head it judged,
+  and refuses a `--base` that already holds HEAD when the tree is clean.
+  A facade API or snapshot format change also needs `cargo xtask
+  wasm-host` (in the release gate).
 - Ir: drops always pass; rises are gated against the base and against an
   anchor (each count's lowest since the last `v*` tag, so steps under a
   limit cannot add up; the gates need the tags fetched). Three gates, on

@@ -105,6 +105,10 @@ tasks:
                              toolchain, Cargo.lock, .cargo/ or a profile;
                              AGENTS.md)
       --landing-tier         the landing tier whatever the change touches
+      --base <rev>           the revision the change is measured from: the
+                             tier's paths, size and the Ir gates (default
+                             origin/main; a stack's parent while the parent
+                             is gated or waits to be pushed)
   size [--base <rev>]        build `hello` and the mm-wasm guests as shipped
                              (wasm-opt -Oz on wasm), and the base's (default
                              origin/main) and the release's, each with its
@@ -277,18 +281,39 @@ fn main() -> ExitCode {
 #[allow(clippy::too_many_lines, reason = "one flat list of stages")]
 fn check(args: &[String]) -> Result<(), String> {
     let (mut serial, mut release_gate, mut landing_tier) = (false, false, false);
-    for arg in args {
+    let mut base = None;
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--serial" => serial = true,
             "--release-gate" => release_gate = true,
             "--landing-tier" => landing_tier = true,
+            "--base" => base = Some(args.next().ok_or("check: --base needs a revision")?),
             other => return Err(format!("check: unknown option `{other}`\n{USAGE}")),
         }
     }
     let root = workspace_root();
+    let head = wasm_wall::git(&root, &["rev-parse", "HEAD"])?;
+    let merge_base = base.map_or("origin/main", String::as_str);
+    let merge_base = wasm_wall::git(&root, &["merge-base", merge_base, "HEAD"]).ok();
+    // An uncommitted change on the base is gated, as against origin/main.
+    if let Some(given) = base
+        && merge_base.as_deref() == Some(head.as_str())
+        && wasm_wall::git(&root, &["status", "--porcelain"])?.is_empty()
+    {
+        return Err(format!(
+            "check: --base {given} already holds HEAD ({head}) and the tree is clean, so \
+             nothing would be measured; give the stack's parent"
+        ));
+    }
+    let base = base.map_or("origin/main", String::as_str);
+    println!(
+        "check: measured from {base} (merge base {}), head {head}",
+        merge_base.as_deref().unwrap_or("none")
+    );
     if !release_gate
         && !landing_tier
-        && let Some(why) = release_gate_reason(&root)
+        && let Some(why) = release_gate_reason(&root, base)
     {
         println!("check: the release gate, as the change touches {why} (AGENTS.md)");
         release_gate = true;
@@ -458,13 +483,13 @@ fn check(args: &[String]) -> Result<(), String> {
         // The size gate in three stages: the base's and the release's
         // builds, each in its own worktree and target directory outside
         // the checkout (`shipped::refs_dir`), beside the head's.
-        Stage::new("size-references").run(task(&["size", "--references"])),
+        Stage::new("size-references").run(task(&["size", "--references", "--base", base])),
         Stage::new("size-head")
             .after(&["mm"])
             .run(task(&["size", "--head"])),
         Stage::new("size")
             .after(&["size-head", "size-references"])
-            .run(task(&["size", "--judge"])),
+            .run(task(&["size", "--judge", "--base", base])),
         Stage::new("wasm")
             .after(&["size-head"])
             .run(task(&["wasm"])),
@@ -571,14 +596,14 @@ fn check(args: &[String]) -> Result<(), String> {
             .after(&["mm"])
             .run(steps_cargo(&[&steps[..], &["--no-run"]].concat())),
     ];
-    // wasmtime's guest instructions against origin/main and the anchor
+    // wasmtime's guest instructions against the base and the anchor
     // (its own worktrees and target directories, `shipped::refs_dir`).
     if cfg!(target_os = "linux") {
-        stages.push(Stage::new("wasm-ir").run(task(&["wasm-ir"])));
+        stages.push(Stage::new("wasm-ir").run(task(&["wasm-ir", "--base", base])));
         // The bench programs' gated Ir on the shipped native `mm` against
         // the base's and the anchor's (AGENTS.md's Ir rule).
         stages.push(Stage::new("native-ir").after(&["shipped-mm"]).run({
-            let mut ir = task(&["native-ir"]);
+            let mut ir = task(&["native-ir", "--base", base]);
             ir.env("MM", &shipped_mm);
             ir
         }));
@@ -587,11 +612,12 @@ fn check(args: &[String]) -> Result<(), String> {
     }
     if release_gate && cfg!(target_os = "linux") {
         // V8's instructions on the guests the size-head stage built.
-        stages.push(
-            Stage::new("v8-ir")
-                .after(&["size-head"])
-                .run(task(&["v8-ir", "--head-built"])),
-        );
+        stages.push(Stage::new("v8-ir").after(&["size-head"]).run(task(&[
+            "v8-ir",
+            "--head-built",
+            "--base",
+            base,
+        ])));
     }
     if release_gate {
         // Next to the other wasip1 stage, but off the critical path: it
@@ -667,11 +693,11 @@ const RELEASE_GATE_PATHS: &[&str] = &[
     ".agents/setup",
 ];
 
-/// Why the change since the merge base with `origin/main`, committed or
+/// Why the change since the merge base with `base_rev`, committed or
 /// not (new untracked files included), needs the release gate: a path of [`RELEASE_GATE_PATHS`], Cargo.toml's
 /// `[profile.*]` tables, an `optimize(size)` mark added or removed, or no
 /// merge base to tell.
-fn release_gate_reason(root: &Path) -> Option<String> {
+fn release_gate_reason(root: &Path, base_rev: &str) -> Option<String> {
     let git = |args: &[&str]| {
         let out = Command::new("git")
             .args(args)
@@ -682,8 +708,10 @@ fn release_gate_reason(root: &Path) -> Option<String> {
             .success()
             .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
     };
-    let Some(base) = git(&["merge-base", "origin/main", "HEAD"]) else {
-        return Some("an unknown set of files (no merge base with origin/main)".to_owned());
+    let Some(base) = git(&["merge-base", base_rev, "HEAD"]) else {
+        return Some(format!(
+            "an unknown set of files (no merge base with {base_rev})"
+        ));
     };
     let base = base.trim();
     // `--no-renames`: a moved file counts under its old and its new path,

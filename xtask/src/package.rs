@@ -42,7 +42,8 @@ pub(crate) fn run() -> Result<(), String> {
     }
     run_gate(&cargo, &args)?;
     // Outside the workspace: an unpacked crate's Cargo.toml names none.
-    let unpacked = env::temp_dir().join("mm-package-check");
+    // The pid keeps two gates on one host (`check --base`) apart.
+    let unpacked = env::temp_dir().join(format!("mm-package-check-{}", std::process::id()));
     let _ = fs::remove_dir_all(&unpacked);
     fs::create_dir_all(&unpacked).map_err(|e| format!("{}: {e}", unpacked.display()))?;
     for c in PUBLISHED {
@@ -82,7 +83,9 @@ pub(crate) fn run() -> Result<(), String> {
             path_str(&unpacked.join("target"))?,
         ],
         &patches,
-    )?;
+    );
+    let _ = fs::remove_dir_all(&unpacked);
+    let packaged = packaged?;
     let workspace = build_id(
         &cargo,
         &["--package".to_owned(), "micro-monty".to_owned()],
@@ -131,6 +134,14 @@ fn path_str(p: &Path) -> Result<String, String> {
 /// the name) and, taking registry crates as immutable, never extracts again
 /// for the same version: without this, a verify after a source change
 /// builds against the first package's sources.
+///
+/// Every local registry's directory, another checkout's included: cargo
+/// names it by a hash of the temporary registry's path that only cargo
+/// computes, and a stale copy left at this checkout's name (a checkout
+/// made again at the same path) would verify old sources. A gate whose
+/// `cargo package` builds from a removed copy fails to compile, and its
+/// next run extracts again: a removal never makes a verify pass on old
+/// sources.
 fn forget_extracted(version: &str) -> Result<(), String> {
     let home = env::var_os("CARGO_HOME").map_or_else(
         || env::var_os("HOME").map(|h| Path::new(&h).join(".cargo")),
