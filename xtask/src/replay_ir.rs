@@ -7,29 +7,63 @@
 //! the 261 functions one size change marked (size review of A+B). This
 //! workload is the 160 sessions agents ran: this checkout's `gate.py
 //! --check --worker W` replays each with `W`, a script that runs the
-//! worker under callgrind. A session's count is its worker's Ir from
-//! glibc's `start_thread` on, without `pthread_getattr_np`: the worker
-//! serves on a thread of its own, and the main thread's startup reads the
-//! environment and paths. A session whose worker `gate.py` kills (it
-//! diverged from the recording) counts nothing on that side, and the
-//! real-replay stage fails on it.
+//! worker under callgrind, counting everything from glibc's
+//! `start_thread` on (the worker serves on a thread of its own; the main
+//! thread's startup reads the environment and paths), without
+//! `pthread_getattr_np`. Each replay's callgrind dump gives three numbers
+//! ([`Count`]): the total; the judged count, the total without the
+//! inclusive Ir of glibc's allocator ([`ALLOCATOR`]); and the allocator's
+//! calls. The allocator's cost follows the heap's layout, not the work: a
+//! worker with one more 24-byte allocation read a session's total up to
+//! 1.0062 and down to 0.9933 against the same worker without it (one more
+//! `malloc_consolidate`), past the session limit, where the judged count
+//! moved within 0.05% [M]. The judged count sees an added allocation only
+//! in the worker's own instructions around the call, 17.5 of its 157 Ir
+//! (11%) [M], so the calls are judged too: they follow the work, not the
+//! layout (same-work workers differ by at most 0.031% of a session's
+//! calls [M]). Neither sees work glibc does in proportion to a call's
+//! size: the copy inside `realloc` and the zeroing inside `calloc` (5.4%
+//! of `memcpy`'s Ir and 5.0% of `memset`'s, up to 4.6% of a session [M]).
+//! A session `gate.py` finds diverged from the recording counts nothing,
+//! whether it killed the worker or the worker ended, exited or aborted
+//! first, or exited with an error after its last cell (it names each such
+//! session), and is not compared; one that diverged on the head and not
+//! on the base fails, and no accept line covers it.
+//!
+//! A count repeats only if the worker's heap is laid out the same way in
+//! every run: which reallocations copy, and the engine's probes keyed by
+//! addresses (`Vm::intern_shared`), follow the layout. Two things moved
+//! it, and the replay pins both. The worker's reader thread parses a frame
+//! while its serve thread runs, so the frames' timing decided how the two
+//! interleaved (one binary read 14.129M and 14.234M Ir on a session, as
+//! the load around it changed [M]): `gate.py --lockstep` sends a frame
+//! only once every thread of the worker sleeps in two looks with no thread
+//! run between them (one look let a frame out early in 45 of 320 replays
+//! of a session [M]). And std's `HashMap` keys came from `getrandom`, so a
+//! map's drop order differed per process: the worker preloads a fixed
+//! `getrandom` ([`FIXED_RANDOM`]).
 //!
 //! Both workers are `mm-cell-worker`'s `replay_worker` built with this
 //! checkout's shipped recipe and `--cfg mm_size_wasm`, which turns on the
 //! `optimize(size)` marks that are otherwise on for wasm only, so the
 //! sessions cover them too (the 0.0.2 performance review, section 17);
 //! the base's is built in its own tree ([`crate::shipped::refs_dir`]) with
-//! its own toolchain. Counts are cached per commit, keyed by the recipe,
-//! the toolchain, valgrind, the host and the workload (the traces and
-//! `gate.py`).
+//! its own toolchain. Counts are cached per worker binary, keyed by
+//! valgrind, the host and the workload (the traces and `gate.py`): a head
+//! whose worker is the base's byte for byte is counted once.
 //!
-//! The counts are not exact: one binary's sessions differ by up to 0.1%
-//! between runs [M, the review]; one session holds 56% of all the
-//! instructions. So the gate judges each session's ratio, head over base,
-//! and the median of the ratios, not the total: a session past +0.5%
-//! ([`SESSION_LIMIT`]) or the median past +0.3% ([`MEDIAN_LIMIT`]) fails
-//! unless a `Native-IR-Accepted: sessions <ceiling> <reason>` line covers
-//! it. There are no floors and no anchor: the sessions are measured on the
+//! What still moves a count is a race inside the worker: its serve thread,
+//! woken by the reader, may meet the channel's lock still held (about 800
+//! Ir a time, a few times a session; one binary's judged count differs by
+//! up to 0.106% on a session between runs, the highest of five [M]). One
+//! session holds 63.1% of all the counted instructions. So the gate judges
+//! each session's ratio, head over base, and the median of the ratios, not
+//! the total: a session past +0.5% ([`SESSION_LIMIT`]) or the median
+//! past +0.3% ([`MEDIAN_LIMIT`]) fails unless a `Native-IR-Accepted:
+//! sessions <ceiling> <reason>` line covers it, and so does a session
+//! whose allocator calls rise past +0.5% ([`CALLS_LIMIT`]) unless a line
+//! naming `sessions-calls` ([`CALLS_NAME`]) does.
+//! There are no floors and no anchor: the sessions are measured on the
 //! base and the head only.
 
 use std::{
@@ -42,9 +76,8 @@ use std::{
 };
 
 use crate::{
-    accept::{self, Failure},
+    accept::{self, Accept, Failure},
     native_ir::ACCEPTED,
-    size,
     wasm_ir::{source_hash, version},
     wasm_wall::{checkout, git},
     workspace_root,
@@ -59,15 +92,67 @@ const MEDIAN_LIMIT: f64 = 1.003;
 /// The cfg that turns on the wasm-only `optimize(size)` marks natively.
 const WASM_MARKS: &str = "--cfg mm_size_wasm";
 /// What a count holds, in the cache key: change it when that changes.
-const COUNTING: &str = "callgrind Ir from start_thread, replay_worker, wasm marks on, 2";
+const COUNTING: &str = "callgrind from start_thread, all counted: total, total without the \
+                        allocator's entry points, allocator calls; replay_worker, wasm marks on, \
+                        lockstep, fixed getrandom, 5";
+/// glibc's allocator entry points. Their inclusive Ir is left out of the
+/// judged count; the calls of the first [`CALLED`] are a session's
+/// allocator calls. `free` is one of them: with it two workers that do the
+/// same work differ by at most 0.031% of a session's calls, without it by
+/// 0.057% [M].
+const ALLOCATOR: [&str; 6] = [
+    "malloc",
+    "free",
+    "realloc",
+    "calloc",
+    "posix_memalign",
+    "__libc_thread_freeres",
+];
+/// How many of [`ALLOCATOR`] are the calls a session's allocations count.
+const CALLED: usize = 5;
+/// How many of [`ALLOCATOR`] every worker that ran calls, so a dump
+/// without one of them is an error.
+const REQUIRED: usize = 2;
+/// The most one session's allocator calls may rise, head over base;
+/// fewer calls always pass.
+const CALLS_LIMIT: f64 = 1.005;
+/// The allocator calls' name in the verdict and in accept lines: a line
+/// accepts the number it names, so one written for a rise in calls leaves
+/// the instructions judged.
+const CALLS_NAME: &str = "sessions-calls";
+/// A `getrandom` for the worker's `LD_PRELOAD`: fixed bytes, so std's
+/// `HashMap` keys, the only randomness the replay worker draws itself (it
+/// pins the cells' entropy), are the same in every run. With random keys a
+/// map's drop order (mm-cell-worker's bindings, at each `Reset`) and so the
+/// heap's layout differed run to run, by up to 0.13% of a session [M].
+const FIXED_RANDOM: &str = "#include <stddef.h>
+#include <sys/types.h>
+ssize_t getrandom(void *buf, size_t len, unsigned int flags) {
+    unsigned char *p = buf;
+    (void)flags;
+    for (size_t i = 0; i < len; i++) p[i] = (unsigned char)(i * 37 + 11);
+    return (ssize_t)len;
+}
+";
 /// The files that make the workload.
 const WORKLOAD: [&str; 2] = [
     "conformance/codemode/real/traces.tar.xz",
     "conformance/codemode/real/gate.py",
 ];
 
+/// What one session read, from callgrind's dump of its worker.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Count {
+    /// The judged count: `total` without the inclusive Ir of [`ALLOCATOR`].
+    ir: u64,
+    /// Every instruction from `start_thread` on.
+    total: u64,
+    /// Calls of the first [`CALLED`] of [`ALLOCATOR`].
+    calls: u64,
+}
+
 /// Each session's count, by its id with `/` as `.`.
-type Counts = BTreeMap<String, u64>;
+type Counts = BTreeMap<String, Count>;
 
 #[allow(
     clippy::too_many_lines,
@@ -86,6 +171,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         return Err("replay-ir needs valgrind, which runs on Linux only".to_owned());
     }
     let valgrind = crate::wasm::tool("VALGRIND", "valgrind")
+        .and_then(|v| absolute(&v))
         .ok_or("replay-ir needs valgrind ($VALGRIND, PATH); run .agents/setup")?;
     let root = workspace_root();
     let host = crate::host_target()?;
@@ -97,93 +183,147 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         workload.extend(fs::read(root.join(file)).map_err(|e| format!("{file}: {e}"))?);
     }
     let method = format!(
-        "{COUNTING}; {}; {}; workload {}",
+        "{COUNTING}; {}; {}; workload {}; getrandom {}",
         version(&valgrind),
         crate::floors::host(&valgrind),
-        source_hash(&workload)
+        source_hash(&workload),
+        source_hash(FIXED_RANDOM.as_bytes())
     );
     let base = git(&root, &["merge-base", &base_rev, "HEAD"])?;
     println!("replay-ir: base = {base_rev} ({})", short(&base));
     let base_tree = refs.join("base-src");
     checkout(&root, &base_tree, &base)?;
-    let clean = git(&root, &["status", "--porcelain", "--untracked-files=no"])?.is_empty();
-    let head_sha = git(&root, &["rev-parse", "HEAD"])?;
-    // (label, tree, commit, cache key); a head with uncommitted changes is
-    // not its commit.
-    let sides = [
-        (
-            "head",
-            root.clone(),
-            clean.then_some(head_sha),
-            format!("{method}; {}", size::recipe_key(&root, &root)?),
-        ),
-        (
-            "base",
-            base_tree.clone(),
-            Some(base.clone()),
-            format!("{method}; {}", size::recipe_key(&root, &base_tree)?),
-        ),
-    ];
-    let cache = |sha: &str| dir.join("cache").join(format!("{sha}.tsv"));
-    let mut counts: Vec<Option<Counts>> = sides
-        .iter()
-        .map(|(_, _, sha, key)| sha.as_ref().and_then(|s| load(&cache(s), key)))
-        .collect();
+    // This run's own: another gate in the checkout uses another. A run
+    // that stopped on an error left its dumps for a look; once its pid is
+    // gone they go.
+    let scratches = dir.join("callgrind");
+    for entry in fs::read_dir(&scratches).into_iter().flatten().flatten() {
+        let gone = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+            .is_some_and(|pid| !Path::new(&format!("/proc/{pid}")).exists());
+        if gone {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+    let scratch = scratches.join(std::process::id().to_string());
+    let _ = fs::remove_dir_all(&scratch);
+    let preload = fixed_random(&scratch)?;
     let mut workers = Vec::new();
-    for (i, (label, tree, _, _)) in sides.iter().enumerate() {
-        if counts[i].is_some() {
-            println!("replay-ir: the {label}'s counts are cached");
+    for (label, tree, target) in [
+        ("head", &root, root.join("target/replay-ir/build")),
+        ("base", &base_tree, refs.join("base")),
+    ] {
+        println!("replay-ir: building the {label}'s worker");
+        let worker = build(tree, &target, &host)?;
+        let bytes = fs::read(&worker).map_err(|e| format!("{}: {e}", worker.display()))?;
+        workers.push((source_hash(&bytes), worker));
+    }
+    // A count belongs to the worker binary: one the base shares with the
+    // head, or one counted before, is not counted again.
+    if workers[0].0 == workers[1].0 {
+        println!("replay-ir: the head's worker is the base's, counted once");
+    }
+    let cache = |hash: &str| dir.join("cache").join(format!("{hash}.tsv"));
+    let mut counts: BTreeMap<String, Counts> = BTreeMap::new();
+    let mut todo: Vec<&(String, PathBuf)> = Vec::new();
+    for side in &workers {
+        if counts.contains_key(&side.0) || todo.iter().any(|t| t.0 == side.0) {
             continue;
         }
-        let target = if i == 0 {
-            root.join("target/replay-ir/build")
-        } else {
-            refs.join("base")
-        };
-        println!("replay-ir: building the {label}'s worker");
-        workers.push((i, build(tree, &target, &host)?));
+        match load(&cache(&side.0), &method) {
+            Some(c) => {
+                println!("replay-ir: {} is counted (cache)", side.1.display());
+                counts.insert(side.0.clone(), c);
+            }
+            None => todo.push(side),
+        }
     }
     // The replays run at once, sharing the cores: each ends with its
     // longest session alone (about 8.5 minutes under callgrind [M]).
     let jobs = thread::available_parallelism()
         .map_or(1, usize::from)
-        .div_ceil(workers.len().max(1));
-    let scratch = dir.join("callgrind");
-    let _ = fs::remove_dir_all(&scratch);
-    let results: Vec<(usize, Result<Counts, String>)> = thread::scope(|scope| {
-        let running: Vec<_> = workers
+        .div_ceil(todo.len().max(1));
+    for (_, worker) in &todo {
+        canary(&valgrind, &preload, worker, &scratch)?;
+    }
+    let results: Vec<(&String, Result<Counts, String>)> = thread::scope(|scope| {
+        let running: Vec<_> = todo
             .iter()
-            .map(|(i, worker)| {
+            .enumerate()
+            .map(|(i, (hash, worker))| {
                 let out = scratch.join(format!("{i:02}"));
-                let (root, valgrind) = (&root, &valgrind);
-                let job = scope.spawn(move || replay(root, valgrind, worker, jobs, &out));
-                (*i, job)
+                let (root, valgrind, preload) = (&root, &valgrind, &preload);
+                let job = scope.spawn(move || replay(root, valgrind, preload, worker, jobs, &out));
+                (hash, job)
             })
             .collect();
         running
             .into_iter()
-            .map(|(i, job)| {
+            .map(|(hash, job)| {
                 let result = job
                     .join()
                     .unwrap_or_else(|_| Err("a replay thread failed".to_owned()));
-                (i, result)
+                (hash, result)
             })
             .collect()
     });
     let _ = fs::remove_dir_all(&scratch);
-    for (i, result) in results {
+    for (hash, result) in results {
         let c = result?;
-        if let (Some(sha), key) = (&sides[i].2, &sides[i].3) {
-            save(&cache(sha), key, &c)?;
-        }
-        counts[i] = Some(c);
+        save(&cache(hash), &method, &c)?;
+        counts.insert(hash.clone(), c);
     }
-    let [Some(head), Some(base_counts)] = &counts[..] else {
+    let (Some(head), Some(base_counts)) = (counts.get(&workers[0].0), counts.get(&workers[1].0))
+    else {
         return Err("replay-ir: a side has no counts".to_owned());
     };
-    let failures = report(head, (&format!("base {}", short(&base)), base_counts));
+    let (failures, uncounted) = report(head, (&format!("base {}", short(&base)), base_counts));
     let accepts = accept::for_change(&root, ACCEPTED, &base, "MM_IR_ACCEPT")?;
-    accept::verdict("replay-ir", ACCEPTED, "MM_IR_ACCEPT", &failures, &accepts)
+    judge(failures, &uncounted, &accepts)
+}
+
+/// The verdict on `failures` under `accepts`, one number at a time, so the
+/// line a failure suggests names one number with its own ceiling; and a
+/// failure for each session in `uncounted`, which no line covers.
+fn judge(failures: Vec<Failure>, uncounted: &[String], accepts: &[Accept]) -> Result<(), String> {
+    let (ir, calls): (Vec<Failure>, Vec<Failure>) =
+        failures.into_iter().partition(|f| f.name == NAME);
+    let verdict =
+        |f: &[Failure]| accept::verdict("replay-ir", ACCEPTED, "MM_IR_ACCEPT", f, accepts);
+    let mut errors: Vec<String> = if ir.is_empty() && calls.is_empty() {
+        verdict(&[]).err().into_iter().collect()
+    } else {
+        [ir, calls]
+            .iter()
+            .filter(|f| !f.is_empty())
+            .filter_map(|f| verdict(f).err())
+            .collect()
+    };
+    if !uncounted.is_empty() {
+        errors.push(format!(
+            "replay-ir: diverged on the head and not on the base, so not counted: {} (see the \
+             real-replay stage)",
+            uncounted.join(", ")
+        ));
+    }
+    if errors.is_empty() {
+        return Ok(());
+    }
+    Err(errors.join("\n"))
+}
+
+/// `tool` as an absolute path, looked up on `PATH` if it is a bare name:
+/// `gate.py` runs `worker.sh` with a `PATH` of its own, and the valgrind
+/// that counts must be the one whose version is in the cache key.
+fn absolute(tool: &Path) -> Option<PathBuf> {
+    if tool.components().count() > 1 {
+        return std::path::absolute(tool).ok();
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(tool))
+        .find(|path| path.is_file())
 }
 
 /// Builds `replay_worker` of the tree at `src` for `host` into `target`,
@@ -215,13 +355,35 @@ fn build(src: &Path, target: &Path, host: &str) -> Result<PathBuf, String> {
     Ok(target.join(host).join("release/examples/replay_worker"))
 }
 
-/// Every session replayed by this checkout's `gate.py` on `worker` under
-/// callgrind, `jobs` at a time, in `out`: each session's count. `gate.py`'s
+/// [`FIXED_RANDOM`] built with the C compiler (`$CC`, else `cc`) into
+/// `dir`: the library the replays preload.
+fn fixed_random(dir: &Path) -> Result<PathBuf, String> {
+    fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let src = dir.join("fixed_random.c");
+    let lib = dir.join("fixed_random.so");
+    fs::write(&src, FIXED_RANDOM).map_err(|e| format!("{}: {e}", src.display()))?;
+    let cc = std::env::var_os("CC").unwrap_or_else(|| "cc".into());
+    let status = Command::new(&cc)
+        .args(["-shared", "-fPIC", "-O2", "-o"])
+        .arg(&lib)
+        .arg(&src)
+        .status()
+        .map_err(|e| format!("replay-ir needs a C compiler ({}): {e}", cc.display()))?;
+    if !status.success() {
+        return Err(format!("{} failed on {}", cc.display(), src.display()));
+    }
+    Ok(lib)
+}
+
+/// Every session replayed by this checkout's `gate.py --lockstep` on
+/// `worker` under callgrind with [`fixed_random`]'s `preload`, `jobs` at a
+/// time, in `out`: each session's count. `gate.py`'s
 /// verdict is the real-replay stage's: an older build may differ from the
 /// recorded results, and its count is still what this workload costs it.
 fn replay(
     root: &Path,
     valgrind: &Path,
+    preload: &Path,
     worker: &Path,
     jobs: usize,
     out: &Path,
@@ -237,9 +399,11 @@ fn replay(
     fs::write(
         &script,
         format!(
-            "#!/bin/sh\nn=$(printf %s \"$MM_REPLAY_SESSION\" | tr / .)\nexec '{}' --tool=callgrind \
-             --log-file=\"{o}/$n.%p.log\" --callgrind-out-file=/dev/null \
+            "#!/bin/sh\nn=$(printf %s \"$MM_REPLAY_SESSION\" | tr / .)\nexport LD_PRELOAD='{}'\n\
+             exec '{}' --tool=callgrind --log-file=\"{o}/$n.%p.log\" \
+             --callgrind-out-file=\"{o}/$n.%p.cg\" \
              --toggle-collect=start_thread '--toggle-collect=pthread_getattr_np*' '{}'\n",
+            preload.display(),
             valgrind.display(),
             local.display()
         ),
@@ -257,6 +421,7 @@ fn replay(
         .current_dir(root)
         .arg("conformance/codemode/real/gate.py")
         .arg("--check")
+        .arg("--lockstep")
         .arg("--worker")
         .arg(&script)
         .arg("--jobs")
@@ -275,6 +440,22 @@ fn replay(
             )
         })?;
     println!("replay-ir: {}: {summary}", worker.display());
+    // A session that diverged counts nothing, whether gate.py killed its
+    // worker or the worker ended, exited or aborted first: what it ran is
+    // not the session.
+    let diverged: Vec<String> = stdout
+        .lines()
+        .filter_map(|l| l.strip_prefix("diverged "))
+        .map(|sid| sid.replace('/', "."))
+        .collect();
+    for session in &diverged {
+        println!(
+            "replay-ir: {session} diverged on {}: counted as nothing",
+            worker.display()
+        );
+    }
+    // One log per replay; its dump, `<session>.<pid>.cg`, is written when
+    // the worker exits and removed once read.
     let mut counts = Counts::new();
     for entry in fs::read_dir(out).map_err(|e| format!("{}: {e}", out.display()))? {
         let path = entry.map_err(|e| e.to_string())?.path();
@@ -285,21 +466,158 @@ fn replay(
             continue;
         };
         let session = stem.rsplit_once('.').map_or(stem, |(s, _)| s).to_owned();
-        let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let n: u64 = text
-            .lines()
-            .filter_map(|l| l.split_once("Collected : "))
-            .filter_map(|(_, n)| n.trim().parse::<u64>().ok())
-            .sum();
-        *counts.entry(session).or_default() += n;
+        if diverged.contains(&session) {
+            counts.entry(session).or_default();
+            continue;
+        }
+        let count = counts.entry(session).or_default();
+        let log = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        if !log.contains("Collected : ") {
+            return Err(format!(
+                "{} left no totals, and gate.py did not find its session diverged",
+                path.display()
+            ));
+        }
+        let cg = out.join(format!("{stem}.cg"));
+        let text = fs::read_to_string(&cg).map_err(|e| format!("{}: {e}", cg.display()))?;
+        let c = dump(&text).map_err(|e| format!("{}: {e}", cg.display()))?;
+        let _ = fs::remove_file(&cg);
+        count.ir += c.ir;
+        count.total += c.total;
+        count.calls += c.calls;
     }
-    if counts.values().sum::<u64>() == 0 {
+    if counts.values().all(|c| c.total == 0) {
         return Err(format!(
             "replay-ir: nothing collected on {}",
             worker.display()
         ));
     }
     Ok(counts)
+}
+
+/// Runs `worker` with an empty stdin under callgrind collecting from
+/// `start_thread` on, and fails unless that collects something: without
+/// glibc's debug symbols callgrind never sees the (local) `start_thread`,
+/// and every session would read nothing.
+fn canary(valgrind: &Path, preload: &Path, worker: &Path, dir: &Path) -> Result<(), String> {
+    let log = dir.join("canary.log");
+    let status = Command::new(valgrind)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("LD_PRELOAD", preload)
+        .arg("--tool=callgrind")
+        .arg(format!("--log-file={}", log.display()))
+        .arg("--callgrind-out-file=/dev/null")
+        .arg("--toggle-collect=start_thread")
+        .arg(worker)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| format!("cannot run {}: {e}", valgrind.display()))?;
+    let text = fs::read_to_string(&log).map_err(|e| format!("{}: {e}", log.display()))?;
+    let n: u64 = text
+        .lines()
+        .filter_map(|l| l.split_once("Collected : "))
+        .filter_map(|(_, n)| n.trim().parse::<u64>().ok())
+        .sum();
+    // The worker exits with an error on an empty stdin (no configure
+    // frame); only what was collected before that matters.
+    if n == 0 {
+        return Err(format!(
+            "replay-ir: {} under callgrind collected nothing from glibc's start_thread \
+             ({status}): valgrind needs glibc's debug symbols (libc6-dbg), see {}",
+            worker.display(),
+            log.display()
+        ));
+    }
+    Ok(())
+}
+
+/// One callgrind dump's three numbers ([`Count`]). The calls into each of
+/// [`ALLOCATOR`] in glibc carry their inclusive Ir. A dump that ran
+/// without glibc's `malloc` or `free` (an
+/// allocator linked in, or interposed without forwarding to glibc's) and
+/// a dump without its totals are errors, never zero; the other entry
+/// points, called once a session or not at all, count 0 when missing.
+fn dump(text: &str) -> Result<Count, String> {
+    // Names are compressed: `(id) name` the first time, `(id)` after.
+    fn name<'a>(table: &mut BTreeMap<&'a str, &'a str>, spec: &'a str) -> &'a str {
+        let Some((id, rest)) = spec.split_once(')') else {
+            return spec.trim();
+        };
+        let rest = rest.trim();
+        if rest.is_empty() {
+            return table.get(id).copied().unwrap_or_default();
+        }
+        table.insert(id, rest);
+        rest
+    }
+    let (mut objects, mut functions) = (BTreeMap::new(), BTreeMap::new());
+    let glibc = |object: &str| {
+        Path::new(object)
+            .file_name()
+            .is_some_and(|f| f.to_string_lossy().starts_with("libc.so"))
+    };
+    let (mut ob, mut cob, mut cfn): (&str, Option<&str>, Option<&str>) = ("", None, None);
+    let mut call: Option<u64> = None;
+    let mut total = None;
+    let (mut inclusive, mut calls, mut seen) = ([0u64; 6], [0u64; 6], [false; 6]);
+    for line in text.lines() {
+        // The line after `calls=` is the call's inclusive cost.
+        if let Some(n) = call.take() {
+            let cost = line
+                .split_whitespace()
+                .last()
+                .and_then(|c| c.parse::<u64>().ok())
+                .ok_or_else(|| format!("a call without its cost: `{line}`"))?;
+            let object = cob.take().unwrap_or(ob);
+            if let Some(i) = ALLOCATOR.iter().position(|f| Some(*f) == cfn)
+                && glibc(object)
+            {
+                inclusive[i] += cost;
+                calls[i] += n;
+                seen[i] = true;
+            }
+            cfn = None;
+        } else if let Some(spec) = line.strip_prefix("ob=") {
+            ob = name(&mut objects, spec);
+        } else if let Some(spec) = line.strip_prefix("cob=") {
+            cob = Some(name(&mut objects, spec));
+        } else if let Some(spec) = line.strip_prefix("cfn=") {
+            cfn = Some(name(&mut functions, spec));
+        } else if let Some(spec) = line.strip_prefix("fn=") {
+            name(&mut functions, spec);
+            cob = None;
+        } else if let Some(n) = line.strip_prefix("calls=") {
+            let n = n.split_whitespace().next().and_then(|n| n.parse().ok());
+            call = Some(n.ok_or_else(|| format!("a malformed `{line}`"))?);
+        } else if let Some(n) = line.strip_prefix("totals:") {
+            total = Some(
+                n.trim()
+                    .parse::<u64>()
+                    .map_err(|_| format!("a malformed `{line}`"))?,
+            );
+        }
+    }
+    let total = total.ok_or("a callgrind dump without its totals")?;
+    if total > 0
+        && let Some(i) = seen[..REQUIRED].iter().position(|s| !s)
+    {
+        return Err(format!(
+            "glibc's `{}` is not in the dump: an allocator other than glibc's cannot be \
+             left out of the count",
+            ALLOCATOR[i]
+        ));
+    }
+    let ir = total
+        .checked_sub(inclusive.iter().sum())
+        .ok_or("the allocator's inclusive Ir exceeds the total")?;
+    Ok(Count {
+        ir,
+        total,
+        calls: calls[..CALLED].iter().sum(),
+    })
 }
 
 #[allow(clippy::cast_precision_loss, reason = "a ratio of counts")]
@@ -312,94 +630,212 @@ fn millions(n: u64) -> f64 {
     n as f64 / 1e6
 }
 
-/// Prints the sessions against `other` (named `against`): the median
-/// ratio, the total and the sessions that moved most; returns the
-/// sessions and the median past their limits.
-fn report(head: &Counts, (against, other): (&str, &Counts)) -> Vec<Failure> {
-    // Sessions counted on both sides; one a side's worker was killed in
-    // counts nothing there and is only reported.
-    let mut ratios: Vec<(f64, &String, u64, u64)> = head
+/// One session's two judged numbers, head against base.
+struct Row<'a> {
+    name: &'a String,
+    head: Count,
+    base: Count,
+    ratio: f64,
+}
+
+/// Prints the sessions against `other` (named `against`): per session the
+/// total, the judged count and the allocator calls, the median ratio of
+/// the judged count and the sessions that moved most; returns the sessions
+/// and the median past their limits.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the table, the sessions that moved and the verdict on two numbers"
+)]
+fn report(head: &Counts, (against, other): (&str, &Counts)) -> (Vec<Failure>, Vec<String>) {
+    // Sessions counted on both sides; one that diverged on a side counts
+    // nothing there.
+    let mut rows: Vec<Row<'_>> = head
         .iter()
-        .filter_map(|(k, &h)| other.get(k).map(|&b| (ratio(h, b), k, h, b)))
-        .filter(|&(_, _, h, b)| h > 0 && b > 0)
+        .filter_map(|(name, &h)| {
+            let b = *other.get(name)?;
+            (h.total > 0 && b.total > 0).then(|| Row {
+                name,
+                head: h,
+                base: b,
+                ratio: ratio(h.ir, b.ir),
+            })
+        })
         .collect();
-    let lost: Vec<&String> = head
-        .iter()
-        .filter(|(k, h)| (**h == 0) != (other.get(*k).copied().unwrap_or(0) == 0))
-        .map(|(k, _)| k)
+    // (session, counted on the head, counted on the base)
+    let names: std::collections::BTreeSet<&String> = head.keys().chain(other.keys()).collect();
+    let unmatched: Vec<(&String, bool, bool)> = names
+        .into_iter()
+        .map(|k| {
+            let counted = |c: &Counts| c.get(k).is_some_and(|c| c.total > 0);
+            (k, counted(head), counted(other))
+        })
+        .filter(|(_, h, b)| !(*h && *b))
         .collect();
-    ratios.sort_by(|x, y| x.0.total_cmp(&y.0));
-    let median = match ratios.len() {
+    rows.sort_by(|x, y| x.ratio.total_cmp(&y.ratio));
+    let median = match rows.len() {
         0 => 1.0,
-        n if n % 2 == 1 => ratios[n / 2].0,
-        n => f64::midpoint(ratios[n / 2 - 1].0, ratios[n / 2].0),
+        n if n % 2 == 1 => rows[n / 2].ratio,
+        n => f64::midpoint(rows[n / 2 - 1].ratio, rows[n / 2].ratio),
     };
-    let (h, b) = (
-        ratios.iter().map(|r| r.2).sum::<u64>(),
-        ratios.iter().map(|r| r.3).sum::<u64>(),
-    );
-    println!("\n| Sessions | {against} (M Ir) | head (M Ir) | head / it |");
-    println!("|---|---:|---:|---:|");
+    let sum = |f: fn(&Row<'_>) -> u64| rows.iter().map(f).sum::<u64>();
+    let (hi, bi) = (sum(|r| r.head.ir), sum(|r| r.base.ir));
+    let (ht, bt) = (sum(|r| r.head.total), sum(|r| r.base.total));
+    let (hc, bc) = (sum(|r| r.head.calls), sum(|r| r.base.calls));
     println!(
-        "| total of {} | {:.3} | {:.3} | {:.4} |",
-        ratios.len(),
-        millions(b),
-        millions(h),
-        ratio(h, b)
+        "\n| Sessions | {against}: Ir without the allocator (M) | head | head / it \
+         | total Ir, head / it | allocator calls, head / it |"
+    );
+    println!("|---|---:|---:|---:|---:|---:|");
+    println!(
+        "| total of {} | {:.3} | {:.3} | {:.4} | {:.4} | {:.4} |",
+        rows.len(),
+        millions(bi),
+        millions(hi),
+        ratio(hi, bi),
+        ratio(ht, bt),
+        ratio(hc, bc)
     );
     println!(
-        "| median ratio | | | {median:.4} |\n(limits: a session +{:.1}%, the median +{:.1}%)",
+        "| median ratio | | | {median:.4} | | |\n(limits on Ir without the allocator: a session \
+         +{:.1}%, the median +{:.1}%; on allocator calls: a session +{:.1}%)",
         (SESSION_LIMIT - 1.0) * 100.0,
-        (MEDIAN_LIMIT - 1.0) * 100.0
+        (MEDIAN_LIMIT - 1.0) * 100.0,
+        (CALLS_LIMIT - 1.0) * 100.0
     );
-    let mut text = String::from("sessions that moved most, head / base:");
-    for (r, name, h, b) in ratios.iter().rev().take(5) {
+    let mut text = String::from(
+        "sessions that moved most, head / base: Ir without the allocator; total Ir; allocator calls",
+    );
+    for r in rows.iter().rev().take(5) {
         let _ = write!(
             text,
-            "\n  {name}: {:.3} -> {:.3} M Ir ({r:.4})",
-            millions(*b),
-            millions(*h)
+            "\n  {}: {:.3} -> {:.3} M Ir ({:.4}); total {:.4}; calls {} -> {}",
+            r.name,
+            millions(r.base.ir),
+            millions(r.head.ir),
+            r.ratio,
+            ratio(r.head.total, r.base.total),
+            r.base.calls,
+            r.head.calls
         );
     }
     println!("{text}");
-    for name in lost {
-        println!("replay-ir: {name} counted on one side only (a killed worker; see real-replay)");
-    }
-    let mut failures: Vec<Failure> = ratios
+    let mut by_calls: Vec<&Row<'_>> = rows.iter().collect();
+    by_calls.sort_by_key(|r| core::cmp::Reverse(r.head.calls.saturating_sub(r.base.calls)));
+    let rose = by_calls
+        .first()
+        .is_some_and(|r| r.head.calls > r.base.calls);
+    let mut text = String::from(if rose {
+        "sessions whose allocator calls rose most:"
+    } else {
+        "no session's allocator calls rose"
+    });
+    for r in by_calls
         .iter()
-        .filter(|r| r.0 > SESSION_LIMIT)
-        .map(|&(r, name, _, _)| Failure {
-            guest: None,
-            name: NAME.to_owned(),
-            ratio: r,
-            text: format!("session {name} {r:.4} against {against}"),
-        })
-        .collect();
+        .take(5)
+        .filter(|r| r.head.calls > r.base.calls)
+    {
+        let _ = write!(
+            text,
+            "\n  {}: {} -> {} calls ({:.4})",
+            r.name,
+            r.base.calls,
+            r.head.calls,
+            ratio(r.head.calls, r.base.calls)
+        );
+    }
+    println!("{text}");
+    let mut uncounted = Vec::new();
+    for &(name, h, b) in &unmatched {
+        let side = match (h, b) {
+            (true, false) => "on the head only",
+            (false, true) => "on the base only",
+            _ => "on neither side",
+        };
+        println!("replay-ir: {name} is not compared: it diverged, counted {side}");
+        // Counted on the base and not on the head: no ceiling covers a
+        // session the head did not finish.
+        if b && !h {
+            uncounted.push(name.clone());
+        }
+    }
+    let mut failures = Vec::new();
+    failures.extend(
+        rows.iter()
+            .filter(|r| r.ratio > SESSION_LIMIT)
+            .map(|r| Failure {
+                guest: None,
+                name: NAME.to_owned(),
+                ratio: r.ratio,
+                text: format!(
+                    "session {}: Ir without the allocator {:.4} against {against}",
+                    r.name, r.ratio
+                ),
+            }),
+    );
     if median > MEDIAN_LIMIT {
         failures.push(Failure {
             guest: None,
             name: NAME.to_owned(),
             ratio: median,
-            text: format!("the sessions' median ratio {median:.4} against {against}"),
+            text: format!(
+                "the sessions' median ratio of Ir without the allocator {median:.4} against \
+                 {against}"
+            ),
         });
     }
-    failures
+    failures.extend(
+        rows.iter()
+            .filter(|r| calls_rose(r.head.calls, r.base.calls))
+            .map(|r| {
+                let q = ratio(r.head.calls, r.base.calls);
+                Failure {
+                    guest: None,
+                    name: CALLS_NAME.to_owned(),
+                    ratio: q,
+                    text: format!(
+                        "session {}: allocator calls {} -> {} ({q:.4}) against {against}",
+                        r.name, r.base.calls, r.head.calls
+                    ),
+                }
+            }),
+    );
+    (failures, uncounted)
 }
 
-/// The cached counts in `path` under `key`.
+/// Whether `head` allocator calls are past [`CALLS_LIMIT`] over `base`'s.
+/// A compared session ran on both sides and so called the allocator; a
+/// `base` of 0 would make any call on the head a failure, never a pass.
+fn calls_rose(head: u64, base: u64) -> bool {
+    head > base && (base == 0 || ratio(head, base) > CALLS_LIMIT)
+}
+
+/// The cached counts in `path` under `key`: every line a session and its
+/// three numbers, closed by a line with their number, or none.
 fn load(path: &Path, key: &str) -> Option<Counts> {
     let text = fs::read_to_string(path).ok()?;
     let mut lines = text.lines();
     if lines.next() != Some(&format!("# {key}")) {
         return None;
     }
-    let counts: Counts = lines
-        .filter_map(|line| {
-            let (k, n) = line.split_once('\t')?;
-            Some((k.to_owned(), n.parse().ok()?))
-        })
-        .collect();
-    (!counts.is_empty()).then_some(counts)
+    let mut counts = Counts::new();
+    for line in lines {
+        if let Some(n) = line.strip_prefix("# sessions ") {
+            return (n.parse() == Ok(counts.len()) && !counts.is_empty()).then_some(counts);
+        }
+        let mut fields = line.split('\t');
+        let name = fields.next()?;
+        let mut n = || fields.next()?.parse::<u64>().ok();
+        let count = Count {
+            ir: n()?,
+            total: n()?,
+            calls: n()?,
+        };
+        if fields.next().is_some() || count.ir > count.total {
+            return None;
+        }
+        counts.insert(name.to_owned(), count);
+    }
+    None
 }
 
 fn save(path: &Path, key: &str, counts: &Counts) -> Result<(), String> {
@@ -407,8 +843,217 @@ fn save(path: &Path, key: &str, counts: &Counts) -> Result<(), String> {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let mut text = format!("# {key}\n");
-    for (k, n) in counts {
-        let _ = writeln!(text, "{k}\t{n}");
+    for (k, c) in counts {
+        let _ = writeln!(text, "{k}\t{}\t{}\t{}", c.ir, c.total, c.calls);
     }
-    fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+    let _ = writeln!(text, "# sessions {}", counts.len());
+    // Through a new name and a rename: a run stopped while writing leaves
+    // no entry that reads as complete.
+    let new = path.with_extension("tsv.new");
+    fs::write(&new, text).map_err(|e| format!("{}: {e}", new.display()))?;
+    fs::rename(&new, path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "tests fail on a broken fixture")]
+
+    use super::{CALLS_NAME, Count, Counts, NAME, calls_rose, dump, judge, report};
+    use crate::{
+        accept::{self, Failure},
+        native_ir::ACCEPTED,
+        wasm_wall::git,
+    };
+
+    /// A dump in callgrind's compressed form: `malloc` named once and
+    /// referred to by id after, an allocator call from the worker's object
+    /// counted only when its callee is glibc's.
+    const DUMP: &str = "events: Ir
+ob=(1) /w/replay_worker
+fn=(1) main
+0 100
+cob=(2) /usr/lib/x86_64-linux-gnu/libc.so.6
+cfn=(2) malloc
+calls=3 0
+0 40
+cob=(2)
+cfn=(2)
+calls=2 0
+0 20
+cob=(2)
+cfn=(3) free
+calls=4 0
+0 30
+cob=(2)
+cfn=(4) realloc
+calls=1 0
+0 10
+cob=(2)
+cfn=(5) calloc
+calls=1 0
+0 5
+cob=(2)
+cfn=(6) posix_memalign
+calls=1 0
+0 5
+cob=(2)
+cfn=(7) __libc_thread_freeres
+calls=1 0
+0 7
+cob=(3) /w/other.so
+cfn=(2)
+calls=9 0
+0 900
+totals: 1117
+";
+
+    #[test]
+    fn a_dump_reads_its_total_the_count_without_the_allocator_and_its_calls() {
+        assert_eq!(
+            dump(DUMP),
+            Ok(Count {
+                ir: 1117 - (40 + 20 + 30 + 10 + 5 + 5 + 7),
+                total: 1117,
+                calls: 3 + 2 + 4 + 1 + 1 + 1,
+            })
+        );
+    }
+
+    #[test]
+    fn a_dump_missing_its_totals_malloc_or_free_is_an_error() {
+        assert!(dump(&DUMP.replace("totals: 1117\n", "")).is_err());
+        let interposed = DUMP.replace("cfn=(3) free", "cfn=(3) je_free");
+        assert!(dump(&interposed).is_err_and(|e| e.contains("`free`")));
+    }
+
+    #[test]
+    fn entry_points_called_once_a_session_may_be_missing() {
+        // A worker that never calls posix_memalign, and one that exits
+        // without its thread's cleanup.
+        let text = DUMP
+            .replace("cfn=(6) posix_memalign", "cfn=(6) other")
+            .replace("cfn=(7) __libc_thread_freeres", "cfn=(7) other2");
+        assert_eq!(
+            dump(&text),
+            Ok(Count {
+                ir: 1117 - (40 + 20 + 30 + 10 + 5),
+                total: 1117,
+                calls: 3 + 2 + 4 + 1 + 1,
+            })
+        );
+    }
+
+    fn counts(rows: &[(&str, u64, u64)]) -> Counts {
+        rows.iter()
+            .map(|&(name, ir, calls)| {
+                let count = Count {
+                    ir,
+                    total: ir + 100,
+                    calls,
+                };
+                (name.to_owned(), count)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_session_the_head_did_not_finish_is_named_and_not_a_ratio() {
+        let base = counts(&[("a", 1000, 100), ("b", 1000, 100)]);
+        // gate.py found b diverged on the head: it counts nothing there.
+        let mut head = counts(&[("a", 1000, 100)]);
+        head.insert("b".to_owned(), Count::default());
+        let (failures, uncounted) = report(&head, ("base", &base));
+        assert!(failures.is_empty());
+        assert_eq!(uncounted, ["b"]);
+        // The other way round, the base's divergence is only reported.
+        let (failures, uncounted) = report(&base, ("base", &head));
+        assert!(failures.is_empty() && uncounted.is_empty());
+    }
+
+    #[test]
+    fn instructions_and_calls_fail_under_their_own_names() {
+        let base = counts(&[("a", 1000, 1000), ("b", 1000, 1000), ("c", 1000, 1000)]);
+        let head = counts(&[("a", 1010, 1000), ("b", 1000, 1010), ("c", 1000, 1000)]);
+        let (failures, _) = report(&head, ("base", &base));
+        let names: Vec<(&str, bool)> = failures
+            .iter()
+            .map(|f| (f.name.as_str(), f.text.contains("session a")))
+            .collect();
+        assert_eq!(names, [(NAME, true), (CALLS_NAME, false)]);
+    }
+
+    #[test]
+    fn allocator_calls_fail_past_half_a_percent_and_never_on_fewer() {
+        assert!(!calls_rose(100_500, 100_000));
+        assert!(calls_rose(100_501, 100_000));
+        // No floor: a small session fails on a few calls.
+        assert!(calls_rose(202, 200));
+        assert!(!calls_rose(50, 100_000));
+        assert!(calls_rose(1, 0));
+        assert!(!calls_rose(0, 0));
+    }
+
+    #[test]
+    fn each_number_takes_its_own_accept_line_and_suggests_its_own() {
+        let failure = |name: &str, ratio: f64| Failure {
+            guest: None,
+            name: name.to_owned(),
+            ratio,
+            text: format!("{name} {ratio}"),
+        };
+        let none = judge(
+            vec![failure(NAME, 1.0151), failure(CALLS_NAME, 1.2994)],
+            &[],
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            none.contains(&format!("`{ACCEPTED} sessions 1.016 <reason>`")),
+            "{none}"
+        );
+        assert!(
+            none.contains(&format!("`{ACCEPTED} sessions-calls 1.300 <reason>`")),
+            "{none}"
+        );
+        // Two lines in one commit are both read, each for the number it names.
+        let dir = std::env::temp_dir().join(format!("replay-ir-accept-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "--quiet"]).unwrap();
+        let commit = |message: &str| {
+            let args = [
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                message,
+            ];
+            git(&dir, &args).unwrap();
+        };
+        commit("base");
+        let base = git(&dir, &["rev-parse", "HEAD"]).unwrap();
+        commit(&format!(
+            "Two boxes a call\n\n{ACCEPTED} sessions 1.016 the boxes' own code\n\
+             {ACCEPTED} sessions-calls 1.300 two boxes a call"
+        ));
+        let accepts = accept::for_change(&dir, ACCEPTED, base.trim(), "MM_REPLAY_IR_TEST").unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(
+            judge(
+                vec![failure(NAME, 1.0151), failure(CALLS_NAME, 1.2994)],
+                &[],
+                &accepts
+            )
+            .is_ok()
+        );
+        // The calls' ceiling does not cover the instructions.
+        assert!(judge(vec![failure(NAME, 1.0201)], &[], &accepts).is_err());
+        assert!(judge(vec![], &["s".to_owned()], &accepts).is_err());
+    }
 }

@@ -174,15 +174,18 @@ to `target/check/logs/<stage>.log`.
     sessions (`conformance/codemode/real`) on the replay worker built as
     shipped plus `--cfg mm_size_wasm` (the wasm-only `optimize(size)` marks
     on), head against base only, no floors. Fails on a session past +0.5%
-    or the sessions' median ratio past +0.3%.
+    or the sessions' median ratio past +0.3% (`sessions`, instructions
+    outside glibc's allocator), on a session whose allocator calls rise
+    past +0.5% (`sessions-calls`), and on a session that diverged on the
+    head only.
 
   An intended rise says why in its commit, with the table. Each gate takes
   a line `<Prefix> <names> <ceiling> <reason>`: `Native-IR-Accepted:`
   (native-ir and replay-ir), `Wasm-IR-Accepted:` or `V8-IR-Accepted:`,
   such as `Native-IR-Accepted: dict,startup 1.006 <reason>`. It passes
-  only the names it lists (programs, `sessions` or `geomean`; v8-ir may
-  put `plain/` or `bundle/` before one) up to the ceiling ratio, and
-  raises only their floors. `MM_IR_ACCEPT`, `MM_WASM_IR_ACCEPT` and
+  only the names it lists (programs, `sessions`, `sessions-calls` or
+  `geomean`; v8-ir may put `plain/` or `bundle/` before one) up to the
+  ceiling ratio, and raises only their floors. `MM_IR_ACCEPT`, `MM_WASM_IR_ACCEPT` and
   `MM_V8_IR_ACCEPT` with the same text stand for the line in an
   uncommitted tree only. `just pretag` runs each against the previous tag
   and checks the floors against the tag's counts. Report the

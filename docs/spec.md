@@ -2921,12 +2921,67 @@ so the release gate also counts the 160 recorded real sessions: `cargo
 xtask replay-ir` replays them through `conformance/codemode/real/gate.py`
 on the `replay_worker` built as shipped plus `--cfg mm_size_wasm`, which
 turns the wasm-only `optimize(size)` marks on natively, under callgrind,
-counting each worker's Ir from glibc's `start_thread` (the thread that
-serves) without `pthread_getattr_np`. One binary's sessions differ by up
-to 0.1% run to run, and one session holds 56% of the instructions [M], so
-it judges head against base only, per session (+0.5%) and by the median
-of the sessions' ratios (+0.3%), with the same accept line naming
-`sessions`; it keeps no floors.
+counting everything each worker runs from glibc's `start_thread` (the
+thread that serves) on, without `pthread_getattr_np`. From each
+replay's callgrind dump it reads three numbers. The total. The judged
+count: the total without the inclusive Ir of glibc's `malloc`, `free`,
+`realloc`, `calloc`, `posix_memalign` and its cleanup at a thread's
+exit (`__libc_thread_freeres`), 17.6% of all the sessions' Ir, 1.2% to
+28.4% of one and 16.3% of the `codex` sessions' [M]. And the
+allocator's calls: the calls of the first five, `free` included. The
+allocator's cost follows the heap's layout, not the work: a worker that
+made one more allocation of 24 bytes moved a session's total by up to
+0.67% against the same worker without it, both ways, while the judged
+count moved within 0.05% [M]. The judged count alone sees a change that
+allocates more often only in the worker's own instructions around each
+call, 17.5 of the 157 Ir an added allocation costs (11%) [M]; the
+allocator's calls see it whole and do not follow the layout: two
+workers that do the same work differ by at most 27 calls a session
+(0.031%), two runs of one by at most 1, where the sessions make 3,188 to
+124 million calls [M] (without `free` the same-work drift is 0.057%).
+What neither judged number sees is work glibc does for a call that
+grows with its size: the copy inside `realloc` and the zeroing inside
+`calloc`, left out with them, are 5.4% of `memcpy`'s Ir and 5.0% of
+`memset`'s, and up to 4.6% of a session [M]. A count is only as good as
+callgrind's view of glibc: without glibc's debug symbols it never sees
+the local `start_thread` and collects nothing, so before the replays the
+gate runs each worker on an empty stdin and stops unless it collects
+something. An allocator linked in, or interposed without forwarding to
+glibc's, leaves glibc's `malloc` and `free` out of the dumps, and a dump
+that ran without them, or without its totals, is an error, never a
+zero; one that forwards to glibc's is counted, its own instructions in
+the judged count. `posix_memalign` and `__libc_thread_freeres` are
+called once a session or not at all and count 0 when missing. The
+cleanup frees through glibc's own functions, so that `free` (about 200
+Ir and one call a session, the same on both sides) is left out twice: a
+dump holds callers, not call stacks.
+The rest of a count still follows the layout (probes keyed by
+addresses), so the replay pins the two things that moved it from run to
+run. `gate.py --lockstep` sends a frame only once every thread of the
+worker sleeps in two looks with no thread run between them, so its
+reader and serve threads take each frame in the same order; it reads
+`/proc`, so it is for Linux only. And the worker preloads a fixed
+`getrandom`, so std's `HashMap` keys, and the order a map drops its
+entries in, are the same in every run. A race left in the worker's
+channel still moves one binary's judged count on a session by up to
+0.106% between runs (the highest of five runs on 16 cores, machine
+load 90 to 230) [M]. A session that diverges from the recording
+counts nothing, whether `gate.py` killed its worker or the worker ended,
+exited or aborted first, or exited with an error or aborted after its
+last cell (`gate.py` names each such session), so it is not compared: `phase1/codex-sdk-monty/codec-review` diverges at cell 12
+in its recording, so on every build its first 11 cells go uncounted. A
+session that diverged on the head and not on the base fails, and no
+accept line covers it.
+Counts are kept per worker binary: a head whose worker is the base's
+byte for byte is counted once. One session holds 63.1% of the counted
+instructions [M], so it judges head against base only, per session
+(+0.5%) and by the median of the sessions' ratios (+0.3%) of the judged
+count, and fails a session whose allocator calls rise past +0.5% (fewer
+always pass). An accept line covers the number it names, up to its
+ceiling (under 2.0): `sessions` a session's ratio of judged Ir and the
+median's, `sessions-calls` a session's ratio of allocator calls, head
+over base, so a line written for one leaves the other judged. It keeps
+no floors.
 
 ## 13. Tests and conformance
 

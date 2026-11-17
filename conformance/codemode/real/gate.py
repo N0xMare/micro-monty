@@ -39,13 +39,17 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import difflib
+import fcntl
 import json
 import os
+import platform
 import struct
 import subprocess
 import sys
 import tarfile
+import termios
 import time
 from pathlib import Path
 
@@ -58,6 +62,8 @@ ARCHIVE = HERE / 'traces.tar.xz'
 EXPECTED = HERE / 'results' / 'gate.jsonl'
 FIELDS = ('calls', 'batches', 'deliveries', 'output', 'outcome')
 TIMEOUT = 120
+# The numbers of read and futex, for --lockstep.
+SYSCALLS = {'x86_64': (0, 202), 'aarch64': (63, 98)}
 
 
 def sessions(only: str | None):
@@ -122,17 +128,67 @@ def recorded_cells(lines):
 
 
 class Worker:
-    def __init__(self, path, clock, sid=''):
+    def __init__(self, path, clock, sid='', lockstep=False):
+        if lockstep and (sys.platform != 'linux' or platform.machine() not in SYSCALLS):
+            raise SystemExit(f'--lockstep reads Linux /proc on {", ".join(SYSCALLS)} only')
         # MM_REPLAY_SESSION names the session for a --worker wrapper (the
         # worker ignores it; `cargo xtask replay-ir` counts per session).
         env = {'PATH': '/usr/bin:/bin', 'MM_REPLAY_CLOCK': repr(clock), 'MM_REPLAY_SESSION': sid}
         self.process = subprocess.Popen([path], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, env=env)
+        self.sid, self.lockstep = sid, lockstep
 
     def send(self, frame):
         body = json.dumps(frame).encode()
-        self.process.stdin.write(struct.pack('>I', len(body)) + body)
-        self.process.stdin.flush()
+        if self.lockstep:
+            self.settle()
+        # A worker that exited reads nothing more: the next recv says so,
+        # and the cell diverges with 'the worker exited'.
+        with contextlib.suppress(BrokenPipeError):
+            self.process.stdin.write(struct.pack('>I', len(body)) + body)
+            self.process.stdin.flush()
+
+    def settle(self):
+        """Waits until the worker has taken in every frame sent and every
+        thread of it waits, on its stdin (the reader) or on a futex, and
+        none ran between two looks at it.
+
+        The worker's reader thread parses frames while its serve thread
+        runs the cell, and the heap they share ends up laid out by how the
+        two interleaved, so a frame that arrives a moment earlier or later
+        moves the instruction count: which reallocations copy, and the
+        engine's address-keyed probes (`Vm::intern_shared`). One look is
+        not enough: the reader can wake the serve thread and block again
+        between the reads of the two threads' files, so a look counts only
+        if the next one finds the same threads with the same number of
+        times run (/proc/PID/task/TID/schedstat). Linux only: reads /proc,
+        so `--worker` must be the worker's process (a wrapper `exec`s it).
+        What is left is a race in the worker's channel
+        (xtask/src/replay_ir.rs). A worker that exited has settled."""
+        read, futex = SYSCALLS[platform.machine()]
+        pipe = self.process.stdin.fileno()
+        task = Path(f'/proc/{self.process.pid}/task')
+        deadline, pause = time.monotonic() + TIMEOUT, 0.0001
+        last, error = None, None
+        while True:
+            if self.process.poll() is not None:
+                return
+            now = None
+            if not struct.unpack('i', fcntl.ioctl(pipe, termios.FIONREAD, b'\0' * 4))[0]:
+                try:
+                    now = asleep(task, read, futex)
+                except OSError as e:
+                    error = e  # a thread ended between the listing and its files, or no access
+            if now is not None and now == last:
+                return
+            last = now
+            if time.monotonic() > deadline:
+                why = f'; the last error: {error}' if error else ''
+                raise SystemExit(f'{self.sid}: the worker did not settle in {TIMEOUT} s (is '
+                                 f'--worker the worker\'s process, or a wrapper that execs it?){why}')
+            # Polls back off, so many sessions at once leave the GIL free.
+            pause = min(pause * 2, 0.004)
+            time.sleep(pause)
 
     def recv(self):
         head = self.process.stdout.read(4)
@@ -140,6 +196,23 @@ class Worker:
             return None
         (length,) = struct.unpack('>I', head)
         return json.loads(self.process.stdout.read(length))
+
+
+def asleep(task, read, futex):
+    """Each thread of the process (TID: times it ran) if every one sleeps in
+    read(0) or a futex wait, else None."""
+    seen = {}
+    for t in task.iterdir():
+        state = (t / 'stat').read_text().rpartition(')')[2].split()[0]
+        call = (t / 'syscall').read_text().split()
+        if state != 'S' or len(call) < 3 or call[0] == 'running':
+            return None
+        number, first, second = int(call[0]), int(call[1], 16), int(call[2], 16)
+        # FUTEX_WAIT or FUTEX_WAIT_BITSET, private or not: not a wake in progress.
+        if not ((number == read and first == 0) or (number == futex and second & 0x7f in (0, 9))):
+            return None
+        seen[t.name] = (t / 'schedstat').read_text().split()[2]
+    return seen
 
 
 def replay_cell(worker, start, recorded):
@@ -185,11 +258,11 @@ def replay_cell(worker, start, recorded):
             return seen, f'unexpected frame {name}'
 
 
-def replay_session(path, session):
+def replay_session(path, session, lockstep=False):
     """One record per recorded cell: the fields that differ from the recording."""
     sid, clock, lines = session
     script, cells = recorded_cells(lines)
-    worker = Worker(path, clock, sid)
+    worker = Worker(path, clock, sid, lockstep)
     records, broken = [], None
     try:
         if (worker.recv() or {}).get('frame') != 'hello':
@@ -214,8 +287,19 @@ def replay_session(path, session):
                 worker.send(frame)
         if broken:
             worker.process.kill()
-        worker.process.stdin.close()
+        elif lockstep:
+            # The script ends with Shutdown, on which the worker exits; an
+            # end of its stdin first would race its reader thread's exit
+            # against the process's.
+            worker.process.wait(timeout=TIMEOUT)
+        with contextlib.suppress(BrokenPipeError):
+            worker.process.stdin.close()
         worker.process.wait(timeout=TIMEOUT)
+        # A worker that answered every cell and then exited with an error
+        # or aborted (a panic, built as shipped) did not end the session.
+        if not broken and worker.process.returncode != 0:
+            records[-1]['diverged'] = (f'the worker exited with {worker.process.returncode} '
+                                       'after its last cell')
     finally:
         if worker.process.poll() is None:
             worker.process.kill()
@@ -451,6 +535,8 @@ def main() -> int:
     ap.add_argument('--filter', help='only sessions whose id contains this')
     ap.add_argument('--jobs', type=int, default=os.cpu_count() or 4)
     ap.add_argument('--worker', help='a replay worker to use instead of building one')
+    ap.add_argument('--lockstep', action='store_true',
+                    help='send a frame only once the worker settled (repeatable counts; Linux)')
     ap.add_argument('--carry', action='store_true',
                     help='py-ptc sessions only: carry the state into a new worker before each cell')
     ap.add_argument('--base', help='with --carry: the build the state is carried from (a git rev)')
@@ -469,7 +555,7 @@ def main() -> int:
     # Longest recorded sessions first, results in id order.
     todo = sorted(sessions(args.filter), key=busy, reverse=True)
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
-        results = sorted(pool.map(lambda s: replay_session(path, s), todo))
+        results = sorted(pool.map(lambda s: replay_session(path, s, args.lockstep), todo))
     elapsed = time.monotonic() - began
 
     changed, cells, differing, diverged = [], 0, 0, 0
@@ -496,6 +582,11 @@ def main() -> int:
         show(record, old, recorded)
     for cell in missing:
         print(f'{cell}: expected but not in the archive')
+    # One line per session that diverged, whoever ended its worker:
+    # `cargo xtask replay-ir` counts nothing for it.
+    for sid, records, _ in results:
+        if any('diverged' in record for record in records):
+            print(f'diverged {sid}')
     print(f'{cells} cells in {len(results)} sessions, {elapsed:.1f} s: {differing} differ from '
           f'the recording ({diverged} diverged or skipped), {len(changed)} changed since '
           f'results/gate.jsonl')
