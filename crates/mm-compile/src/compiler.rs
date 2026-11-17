@@ -584,16 +584,21 @@ impl<'a> Compiler<'a> {
     }
 
     fn byte(&mut self, b: u8) {
-        // A register the instruction names holds a value once it has run:
-        // the instruction stores to it, or it was set already. The `BUILD`
-        // instructions only read theirs, and with no items name one they
-        // do not read.
+        // A register is set only by an instruction that stores to it: a
+        // read leaves the state as it is (an unset register it read would
+        // be a bug `Code::check_live` reports), and so does an operand a
+        // mode does not use, such as `DICT_UPDATE`'s third of modes 0 and
+        // 1 or `MAKE_FUNCTION`'s parts with no flags. An unpack stores all
+        // its targets at once and `FOR_PREP` its counters on the jump:
+        // their callers set those.
         let u = self.ur();
         let opcode = u.code.bytecode[u.at].to_le_bytes()[0];
-        if u.unset != 0
-            && operand_plan(opcode) >> (9 * u.nops) & 7 == 1
-            && !(op::BUILD_LIST..=op::BUILD_STRING).contains(&opcode)
-        {
+        let stores = match opcode {
+            op::STAR | op::PUSH_EXC | op::WITH_ENTER | op::LOAD_METHOD => true,
+            op::MOV => u.nops == 1,
+            _ => false,
+        };
+        if u.unset != 0 && stores && operand_plan(opcode) >> (9 * u.nops) & 7 == 1 {
             self.set(b, b);
         }
         self.put(u32::from(b));
@@ -1160,11 +1165,13 @@ impl<'a> Compiler<'a> {
                         self.emit_rr(op::MOV, it + k, it + k + 1);
                     }
                     self.emit_rbu(op::CALL, it, n, ic);
-                    // The loop keeps the counters only: the arguments
-                    // shifted past them are spent.
-                    self.set(it + 3, it + 4);
-                    self.unset(it + 4);
-                    self.unset(it + 3);
+                    // The callee's frame overlaid the window: every slot
+                    // holds nothing until the stores below, and the
+                    // arguments shifted past the counters are spent.
+                    self.set(it, it + 4);
+                    for r in (it..=it + 4).rev() {
+                        self.unset(r);
+                    }
                     self.emit(op::GET_ITER);
                     self.emit_r(op::STAR, it);
                     self.emit(op::LDA_NONE);
@@ -1293,6 +1300,10 @@ impl<'a> Compiler<'a> {
                     self.at(d);
                     let ic = self.ic()?;
                     self.emit_rbu(op::CALL, base, 1, ic);
+                    // The callee's frame overlaid the window: the next
+                    // decorator's stores fill it again.
+                    self.unset(base);
+                    self.unset(base + 2);
                 }
                 self.release(m);
                 self.store_name(&f.name)
@@ -1742,6 +1753,9 @@ impl<'a> Compiler<'a> {
         self.emit_r(op::POP_EXC, old);
         self.jump(op::JUMP, end);
         self.bind(cleanup);
+        // Its range begins before the store to the state list.
+        self.set(state, state);
+        self.unset(state);
         self.emit_r(op::POP_EXC, old);
         self.emit(op::RERAISE);
         self.release(m);
@@ -1957,6 +1971,10 @@ impl<'a> Compiler<'a> {
         let ic = self.ic()?;
         self.at_pos(c.span);
         self.emit_rbu(op::CALL, f, 1, ic);
+        // The body's frame overlaid the window, which `BUILD_CLASS` does
+        // not read.
+        self.unset(f + 2);
+        self.unset(f);
         self.emit_r(op::BUILD_CLASS, base);
         let b = if decos.is_empty() { 0 } else { self.window(3)? };
         for (r, d) in decos.into_iter().rev() {
@@ -1965,6 +1983,9 @@ impl<'a> Compiler<'a> {
             self.at(d);
             let ic = self.ic()?;
             self.emit_rbu(op::CALL, b, 1, ic);
+            // As a function's decorators: the window holds nothing now.
+            self.unset(b);
+            self.unset(b + 2);
         }
         self.release(m);
         self.store_name(&c.name)
