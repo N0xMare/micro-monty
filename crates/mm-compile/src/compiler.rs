@@ -958,7 +958,10 @@ impl<'a> Compiler<'a> {
                 p.top = top;
             }
         }
-        u.hi = hi;
+        // A statement that reaches the last register keeps every register
+        // live, and so do the statements around it: `NO_TOP` is also what an
+        // entry not yet stamped holds, which they would overwrite.
+        u.hi = if top == NO_TOP { u.hi.max(hi) } else { hi };
         u.last_loc = None;
         self.release(m);
         self.depth -= 1;
