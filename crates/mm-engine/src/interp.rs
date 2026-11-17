@@ -1876,6 +1876,20 @@ impl Vm {
         ret_pc: usize,
         op_cont: Cont,
     ) -> Result<Landed, Raised> {
+        // The registers an unpack or `LOAD_METHOD` fills once the code it
+        // hands off to returns are temporaries no instruction reads before
+        // that: they hold nothing while it runs, or what an earlier
+        // statement left there stays a root (the frame waits as a caller,
+        // cleared only of what is dead around the instruction). Here and
+        // not in the dispatch loop, which this would slow.
+        let (r, n) = match op_cont {
+            Cont::Unpack { r, n } => (usize::from(r), usize::from(n)),
+            Cont::StoreReg(r) => (usize::from(r), 1),
+            _ => (0, 0),
+        };
+        if let Some(regs) = self.stack.get_mut(st.base + r..st.base + r + n) {
+            regs.fill(DEAD);
+        }
         match self.request.take() {
             Some(Request::Host(call)) => {
                 if op_cont != Cont::None {
