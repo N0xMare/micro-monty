@@ -180,7 +180,7 @@ sessions/phase1.codex-sdk-mm.builtins-callbacks	116360067	b-7a502317c6c975b9	k-7
 sessions/phase1.codex-sdk-mm.codec-review	115944824	b-7a502317c6c975b9	k-701f1b4fd63fdc19
 sessions/phase1.codex-sdk-mm.dict-review	114501710	b-7a502317c6c975b9	k-701f1b4fd63fdc19
 sessions/phase1.codex-sdk-mm.fuel-loops	159107972	b-7a502317c6c975b9	k-701f1b4fd63fdc19
-sessions/phase1.codex-sdk-mm.loc-census	22721254	b-2109dc0319033cb4	k-701f1b4fd63fdc19
+sessions/phase1.codex-sdk-mm.loc-census	22887531	b-d5f99c632d5ad4a2	k-701f1b4fd63fdc19
 sessions/phase1.codex-sdk-mm.own-exceptions	73595241	b-2109dc0319033cb4	k-701f1b4fd63fdc19
 sessions/phase1.codex-sdk-mm.snapshot-format	81999151	b-7a502317c6c975b9	k-701f1b4fd63fdc19
 sessions/phase1.codex-sdk-mm.todo-census	26726968	b-7a502317c6c975b9	k-701f1b4fd63fdc19
@@ -211,10 +211,10 @@ sessions/phase1.grok-sdk-mm.builtins-callbacks	457841235	b-7a502317c6c975b9	k-70
 sessions/phase1.grok-sdk-mm.codec-review	499528429	b-7a502317c6c975b9	k-701f1b4fd63fdc19
 sessions/phase1.grok-sdk-mm.dict-review	19061306448	b-7a502317c6c975b9	k-701f1b4fd63fdc19
 sessions/phase1.grok-sdk-mm.fuel-loops	396085086	b-7a502317c6c975b9	k-701f1b4fd63fdc19
-sessions/phase1.grok-sdk-mm.loc-census	55245319	b-7a502317c6c975b9	k-701f1b4fd63fdc19
+sessions/phase1.grok-sdk-mm.loc-census	55536138	b-d5f99c632d5ad4a2	k-701f1b4fd63fdc19
 sessions/phase1.grok-sdk-mm.own-exceptions	110351588	b-7a502317c6c975b9	k-701f1b4fd63fdc19
 sessions/phase1.grok-sdk-mm.snapshot-format	182503420	b-7a502317c6c975b9	k-701f1b4fd63fdc19
-sessions/phase1.grok-sdk-mm.todo-census	71059215	b-7a502317c6c975b9	k-701f1b4fd63fdc19
+sessions/phase1.grok-sdk-mm.todo-census	71419179	b-d5f99c632d5ad4a2	k-701f1b4fd63fdc19
 sessions/phase1.grok-sdk-monty.builtins-callbacks	438159002	b-7a502317c6c975b9	k-701f1b4fd63fdc19
 sessions/phase1.grok-sdk-monty.codec-review	382487713	b-7a502317c6c975b9	k-701f1b4fd63fdc19
 sessions/phase1.grok-sdk-monty.dict-review	732842271	b-7a502317c6c975b9	k-701f1b4fd63fdc19

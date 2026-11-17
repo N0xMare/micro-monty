@@ -3203,6 +3203,43 @@ print('ok')
     }
 }
 
+/// A strict decode error's `object` is a `bytes` copy of a `bytearray`, or
+/// of what follows utf-8-sig's BOM, allocated by the error's own step: at
+/// 256 MiB, 60 caught decodes of 64 MiB and one beside 128 MiB of garbage
+/// raised `MemoryError` where Python 3.14 runs them [M, reviewer]. The
+/// copy's block now waits for one collection (`Vm::oom_defer`). Here at
+/// 64 MiB with 12 MiB inputs and 36 MiB of garbage, the same shapes.
+#[test]
+fn a_decode_errors_copy_beside_garbage_waits_for_a_collection() {
+    for (setup, op) in [
+        ("ba = bytearray(N); ba[-1] = 255", "ba.decode()"),
+        (
+            "b = b'\\xef\\xbb\\xbf' + bytes(N - 4) + b'\\xff'",
+            "b.decode('utf-8-sig')",
+        ),
+    ] {
+        let src = format!(
+            "N = 12 << 20
+{setup}
+n = 0
+for i in range(8):
+    j1 = bytes(N)
+    j2 = bytes(N)
+    j3 = bytes(N)
+    j1 = j2 = j3 = None
+    try:
+        {op}
+    except UnicodeDecodeError as e:
+        n += e.start == N - 1 - (3 if 'sig' in {op:?} else 0)
+print(n)
+"
+        );
+        let (p, out) = run_with(Limits::new().with_memory(64 << 20), &src);
+        assert!(matches!(p, Progress::Complete(_)), "{op}: {p:?}\n{out}");
+        assert_eq!(out, "8\n", "{op}");
+    }
+}
+
 /// A set, dict or list built an item at a time outgrows its tables, which
 /// only a collection frees: at a 64 MiB limit with 12 MB live these raised
 /// where Python 3.14 runs them [M]; at 256 MiB, 3M items of

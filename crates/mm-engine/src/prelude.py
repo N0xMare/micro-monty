@@ -1052,6 +1052,20 @@ def _repr_to(x, d, out):
         out.append(object.__repr__(x))
 
 
+def _unicode_init(e, decode, a, ret):
+    # A Unicode error's arguments that need Python code to be its fields,
+    # one at a time in its constructor's order: a `start` or `end` with its
+    # own `__index__`, or a decode's `bytearray`, whose `bytes` copy is the
+    # field (made a step at a time).
+    import _mm
+    a = list(a)
+    while True:
+        i = _mm.unicode_fields(e, decode, tuple(a))
+        if i is None:
+            return ret
+        a[i] = bytes(a[i]) if i == 1 else _index(a[i])
+
+
 def _exc_str(e):
     args = e.args
     if len(args) == 0:
@@ -1087,6 +1101,16 @@ def _str(a):
     if len(a) == 0:
         return ''
     x = a[0]
+    if isinstance(x, (UnicodeDecodeError, UnicodeEncodeError)):
+        # CPython's order: `reason`'s and `encoding`'s `str()`, which may
+        # run Python code, then `object` checked and the rest from the
+        # fields; joined here, a step at a time for long ones.
+        import _mm
+        u = _mm.unicode_str
+        r = str(u(x, True))
+        c = str(u(x, False))
+        m = u(x)
+        return "'" + c + m + r if m else ''
     if isinstance(x, BaseException):
         return _exc_str(x)
     return _repr_of(x)

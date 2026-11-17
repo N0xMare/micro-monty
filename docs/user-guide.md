@@ -1581,8 +1581,12 @@ differs:
   hook, and nesting deeper than CPython's recursion limit parses.
 - **`dir()`** of a builtin type lists its method table plus a fixed set of
   dunders, not CPython's list exactly. `help()` prints a short stub.
-  `UnicodeEncodeError` and `UnicodeDecodeError` have no `encoding`,
-  `object`, `start`, `end` or `reason` attributes.
+  `UnicodeDecodeError`'s and `UnicodeEncodeError`'s five fields are not
+  in `dir()` or on the class (`hasattr(UnicodeDecodeError, 'start')` is
+  `False`), a value written to an instance's `__dict__` under one of their
+  names shadows it, a class with one of the two as a later base, not
+  its first, has none, and an encode error of a `str` subclass instance
+  holds the plain `str` as its `object`.
 - **SyntaxError text** follows CPython 3.14, except that a misspelt keyword
   gets no "Did you mean", a missing comma gets no "Perhaps you forgot a
   comma?", and a few carets differ.

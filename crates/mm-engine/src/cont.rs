@@ -371,8 +371,23 @@ impl Vm {
                         && self.instance_of(v, cls)
                         && let Some(r) = v.as_obj()
                     {
-                        // `BaseException.__init__` stores the arguments.
+                        // `BaseException.__init__` stores the arguments;
+                        // a Unicode error's `__init__` its fields too, one
+                        // that needs Python code first in the prelude, which
+                        // gives `v` back.
                         self.set_slot_hot(r, exc_slot::ARGS, args);
+                        if let Some(decode) = self.unicode_decode(v)
+                            && self.unicode_init(v, decode, args)?.is_some()
+                        {
+                            let f = self.prelude_fn("_unicode_init")?;
+                            let d = Value::from_bool(decode);
+                            return Ok(Next::Invoke(
+                                f,
+                                Args::of(&[v, d, args, v]),
+                                Value::NONE,
+                                Cont::None,
+                            ));
+                        }
                     }
                     Next::Acc(v)
                 }

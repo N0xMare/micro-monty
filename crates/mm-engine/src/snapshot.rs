@@ -2688,6 +2688,27 @@ fn byte_job_ok(vm: &Vm, v: &dyn Fn(usize) -> Value, w: &dyn Fn(usize) -> u64) ->
         }
         // `[lo:hi] = src` after the growth: `lo` in the bytearray.
         job::GROW if w(W_A) == fin::SPLICE => w(W_A + 1) <= vm.bytearray_data(v(3)).len() as u64,
+        // A strict decode's error (`job::DECODE_ERR`): its source read to
+        // its end from `W_I0`, its copy not yet allocated (nothing written)
+        // or a block of that many bytes, its reason a `str`, and the bytes
+        // it names inside what the copy holds.
+        job::DECODE_ERR => {
+            use crate::bytes::{W_END, W_I0, W_O};
+            let len = w(W_END).saturating_sub(w(W_I0));
+            let block = match v(2) {
+                Value::NONE => w(W_O) == 0,
+                b => b
+                    .as_byte_ref()
+                    .and_then(|b| vm.heap.bytes(b).ok())
+                    .is_some_and(|b| b.len() as u64 == len && w(W_O) <= len),
+            };
+            w(W_END) == vm.job_data(v(0)).len() as u64
+                && block
+                && Vm::is_str(v(1))
+                && w(W_A + 1) <= w(W_A + 2)
+                && w(W_A + 2) <= len
+                && w(W_C) <= 1
+        }
         // A split's pieces counted (`W_C`) are a count; at whitespace, a
         // piece found starts at or before where the search for its end
         // goes on.

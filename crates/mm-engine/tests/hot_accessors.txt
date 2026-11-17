@@ -29,7 +29,7 @@ aio.rs::warn_unawaited
 builtins.rs::bi_int
 builtins.rs::bi_str
 builtins.rs::call_native
-builtins.rs::exc_init
+builtins.rs::exc_init_unbound
 builtins.rs::install
 builtins.rs::sort_by_keys
 builtins.rs::sort_lt

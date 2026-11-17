@@ -681,6 +681,10 @@ impl Vm {
         if self.uflags(e) & crate::class::f::STR != 0 {
             return Err(self.need_py());
         }
+        // From its fields, whatever its arguments.
+        if let Some(s) = self.unicode_str(e, true)? {
+            return Ok(s);
+        }
         let args = self.vslot(e, exc_slot::ARGS);
         let items = args
             .as_obj()
@@ -885,6 +889,9 @@ impl Vm {
             if self.uflags(x) & crate::class::f::STR != 0
                 && !Vm::is_str(self.vslot(x, exc_slot::STR))
             {
+                return true;
+            }
+            if self.unicode_decode(x).is_some() && self.unicode_texts(x).is_none() {
                 return true;
             }
             let args = self.vslot(x, exc_slot::ARGS);

@@ -1,7 +1,7 @@
 //! Exceptions: context chaining, tracebacks as `(code, pc)` pairs, "Did you
 //! mean" hints, and CPython 3.14's traceback text with `~~^~~` carets.
 
-use crate::scratch::NativeIds;
+use crate::scratch::{NativeIds, NativeText};
 use crate::text::char_len;
 use crate::types::{T, ty};
 use crate::vm::{Raised, Vm, exc_slot};
@@ -21,6 +21,8 @@ use mm_core::Value;
 /// the raising frame (NameError), `AttributeError.obj`, or the module an
 /// `ImportError` imported from; `locals` the frame's bound names, one per
 /// line; `note` a fixed micro-monty sentence shown instead of a suggestion.
+/// A `UnicodeDecodeError` or `UnicodeEncodeError`, which has no hint, keeps
+/// its five fields here instead ([`Vm::unicode_init`]).
 const HINT: u32 = 5;
 const PENDING_NAME: i64 = 0;
 const PENDING_ATTR: i64 = 1;
@@ -33,6 +35,9 @@ const PENDING_MODULE: i64 = 2;
 pub(crate) const SELF_HAS_NAME: &str = "\0self";
 /// `ImportError`'s keyword arguments (and attributes besides `msg`).
 const IMPORT_ATTRS: [&str; 3] = ["name", "path", "name_from"];
+/// `UnicodeDecodeError`'s and `UnicodeEncodeError`'s attributes, in the
+/// order of the constructor's arguments.
+pub(crate) const UNICODE_ATTRS: [&str; 5] = ["encoding", "object", "start", "end", "reason"];
 const RECURSIVE_CUTOFF: usize = 3;
 const MAX_CANDIDATES: usize = 750;
 const MAX_STRING: usize = 40;
@@ -578,6 +583,316 @@ impl Vm {
         Ok(Some(s))
     }
 
+    /// Whether `e` is a `UnicodeDecodeError` (`Some(true)`) or a
+    /// `UnicodeEncodeError` (`Some(false)`), or a subclass of one.
+    pub(crate) fn unicode_decode(&self, e: Value) -> Option<bool> {
+        match self.class_base_t(self.vslot(e, exc_slot::TYPE)) {
+            T::UnicodeDecodeError => Some(true),
+            T::UnicodeEncodeError => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Field `i` of [`UNICODE_ATTRS`] as a Unicode error keeps it in its
+    /// [`HINT`] slot, a tuple of the five that its constructor writes:
+    /// `UNDEFINED` where none was set or it was deleted (CPython's `NULL`),
+    /// an int for `start` and `end` (0 until set).
+    pub(crate) fn unicode_raw(&self, e: Value, i: usize) -> Value {
+        let t = self.vslot(e, HINT);
+        if t.is_obj_kind(ty::TUPLE as u8) {
+            self.vslot(t, i as u32)
+        } else if i == 2 || i == 3 {
+            Value::int(0).unwrap_or(Value::NONE)
+        } else {
+            Value::UNDEFINED
+        }
+    }
+
+    /// Field `i` of [`UNICODE_ATTRS`] of a Unicode error, as read: `None`
+    /// where none is set.
+    pub(crate) fn unicode_field(&self, e: Value, i: usize) -> Value {
+        match self.unicode_raw(e, i) {
+            Value::UNDEFINED => Value::NONE,
+            v => v,
+        }
+    }
+
+    /// `v` as CPython's `Py_ssize_t` conversion takes it: the int of an int
+    /// (a bool or an int subclass's included), `OverflowError` past it, and
+    /// `None` for anything else.
+    fn unicode_ssize(&mut self, v: Value) -> Result<Option<Value>, Raised> {
+        let v = self.unbx(v);
+        match self.int_of(v) {
+            Some(i) => self.new_int(i).map(Some),
+            None if Vm::is_heap_int(v) => Err(self.err(
+                T::OverflowError,
+                "Python int too large to convert to C ssize_t",
+            )),
+            None => Ok(None),
+        }
+    }
+
+    /// Sets (`Some`) or deletes field `i` of Unicode error `e`, as CPython's
+    /// members do: `start` and `end` take an int only and cannot be
+    /// deleted; the other three take any value.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    fn unicode_set_field(&mut self, e: Value, i: usize, v: Option<Value>) -> Result<(), Raised> {
+        let v = match (i, v) {
+            (2 | 3, None) => {
+                return Err(self.err(T::TypeError, "can't delete numeric/char attribute"));
+            }
+            (2 | 3, Some(v)) => match self.unicode_ssize(v)? {
+                Some(n) => n,
+                None => return Err(self.err(T::TypeError, "an integer is required")),
+            },
+            (_, None) => Value::UNDEFINED,
+            (_, Some(v)) => v,
+        };
+        let mut t = self.vslot(e, HINT);
+        if !t.is_obj_kind(ty::TUPLE as u8) {
+            let zero = Value::int(0).unwrap_or(Value::NONE);
+            let unset = Value::UNDEFINED;
+            t = self.alloc_tuple(&[unset, unset, zero, zero, unset])?;
+            if let Some(r) = e.as_obj() {
+                self.set_slot(r, HINT, t);
+            }
+        }
+        if let Some(r) = t.as_obj() {
+            self.set_slot(r, i as u32, v);
+        }
+        Ok(())
+    }
+
+    /// `e.name = v` (`Some`) or `del e.name` of field `i` of
+    /// [`UNICODE_ATTRS`] of a Unicode error; `false` for other exceptions,
+    /// and where a user class defines the name, which hides the member as
+    /// in CPython (the instance's dict takes it).
+    pub(crate) fn unicode_attr_set(
+        &mut self,
+        e: Value,
+        i: usize,
+        v: Option<Value>,
+    ) -> Result<bool, Raised> {
+        let c = self.class_of(e);
+        if self.unicode_decode(e).is_none()
+            || (Vm::is_class(c)
+                && self
+                    .find_interned(UNICODE_ATTRS[i])
+                    .is_some_and(|k| self.class_lookup(c, k).is_some()))
+        {
+            return Ok(false);
+        }
+        self.unicode_set_field(e, i, v)?;
+        Ok(true)
+    }
+
+    /// `encoding` or `reason` (field `i`) of a Unicode error for its
+    /// `str()`: `UNDEFINED` when unset (shown as `<NULL>`), the `str` it is
+    /// or extends without a `__str__` of its own, else `None`: its `str()`
+    /// may run Python code or be another exception's, which may lead back
+    /// here, so the prelude's `_str` takes it.
+    pub(crate) fn unicode_text(&self, e: Value, i: usize) -> Option<Value> {
+        match self.unicode_raw(e, i) {
+            Value::UNDEFINED => Some(Value::UNDEFINED),
+            v => {
+                let v = self.str_backing(v).unwrap_or(v);
+                Vm::is_str(v).then_some(v)
+            }
+        }
+    }
+
+    /// `reason` and `encoding` when `str()` takes them as they are: both
+    /// `str`s (or unset, `<NULL>`) of at most 1 MiB together. Else `str()`
+    /// and an uncaught error's report ([`Vm::exc_needs_py`]) go through
+    /// the prelude, which joins them a step at a time. Out of line: inlined
+    /// in both callers it was 80 B more native code [M].
+    #[inline(never)]
+    pub(crate) fn unicode_texts(&self, e: Value) -> Option<(Value, Value)> {
+        let (r, c) = (self.unicode_text(e, 4)?, self.unicode_text(e, 0)?);
+        let len = |v: Value| {
+            if Vm::is_str(v) {
+                self.str_bytes(v).len()
+            } else {
+                0
+            }
+        };
+        (len(r) + len(c) <= 1 << 20).then_some((r, c))
+    }
+
+    /// `str()` of a `UnicodeDecodeError` or `UnicodeEncodeError`, from its
+    /// fields as CPython's: empty without an `object` (an instance its
+    /// constructor never saw); one byte or character named when
+    /// `start..end` is one inside `object`, else the range. `whole`: with
+    /// `encoding` and `reason` as they are, when both are `str`s (or unset,
+    /// `<NULL>`) of at most a piece together, else `need_py`; without, the
+    /// middle alone, which the prelude's `_str` joins a step at a time with
+    /// their `str()`, taken first as CPython takes them, before `object` is
+    /// checked. `None` for other exceptions.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub(crate) fn unicode_str(
+        &mut self,
+        e: Value,
+        whole: bool,
+    ) -> Result<Option<NativeText>, Raised> {
+        let Some(decode) = self.unicode_decode(e) else {
+            return Ok(None);
+        };
+        let mut s = NativeText::default();
+        let object = self.unicode_raw(e, 1);
+        if object == Value::UNDEFINED {
+            return Ok(Some(s));
+        }
+        let mut texts = None;
+        if whole {
+            texts = match self.unicode_texts(e) {
+                Some(t) => Some(t),
+                None => return Err(self.need_py()),
+            };
+        }
+        let object = self.unbx(object);
+        let len = if decode && Vm::is_bytes(object) {
+            self.bytes_data(object).len()
+        } else if !decode && Vm::is_str(object) {
+            self.str_len(object)
+        } else {
+            let msg = if decode {
+                "UnicodeError 'object' attribute must be a bytes"
+            } else {
+                "UnicodeError 'object' attribute must be a string"
+            };
+            return Err(self.err(T::TypeError, msg));
+        };
+        let field = |vm: &Vm, i: usize| vm.int_of(vm.unicode_raw(e, i)).unwrap_or(0);
+        let (start, end) = (field(self, 2), field(self, 3));
+        if let Some((_, encoding)) = texts {
+            s.push(self, "'")?;
+            self.unicode_push(&mut s, encoding)?;
+        }
+        let one = usize::try_from(start)
+            .ok()
+            .filter(|&i| i < len && start.checked_add(1) == Some(end));
+        let what = match one {
+            Some(i) if decode => {
+                let byte = self.bytes_data(object).get(i).copied().unwrap_or(0);
+                format!("' codec can't decode byte 0x{byte:02x} in position {start}: ")
+            }
+            Some(i) => {
+                // Read from the bytes: `str_ref_o` would validate all of
+                // `object` for one char.
+                let at = self.str_offset(object, i);
+                let ch = crate::strmeth::char_at(self.str_bytes(object), at).map_or('\0', |c| c.0);
+                format!(
+                    "' codec can't encode character '{}' in position {start}: ",
+                    crate::bytes::escaped_char(ch)
+                )
+            }
+            None => format!(
+                "' codec can't {} in position {start}-{}: ",
+                if decode {
+                    "decode bytes"
+                } else {
+                    "encode characters"
+                },
+                end.wrapping_sub(1)
+            ),
+        };
+        s.push(self, &what)?;
+        if let Some((reason, _)) = texts {
+            self.unicode_push(&mut s, reason)?;
+        }
+        Ok(Some(s))
+    }
+
+    /// `encoding` or `reason` as [`Vm::unicode_text`] gave it, into `s`.
+    fn unicode_push(&mut self, s: &mut NativeText, v: Value) -> Result<(), Raised> {
+        if v == Value::UNDEFINED {
+            s.push(self, "<NULL>")
+        } else {
+            s.push_value(self, v)
+        }
+    }
+
+    /// CPython's `UnicodeDecodeError.__init__` (`decode`) or
+    /// `UnicodeEncodeError.__init__` on arguments `a`, a tuple (`e`'s
+    /// `args`, or what the prelude's `_unicode_init` made of them): five,
+    /// checked in its order (a decode's `object` last), kept as `e`'s
+    /// fields. `Some(i)` when argument `i` needs Python code first, and
+    /// nothing is kept: a `start` or `end` with its own `__index__`, or a
+    /// decode's bytes-like `object` that is not a `bytes` (its copy is the
+    /// field, made by `bytes()` a step at a time). Out of line: the call
+    /// paths that reach it stay as they were for every other type.
+    #[cold]
+    #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub(crate) fn unicode_init(
+        &mut self,
+        e: Value,
+        decode: bool,
+        a: Value,
+    ) -> Result<Option<usize>, Raised> {
+        let n = self.tuple_len(a);
+        if n != 5 {
+            let msg = format!("function takes exactly 5 arguments ({n} given)");
+            return Err(self.err(T::TypeError, &msg));
+        }
+        let order = if decode {
+            [0, 2, 3, 4, 1]
+        } else {
+            [0, 1, 2, 3, 4]
+        };
+        let mut fields = [Value::NONE; 5];
+        for i in order {
+            let v = self.vslot(a, i as u32);
+            let b = self.unbx(v);
+            fields[i] = match i {
+                2 | 3 => match self.unicode_ssize(v)? {
+                    Some(n) => n,
+                    None if self.uflags(v) & crate::class::f::INDEX != 0 => return Ok(Some(i)),
+                    None => {
+                        let msg = format!(
+                            "'{}' object cannot be interpreted as an integer",
+                            self.type_name(v)
+                        );
+                        return Err(self.err(T::TypeError, &msg));
+                    }
+                },
+                1 if decode && Vm::is_bytes(b) => v,
+                1 if decode && Vm::is_bytearray(b) => return Ok(Some(1)),
+                1 if decode => return self.need_bytes(v).map(|_| None),
+                _ if Vm::is_str(b) => v,
+                _ => {
+                    let tn = if v == Value::NONE {
+                        "None"
+                    } else {
+                        self.type_name(v)
+                    };
+                    let msg = format!("argument {} must be str, not {tn}", i + 1);
+                    return Err(self.err(T::TypeError, &msg));
+                }
+            };
+        }
+        let t = self.alloc_tuple(&fields)?;
+        if let Some(r) = e.as_obj() {
+            self.set_slot(r, HINT, t);
+        }
+        Ok(None)
+    }
+
+    /// Unicode error `e` made from its `args`, its fields kept
+    /// ([`Vm::unicode_init`]); one that needs Python code first goes on in
+    /// the prelude's `_unicode_init`, which gives `e` back.
+    #[cold]
+    #[inline(never)]
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub(crate) fn unicode_new(&mut self, e: Value, decode: bool) -> Result<Value, Raised> {
+        let a = self.vslot(e, exc_slot::ARGS);
+        if self.unicode_init(e, decode, a)?.is_none() {
+            return Ok(e);
+        }
+        let d = Value::from_bool(decode);
+        self.prelude_request("_unicode_init", vec![e, d, a, e], crate::cont::Cont::None)
+    }
+
     /// `NameError.name`, `AttributeError.name` and `AttributeError.obj`;
     /// `None` for other attributes and exceptions.
     pub(crate) fn exc_name_attr(&mut self, e: Value, attr: &str) -> Option<Value> {
@@ -715,8 +1030,9 @@ impl Vm {
     /// an `ImportError`'s from the module.
     pub(crate) fn hint_of(&mut self, exc: Value, with_tb: bool) -> Value {
         let h = self.vslot(exc, HINT);
-        if !h.is_obj_kind(ty::TUPLE as u8) {
-            return h;
+        // A Unicode error's tuple there is its fields.
+        if !h.is_obj_kind(ty::TUPLE as u8) || self.unicode_decode(exc).is_some() {
+            return if Vm::is_str(h) { h } else { Value::NONE };
         }
         let p = self.tuple_items(h);
         if p.len() != 5 {

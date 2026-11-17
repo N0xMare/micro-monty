@@ -177,6 +177,20 @@ hashes are pre-release history, kept in the private archive
   so the copy is the class called with nothing, the attributes, then each
   item of `items()` stored with `[]` (0.0.2's known issue, among the
   smaller differences). The build id moves.
+- `UnicodeDecodeError` and `UnicodeEncodeError` have CPython's `encoding`,
+  `object`, `start`, `end` and `reason` (0.0.2's known issue: they had
+  none, and `args` was one message). `args` is those five for the codecs'
+  own errors and for constructed ones. The two types have their own
+  `__init__` and `__str__`: `__init__` checks the arguments as CPython's
+  does and keeps the five fields, which a later `args` does not change,
+  and the members check what is assigned to them; `str()` is made from
+  the fields. `object` is the value of the `str` an encode was given
+  and a `bytes` equal to what a decode read: the input itself when it is
+  a `bytes`, else a copy (of a `bytearray`, or of what follows
+  utf-8-sig's BOM) made once, a step at a time, which waits for a
+  collection beside garbage.
+  `xml.etree.ElementTree` reports ill-formed bytes as `ParseError` (it
+  reads `e.start`, and raised `AttributeError`). The build id moves.
 
 ### Known issues
 
@@ -221,6 +235,13 @@ hashes are pre-release history, kept in the private archive
   futures, a gather of two pending futures ends done with `[None, None]`.
   python3.14 reports `TypeError: '_GatheringFuture' object is not
   callable` for each and the gather waits for its children.
+- A `UnicodeEncodeError` raised by encoding an instance of a `str`
+  subclass holds the plain `str` as its `object`, where CPython's holds
+  the instance itself (`e.object is s`).
+- `gen.throw(UnicodeDecodeError)`, the class with no arguments, raises
+  its constructor's `TypeError` at the caller, where CPython raises it
+  inside the generator. A user class whose `__init__` needs an argument
+  is thrown in without its `__init__` run, as in 0.0.2.
 
 ## 0.0.2 (2026-11-18)
 

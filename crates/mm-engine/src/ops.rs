@@ -3657,7 +3657,7 @@ impl Vm {
             }
             if t == T::type_ {
                 // `str.upper`: the unbound method descriptor.
-                return Ok(Value::native(f));
+                return Ok(Value::native(crate::builtins::unbound(f)));
             }
             let r = {
                 let res = self

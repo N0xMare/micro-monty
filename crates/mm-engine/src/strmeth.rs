@@ -633,7 +633,7 @@ fn strip_impl(
 }
 
 /// The char at byte `i` of valid UTF-8 `h` and the byte after it.
-fn char_at(h: &[u8], i: usize) -> Option<(char, usize)> {
+pub(crate) fn char_at(h: &[u8], i: usize) -> Option<(char, usize)> {
     let e = ceil_char(h, i + 1);
     let w = h.get(i..e)?;
     let c = match w {

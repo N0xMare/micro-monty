@@ -1425,7 +1425,11 @@ impl Vm {
                     return self.exc_with_kwargs(t, args, npos, kwnames).map(Some);
                 }
                 let items: Vec<Value> = self.stack[args..args + npos].to_vec();
-                return Ok(Some(self.new_exception(t, &items)?));
+                let e = self.new_exception(t, &items)?;
+                if matches!(t, T::UnicodeDecodeError | T::UnicodeEncodeError) {
+                    return self.unicode_new(e, t == T::UnicodeDecodeError).map(Some);
+                }
+                return Ok(Some(e));
             }
             if let Some(c) = self.ctor_of(t) {
                 self.ensure_stack(top + npos + nkw + 64)?;
@@ -1738,6 +1742,11 @@ impl Vm {
                 if (!pos.is_empty() || !kws.is_empty()) && !self.class_base_t(cls).is_exception() {
                     let msg = format!("{}() takes no arguments", self.class_name(cls));
                     return Err(self.err(T::TypeError, &msg));
+                }
+                if inst.is_obj_kind(ty::EXC as u8)
+                    && let Some(decode) = self.unicode_decode(inst)
+                {
+                    return self.unicode_new(inst, decode).map(Some);
                 }
                 return Ok(Some(inst));
             };
@@ -2746,7 +2755,12 @@ impl Vm {
         if let Some(t) = self.type_of_typeobj_hot(v)
             && t.is_exception()
         {
-            return self.new_exception(t, &[]);
+            let e = self.new_exception(t, &[])?;
+            if matches!(t, T::UnicodeDecodeError | T::UnicodeEncodeError) {
+                // No arguments: `TypeError`.
+                return self.unicode_new(e, t == T::UnicodeDecodeError);
+            }
+            return Ok(e);
         }
         if Vm::is_class(v) && self.class_base_t(v).is_exception() {
             return self.alloc_of_class(v, &[]);

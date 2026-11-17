@@ -181,20 +181,11 @@ def getdecoder(encoding):
 
 
 def _span(exc, kinds):
-    # (object, start, end) of a UnicodeError. micro-monty's own codec errors
-    # carry only their message, so only one constructed with all five
-    # arguments (encoding, object, start, end, reason) can be handled.
+    # (object, start, end) of a UnicodeError.
     if not isinstance(exc, kinds):
         raise TypeError("don't know how to handle %s in error callback"
                         % type(exc).__name__)
-    try:
-        return exc.object, exc.start, exc.end
-    except AttributeError:
-        pass
-    if len(exc.args) == 5:
-        return exc.args[1], exc.args[2], exc.args[3]
-    raise TypeError("micro-monty: this %s has no object, start and end"
-                    % type(exc).__name__)
+    return exc.object, exc.start, exc.end
 
 
 def strict_errors(exc):

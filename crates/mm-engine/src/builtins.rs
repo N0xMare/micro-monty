@@ -190,6 +190,26 @@ macro_rules! m {
     };
 }
 
+/// The module of a method's unbound twin: a native with an owner that no
+/// method lookup finds ([`pack`] puts it among the functions), which a type
+/// gives for `T.name` in place of the method ([`unbound`]).
+const UNBOUND: &str = "";
+
+macro_rules! u {
+    ($name:literal, $owner:expr, $min:expr, $max:expr, $params:expr, $kw:expr, $f:expr) => {
+        Def {
+            name: $name,
+            owner: $owner,
+            min: $min,
+            max: $max,
+            params: $params,
+            kwonly: $kw,
+            module: Some(UNBOUND),
+            f: $f,
+        }
+    };
+}
+
 const NO: &[&str] = &[];
 const L: Option<T> = Some(T::list);
 const D: Option<T> = Some(T::dict);
@@ -201,6 +221,8 @@ const FS: Option<T> = Some(T::frozenset);
 const IO: Option<T> = Some(T::TextIOWrapper);
 const OB: Option<T> = Some(T::object);
 const BE: Option<T> = Some(T::BaseException);
+const UD: Option<T> = Some(T::UnicodeDecodeError);
+const UE: Option<T> = Some(T::UnicodeEncodeError);
 const GE: Option<T> = Some(T::generator);
 const AG: Option<T> = Some(T::async_generator);
 const CO: Option<T> = Some(T::coroutine);
@@ -490,6 +512,12 @@ const DEFS: &[Def] = &[
     // BaseException
     n!("__init__", BE, 1, VAR, NO, &["**"], exc_init),
     n!("__str__", BE, 1, 1, NO, NO, exc_str_m),
+    u!("__init__", BE, 1, VAR, NO, &["**"], exc_init_unbound),
+    u!("__str__", BE, 1, 1, NO, NO, exc_str_unbound),
+    n!("__init__", UD, 1, VAR, NO, &["**"], unicode_decode_init),
+    n!("__init__", UE, 1, VAR, NO, &["**"], unicode_encode_init),
+    n!("__str__", UD, 1, 1, NO, NO, unicode_decode_str),
+    n!("__str__", UE, 1, 1, NO, NO, unicode_encode_str),
     n!("__repr__", BE, 1, 1, NO, NO, object_repr),
     n!("with_traceback", BE, 2, 2, NO, NO, exc_with_traceback),
     n!("add_note", BE, 2, 2, NO, NO, exc_add_note),
@@ -1321,6 +1349,9 @@ const DEFS: &[Def] = &[
     // because those are bound at startup (1,464 instructions [M]).
     m!("_mm", "exc_match_part", 4, 4, NO, NO, mm_exc_match_part),
     m!("_mm", "exc_name", 1, 1, NO, NO, crate::mmmod::mm_exc_name),
+    // The prelude's, here because prelude natives are bound at startup.
+    m!("_mm", "unicode_fields", 3, 3, NO, NO, mm_unicode_fields),
+    m!("_mm", "unicode_str", 1, 2, NO, NO, mm_unicode_str),
     m!(
         "_mm",
         "make_class",
@@ -1797,6 +1828,13 @@ static MODULES: [Sref; PACKED.modules_len] = prefix(&PACKED.modules);
 /// `NATIVES[OWNER_START[t]..OWNER_START[t + 1]]` are type `t`'s methods.
 static OWNER_START: [u16; crate::types::NTYPES + 1] = PACKED.owner_start;
 
+/// The first method's index: below it are functions and the unbound twins,
+/// none owned by a type [`Vm::is_bx_type`] accepts ([`pack`] asserts it).
+const FIRST_METHOD: u32 = PACKED.owner_start[0] as u32;
+
+/// (method, its unbound twin) pairs ([`unbound`]).
+static TWIN_PAIRS: [(u16, u16); TWINS] = PACKED.twins;
+
 const COUNT: usize = DEFS.len();
 const STR_CAP: usize = str_cap();
 const LIST_CAP: usize = list_cap();
@@ -1848,7 +1886,11 @@ struct Packed {
     strs: [Sref; STR_CAP],
     strs_len: usize,
     owner_start: [u16; crate::types::NTYPES + 1],
+    twins: [(u16, u16); TWINS],
 }
+
+/// How many methods have an unbound twin ([`UNBOUND`]).
+const TWINS: usize = 2;
 
 #[allow(
     clippy::large_const_arrays,
@@ -1865,6 +1907,11 @@ const fn prefix<E: Copy, const N: usize, const M: usize>(a: &[E; M]) -> [E; N] {
         i += 1;
     }
     out
+}
+
+/// Is `d` a method's unbound twin ([`UNBOUND`])?
+const fn is_unbound(d: &Def) -> bool {
+    matches!(d.module, Some(m) if m.is_empty())
 }
 
 /// The order of [`NATIVES`]: `a` (a method) before `b`?
@@ -2021,13 +2068,14 @@ const fn pack() -> Packed {
         strs: [none; STR_CAP],
         strs_len: 0,
         owner_start: [0; crate::types::NTYPES + 1],
+        twins: [(0, 0); TWINS],
     };
     // The order: functions as written, then methods (insertion sort).
     let mut order = [0u16; COUNT];
     let mut n = 0;
     let mut i = 0;
     while i < COUNT {
-        if DEFS[i].owner.is_none() {
+        if DEFS[i].owner.is_none() || is_unbound(&DEFS[i]) {
             order[n] = i as u16;
             n += 1;
         }
@@ -2036,7 +2084,7 @@ const fn pack() -> Packed {
     let functions = n;
     i = 0;
     while i < COUNT {
-        if DEFS[i].owner.is_some() {
+        if DEFS[i].owner.is_some() && !is_unbound(&DEFS[i]) {
             let mut j = n;
             while j > functions && method_before(&DEFS[i], &DEFS[order[j - 1] as usize]) {
                 order[j] = order[j - 1];
@@ -2089,6 +2137,37 @@ const fn pack() -> Packed {
         p.owner_start[t] = k as u16;
         t += 1;
     }
+    // Each unbound twin with the method it stands for: (method, twin).
+    let mut n = 0;
+    let mut u = 0;
+    while u < functions {
+        let d = &DEFS[order[u] as usize];
+        if is_unbound(d) {
+            let mut m = functions;
+            while m < COUNT {
+                let e = &DEFS[order[m] as usize];
+                if !method_before(d, e) && !method_before(e, d) {
+                    p.twins[n] = (m as u16, u as u16);
+                    n += 1;
+                }
+                m += 1;
+            }
+        }
+        u += 1;
+    }
+    assert!(n == TWINS, "every unbound twin names one method");
+    // `call_native` skips the swap for a subclass instance below the first
+    // method, so nothing there may be owned by a type the swap applies to.
+    k = 0;
+    while k < functions {
+        if let Some(o) = p.natives[k].owner {
+            assert!(
+                !Vm::is_bx_type(o),
+                "a boxed type's native among the functions"
+            );
+        }
+        k += 1;
+    }
     p
 }
 
@@ -2104,6 +2183,22 @@ pub(crate) fn is_classmethod(n: &Native) -> bool {
             | (Some(T::dict), "fromkeys")
             | (Some(T::complex), "from_number")
     )
+}
+
+/// What a lookup along a class's MRO gives for method `f`: its unbound
+/// twin when it has one. A plain `UnicodeDecodeError`'s `__init__` and
+/// `__str__` are found in `BaseException`'s table (`Vm::method_owner`) and
+/// go on to the type's own; found through a class (`Exception.__init__(e,
+/// msg)`, `super().__init__`), where the type's own would have come first,
+/// they are `BaseException`'s alone.
+#[cfg_attr(mm_shipped, optimize(size))]
+pub(crate) fn unbound(f: u32) -> u32 {
+    for &(m, u) in &TWIN_PAIRS {
+        if u32::from(m) == f {
+            return u32::from(u);
+        }
+    }
+    f
 }
 
 /// The builtin with table index `i`.
@@ -2172,7 +2267,7 @@ pub(crate) fn methods_of(owner: T) -> &'static [Native] {
 }
 
 /// `t.__dict__` for builtin type `t`: a new dict of its method-table
-/// entries. CPython's is a read-only mappingproxy that also holds the
+/// entries, as a lookup through the type gives them ([`unbound`]). CPython's is a read-only mappingproxy that also holds the
 /// slot wrappers and data descriptors the table does not.
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn type_dict(vm: &mut Vm, owner: T) -> Result<Value, Raised> {
@@ -2189,7 +2284,7 @@ pub(crate) fn type_dict(vm: &mut Vm, owner: T) -> Result<Value, Raised> {
             for i in u32::from(lo)..u32::from(hi) {
                 if let Some(n) = native(i) {
                     let k = vm.intern(n.name())?;
-                    vm.dict_set(d, k, Value::native(i))?;
+                    vm.dict_set(d, k, Value::native(unbound(i)))?;
                 }
             }
         }
@@ -2390,8 +2485,10 @@ impl Vm {
             return Err(self.err(T::SystemError, "bad builtin"));
         };
         // A builtin type's method called on an instance of a subclass
-        // works on the value the instance extends.
-        if let Some(o) = n.owner
+        // works on the value the instance extends. The index test first:
+        // most calls are functions, and it keeps them off the owner's load.
+        if idx >= FIRST_METHOD
+            && let Some(o) = n.owner
             && Vm::is_bx_type(o)
             && npos > 0
             && let Some(b) = self.backing_hot(self.stack[base as usize])
@@ -6601,6 +6698,15 @@ fn object_init_subclass(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 // ------------------------------------------------------- exceptions
 
 fn exc_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    if let Some(decode) = plain_unicode_error(vm, vm.arg_o(&a, 0)) {
+        return unicode_init_m(vm, a, decode);
+    }
+    exc_init_unbound(vm, a)
+}
+
+/// `BaseException.__init__` as a type gives it (`Exception.__init__(e,
+/// ...)`): the arguments only, whatever `e` is ([`UNBOUND`]).
+fn exc_init_unbound(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let e = vm.arg_o(&a, 0);
     let rest: Vec<Value> = (1..a.n).map(|i| vm.arg_o(&a, i)).collect();
     let t = vm.alloc_tuple_hot(&rest)?;
@@ -6620,8 +6726,140 @@ fn exc_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::NONE)
 }
 
+fn unicode_decode_str(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    unicode_str_m(vm, a, true)
+}
+
+fn unicode_encode_str(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    unicode_str_m(vm, a, false)
+}
+
+/// `self` of a method `name` of `UnicodeDecodeError` (`decode`) or
+/// `UnicodeEncodeError`: CPython's `TypeError` for anything else.
+fn unicode_self(vm: &mut Vm, e: Value, decode: bool, name: &str) -> Result<mm_core::Ref, Raised> {
+    if let Some(r) = e.as_obj().filter(|_| vm.unicode_decode(e) == Some(decode)) {
+        return Ok(r);
+    }
+    let msg = format!(
+        "descriptor '{name}' requires a '{}' object but received a '{}'",
+        if decode {
+            "UnicodeDecodeError"
+        } else {
+            "UnicodeEncodeError"
+        },
+        vm.type_name(e)
+    );
+    Err(vm.err(T::TypeError, &msg))
+}
+
+/// `UnicodeDecodeError.__str__` (`decode`) and `UnicodeEncodeError.__str__`:
+/// from the fields (`BaseException.__str__` is the arguments'), in the
+/// prelude's `_str`, which `str()` reaches when a field's `str()` needs
+/// Python code (an explicit `__str__` call is rare; `str()` stays native).
+#[cfg_attr(mm_shipped, optimize(size))]
+fn unicode_str_m(vm: &mut Vm, a: CallArgs, decode: bool) -> Result<Value, Raised> {
+    let e = vm.arg_o(&a, 0);
+    unicode_self(vm, e, decode, "__str__")?;
+    let t = vm.alloc_tuple(&[e])?;
+    vm.prelude_request("_str", alloc::vec![t], Cont::None)
+}
+
+/// Whether `e` is a `UnicodeDecodeError` (`Some(true)`) or
+/// `UnicodeEncodeError` of no user class. A method of an exception
+/// instance is looked up in `BaseException`'s table (`Vm::method_owner`:
+/// a test there for the two costs the dispatch loop's registers 6% of
+/// fib's Ir [M]), so their `__init__` and `__str__` start in
+/// `BaseException`'s. A user subclass reaches theirs through its class;
+/// `BaseException.__init__(e, ...)` and `BaseException.__str__(e)` through a
+/// type are the unbound twins, which do not look ([`unbound`]).
+fn plain_unicode_error(vm: &Vm, e: Value) -> Option<bool> {
+    if !e.is_obj_kind(ty::EXC as u8) {
+        return None;
+    }
+    let c = vm.vslot(e, crate::vm::exc_slot::TYPE);
+    if Vm::is_class(c) {
+        return None;
+    }
+    vm.unicode_decode(e)
+}
+
+fn unicode_decode_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    unicode_init_m(vm, a, true)
+}
+
+fn unicode_encode_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    unicode_init_m(vm, a, false)
+}
+
+/// `UnicodeDecodeError.__init__` (`decode`) and `UnicodeEncodeError.__init__`:
+/// `BaseException.__init__`'s `args`, then the five fields from them.
+#[cfg_attr(mm_shipped, optimize(size))]
+fn unicode_init_m(vm: &mut Vm, a: CallArgs, decode: bool) -> Result<Value, Raised> {
+    let e = vm.arg_o(&a, 0);
+    let r = unicode_self(vm, e, decode, "__init__")?;
+    let kw = vm.kwarg(&a, 0);
+    if kw.is_obj_kind(ty::DICT as u8) && vm.dict_len(kw) > 0 {
+        let c = vm.class_of(e);
+        let msg = format!("{}() takes no keyword arguments", vm.class_name(c));
+        return Err(vm.err(T::TypeError, &msg));
+    }
+    let rest: Vec<Value> = (1..a.n).map(|i| vm.arg_o(&a, i)).collect();
+    let t = vm.alloc_tuple(&rest)?;
+    vm.set_slot(r, crate::vm::exc_slot::ARGS, t);
+    if vm.unicode_init(e, decode, t)?.is_none() {
+        return Ok(Value::NONE);
+    }
+    let d = Value::from_bool(decode);
+    vm.prelude_request(
+        "_unicode_init",
+        alloc::vec![e, d, t, Value::NONE],
+        Cont::None,
+    )
+}
+
+/// `_mm.unicode_fields(e, decode, a)`: [`Vm::unicode_init`] on the five
+/// arguments `a`: `None` once kept, else the index of the one the prelude
+/// converts first.
+#[cfg_attr(mm_shipped, optimize(size))]
+fn mm_unicode_fields(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let (e, d, t) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1), vm.arg_o(&a, 2));
+    Ok(match vm.unicode_init(e, d == Value::TRUE, t)? {
+        Some(i) => Value::int(i as i64).unwrap_or(Value::NONE),
+        None => Value::NONE,
+    })
+}
+
+/// `_mm.unicode_str(e, reason)`: what the prelude's `_str` takes `str()` of
+/// for Unicode error `e`'s `reason` (`True`) or `encoding`: `''` without an
+/// `object`, `'<NULL>'` unset, else the field. `_mm.unicode_str(e)`: the
+/// middle of `str(e)`, between those two ([`Vm::unicode_str`]).
+#[cfg_attr(mm_shipped, optimize(size))]
+fn mm_unicode_str(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let e = vm.arg_o(&a, 0);
+    if a.n == 1 {
+        let s = vm.unicode_str(e, false)?.unwrap_or_default();
+        return vm.new_str(&s);
+    }
+    let i = if vm.arg_o(&a, 1) == Value::TRUE { 4 } else { 0 };
+    match (vm.unicode_raw(e, 1), vm.unicode_raw(e, i)) {
+        (Value::UNDEFINED, _) => vm.new_str(""),
+        (_, Value::UNDEFINED) => vm.new_str("<NULL>"),
+        (_, v) => Ok(v),
+    }
+}
+
 #[cfg_attr(mm_shipped, optimize(size))]
 fn exc_str_m(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    if let Some(decode) = plain_unicode_error(vm, vm.arg_o(&a, 0)) {
+        return unicode_str_m(vm, a, decode);
+    }
+    exc_str_unbound(vm, a)
+}
+
+/// `BaseException.__str__` as a type gives it: from the arguments, whatever
+/// `e` is ([`UNBOUND`]).
+#[cfg_attr(mm_shipped, optimize(size))]
+fn exc_str_unbound(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let e = vm.arg_o(&a, 0);
     if let Some(s) = vm.syntax_str(e)? {
         return vm.new_str(&s);

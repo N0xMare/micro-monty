@@ -534,7 +534,7 @@ impl Vm {
                 } else {
                     self.type_of_typeobj_hot(k)
                         .and_then(|t| crate::builtins::method_index(t, s))
-                        .map(Value::native)
+                        .map(|f| Value::native(crate::builtins::unbound(f)))
                 };
                 if v.is_some() {
                     return v;
@@ -545,7 +545,7 @@ impl Vm {
         let mut t = self.type_of_typeobj_hot(c)?;
         loop {
             if let Some(f) = crate::builtins::method_index(t, s) {
-                return Some(Value::native(f));
+                return Some(Value::native(crate::builtins::unbound(f)));
             }
             if t == T::object {
                 return None;
@@ -561,7 +561,8 @@ impl Vm {
             return self.dict_get_str(d, name);
         }
         let t = self.type_of_typeobj_hot(k)?;
-        crate::builtins::method_index(t, self.str_bytes_hot(name)).map(Value::native)
+        crate::builtins::method_index(t, self.str_bytes_hot(name))
+            .map(|f| Value::native(crate::builtins::unbound(f)))
     }
 
     /// The dunder `name` of `v`'s user class, if Python code defines it.
@@ -1261,7 +1262,7 @@ impl Vm {
 
     /// Can user classes extend builtin type `t` (instances wrap a value of
     /// it, see [`inst::BACK`])?
-    pub(crate) fn is_bx_type(t: T) -> bool {
+    pub(crate) const fn is_bx_type(t: T) -> bool {
         matches!(
             t,
             T::tuple | T::list | T::dict | T::set | T::int | T::str | T::float | T::bytes
@@ -1614,6 +1615,14 @@ impl Vm {
 
     /// Deletes an attribute stored on the instance; `false` if absent.
     pub(crate) fn inst_del(&mut self, o: Value, name: Value) -> Result<bool, Raised> {
+        if o.is_obj_kind(ty::EXC as u8)
+            && let Some(i) = crate::exc::UNICODE_ATTRS
+                .iter()
+                .position(|&a| a == self.str_ref(name))
+            && self.unicode_attr_set(o, i, None)?
+        {
+            return Ok(true);
+        }
         if self.inst_get(o, name).is_none() {
             return Ok(false);
         }
@@ -2061,6 +2070,11 @@ impl Vm {
             {
                 Some(self.syntax_attr(obj, n))
             }
+            n if let Some(i) = crate::exc::UNICODE_ATTRS.iter().position(|&a| a == n)
+                && self.unicode_decode(obj).is_some() =>
+            {
+                Some(self.unicode_field(obj, i))
+            }
             "name" => self.exc_name_attr(obj, "name"),
             "obj" => self.exc_name_attr(obj, "obj"),
             "code" => self.exit_code(obj),
@@ -2506,7 +2520,14 @@ impl Vm {
             "__traceback__" => self.set_traceback(e, v)?,
             "name" => return self.set_exc_name_attr(e, "name", v),
             "obj" => return self.set_exc_name_attr(e, "obj", v),
-            _ => return Ok(false),
+            n => {
+                // The name first: every exception's attribute stores come
+                // here.
+                let Some(i) = crate::exc::UNICODE_ATTRS.iter().position(|&a| a == n) else {
+                    return Ok(false);
+                };
+                return self.unicode_attr_set(e, i, Some(v));
+            }
         }
         Ok(true)
     }

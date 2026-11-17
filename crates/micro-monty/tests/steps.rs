@@ -2050,6 +2050,46 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "c = b.copy()",
         1,
     ),
+    // A strict codec error. A decode's `object` is a `bytes` of what the
+    // codec read: of a `bytearray`, a copy made a step at a time
+    // (`job::DECODE_ERR`) before the error is raised. An encode's `str()`
+    // finds its one char from the nearer end, as `s[i]` does (6 ms [M]).
+    (
+        Row::Bounded,
+        "b = bytearray(67_108_864)\nb[-1] = 255",
+        "try:\n    b.decode()\nexcept UnicodeDecodeError as e:\n    n = e.start",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "s = '\\xe9' * 16_000_000 + '\\u20ac' + '\\xe9' * 16_000_000",
+        "try:\n    s.encode('latin-1')\nexcept UnicodeEncodeError as e:\n    t = str(e)",
+        1,
+    ),
+    // The fields are kept by the constructor: a read and `str()` do not
+    // look at `args`, however long (one `str(e)` with 8M `args` was a
+    // 285-298 ms step for 14 units on the first form [M, reviewer]). A
+    // `bytearray` given is copied once, a step at a time, by `bytes()`.
+    (
+        Row::Bounded,
+        "t = (0,) * 8_000_000\ne = UnicodeDecodeError('u', b'abc', 0, 1, 'r')\ne.args = t",
+        "s = str(e)\nn = e.start\nb = e.object",
+        8,
+    ),
+    (
+        Row::Bounded,
+        "b = bytearray(67_108_864)",
+        "e = UnicodeDecodeError('utf-8', b, 0, 1, 'r')\no = e.object",
+        1,
+    ),
+    // `str()` with a long `encoding` and `reason`: joined in the prelude,
+    // a step at a time (30 MiB each was one step of 111-123 ms [M]).
+    (
+        Row::Bounded,
+        "e = UnicodeEncodeError('e' * 31_457_280, 'x', 0, 1, 'r' * 31_457_280)",
+        "s = str(e)",
+        1,
+    ),
     // A wide tab (review T6, P5): a short str whose tabs widen it past a
     // step goes the stepped way (`STR_MAP`), and a bytes tab's spaces go
     // out a MiB at a time. Before, the str was one 107-128 ms step charged

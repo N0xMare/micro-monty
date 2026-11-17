@@ -383,7 +383,7 @@ fn wide_step(data: &[u8], i: usize, c: Codec) -> Result<(char, usize), (usize, &
 
 /// `'\xe9'`-style text for a code point in a `UnicodeEncodeError`.
 #[cfg_attr(mm_shipped, optimize(size))]
-fn escaped_char(c: char) -> String {
+pub(crate) fn escaped_char(c: char) -> String {
     let u = c as u32;
     if u <= 0xff {
         format!("\\x{u:02x}")
@@ -830,7 +830,7 @@ impl Vm {
     }
 
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn need_bytes(&mut self, v: Value) -> Result<Value, Raised> {
+    pub(crate) fn need_bytes(&mut self, v: Value) -> Result<Value, Raised> {
         if Self::is_bytes_like(v) {
             return Ok(v);
         }
@@ -2078,6 +2078,9 @@ pub(crate) mod job {
     /// Output bytes `W_O..W_A` set to byte `W_A + 1`: `int.to_bytes`'s
     /// sign padding.
     pub const PAD: u8 = 27;
+    /// What a strict decode became at bytes it cannot decode, when its
+    /// error's `object` is a copy ([`crate::vm::Vm::job_decode_err`]).
+    pub const DECODE_ERR: u8 = 28;
 }
 
 /// Input position, end and start (where each pass starts).
@@ -2611,6 +2614,7 @@ impl Vm {
             job::INTS => self.job_ints(j, start),
             job::GROW => self.ba_grow_step(j, start),
             job::PAD => self.job_pad(j, start),
+            job::DECODE_ERR => self.job_decode_err(j, start),
             _ => Err(self.bad_step()),
         }
     }
@@ -2796,6 +2800,8 @@ pub(crate) enum Feed {
     Stop,
     /// The job's value: a `binascii` error message.
     Msg(&'static str),
+    /// The job became another, which goes on: [`job::DECODE_ERR`].
+    Became,
 }
 
 /// The most spaces a wide tab writes at once (16 Ki fuel units): a tab
@@ -3560,6 +3566,7 @@ impl Vm {
                 Feed::Again => 0,
                 Feed::Stop => end - i,
                 Feed::Msg(m) => return self.new_str(m).map(Some),
+                Feed::Became => return self.job_decode_err(j, start),
             };
             let i0 = j.at(W_I0);
             let charge = (i + used - i0) as u64 / rate - (i - i0) as u64 / rate;
@@ -3607,24 +3614,92 @@ impl Vm {
     }
 
     /// The `UnicodeEncodeError` of an encode job that met chars it cannot
-    /// encode: from char `W_C + 1` (less one) to char `W_C`.
+    /// encode: from char `W_C + 1` (less one) to char `W_C` of its source.
     #[cold]
     #[cfg_attr(mm_shipped, optimize(size))]
     fn encode_err(&mut self, j: &Job) -> Raised {
-        let (i, end) = (j.at(W_C + 1) - 1, j.at(W_C));
+        let (i, end) = (j.at(W_C + 1).saturating_sub(1), j.at(W_C));
+        let reason = format!("ordinal not in range({})", j.w[W_A + 2]);
         let c = word_codec(j.w[W_A]);
-        let limit = j.w[W_A + 2];
-        let what = if end - i == 1 {
-            let ch = char::from_u32(j.w[W_C + 2] as u32).unwrap_or('\u{fffd}');
-            format!("character '{}' in position {i}", escaped_char(ch))
-        } else {
-            format!("characters in position {i}-{}", end - 1)
+        match self.new_str(&reason) {
+            Ok(reason) => self.codec_err(T::UnicodeEncodeError, c, j.v[0], i, end, reason),
+            Err(raised) => raised,
+        }
+    }
+
+    /// Raises codec `c`'s `UnicodeDecodeError` or `UnicodeEncodeError` `t`
+    /// with CPython's arguments `(encoding, object, start, end, reason)`,
+    /// which its attributes and `str()` are read from.
+    #[cold]
+    #[cfg_attr(mm_shipped, optimize(size))]
+    fn codec_err(
+        &mut self,
+        t: T,
+        c: Codec,
+        object: Value,
+        start: usize,
+        end: usize,
+        reason: Value,
+    ) -> Raised {
+        let made: Result<Value, Raised> = (|| {
+            let args = [
+                self.new_str(c.name())?,
+                object,
+                self.new_int(start as i64)?,
+                self.new_int(end as i64)?,
+                reason,
+            ];
+            let e = self.new_exception(t, &args)?;
+            let a = self.vslot(e, crate::vm::exc_slot::ARGS);
+            self.unicode_init(e, t == T::UnicodeDecodeError, a)?;
+            Ok(e)
+        })();
+        // Else the allocation's own `MemoryError` is pending.
+        if let Ok(e) = made {
+            self.exc = e;
+        }
+        Raised
+    }
+
+    /// A [`job::DECODE_ERR`] job: source bytes `W_I0..W_END` copied into
+    /// the block (value slot 2), as many a step as its room; then codec
+    /// `W_A`'s `UnicodeDecodeError` at `W_A + 1..W_A + 2` for the reason in
+    /// value slot 1, the block as its `object`. The block is allocated by
+    /// the job's first step; one that does not fit beside garbage waits for
+    /// a collection once (`Vm::oom_defer`, `W_C` saying it has, in the
+    /// image too) and is allocated again at a later step.
+    #[cold]
+    #[cfg_attr(mm_shipped, optimize(size))]
+    fn job_decode_err(&mut self, j: &mut Job, start: u64) -> Result<Option<Value>, Raised> {
+        let (skip, end) = (j.at(W_I0), j.at(W_END));
+        if j.v[2] == Value::NONE {
+            if self.oom_deferred() {
+                return Ok(None);
+            }
+            match self.job_block(end.saturating_sub(skip)) {
+                Ok(b) => j.v[2] = Value::from_byte_ref(b),
+                Err(e) if j.w[W_C] != 0 || !self.oom_defer() => return Err(e),
+                Err(_) => {
+                    j.w[W_C] = 1;
+                    return Ok(None);
+                }
+            }
+        }
+        let Some(out) = j.v[2].as_byte_ref() else {
+            return Err(self.bad_step());
         };
-        let msg = format!(
-            "'{}' codec can't encode {what}: ordinal not in range({limit})",
-            c.name()
-        );
-        self.err(T::UnicodeEncodeError, &msg)
+        let mut o = j.at(W_O);
+        while skip.saturating_add(o) < end {
+            let room = self.job_room(start);
+            if room == 0 {
+                j.w[W_O] = o as u64;
+                return Ok(None);
+            }
+            self.copy_part(j.v[0], skip + o, end, out, &mut o, room)?;
+        }
+        let object = self.job_wrap(j, out, 0)?;
+        let (t, c) = (T::UnicodeDecodeError, word_codec(j.w[W_A]));
+        Err(self.codec_err(t, c, object, j.at(W_A + 1), j.at(W_A + 2), j.v[1]))
     }
 
     /// One window of a window-by-window job: `inb` holds input `i..` (at
@@ -3885,18 +3960,23 @@ impl Vm {
                 break;
             }
             self.decode_bad(j, &inb[p..p + bad], i + p, reason, out)?;
+            if j.kind == job::DECODE_ERR {
+                return Ok(Feed::Became);
+            }
             p += bad;
         }
         Ok(Feed::Used(p))
     }
 
-    /// What decode job `j`'s handler makes of `bad`, at input `at`.
+    /// What decode job `j`'s handler makes of `bad`, at input `at`. A
+    /// strict one raises, or makes `j` the [`job::DECODE_ERR`] job that
+    /// will.
     #[cold]
     #[inline(never)]
     #[cfg_attr(mm_shipped, optimize(size))]
     fn decode_bad(
         &mut self,
-        j: &Job,
+        j: &mut Job,
         bad: &[u8],
         at: usize,
         reason: &str,
@@ -3904,15 +3984,22 @@ impl Vm {
     ) -> Result<(), Raised> {
         match word_errors(j.w[W_A + 1]) {
             Errors::Strict | Errors::SurrogatePass => {
-                let c = word_codec(j.w[W_A]);
-                let at = at - j.at(W_A + 2);
-                let what = if bad.len() == 1 {
-                    format!("byte 0x{:02x} in position {at}", bad[0])
-                } else {
-                    format!("bytes in position {at}-{}", at + bad.len() - 1)
-                };
-                let msg = format!("'{}' codec can't decode {what}: {reason}", c.name());
-                Err(self.err(T::UnicodeDecodeError, &msg))
+                let (codec, src, skip) = (j.w[W_A], j.v[0], j.at(W_A + 2));
+                let (at, t) = (at.saturating_sub(skip), T::UnicodeDecodeError);
+                let end = at + bad.len();
+                let reason = self.new_str(reason)?;
+                // CPython's `object` is a `bytes` of what the codec read:
+                // the source itself when it is one, read whole.
+                if skip == 0 && Vm::is_bytes(src) {
+                    return Err(self.codec_err(t, word_codec(codec), src, at, end, reason));
+                }
+                // Else a copy, of a `bytearray` or of what follows
+                // utf-8-sig's BOM, which the job goes on to make.
+                let n = self.bytes_data(src).len();
+                *j = Job::new(job::DECODE_ERR, src, skip, n, R_BYTES);
+                (j.v[1], j.v[2]) = (reason, Value::NONE);
+                (j.w[W_A], j.w[W_A + 1], j.w[W_A + 2]) = (codec, at as u64, end as u64);
+                Ok(())
             }
             Errors::Replace => out.char(self, '\u{fffd}'),
             Errors::Ignore => Ok(()),
@@ -3945,7 +4032,7 @@ impl Vm {
     /// A window of `str.encode`: `W_A` the codec, `W_A + 1` the error
     /// handler (its name in value slot 3), `W_A + 2` the code point limit;
     /// `W_C` counts chars, `W_C + 1` (plus one) is where a run of chars the
-    /// codec cannot encode started, `W_C + 2` its first.
+    /// codec cannot encode started.
     #[cfg_attr(mm_shipped, optimize(size))]
     fn encode_feed(
         &mut self,
@@ -4003,7 +4090,6 @@ impl Vm {
                     Errors::NameReplace => out.put(self, name_escape(ch).as_bytes())?,
                     Errors::Strict | Errors::SurrogateEscape | Errors::SurrogatePass => {
                         j.w[W_C + 1] = j.w[W_C] + 1;
-                        j.w[W_C + 2] = u;
                     }
                     _ => return Err(self.codec_lookup_error(j.v[3], false)),
                 }
