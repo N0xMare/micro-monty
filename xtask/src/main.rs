@@ -64,6 +64,7 @@ mod handoffs;
 mod native_ir;
 mod overflow;
 mod package;
+mod restack;
 mod shipped;
 mod size;
 mod v8_ir;
@@ -208,6 +209,13 @@ tasks:
                              cases pass (not in check: about 85 minutes)
   handoffs [--check]         write (--check: compare) xtask/handoff-sites.txt,
                              the need_py() hand-off sites by file and function
+  restack <commit|a..b>...   cherry-pick commits onto HEAD, blessing the golden
+                             images again in each commit that moves the
+                             snapshot build id (the images' conflicts take
+                             the parent's); stops at any other conflict and
+                             where blessing would keep HEAD's id
+      --resolved <commit>    the staged pick restack stopped at, resolved:
+                             tested, blessed and committed, then the rest
   overflow-wasip1            every own, corpus, codemode and breadth case on mm
                              for wasm32-wasip1 built with overflow checks
                              (target/check/overflow-wasip1); fails on a panic
@@ -249,6 +257,7 @@ fn main() -> ExitCode {
         Some("docs") if rest.is_empty() => docs::run(),
         Some("difffuzz") => difffuzz::run(&rest),
         Some("handoffs") => handoffs::run(&rest),
+        Some("restack") => restack::run(&rest),
         Some("overflow-wasip1") if rest.is_empty() => overflow::run(),
         _ => Err(USAGE.to_owned()),
     };

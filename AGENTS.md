@@ -159,6 +159,17 @@ to `target/check/logs/<stage>.log`.
   or means (spec §9.3). A change that moves the build id re-blesses the
   golden images in the same commit:
   `MM_BLESS=1 cargo test --release --locked -p micro-monty --test golden`.
+  Every commit that moves the id is blessed, not only a stack's tip:
+  under one id a later commit's images must continue as an earlier
+  one's did, which is what catches a change of meaning that does not
+  move the id. `cargo xtask restack <commits>` cherry-picks a stack and
+  blesses each commit whose images fail where the id moved from HEAD's;
+  where blessing would keep HEAD's id it stops, as the commit changes
+  what an image means (a `SNAPSHOT_EPOCH` bump is missing), brings a
+  scenario blessed elsewhere or changes a scenario itself; `restack
+  --resolved` finishes the pick it stopped at. It copies each commit's
+  author and committer, and refuses a commit authored or committed by
+  another identity than the one the commits rule below names.
 - Size: `cargo xtask size` compares each shipped artifact with the base
   and the last `v*` tag, both built outside the checkout. A rise past the
   base needs a git trailer `Size: <artifact> <±bytes> <why>` in the commit
@@ -172,7 +183,11 @@ to `target/check/logs/<stage>.log`.
   `xtask/size-ceilings.txt` is history; do not write ceiling lines.
 - Results that move on purpose are rerun and committed:
   `conformance/results/` (`cargo xtask conformance`), and
-  `conformance/codemode/real/results/gate.jsonl` with a `why`. The
+  `conformance/codemode/real/results/gate.jsonl` with a `why`.
+  `conformance/durability-results.txt` is recorded once per push, on the
+  stack's tip (`cargo xtask durability --record`, then `--cross-target
+  --record`): the gate judges the head's file. A `report` or `fuel`
+  difference is a bug and is not recorded. The
   idle-state census and the cross-build carry gate are not in `check`:
   `python3.14 conformance/codemode/real/idle_state.py --check` and
   `python3.14 conformance/codemode/real/gate.py --carry --base v0.0.1 --check`
