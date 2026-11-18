@@ -17,11 +17,11 @@ release builds, unless stated.
 
 ```toml
 [dependencies]
-micro-monty = "0.0.1"   # or { git = "https://github.com/N0xMare/micro-monty" }
+micro-monty = "0.0.2"   # or { git = "https://github.com/N0xMare/micro-monty" }
 ```
 
 Releases are `0.0.x`, and Cargo treats each one as incompatible with the
-next: `"0.0.1"` never upgrades to 0.0.2 on its own. With no compatibility
+next: `"0.0.2"` never upgrades to 0.0.3 on its own. With no compatibility
 layers between releases, moving is a deliberate change, and its snapshots
 follow [Upgrading: drain old builds](#upgrading-drain-old-builds).
 
@@ -1200,11 +1200,11 @@ of them, and the instance's memory must hold the sum of their bounds.
 
 ## Binary size
 
-Sizes of the shipped builds at v0.0.1 (`cargo xtask size`: release,
+Sizes of the shipped builds at v0.0.2 (`cargo xtask size`: release,
 `panic=immediate-abort`, `wasm-opt -Oz` on wasm) \[M\]: `hello.wasm` (the
-facade's example, `wasm32-unknown-unknown`) 2,271,969 B, native `hello`
-(x86_64 Linux) 2,490,336 B, `mm_wasm_guest.wasm` 2,358,872 B and
-`mm_wasm_guest_bundle.wasm` 2,357,307 B.
+facade's example, `wasm32-unknown-unknown`) 2,233,281 B, native `hello`
+(x86_64 Linux) 2,413,200 B, `mm_wasm_guest.wasm` 2,324,026 B and
+`mm_wasm_guest_bundle.wasm` 2,322,562 B.
 
 **Native embedders: link with `-Wl,-z,pack-relative-relocs`.** It takes
 35,960 B off native `hello` by shrinking `.rela.dyn` from 37,368 B to under
@@ -1261,7 +1261,7 @@ named references, but not names only HTML 5 defines. `ast` is CPython's
 tree) and adds about 48 KB to `hello.wasm` \[M\]. To enable one, list it:
 
 ```toml
-micro-monty = { version = "0.0.1", features = ["mod-uuid", "mod-ast"] }
+micro-monty = { version = "0.0.2", features = ["mod-uuid", "mod-ast"] }
 ```
 
 To leave default modules out, turn off the default features and list the
@@ -1275,7 +1275,7 @@ module only when called and need it listed too: `time.strptime` needs
 feature changes the build id.
 
 ```toml
-micro-monty = { version = "0.0.1", default-features = false, features = ["mod-re", "mod-collections"] }
+micro-monty = { version = "0.0.2", default-features = false, features = ["mod-re", "mod-collections"] }
 ```
 
 ### Smaller module sets for code-mode agents
@@ -1293,7 +1293,7 @@ the default build fails; 42 of the 1,782 synthetic solutions (2.4%) fail on
 an import (`zoneinfo` 21, `calendar` 9, `tomllib` 9, `shlex` 3).
 
 ```toml
-micro-monty = { version = "0.0.1", default-features = false, features = [
+micro-monty = { version = "0.0.2", default-features = false, features = [
     "mod-json", "mod-re", "mod-collections", "mod-itertools", "mod-functools",
     "mod-datetime", "mod-random", "mod-asyncio", "mod-typing", "mod-base64",
     "mod-hashlib", "mod-operator", "mod-heapq", "mod-bisect", "mod-textwrap",
@@ -1312,7 +1312,7 @@ import, mostly `datetime`, `csv`, `statistics`, `html`, `urllib.parse` and
 `decimal`. Use it only for agents that read and search code.
 
 ```toml
-micro-monty = { version = "0.0.1", default-features = false, features = [
+micro-monty = { version = "0.0.2", default-features = false, features = [
     "mod-json", "mod-re", "mod-collections", "mod-itertools", "mod-functools",
     "mod-random", "mod-asyncio", "mod-typing", "mod-base64", "mod-hashlib",
     "mod-operator", "mod-heapq", "mod-bisect", "mod-binascii", "mod-os",

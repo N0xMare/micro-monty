@@ -328,7 +328,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "micro-monty"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "micro-monty",
  "mm-compile",
@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "mm-cell-worker"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "libc",
  "micro-monty",
@@ -362,7 +362,7 @@ dependencies = [
 
 [[package]]
 name = "mm-cli"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "micro-monty",
  "serde_json",
@@ -370,7 +370,7 @@ dependencies = [
 
 [[package]]
 name = "mm-codemode"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "micro-monty",
  "serde_json",
@@ -378,18 +378,18 @@ dependencies = [
 
 [[package]]
 name = "mm-compile"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "mm-parse",
 ]
 
 [[package]]
 name = "mm-core"
-version = "0.0.1"
+version = "0.0.2"
 
 [[package]]
 name = "mm-engine"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "mm-compile",
  "mm-core",
@@ -398,7 +398,7 @@ dependencies = [
 
 [[package]]
 name = "mm-parse"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "mm-compile",
  "ruff_python_ast",
@@ -408,7 +408,7 @@ dependencies = [
 
 [[package]]
 name = "mm-stdlib"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "mm-compile",
  "mm-engine",
@@ -417,21 +417,21 @@ dependencies = [
 
 [[package]]
 name = "mm-wasm-abi"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "micro-monty",
 ]
 
 [[package]]
 name = "mm-wasm-alloc"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "dlmalloc",
 ]
 
 [[package]]
 name = "mm-wasm-guest"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "micro-monty",
  "mm-wasm-abi",
@@ -961,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "serde_json",
 ]

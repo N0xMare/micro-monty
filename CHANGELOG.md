@@ -10,7 +10,30 @@ repository. The 0.0.1 entry stays as published: the docs it cites
 hashes are pre-release history, kept in the private archive
 `N0xMare/micro-monty-archive` (branch `history-0.0.1`).
 
-## 0.0.2 (unreleased)
+## 0.0.2 (2026-11-18)
+
+The second release, from `7e59d6c` (this entry as of 2026-11-18). Every API may have changed since 0.0.1, and images written
+by 0.0.1 do not restore: the build ids below are new.
+
+### Build ids
+
+A snapshot restores only on a build with the id that wrote it [M, on
+the release commit, `micro-monty`'s `build_id` example]:
+
+- `06717fdeb70bb48b5e5461b21b1816428052fc4f71846c8b79cefbb14713231d`: the facade's default features: an
+  embedding with no opt-in module, the shipped mm-wasm guest and the
+  bundle guest, and `mm-cell-worker` built on its own.
+- `099c0eda0275bba7194dc97691e2f5e475b416f4e86c75d58f2da4bdcb9e0a06`: with `mod-uuid`, `mod-unicodedata`,
+  `mod-html-entities` and `mod-ast`, as `mm` (native and `wasm32-wasip1`)
+  builds it, and any binary built together with `mm`.
+
+### Published crates
+
+The same six as 0.0.1, at 0.0.2 and pinning each other with `=0.0.2`:
+`micro-monty` and `mm-core`, `mm-compile`, `mm-parse`, `mm-engine` and
+`mm-stdlib`. Still not published: `mm-cli`, `mm-cell-worker`,
+`mm-wasm-abi`, `mm-wasm-guest`, `mm-wasm-host` and `mm-wasm-alloc`. The
+GitHub release also attaches the two mm-wasm guests.
 
 ### Added
 
@@ -117,6 +140,178 @@ hashes are pre-release history, kept in the private archive
   256 MiB live, repeated at each start while the heap stays there, also
   when the cells succeed (about 26–32 ms a start with 256 MiB of live
   strings) [M]. `reset` over a heap full of live data still fails.
+
+### Measured at release [M]
+
+On the release commit's tree (`7e59d6c` with the version bump):
+
+- 546 of the 568 CPython-scored cases of Monty's test corpus
+  (`conformance/results/micro-monty.md`), as at 0.0.1.
+- 2,841 recorded cells from 160 real code-mode sessions replay as
+  `conformance/codemode/real/results/gate.jsonl` records them
+  (`gate.py --check`): the same 53 cells as at 0.0.1 differ from their
+  recording, each with its reason there.
+- The codemode census: 1,722 of the 1,722 CPython-passing solutions pass,
+  with CPython's tool calls batch by batch (`conformance/codemode`).
+- Shipped sizes (`cargo xtask size`), against 0.0.1: `hello.wasm`
+  2,233,281 B (−38,688 from 2,271,969), native `hello` 2,413,200 B
+  (−77,120 from 2,490,336), `mm_wasm_guest.wasm` 2,324,026 B (−34,846
+  from 2,358,872), `mm_wasm_guest_bundle.wasm` 2,322,562 B (−34,745 from
+  2,357,307).
+- Instructions against v0.0.1's own counts, the pre-tag forms of the Ir
+  gates:
+  - Gated native Ir on the shipped `mm` (`native-ir --base v0.0.1`):
+    `startup` 0.540M against 0.584M (−44,129 instructions), the programs
+    0.9904 (`interp`) to 1.0076. Two are past +0.5%: `exceptions` 1.0076
+    (the bounded-step and memory work, accepted in `763db34`) and `dict`
+    1.0066 (1,163.2M to 1,170.8M), the sum of the cycle's dict and set
+    work, each step inside its own gate: charged set-insert walks and
+    table rebuilds (`901e0377`, +0.32%), lookups charging the slots they
+    pass (`1827fdcb`, +0.25%), hot functions taken off `optimize(size)`
+    (`f147bc0d`, +0.22%), list extend interleaving (`cdf5c099`, +0.21%)
+    and twin inserts rebuilt in steps (`6a188bc0`, +0.20%), less the
+    cold functions put under it (`01519d07`, −0.19%), the heap's
+    medium-block reuse (`1d7c5698`, −0.15%) and Rust 1.100 (−0.09%).
+  - wasmtime guest instructions (`wasm-ir --base v0.0.1`): geomean
+    0.9932, `startup` −101,801 instructions, the programs 0.9635 (`json`)
+    to 1.0054 (`fmt`).
+  - V8's generated code on the `wasm32-unknown-unknown` guests (`v8-ir
+    --base v0.0.1`): geomean 0.9973 on the plain guest and 0.9972 on the
+    bundle guest, the programs 0.9874 (`interp`) to 1.0049 (`str`).
+  - The 159 compared real sessions replayed under callgrind against
+    v0.0.1's worker (the `replay-ir` gate, which lands after this
+    release; run from its own commits over this tree): Ir without the
+    allocator 0.9921 in total and 0.9755 at the median, allocator calls
+    0.9235 in total; `phase1.codex-sdk-monty.codec-review` diverges on
+    this build, as in `gate.jsonl`, and is compared on neither side. Past
+    its limits, and recorded here instead of an accept line:
+    `phase2.grok-ptc-wasm.todo-census` at 1.0183 (`sessions 1.019`): one
+    more full collection with code reclamation at a cell start (three
+    against two in the session), because the prelude's globals start
+    presized (`0e50b7b`) and move the session across the collection
+    threshold, not the parser; and the allocator calls of three
+    codex-sdk sessions, 1.0051 to 1.0063 (`sessions-calls 1.007`):
+    `collections.namedtuple`'s NFKC check of its field names (`462adb7`)
+    allocates and frees a few more blocks per class, 1.2–2.5% more calls
+    than before it on those sessions and 0.5–0.6% more than 0.0.1, every
+    one freed.
+
+### Known issues
+
+Each was found or carried during this cycle and is planned for 0.0.3;
+none is a regression of this release unless it says so.
+
+- Restores are still not fully transparent. 0.0.1 planned all three of
+  its restore-transparency fixes for 0.0.2; all three moved to 0.0.3 with
+  the collector work they need (docs/spec.md §5.1, guarantee 4):
+  - Near the memory limit, an operation the engine does not run again
+    after a collection can raise `MemoryError` unparked and succeed after
+    a snapshot, or the reverse, because a snapshot collects first.
+  - An operation that fails part way for memory is charged for what it
+    did, so a snapshot can move the fuel total: +28,672 units (+0.64%) on
+    `f(*big, **kw)`, and 11% less fuel with `ok ME ok ME ok ME` for six
+    such calls that print `ok` six times unparked [M].
+  - Indexing or searching a long non-ASCII str is charged its
+    char-position walk again after every snapshot: +9,775 units with
+    snapshots and no restore, +826 more with restores, on
+    `conformance/own/419` [M].
+- A register that an ended statement left a value in can keep that value
+  alive: a call or a display allocates its slots before it evaluates an
+  argument, and a generator's saved frame keeps what its last `yield`
+  saved, also while it runs. So a program that drops one large object
+  and makes another can raise `MemoryError` where python3.14 completes:
+  `n = len(load())` and then `m = len(load())`, with `load()` returning
+  three 50 MB bytearrays, under the default 256 MiB limit [M]; the same
+  through an unpack or a method load that runs Python code, and through
+  a generator's temporaries. Whether it does can depend on where a
+  snapshot's collection fell, a regression of this release (the live
+  top it added to collections): with 20,000 statements between the two
+  loads, `MemoryError` at fuel 4,974,841 unparked and `ok 3 3` at
+  4,707,521 with a snapshot every 13, 997 or 5,000 parks, restored [M].
+- asyncio near the memory limit can drop an entry it accepted: a done
+  callback, a `call_soon` handle, a timer or a task's first step that has
+  no room to start is lost without an error (2 callbacks and 2 `call_soon`
+  entries at 6 MiB [M]). The fix moved to 0.0.3 whole.
+- Memory freed inside a cell is not reused by that cell: after a
+  `MemoryError` and `del xs`, a later statement of the same cell can raise
+  `MemoryError` again (`print`, `import json`, `from collections import
+  Counter` at 6 and 16 MiB) where python3.14 completes, because nothing
+  allocated since the last collection. `gc.collect()` after the `del`
+  works around it; the next cell recovers (Changed, above) [M].
+- While live data fills the heap to its wall, every cell start runs a full
+  collection, also when the cells succeed: 26 to 32 ms a start with
+  256 MiB of live strs, 203 cells in 6.9 to 7.1 s against 1.1 to 1.2 s on
+  the build before [M]. This is the cost of letting a session run again
+  after memory filled (Changed, above).
+- `Session::reset` over a heap full of live data returns `MemoryError`
+  and resets nothing, so it cannot recover such a session; beside garbage
+  it succeeds [M]. Older than 0.0.1.
+- Two kinds of garbage are still left beside a full heap with nothing
+  that collects them, so the next cells fail with `MemoryError` and fuel
+  0 as before this release's fix: the constants of a start whose program
+  load was refused part way (at 6 MiB, two failed starts of a cell with
+  a 200 kB literal leave 400 kB less memory), and the constants of dead
+  cells' code that a reclamation between cells drops after its own
+  collection (8,000 dead string constants, then a live fill to a caught
+  `MemoryError`: the next three cells fail at 64 MiB) [M]. A cell that
+  loads without allocating, or `gc.collect()` in one, recovers.
+- A run that was parked once has 24 bytes less memory than one that never
+  stopped, so at a memory limit its `MemoryError` can come one step
+  earlier (25,962 against 25,961 entries in a 6 MiB reproducer) [M].
+- A coroutine driven by hand with `send()` confuses its handled exception
+  with its caller's. Started by `send()` inside the caller's `except`
+  block, it takes the caller's exception as its own: after that handler,
+  `sys.exc_info()` in its body reads it, an exception thrown in takes it
+  as `__context__`, and a bare `raise` re-raises it where CPython raises
+  `RuntimeError` [M]. Suspended inside a handler of its own and run on
+  after the caller left its handler, it leaves that old exception as the
+  caller's handled exception when it returns, raises, is thrown into or
+  is closed: the caller's `sys.exc_info()` reads it for the rest of the
+  module, later exceptions take it as `__context__`, and it stays alive,
+  so a large one can end in `MemoryError`. A generator, and a coroutine
+  after a handler in its body that began under an earlier `send()`, see
+  that stale exception until they return, raise or are closed. Older
+  than 0.0.1.
+- `UnicodeDecodeError` and `UnicodeEncodeError` have no `encoding`,
+  `object`, `start`, `end` or `reason`, and their `args` is one message;
+  so `xml.etree.ElementTree` reports ill-formed bytes with
+  `AttributeError` instead of `ParseError` [M].
+- Generator methods: called unbound on an object of another type, such
+  as `type(gen()).close(d)`, they do not raise `TypeError` and write a
+  generator's slots into it (a dict `{'a': 1, 'b': 2, 'c': 3}` reads
+  `{'a': None, None: None, 'c': 3}`) [M]; `close()` on a generator that
+  has not started, inside an `except` block, empties the handled
+  exception [M]; `throw()` into one that has not started, and `athrow()`
+  or `aclose()` on such an async generator, keep its arguments alive as
+  long as it lives.
+- Steps past the 50 ms bound on this release's reference host [M]:
+  `del b[::2]` on a 64 MiB bytearray (69.4 to 70.7 ms); a greedy
+  `(a|b)*c` over 450,000 chars and more (228 to 327 ms per slice end, and
+  `MemoryError` past about 650,000 chars, where CPython completes); a
+  collection with 1,000 tasks of 500 frames that all run between
+  collections (44 to 47 ms, past 60 ms on wasip1); single dict lookups,
+  `map(d.get)`, `%`, itemgetter, comparisons and items views over many
+  colliding keys (55 to 80 ms). Tuples of millions of items, each in one
+  step [M, on e54f65f]: `except t` with 8,000,000 classes (206 ms); the
+  fields `OSError.errno`, `StopIteration.value`, `SystemExit.code`,
+  `ImportError.msg` and `SyntaxError`'s read from such an `args` (73 ms
+  a read, 563 ms for `SyntaxError.filename`); a call that takes such a
+  `__defaults__` (85 ms); `isinstance(x, t)` (254 ms to 2.0 s); and
+  `isinstance` or `except` over a class chain thousands deep (110 to
+  258 ms).
+- Restoring a forged image can hang instead of being refused.
+- Smaller differences from CPython: no `locals` builtin; dict bulk
+  operations never raise `dictionary keys changed during iteration`, and
+  some results depend on the table's layout; `BaseException.__init__` and
+  `__str__` called unbound skip the receiver check, `__get__`,
+  `__qualname__` and `KeyError`'s quoting; `True + I(1)`, `0.5 + I(1)` and
+  `J(1) + I(1)` call an int subclass's `__radd__` where CPython does not;
+  `in`, `find`, `count`, `index`, `rfind` and `rindex` on `bytes` and
+  `bytearray` refuse an object with `__index__` with `TypeError`, where
+  CPython takes it; `add_done_callback(cb, context=ctx)` does not run `cb`
+  in `ctx`; `copy.copy` and `copy.deepcopy` of an `AttributeError` lose
+  its `name`, and a shallow copy of an `OrderedDict` subclass instance
+  loses its attributes [M].
 
 ## 0.0.1 (2026-11-12)
 

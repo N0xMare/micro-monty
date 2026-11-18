@@ -1,6 +1,6 @@
 # micro-monty: architecture
 
-Status: released as 0.0.1; this file describes `main`. Owner: n0x.
+Status: released as 0.0.2; this file describes `main`. Owner: n0x.
 
 This is the architecture of micro-monty: how it works, the rules it keeps,
 its contracts with hosts and its limits. Read it before changing engine
@@ -1059,23 +1059,24 @@ because executable formats and code size differ per target. The ceilings
 until 2026-11-13 and the reasons for their raises stay in
 `xtask/size-ceilings.txt`, read-only (owner decision D2).
 
-**Sizes at v0.0.1** [M, 1cfcde3, Rust 1.99.0, binaryen 133,
+**Sizes at v0.0.2** [M, the release commit on `7e59d6c`, Rust 1.100.0, binaryen 133,
 `cargo xtask size`]:
 
 | Artifact | Bytes |
 |---|---:|
-| `hello.wasm` (`wasm32-unknown-unknown`, after `wasm-opt -Oz`) | 2,271,969 |
-| native `hello` (x86_64, PIE) | 2,490,336 |
-| `mm_wasm_guest.wasm` | 2,358,872 |
-| `mm_wasm_guest_bundle.wasm` | 2,357,307 |
+| `hello.wasm` (`wasm32-unknown-unknown`, after `wasm-opt -Oz`) | 2,233,281 |
+| native `hello` (x86_64, PIE) | 2,413,200 |
+| `mm_wasm_guest.wasm` | 2,324,026 |
+| `mm_wasm_guest_bundle.wasm` | 2,322,562 |
 
-`hello.wasm` is 1,811,762 bytes of code and 455,312 of data. Code by
-crate: mm-engine 1.02 MB, mm-core 317 KB (almost all inlined heap
-accessors), mm-compile 149 KB, std 141 KB, mm-parse 112 KB. The 65 stdlib
-modules' packed bytecode is 281,480 bytes (12.4%), the prelude's 57,122. A
-build with no stdlib modules (`struct` and `operator` stay) is 1,808,788
-bytes of wasm and 1,996,400 native; a `host-bundle` `hello.wasm` (every
-capability, no bytecode) is 1,938,038. `uv run --with pyelftools python3
+At v0.0.1 (`1cfcde3`; not re-measured for 0.0.2), `hello.wasm` was
+1,811,762 bytes of code and 455,312 of data. Code by crate: mm-engine
+1.02 MB, mm-core 317 KB (almost all inlined heap accessors), mm-compile
+149 KB, std 141 KB, mm-parse 112 KB. The 65 stdlib modules' packed
+bytecode was 281,480 bytes (12.4%), the prelude's 57,122. A build with no
+stdlib modules (`struct` and `operator` stay) was 1,808,788 bytes of wasm
+and 1,996,400 native; a `host-bundle` `hello.wasm` (every capability, no
+bytecode) was 1,938,038. `uv run --with pyelftools python3
 xtask/size_map.py` maps the shipped builds by section and crate into
 `target/size-map/report/size-map.md`. The `mm-cell-worker` binary is larger
 (serde, tokio) and is not what the budget measures.
