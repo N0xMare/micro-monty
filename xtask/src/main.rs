@@ -339,14 +339,10 @@ fn check(args: &[String]) -> Result<(), String> {
     fs::copy(&exe, &xtask).map_err(|e| format!("cannot copy {}: {e}", exe.display()))?;
     let debug = root.join("target/check/debug");
     // The landing tier builds what it only runs (no size or time measured)
-    // with thin LTO (`gate`), and its tests at opt 1 with debug assertions
-    // (`gate-test`); the release gate builds them as the release profile
-    // and `cargo test` do (Cargo.toml).
-    let (profile, test_profile) = if release_gate {
-        ("release", "test")
-    } else {
-        ("gate", "gate-test")
-    };
+    // with thin LTO (`gate`); the release gate builds it as the release
+    // profile does. Both tiers run the tests at opt 1 with debug assertions
+    // (`gate-test`, Cargo.toml); `just test` keeps the opt-0 run.
+    let profile = if release_gate { "release" } else { "gate" };
     let command = |program: &Path, args: &[&str], dir: Option<&Path>| {
         let mut command = Command::new(program);
         command.args(args).current_dir(&root);
@@ -447,7 +443,7 @@ fn check(args: &[String]) -> Result<(), String> {
             "--workspace",
             "--locked",
             "--profile",
-            test_profile,
+            "gate-test",
         ])),
         // Builds the workspace never makes (its features unify): the
         // engine with no module features, the facade with no modules, and
@@ -470,7 +466,7 @@ fn check(args: &[String]) -> Result<(), String> {
             "mod-ast",
             "--locked",
             "--profile",
-            test_profile,
+            "gate-test",
             "--test",
             "features",
         ])),
@@ -567,7 +563,7 @@ fn check(args: &[String]) -> Result<(), String> {
                     "test",
                     "--locked",
                     "--profile",
-                    test_profile,
+                    "gate-test",
                     "--package",
                     "mm-cli",
                     "--test",

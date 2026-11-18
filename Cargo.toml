@@ -115,9 +115,10 @@ inherits = "release"
 lto = "thin"
 codegen-units = 16
 
-# The own-case loops of `cargo test` (parking and snapshot restores over
-# every own case) in `cargo xtask check`: debug assertions and overflow
-# checks as in `dev`, optimized enough that they stop dominating the gate.
+# The tests `cargo xtask check` runs in both tiers (the own-case loops of
+# parking and snapshot restores over every own case dominate them): debug
+# assertions and overflow checks as in `dev`, optimized enough that they
+# stop dominating the gate. `just test` runs them at `dev`'s opt 0.
 [profile.gate-test]
 inherits = "dev"
 opt-level = 1
