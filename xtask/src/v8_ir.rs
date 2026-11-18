@@ -13,12 +13,48 @@
 //! v8-ir after that stage).
 //!
 //! Each program runs in its own process, `node --no-liftoff
-//! hosts/js/bench/count.ts GUEST PROGRAM=EXPECTED` under `valgrind
-//! --tool=callgrind --dump-after=uv_getrusage`: twice, each in a fresh
-//! session, and `process.resourceUsage()` after the module's compile and
-//! after each run ends a dump. The count is the second run's instructions
-//! in code callgrind finds no object file for (`???`): V8's generated
-//! code, TurboFan's wasm code and a little JS. The first run also holds
+//! --single-threaded bench/count.ts guest.wasm program.py=EXPECTED` under
+//! `valgrind --tool=callgrind --dump-after=uv_getrusage`: twice, each in a
+//! fresh session, and `process.resourceUsage()` after the module's compile
+//! and after each run ends a dump. The count is the second run's
+//! instructions in code callgrind finds no object file for (`???`) and
+//! that is not file-backed by the process's mappings: V8's generated code,
+//! that is the guest's TurboFan code, the wasm-to-js wrappers and the
+//! host's JS once V8 has compiled it. It is not the stubs in shared
+//! objects (libstdc++'s allocator and locking stubs, libc) that callgrind
+//! also names `???`, and, as before, not any code in a file: node's and
+//! libc's `memory.copy` and `memory.fill` (11.6% of plain/str's second
+//! run, 2.4% of bytearray's [M]) and interpreted JS. The rule reads the
+//! process's `/proc/self/maps`, one more reason the gate is Linux only.
+//! Two things make the count repeat; measured on one host, one node and
+//! one valgrind [M]:
+//! - `--single-threaded`: with V8's background threads the host's JS
+//!   reached each tier at a point that moved with thread timing, and a
+//!   count with it, between runs and machine loads, by up to 0.085%. The
+//!   flag keeps V8's compiles and collections on the main thread; it also
+//!   implies `--no-wasm-tier-up`, `--wasm-num-compilation-tasks=0` and
+//!   `--no-wasm-async-compilation`, which change nothing under
+//!   `--no-liftoff`: the guest's TurboFan code reads the same with it as
+//!   without, to 15 instructions in 3.3 billion.
+//! - Code in a file left out ([`generated`]): a 2-instruction libstdc++
+//!   stub on the way from `operator new` to `malloc` ran 361 or 360 times,
+//!   2 counts in 30 with every path, the environment, the run id and the
+//!   pid width held, for no cause found; so `???` code in a file-backed
+//!   mapping (libstdc++, libc, node; 860 to 1,780 instructions a program)
+//!   is not counted. `count.ts` writes the mappings after the last dump;
+//!   `???` code in no mapping at all fails the count rather than being
+//!   guessed, and so does a dump whose costs do not add up to its
+//!   `totals:` line (a write that failed).
+//!
+//! Each count also runs in one place ([`count`]), a fixed-length directory
+//! under `/tmp` with copies of the host's JS, the guest and the program
+//! under fixed names, and an empty environment, which keeps `NODE_OPTIONS`,
+//! `VALGRIND_OPTS` and the like out; neither the path nor the environment
+//! moved a count under the two rules above [M]. The CPU class must be
+//! `x86-64-v3`, valgrind is run by its absolute path, and node's key holds
+//! its binary's hash as well as its version.
+//!
+//! Every side runs the head's host JS. The first run also holds
 //! V8's lazy compiles (read alone, they made one head 4.4% "faster" [M]),
 //! and one process per program because twelve in one valgrind process
 //! exited early twice [M]. Valgrind runs no AVX-512, so this is V8's AVX2
@@ -26,9 +62,10 @@
 //!
 //! A count depends only on the guest's bytes, the program and the tools,
 //! so counts are cached in `target/v8-ir/cache/` per guest content, keyed
-//! by the counting method, node's and valgrind's versions, the driver
-//! (`hosts/js/bench/count.ts` and `hosts/js/src/`) and each program's
-//! source; a commit's guests are cached per commit and recipe
+//! by the counting method, node's version and binary, valgrind's version,
+//! glibc and the CPU class ([`floors::host`]), the driver
+//! (`hosts/js/bench/count.ts`, `hosts/js/src/` and `package.json`) and
+//! each program's source; a commit's guests are cached per commit and recipe
 //! ([`crate::size::recipe_key`]), the guests themselves in
 //! `target/v8-ir/guests/`. A change to the head's recipe rebuilds the
 //! guests of the commits built with it, and counts only those whose bytes
@@ -50,7 +87,11 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Mutex, PoisonError, mpsc},
+    sync::{
+        Mutex, PoisonError,
+        atomic::{AtomicU32, Ordering},
+        mpsc,
+    },
     thread,
 };
 
@@ -68,7 +109,8 @@ const PROGRAM_LIMIT: f64 = 1.005;
 /// The most the geometric mean of a guest's ratios may rise.
 const GEOMEAN_LIMIT: f64 = 1.003;
 /// What a count holds, in the cache key: change it when that changes.
-const COUNTING: &str = "V8 generated code, second of two runs, node --no-liftoff, 1";
+const COUNTING: &str = "V8 generated code (in no file), second of two runs, node \
+                        --no-liftoff --single-threaded, from /tmp/mm-v8-ir-<run>/<job>, 4";
 /// The line that accepts a rise ([`crate::accept`]); it raises the floors it names.
 const ACCEPTED: &str = "V8-IR-Accepted:";
 /// The guests counted, by their names in `size --head`'s list.
@@ -112,7 +154,18 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     }
     let valgrind = crate::wasm::tool("VALGRIND", "valgrind")
         .ok_or("v8-ir needs valgrind ($VALGRIND, PATH); run .agents/setup")?;
+    // One binary for the key and the count: [`count`] clears the
+    // environment, so a bare name would be looked up in another `PATH`.
+    let valgrind = absolute(&valgrind)?;
     let node = crate::wasm::tool("NODE", "node").ok_or("v8-ir needs node ($NODE, PATH)")?;
+    // The binary itself, which each count links into its directory ([`count`]).
+    let node = Command::new(&node)
+        .args(["-p", "process.execPath"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
+        .ok_or_else(|| format!("cannot run {}", node.display()))?;
     let programs: Vec<(&str, &str)> = PROGRAMS
         .iter()
         .copied()
@@ -130,11 +183,31 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     for file in driver_files(&root)? {
         driver.extend(fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?);
     }
+    let host = floors::host(&valgrind);
+    // V8 picks its code by the CPU's features, which the class names only
+    // in part: without AVX plain/floats counts 1.556% more [M], and
+    // `x86-64-v2` covers hosts with and without it.
+    if !host.ends_with(", x86-64-v3") {
+        return Err(format!(
+            "v8-ir counts V8's AVX2 code, so it runs only where valgrind shows the CPU as \
+             x86-64-v3; here it is `{host}`, whose hosts V8 may give other code"
+        ));
+    }
+    let (node_version, valgrind_version) = (version(&node), version(&valgrind));
+    if node_version.is_empty() || valgrind_version.is_empty() {
+        return Err(format!(
+            "v8-ir: no version from {} or {}",
+            node.display(),
+            valgrind.display()
+        ));
+    }
+    // The node binary's hash: a build at the same version (another V8
+    // build, other flags) is another key.
+    let node_build = fs::read(&node)
+        .map(|b| source_hash(&b))
+        .map_err(|e| format!("{}: {e}", node.display()))?;
     let tools = format!(
-        "{COUNTING}; node {}; {}; {}; driver {}",
-        version(&node),
-        version(&valgrind),
-        floors::host(&valgrind),
+        "{COUNTING}; node {node_version} ({node_build}); {valgrind_version}; {host}; driver {}",
         source_hash(&driver)
     );
     let base_sha = git(&root, &["merge-base", &base, "HEAD"])?;
@@ -228,6 +301,20 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     )
 }
 
+/// `tool` as an absolute path: as given when it has a directory, else the
+/// first match on `PATH`.
+fn absolute(tool: &Path) -> Result<PathBuf, String> {
+    if tool.components().count() > 1 {
+        return std::path::absolute(tool).map_err(|e| format!("{}: {e}", tool.display()));
+    }
+    std::env::var_os("PATH")
+        .iter()
+        .flat_map(std::env::split_paths)
+        .map(|dir| dir.join(tool))
+        .find(|p| p.is_file())
+        .ok_or_else(|| format!("{} is not on PATH", tool.display()))
+}
+
 /// The short name of a guest in accept lines.
 fn label(guest: &str) -> &'static str {
     if guest == GUESTS[1] {
@@ -272,7 +359,8 @@ fn sides(root: &Path, base: &str, base_sha: &str, floors: &[String]) -> Result<V
     Ok(sides)
 }
 
-/// The JS the count runs: the driver and the host it loads.
+/// The JS the count runs: the driver, the host it loads and the
+/// `package.json` that makes them modules.
 fn driver_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let js = root.join("hosts/js");
     let src = js.join("src");
@@ -284,6 +372,7 @@ fn driver_files(root: &Path) -> Result<Vec<PathBuf>, String> {
         .collect();
     files.sort();
     files.push(js.join("bench/count.ts"));
+    files.push(js.join("package.json"));
     Ok(files)
 }
 
@@ -305,8 +394,7 @@ fn measure(
     let (cache, store) = (dir.join("cache"), dir.join("guests"));
     let bench = root.join("bench");
     let expected = read_expected(&bench.join("expected.txt"))?;
-    let scratch = dir.join("callgrind");
-    for d in [&cache, &store, &scratch] {
+    for d in [&cache, &store] {
         fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
     }
     let mut hashes = BTreeMap::new();
@@ -322,6 +410,9 @@ fn measure(
     let (tx, rx) = mpsc::channel::<(String, &str, &str)>();
     let (rx, done) = (Mutex::new(rx), Mutex::new(Vec::new()));
     let js = root.join("hosts/js");
+    let driver = driver_files(root)?;
+    sweep();
+    make_scratch_root()?;
     let workers = thread::available_parallelism().map_or(1, usize::from);
     let built = thread::scope(|scope| {
         for _ in 0..workers {
@@ -334,11 +425,10 @@ fn measure(
                     let n = count(
                         valgrind,
                         node,
-                        &js,
+                        (&js, &driver),
                         &store.join(format!("{id}.wasm")),
                         &bench.join(format!("{stem}.py")),
                         expected.get(name).map_or("", String::as_str),
-                        &scratch.join(format!("{id}.{stem}")),
                     );
                     done.lock()
                         .unwrap_or_else(PoisonError::into_inner)
@@ -372,6 +462,7 @@ fn measure(
         );
         built
     });
+    let _ = fs::remove_dir_all(scratch_root());
     built?;
     for (id, name, n) in done.into_inner().unwrap_or_else(PoisonError::into_inner) {
         if let Some(c) = by_content.get_mut(&id) {
@@ -531,64 +622,203 @@ fn paths(file: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
         .collect()
 }
 
-/// One program's second run on `guest` under callgrind: V8's generated
-/// code's instructions. The dumps are removed once read.
+/// One program's second run on `guest` under callgrind: the instructions
+/// of code in no file-backed mapping ([`generated`]). Every count runs from
+/// `/tmp/mm-v8-ir-<pid>/<job>/` (each part as long in every run), on copies
+/// of the host's JS (`package.json`, `src/*.ts`, `bench/count.ts`), the
+/// guest (`guest.wasm`) and the program (`program.py`) there, with node
+/// linked in as `node`, the callgrind files there, and an empty
+/// environment. That is hygiene, so that nothing of the caller's reaches
+/// the process; it is not what makes the count repeat (see the module
+/// doc). The directory is removed once the count is read.
 fn count(
     valgrind: &Path,
     node: &Path,
-    js: &Path,
+    (js, driver): (&Path, &[PathBuf]),
     guest: &Path,
     program: &Path,
     want: &str,
-    prefix: &Path,
 ) -> Result<u64, String> {
-    let output = Command::new(valgrind)
-        .args(["--tool=callgrind", "--dump-after=uv_getrusage"])
-        .arg(format!("--callgrind-out-file={}.%p.cg", prefix.display()))
-        .arg(node)
-        .args(["--no-liftoff", "bench/count.ts"])
-        .arg(guest)
-        .arg(format!("{}={want}", program.display()))
-        .current_dir(js)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("cannot run {}: {e}", valgrind.display()))?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
     let what = format!("{} on {}", program.display(), guest.display());
-    if !output.status.success() {
-        let tail: Vec<&str> = stderr.lines().rev().take(6).collect();
-        return Err(format!(
-            "{what}: {}",
-            tail.into_iter().rev().collect::<Vec<_>>().join("\n")
-        ));
-    }
-    let pid = stderr
-        .split("==")
-        .nth(1)
-        .filter(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
-        .ok_or_else(|| format!("{what}: no pid in valgrind's output"))?;
-    let base = format!("{}.{pid}.cg", prefix.display());
-    // Dump 1: start-up and the module's compile; 2: the first run; 3: the
-    // second, counted.
-    let dump = PathBuf::from(format!("{base}.3"));
-    let counted = fs::read_to_string(&dump)
-        .map_err(|e| format!("{what}: {}: {e}", dump.display()))
-        .map(|cg| generated(&cg));
-    for n in ["", ".1", ".2", ".3"] {
-        let _ = fs::remove_file(format!("{base}{n}"));
-    }
+    let dir = scratch_dir()?;
+    let counted = (|| {
+        let place = |from: &Path, to: &str| {
+            let to = dir.join(to);
+            if let Some(parent) = to.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+            }
+            fs::copy(from, &to)
+                .map(|_| ())
+                .map_err(|e| format!("cannot copy {} to {}: {e}", from.display(), to.display()))
+        };
+        for file in driver {
+            let local = file.strip_prefix(js).map_err(|e| e.to_string())?;
+            place(file, &local.to_string_lossy())?;
+        }
+        place(guest, "guest.wasm")?;
+        place(program, "program.py")?;
+        std::os::unix::fs::symlink(node, dir.join("node"))
+            .map_err(|e| format!("cannot link {} into {}: {e}", node.display(), dir.display()))?;
+        let output = Command::new(valgrind)
+            .args(["--tool=callgrind", "--dump-after=uv_getrusage"])
+            .arg(format!("--callgrind-out-file={}/%p.cg", dir.display()))
+            .arg("./node")
+            .args(["--no-liftoff", "--single-threaded", "bench/count.ts"])
+            .arg("guest.wasm")
+            .arg(format!("program.py={want}"))
+            .current_dir(&dir)
+            .env_clear()
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run {}: {e}", valgrind.display()))?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success() {
+            let tail: Vec<&str> = stderr.lines().rev().take(6).collect();
+            return Err(format!(
+                "{what}: {}",
+                tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+            ));
+        }
+        let pid = stderr
+            .split("==")
+            .nth(1)
+            .filter(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+            .ok_or_else(|| format!("{what}: no pid in valgrind's output"))?;
+        // Dump 1: start-up and the module's compile; 2: the first run; 3:
+        // the second, counted.
+        let read = |name: String| {
+            let path = dir.join(name);
+            fs::read_to_string(&path).map_err(|e| format!("{what}: {}: {e}", path.display()))
+        };
+        let maps = mappings(&read("maps.txt".to_owned())?);
+        generated(&read(format!("{pid}.cg.3"))?, &maps).map_err(|e| format!("{what}: {e}"))
+    })();
+    let _ = fs::remove_dir_all(&dir);
     match counted? {
         0 => Err(format!("{what}: no instructions in generated code")),
         n => Ok(n),
     }
 }
 
+/// A new directory `/tmp/mm-v8-ir-PPPPPPPP/NNNNN`, as long for every
+/// count: the run's pid in 8 digits and a 5-digit sequence number, in the
+/// root [`make_scratch_root`] made. Not `TMPDIR`, so that the place is the
+/// same whatever the caller's environment.
+fn scratch_dir() -> Result<PathBuf, String> {
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed) % 100_000;
+    let dir = scratch_root().join(format!("{n:05}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    Ok(dir)
+}
+
+/// Makes this run's root with mode 0700. A pid is a guessable name in a
+/// shared `/tmp`, so a root that is already there is used only when this
+/// user owns it (a killed run's, emptied first); one that another user
+/// made, or that is not a directory, fails the run rather than letting
+/// that user swap a job's files under the count.
+fn make_scratch_root() -> Result<(), String> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    let root = scratch_root();
+    let shown = root.display();
+    match fs::DirBuilder::new().mode(0o700).create(&root) {
+        Ok(()) => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(format!("{shown}: {e}")),
+    }
+    // `/proc/self` belongs to this process's user.
+    let me = fs::metadata("/proc/self")
+        .map_err(|e| format!("/proc/self: {e}"))?
+        .uid();
+    let found = fs::symlink_metadata(&root).map_err(|e| format!("{shown}: {e}"))?;
+    if !found.is_dir() || found.uid() != me {
+        return Err(format!(
+            "{shown} is already there and is not a directory of this user's: refusing to count \
+             in it"
+        ));
+    }
+    fs::remove_dir_all(&root).map_err(|e| format!("{shown}: {e}"))?;
+    // A new owner's directory in the gap fails `create` with the same
+    // error as above, so the run fails rather than counting in it.
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&root)
+        .map_err(|e| format!("{shown}: {e}"))
+}
+
+/// This run's `/tmp/mm-v8-ir-PPPPPPPP` (its pid in 8 digits), removed when
+/// the counts are in.
+fn scratch_root() -> PathBuf {
+    PathBuf::from(format!("/tmp/mm-v8-ir-{:08}", std::process::id()))
+}
+
+/// Removes the `/tmp/mm-v8-ir-PPPPPPPP` of runs that were killed: as
+/// `durability`'s sweep, a directory whose pid is gone, and only once it is
+/// a day old, which a live run's never is (each count makes a directory in
+/// it). Other names, such as another tool's, stay.
+fn sweep() {
+    let Ok(entries) = fs::read_dir("/tmp") else {
+        return;
+    };
+    let day = std::time::Duration::from_hours(24);
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name();
+        let Some(pid) = name
+            .to_str()
+            .and_then(|n| n.strip_prefix("mm-v8-ir-"))
+            .filter(|p| p.len() == 8 && p.bytes().all(|b| b.is_ascii_digit()))
+        else {
+            continue;
+        };
+        let old = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| t.elapsed().is_ok_and(|age| age > day));
+        if old && !Path::new(&format!("/proc/{}", pid.trim_start_matches('0'))).exists() {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// The mappings of `maps` (a `/proc/PID/maps`): each range, and whether
+/// it maps a file.
+fn mappings(maps: &str) -> Vec<(u64, u64, bool)> {
+    maps.lines()
+        .filter_map(|line| {
+            let mut f = line.split_ascii_whitespace();
+            let (lo, hi) = f.next()?.split_once('-')?;
+            let file = f.nth(4).is_some_and(|path| path.starts_with('/'));
+            Some((
+                u64::from_str_radix(lo, 16).ok()?,
+                u64::from_str_radix(hi, 16).ok()?,
+                file,
+            ))
+        })
+        .collect()
+}
+
 /// The self instructions in `cg` (one callgrind dump) at code with no
-/// object file, which callgrind names `???`. Names are compressed:
-/// `ob=(N) name` defines `N`, a later `ob=(N)` refers to it. The cost line
-/// after a `calls=` line is the call's inclusive cost, not self cost.
-fn generated(cg: &str) -> u64 {
+/// object file, which callgrind names `???`, in the anonymous mappings of
+/// `maps` ([`mappings`]): V8's generated code. `???` code in a file's
+/// mapping is left out: stubs in libstdc++, libc and node that callgrind
+/// does not attribute, whose calls moved for no cause found (libstdc++'s
+/// `operator new` to `malloc` stub ran 361 or 360 times [M]). A `???`
+/// function is named by its address; one in no mapping at all (code
+/// unmapped before the maps were read) fails the count. Names are
+/// compressed: `ob=(N) name` and `fn=(N) name` define `N` (`cob=` and
+/// `cfn=` too), a later `fn=(N)` refers to it. The cost line after a
+/// `calls=` line is the call's inclusive cost, not self cost. Callgrind
+/// does not report a write that failed (a full `/tmp`), and a dump cut
+/// short read lower [M], so the self costs of every object must add up
+/// to the dump's `totals:` line, and a cost that is not a number fails.
+fn generated(cg: &str, maps: &[(u64, u64, bool)]) -> Result<u64, String> {
     let (mut unknown, mut ob, mut call, mut n) = (Vec::new(), "", false, 0_u64);
+    let (mut all, mut totals) = (0_u64, None);
+    let mut names = BTreeMap::new();
+    // Where the current function is: in a file, in no mapping, or else
+    // generated code (`None`).
+    let mut fun: (&str, Option<bool>) = ("", None);
     for line in cg.lines() {
         if let Some(rest) = line
             .strip_prefix("ob=")
@@ -603,8 +833,41 @@ fn generated(cg: &str) -> u64 {
             }
             continue;
         }
+        if let Some(rest) = line
+            .strip_prefix("fn=")
+            .or_else(|| line.strip_prefix("cfn="))
+        {
+            let (id, name) = rest.split_once(' ').unwrap_or((rest, ""));
+            if !name.is_empty() {
+                names.insert(id, name);
+            }
+            if line.starts_with("fn=") {
+                let name = names.get(id).copied().unwrap_or(id);
+                let at = name
+                    .strip_prefix("0x")
+                    .and_then(|hex| u64::from_str_radix(hex.split('\'').next()?, 16).ok());
+                let mapped = at.and_then(|a| {
+                    maps.iter()
+                        .find(|&&(lo, hi, _)| (lo..hi).contains(&a))
+                        .map(|&(_, _, file)| file)
+                });
+                fun = (
+                    name,
+                    mapped.map_or(Some(false), |file| file.then_some(true)),
+                );
+            }
+            continue;
+        }
         if line.starts_with("calls=") {
             call = true;
+            continue;
+        }
+        if let Some(t) = line.strip_prefix("totals:") {
+            totals = Some(
+                t.trim()
+                    .parse::<u64>()
+                    .map_err(|_| format!("the dump's `{line}` is not a count"))?,
+            );
             continue;
         }
         if !line
@@ -621,11 +884,31 @@ fn generated(cg: &str) -> u64 {
         if core::mem::take(&mut call) {
             continue;
         }
-        if unknown.contains(&ob) {
-            n += ir.parse::<u64>().unwrap_or(0);
+        let ir: u64 = ir
+            .parse()
+            .map_err(|_| format!("the dump's cost line `{line}` is not a count"))?;
+        all += ir;
+        if !unknown.contains(&ob) {
+            continue;
+        }
+        match fun.1 {
+            None => n += ir,
+            Some(true) => {}
+            Some(false) => {
+                return Err(format!(
+                    "`???` code at {} is in no mapping of the process",
+                    fun.0
+                ));
+            }
         }
     }
-    n
+    match totals {
+        Some(t) if t == all => Ok(n),
+        Some(t) => Err(format!(
+            "the dump's costs add up to {all}, not its `totals: {t}`: cut short?"
+        )),
+        None => Err("the dump has no `totals:` line: cut short?".to_owned()),
+    }
 }
 
 /// The cached counts of the guest with content `id` under `key`, each kept
@@ -768,21 +1051,27 @@ fn millions(n: u64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::generated;
+    #![allow(clippy::unwrap_used, reason = "tests fail on a broken fixture")]
+    use super::{generated, mappings};
 
     #[test]
-    fn counts_self_cost_in_code_without_an_object_file() {
-        let cg = "\
+    fn counts_self_cost_in_generated_code() {
+        let maps = "\\
+0045b000-02a06000 r-xp 0005b000 103:02 1 /nix/store/x-nodejs/bin/node
+04288000-04a87000 rwxp 00000000 00:00 0
+07000000-07200000 r-xp 00000000 103:02 2 /nix/store/x-gcc-lib/lib/libstdc++.so.6
+";
+        let cg = "\\
 ob=(1) /usr/bin/node
 fn=(1) main
 0x10 5
 ob=(2) ???
-fn=(2) 0x7f00
+fn=(2) 0x0000000004300000
 0x20 7
 +1 3
-cob=(1)
-cfn=(1)
-calls=1 0x10
+cob=(2)
+cfn=(3) 0x00000000070ed3d0
+calls=1 0x30
 0x21 1000
 ob=(1)
 fn=(1)
@@ -790,9 +1079,49 @@ fn=(1)
 ob=(2)
 fn=(2)
 * 2
+fn=(3)
+0x30 2
+fn=(4) 0x0000000004300040'2
+0x40 4
+
+totals: 34
 ";
-        // 7 + 3 + 2 in `???`; the call's 1000 is inclusive cost, node's own
-        // 5 and 11 are not generated code.
-        assert_eq!(generated(cg), 12);
+        // 7 + 3 + 2 + 4 in `???` in no file; the call's 1000 is inclusive
+        // cost, node's own 5 and 11 are not generated code, and the stub's
+        // 2 (named first by a `cfn=` line) are in libstdc++'s mapping.
+        let maps = mappings(maps);
+        assert_eq!(maps[1], (0x428_8000, 0x4a8_7000, false));
+        assert_eq!(generated(cg, &maps), Ok(16));
+        // Code in no mapping fails the count.
+        let err = generated(cg, &maps[..1]).unwrap_err();
+        assert!(err.contains("0x0000000004300000"), "{err}");
+    }
+
+    #[test]
+    fn a_dump_cut_short_or_with_a_bad_cost_fails() {
+        let maps = mappings("04288000-04a87000 rwxp 00000000 00:00 0\n");
+        let cg = "\
+ob=(2) ???
+fn=(2) 0x0000000004300000
+0x20 7
++1 3
+
+totals: 10
+";
+        assert_eq!(generated(cg, &maps), Ok(10));
+        // Cut after a cost line, or within one, as a failed write leaves it.
+        let cut = &cg[..cg.find("+1 3").unwrap() + 3];
+        assert!(generated(cut, &maps).unwrap_err().contains("no `totals:`"));
+        let cut = &cg[..cg.find("totals").unwrap()];
+        assert!(generated(cut, &maps).is_err());
+        // A total that the costs do not reach, and a cost that is not a number.
+        let short = cg.replace("totals: 10", "totals: 13");
+        assert!(
+            generated(&short, &maps)
+                .unwrap_err()
+                .contains("add up to 10")
+        );
+        let bad = cg.replace("+1 3", "+1 3x");
+        assert!(generated(&bad, &maps).unwrap_err().contains("`+1 3x`"));
     }
 }

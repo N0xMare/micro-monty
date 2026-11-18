@@ -200,8 +200,9 @@ tasks:
                              `Native-IR-Accepted: sessions <ceiling> <reason>`
                              line covers it
       --base <rev>           the revision to compare with (default origin/main)
-  v8-ir [options]            V8's instructions (node --no-liftoff, generated
-                             code, the second of two runs) on bench/*.py in
+  v8-ir [options]            V8's instructions (node --no-liftoff
+                             --single-threaded, generated code, the second
+                             of two runs) on bench/*.py in
                              both wasm32-unknown-unknown guests against a base
                              and the floors, as wasm-ir (in the release gate):
                              fails on a program rising past 0.5% or a guest's

@@ -3103,13 +3103,34 @@ opens a draft release.
   instructions on the bench programs (`startup` left out) in both
   `wasm32-unknown-unknown` guests, plain and bundle, which are built with
   other `wasm-opt` flags than the wasip1 `mm` wasm-ir counts. Each program
-  runs in its own `node --no-liftoff` process under callgrind, twice in
-  fresh sessions (`hosts/js/bench/count.ts`); the count is the second
-  run's instructions in code without an object file (callgrind's `???`):
-  V8's generated code. The first run holds V8's lazy compiles. A revision
-  whose xtask has `size --head` builds its guests with its own recipe, so
-  a change to the `wasm-opt` flags or the `optimize(size)` marks is
-  counted at its commit; older ones are built with the head's recipe.
+  runs in its own `node --no-liftoff --single-threaded` process under
+  callgrind, twice in fresh sessions (`hosts/js/bench/count.ts`); the
+  count is the second run's instructions in code without an object file
+  (callgrind's `???`) that is not file-backed by the process's mappings:
+  V8's generated code, that is the guest's TurboFan code, the wasm-to-js
+  wrappers and the host's JS as V8 has compiled it. The `???` stubs in
+  libstdc++, libc and node are left out, and code in a file was never
+  counted: node's and libc's `memory.copy` and `memory.fill` (11.6% of
+  plain/str's second run, 2.4% of bytearray's [M]) are outside the count,
+  so work a change moves there costs it only the calls. The first run
+  holds V8's lazy compiles; the second starts with a deopt and up to two
+  recompiles, and repeats. Two things make the count repeat [M, on one
+  host, one node and one valgrind]: `--single-threaded` keeps V8's
+  compiles and collections on the main thread, so the host's JS reaches
+  each tier at the same point in every run (it also implies
+  `--no-wasm-tier-up` and synchronous single-task wasm compiles, without
+  effect under `--no-liftoff`); and leaving out `???` code in a file
+  removes a libstdc++ allocator stub whose calls moved by one, for no
+  cause found. A count whose dump does not add up to its `totals:` line,
+  or that has `???` code in no mapping, fails. Every count also runs from
+  `/tmp/mm-v8-ir-<pid>/<job>/` with copies of the head's host JS, the
+  guest and the program under fixed names and an empty environment, which
+  keeps `NODE_OPTIONS` and `VALGRIND_OPTS` out; the gate runs only where
+  valgrind shows the CPU as `x86-64-v3` (without AVX plain/floats counts
+  1.556% more). A revision whose xtask has `size --head` builds its guests
+  with its own recipe, so a change to the `wasm-opt` flags or the
+  `optimize(size)` marks is counted at its commit; older ones are built
+  with the head's recipe.
   The floors (§12) are named `plain/<program>` and `bundle/<program>`.
   An accept line `V8-IR-Accepted: <names> <ceiling> <reason>` (programs or
   `geomean`, `plain/` or `bundle/` before one for one guest) passes only
@@ -3117,11 +3138,14 @@ opens a draft release.
   `MM_V8_IR_ACCEPT` stands for it in an uncommitted tree only. Limits, on
   either guest against base and floor: a program rising past 0.5% or the geomean past
   0.3%; decreases pass. Counts are cached per guest content, keyed by
-  node's and valgrind's versions, the driver and the program's source, so
-  only a guest whose bytes changed is counted again. Stability [M]: the
-  same guest counts within 0.024% run to run; unrelated commits move a
-  program by 0.00–0.06%. Valgrind runs no AVX-512, so this is V8's AVX2
-  code.
+  the counting method, node's version and binary, valgrind's version,
+  glibc, the CPU class, the driver and the program's source, so only a
+  guest whose bytes changed is counted again. Stability [M, on one host,
+  one node and one valgrind]: of 2,997 counts of 1,980 keys (the guests
+  of 76 commits), the 440 keys counted more than once repeated exactly,
+  idle and under load, from checkouts at three path lengths, in other
+  orders and under other environments; without `--single-threaded` a count moved by up to
+  0.085%. Valgrind runs no AVX-512, so this is V8's AVX2 code.
 - **wasm-wall** (advisory, not in `check`): the count cannot see
   host-tuned layout costs (AVX-512 precompiles), so `cargo xtask wasm-wall`
   times the bench programs on wasmtime and V8 (`node --no-liftoff`, steady
