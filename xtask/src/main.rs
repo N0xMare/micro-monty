@@ -714,8 +714,9 @@ const RELEASE_GATE_PATHS: &[&str] = &[
 
 /// Why the change since the merge base with `base_rev`, committed or
 /// not (new untracked files included), needs the release gate: a path of [`RELEASE_GATE_PATHS`], Cargo.toml's
-/// `[profile.*]` tables, an `optimize(size)` mark added or removed, or no
-/// merge base to tell.
+/// `[profile.*]` tables, an `optimize` mark (`size`, `speed` or `none`,
+/// bare or in `cfg_attr`) in a `.rs` file under `crates/` added, removed,
+/// edited or moved to another function, or no merge base to tell.
 fn release_gate_reason(root: &Path, base_rev: &str) -> Option<String> {
     let git = |args: &[&str]| {
         let out = Command::new("git")
@@ -748,11 +749,133 @@ fn release_gate_reason(root: &Path, base_rev: &str) -> Option<String> {
     if profile_lines(&old) != profile_lines(&new) {
         return Some("Cargo.toml's [profile.*]".to_owned());
     }
-    let marks = git(&["diff", "-U0", base, "--", "crates"]).unwrap_or_default();
-    marks
-        .lines()
-        .any(|l| (l.starts_with('+') || l.starts_with('-')) && l.contains("optimize(size)"))
-        .then(|| "an optimize(size) mark".to_owned())
+    // A changed line that names `optimize(` (a mark added, removed or
+    // moved), or a file whose `optimize` attributes and the functions they
+    // sit on differ (a condition edited on another line of a multi-line
+    // `cfg_attr`, a function inserted under a mark or deleted from under
+    // one).
+    let diff = git(&[
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "-U0",
+        base,
+        "--",
+        "crates",
+    ])
+    .unwrap_or_default();
+    let mut file = "";
+    let by_line = diff.lines().find_map(|l| {
+        if let Some((_, b)) = l
+            .strip_prefix("diff --git ")
+            .and_then(|p| p.rsplit_once(" b/"))
+        {
+            file = b;
+        }
+        ((l.starts_with('+') || l.starts_with('-')) && names_optimize(l)).then_some(file)
+    });
+    let by_attr = || {
+        changed
+            .lines()
+            .filter(|path| {
+                path.starts_with("crates/")
+                    && Path::new(path).extension().is_some_and(|e| e == "rs")
+            })
+            .find(|path| {
+                let old = git(&["show", &format!("{base}:{path}")]).unwrap_or_default();
+                let new = fs::read_to_string(root.join(path)).unwrap_or_default();
+                optimize_attrs(&old) != optimize_attrs(&new)
+            })
+    };
+    by_line
+        .or_else(by_attr)
+        .map(|path| format!("an optimize(...) mark in {path}"))
+}
+
+/// Whether `text` holds `optimize` followed by `(`, spaces allowed
+/// between: every form of the attribute, and also prose that names it.
+fn names_optimize(text: &str) -> bool {
+    text.match_indices("optimize")
+        .any(|(at, word)| text[at + word.len()..].trim_start().starts_with('('))
+}
+
+/// The attributes of `src` (`#[...]` and `#![...]`, brackets balanced)
+/// that name `optimize(`, in order, without whitespace; an outer one with
+/// the name of the function it marks, the next `fn` outside comments and
+/// attributes. A `]` in a string inside an attribute ends it early.
+fn optimize_attrs(src: &str) -> Vec<String> {
+    let mut attrs = Vec::new();
+    let mut rest = src;
+    while let Some(at) = rest.find('#') {
+        rest = &rest[at + 1..];
+        let inner = rest.starts_with('!');
+        let body = if inner { &rest[1..] } else { rest };
+        if !body.starts_with('[') {
+            continue;
+        }
+        let end = bracketed(body);
+        rest = &body[end..];
+        let mut attr: String = body[..end].split_whitespace().collect();
+        if !names_optimize(&attr) {
+            continue;
+        }
+        if let Some(name) = next_fn(rest).filter(|_| !inner) {
+            attr = format!("{attr} fn {name}");
+        }
+        attrs.push(attr);
+    }
+    attrs
+}
+
+/// The length of the `[...]` that `body` starts with, brackets balanced,
+/// or all of `body` when it is not closed.
+fn bracketed(body: &str) -> usize {
+    let mut depth = 0usize;
+    body.char_indices()
+        .find(|&(_, c)| {
+            depth = match c {
+                '[' => depth + 1,
+                ']' => depth - 1,
+                _ => depth,
+            };
+            depth == 0
+        })
+        .map_or(body.len(), |(i, _)| i + 1)
+}
+
+/// The name after the first `fn` keyword of `src` outside line comments,
+/// block comments and attributes, so a comment or a `reason = "..."`
+/// between a mark and its function does not supply the name.
+fn next_fn(mut src: &str) -> Option<&str> {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut after_ident = false;
+    while let Some(c) = src.chars().next() {
+        if src.starts_with("//") {
+            src = src.find('\n').map_or("", |i| &src[i..]);
+        } else if src.starts_with("/*") {
+            src = src.find("*/").map_or("", |i| &src[i + 2..]);
+        } else if let Some(body) = src
+            .strip_prefix("#!")
+            .or_else(|| src.strip_prefix('#'))
+            .filter(|body| body.starts_with('['))
+        {
+            src = &body[bracketed(body)..];
+        } else if !after_ident
+            && let Some(name) = src
+                .strip_prefix("fn")
+                .and_then(|s| s.strip_prefix(char::is_whitespace))
+        {
+            return name.trim_start().split(|c| !ident(c)).next();
+        } else {
+            after_ident = ident(c);
+            src = &src[c.len_utf8()..];
+            continue;
+        }
+        after_ident = false;
+    }
+    None
 }
 
 /// The lines of `toml`'s `[profile.*]` tables, without comments.
@@ -941,5 +1064,139 @@ fn cpython_oracle_version(python: &Path) -> Result<String, String> {
             "{} is {version}, not CPython 3.14; set PYTHON to a CPython 3.14 interpreter",
             python.display()
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{names_optimize, optimize_attrs};
+
+    #[test]
+    fn a_mark_change_is_seen_by_the_attribute_scan() {
+        let multi = "#[cfg_attr(\n    all(mm_shipped, not(target_arch = \"wasm32\")),\n    optimize(speed)\n)]\nfn f() {}\n";
+        // (case, base, head, whether the scan sees a change)
+        let rows: [(&str, &str, &str, bool); 9] = [
+            (
+                "single-line mark added",
+                "fn f() {}",
+                "#[optimize(speed)]\nfn f() {}",
+                true,
+            ),
+            (
+                "multi-line condition edited on its own line",
+                multi,
+                &multi.replace("not(target_arch = \"wasm32\")", "target_arch = \"wasm32\""),
+                true,
+            ),
+            (
+                "multi-line, reformatted only",
+                multi,
+                &multi.replace("\n    ", " "),
+                false,
+            ),
+            (
+                "inner mark added",
+                "fn f() {}",
+                "#![optimize(size)]\nfn f() {}",
+                true,
+            ),
+            (
+                "feature(optimize_attribute) edited",
+                "#![cfg_attr(mm_shipped, feature(optimize_attribute))]",
+                "#![cfg_attr(all(mm_shipped), feature(optimize_attribute))]",
+                false,
+            ),
+            (
+                "`optimize (size)` added",
+                "fn f() {}",
+                "#[optimize (size)]\nfn f() {}",
+                true,
+            ),
+            (
+                "unterminated `#[` added",
+                "fn f() {}",
+                "fn f() {}\n#[optimize(size)",
+                true,
+            ),
+            (
+                "nested `[..]` in the attribute, size to speed",
+                "#[cfg_attr(all(a, doc = [\"x\"][0]), optimize(size))]\nfn f() {}",
+                "#[cfg_attr(all(a, doc = [\"x\"][0]), optimize(speed))]\nfn f() {}",
+                true,
+            ),
+            (
+                "known miss: a `]` in a string before `optimize(`",
+                "#[cfg_attr(all(a, feature = \"x]\"), optimize(size))]\nfn f() {}",
+                "#[cfg_attr(all(b, feature = \"x]\"), optimize(size))]\nfn f() {}",
+                false,
+            ),
+        ];
+        for (case, base, head, seen) in rows {
+            assert_eq!(optimize_attrs(base) != optimize_attrs(head), seen, "{case}");
+        }
+        assert!(names_optimize("+    #[optimize (none)]"));
+        assert!(names_optimize("-// optimize(size) on dt_ord"));
+        assert!(!names_optimize(
+            "+#![cfg_attr(mm_shipped, feature(optimize_attribute))]"
+        ));
+    }
+
+    #[test]
+    fn a_mark_is_paired_with_the_function_it_marks() {
+        let marked = "#[cfg_attr(mm_shipped, optimize(size))]\nfn marked() {}\n\nfn plain() {}\n";
+        // (case, base, head, whether the scan sees a change)
+        let rows: [(&str, &str, &str, bool); 7] = [
+            (
+                "function inserted under a mark",
+                marked,
+                &marked.replace("fn marked", "fn inserted() {}\n\nfn marked"),
+                true,
+            ),
+            (
+                "marked function deleted, its mark falls on the next",
+                marked,
+                &marked.replace("fn marked() {}\n\n", ""),
+                true,
+            ),
+            (
+                "marked function's body edited",
+                marked,
+                &marked.replace("marked() {}", "marked() { g() }"),
+                false,
+            ),
+            (
+                "a comment holding `fn` under the mark, marked function deleted",
+                &marked.replace("fn marked", "// Out of line: the fn is cold.\nfn marked"),
+                &marked.replace("fn marked() {}\n\n", "// Out of line: the fn is cold.\n"),
+                true,
+            ),
+            (
+                "an attribute holding `fn` under the mark, function inserted",
+                &marked.replace(
+                    "fn marked",
+                    "#[expect(x, reason = \"one fn per case\")]\nfn marked",
+                ),
+                &marked.replace(
+                    "fn marked",
+                    "#[expect(x, reason = \"one fn per case\")]\nfn inserted() {}\n\nfn marked",
+                ),
+                true,
+            ),
+            (
+                "marked function renamed",
+                marked,
+                &marked.replace("fn marked", "fn renamed"),
+                true,
+            ),
+            (
+                "an inner mark kept, a function inserted after its function",
+                "fn f() {\n    #![optimize(size)]\n}\n",
+                "fn f() {\n    #![optimize(size)]\n}\n\nfn g() {}\n",
+                false,
+            ),
+        ];
+        for (case, base, head, seen) in rows {
+            assert_eq!(optimize_attrs(base) != optimize_attrs(head), seen, "{case}");
+        }
     }
 }

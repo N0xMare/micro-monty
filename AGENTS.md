@@ -118,15 +118,26 @@ to `target/check/logs/<stage>.log`.
   `crates/mm-compile/src/encode.rs`; a `crates/mm-wasm-*` crate;
   `xtask/src/wasm.rs` or `shipped.rs`; `rust-toolchain.toml`,
   `Cargo.lock`, `.cargo/` or `.agents/setup`. A line of a `[profile.*]`
-  table, an `optimize(size)` mark added or removed, or no merge base does
-  the same. `--landing-tier` forces the landing tier; say why in the commit
-  if you use it. `--base <rev>` measures a stack from its parent instead of
-  `origin/main` (the tier's paths, size, the Ir gates), so a stack can be
-  gated while its parent is gated or waits to be pushed; it is pushed
-  once the parent is main. `check` prints the base and head it judged,
-  and refuses a `--base` that already holds HEAD when the tree is clean.
-  A facade API or snapshot format change also needs `cargo xtask
-  wasm-host` (in the release gate).
+  table, an `optimize` mark (`size`, `speed` or `none`, bare or in
+  `cfg_attr`) added, removed, edited or moved to another function (a
+  changed line under `crates/` that names `optimize(`, or a `.rs` file
+  under `crates/` whose `optimize` attributes, each with the next `fn`
+  outside comments and attributes, differ from the merge base's), or no
+  merge base does the same. Not seen, so such a change needs
+  `--release-gate` by hand: a mark chosen by a macro invocation, by a cfg
+  set in `build.rs` or by a feature list; in a file under `crates/` that
+  is not `.rs` (an `include!`d one), a mark in an untracked file, a
+  multi-line condition edited and a mark moved to another function (one
+  added on one line of a tracked file is seen); and a change around a
+  mark on a closure or an async block, which is paired with the next
+  function of the file. `--landing-tier` forces the landing tier; say why
+  in the commit if you use it. `--base <rev>` measures a stack from its
+  parent instead of `origin/main` (the tier's paths, size, the Ir gates),
+  so a stack can be gated while its parent is gated or waits to be
+  pushed; it is pushed once the parent is main. `check` prints the base
+  and head it judged, and refuses a `--base` that already holds HEAD
+  when the tree is clean. A facade API or snapshot format change also
+  needs `cargo xtask wasm-host` (in the release gate).
 - Ir: drops always pass; rises are gated against the base and against an
   anchor (each count's lowest since the last `v*` tag, so steps under a
   limit cannot add up; the gates need the tags fetched). Three gates, on
