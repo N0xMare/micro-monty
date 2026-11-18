@@ -67,6 +67,10 @@ hashes are pre-release history, kept in the private archive
   `ok 3 3` at fuel 4,707,521 unparked, parked and with a snapshot at
   every park, where 0.0.2 raised `MemoryError` at 4,974,841 unparked
   [M]. The build id moves.
+- Generator, coroutine and async generator methods called unbound on an
+  object of another type, such as `type(gen()).close(d)`, raise CPython's
+  `TypeError` and leave the object alone, where 0.0.2 wrote the
+  generator's slots into it (0.0.2's known issues) [M, own case 566].
 
 ### Known issues
 

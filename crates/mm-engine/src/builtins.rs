@@ -498,8 +498,8 @@ const DEFS: &[Def] = &[
     n!("throw", GE, 2, 4, NO, NO, gen_throw),
     n!("close", GE, 1, 1, NO, NO, gen_close),
     n!("__next__", GE, 1, 1, NO, NO, gen_next),
-    n!("__iter__", GE, 1, 1, NO, NO, self_iter),
-    n!("__aiter__", AG, 1, 1, NO, NO, self_iter),
+    n!("__iter__", GE, 1, 1, NO, NO, gen_iter),
+    n!("__aiter__", AG, 1, 1, NO, NO, agen_aiter),
     n!("__anext__", AG, 1, 1, NO, NO, agen_anext),
     n!("asend", AG, 2, 2, NO, NO, agen_asend),
     n!("athrow", AG, 2, 4, NO, NO, agen_athrow),
@@ -6603,9 +6603,36 @@ fn exc_add_note(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 // ------------------------------------------------------- generators
 
+/// The `self` of method `name` of `owner` (a generator, a coroutine or an
+/// async generator), which the method reads and writes the slots of:
+/// one of `kinds`, or the `TypeError` CPython's descriptor raises for any
+/// other object, a generator of another kind included. Without the check
+/// a dict, tuple or instance passed as `self` had its slots overwritten.
+#[cfg_attr(mm_shipped, optimize(size))]
+fn own_self(
+    vm: &mut Vm,
+    a: &CallArgs,
+    kinds: &[u16],
+    owner: T,
+    name: &str,
+) -> Result<Value, Raised> {
+    let s = vm.arg_o(a, 0);
+    if kinds.iter().any(|&k| s.is_obj_kind(k as u8)) {
+        return Ok(s);
+    }
+    // A dunder is a slot wrapper in CPython, with its own wording.
+    let (owner, got) = (owner.name(), vm.type_name(s));
+    let msg = if name.starts_with("__") {
+        format!("descriptor '{name}' requires a '{owner}' object but received a '{got}'")
+    } else {
+        format!("descriptor '{name}' for '{owner}' objects doesn't apply to a '{got}' object")
+    };
+    Err(vm.err(T::TypeError, &msg))
+}
+
 #[cfg_attr(mm_shipped, optimize(size))]
 fn gen_send(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    let g = vm.arg_o(&a, 0);
+    let g = own_self(vm, &a, &[ty::GEN], T::generator, "send")?;
     vm.call_request(g, alloc::vec![vm.arg_o(&a, 1)], Cont::GenSend)
 }
 
@@ -6624,6 +6651,7 @@ fn gen_next(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         }
         return vm.calliter_next(g, u32::MAX);
     }
+    let g = own_self(vm, &a, &[ty::GEN], T::generator, "__next__")?;
     vm.call_request(g, alloc::vec![Value::NONE], Cont::GenSend)
 }
 
@@ -6633,6 +6661,18 @@ fn range_hint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let it = vm.check_self(&a, T::range_iterator, "__length_hint__")?;
     let left = it.as_obj().map_or(0, |r| vm.raw_o(r, 3));
     vm.new_int128(i128::from(left))
+}
+
+/// `generator.__iter__()`: itself.
+#[cfg_attr(mm_shipped, optimize(size))]
+fn gen_iter(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    own_self(vm, &a, &[ty::GEN], T::generator, "__iter__")
+}
+
+/// `async_generator.__aiter__()`: itself.
+#[cfg_attr(mm_shipped, optimize(size))]
+fn agen_aiter(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    own_self(vm, &a, &[ty::AGEN], T::async_generator, "__aiter__")
 }
 
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
@@ -6683,7 +6723,7 @@ fn thrown(vm: &mut Vm, a: &CallArgs) -> Result<Value, Raised> {
 /// it suspends the calling task, as awaiting it would.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn coro_send(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    let c = vm.arg_o(&a, 0);
+    let c = own_self(vm, &a, &[ty::CORO, ty::SLEEP], T::coroutine, "send")?;
     vm.coro_unstarted(c)?;
     if !c.is_obj_kind(ty::CORO as u8) {
         return Err(vm.err(
@@ -6706,7 +6746,7 @@ fn coro_send(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// exception propagates.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn coro_throw(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    let c = vm.arg_o(&a, 0);
+    let c = own_self(vm, &a, &[ty::CORO, ty::SLEEP], T::coroutine, "throw")?;
     vm.coro_unstarted(c)?;
     let e = thrown(vm, &a)?;
     if vm.coro_state(c) == crate::aio::coro::SUSPENDED {
@@ -6721,7 +6761,7 @@ fn coro_throw(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn coro_close(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    let c = vm.arg_o(&a, 0);
+    let c = own_self(vm, &a, &[ty::CORO, ty::SLEEP], T::coroutine, "close")?;
     if vm.coro_state(c) == crate::aio::coro::RUNNING {
         return Err(vm.err(T::ValueError, "coroutine already executing"));
     }
@@ -6738,17 +6778,20 @@ fn coro_close(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// `coroutine.__await__()`: an iterator that drives the coroutine.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn coro_await(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    vm.prelude_request("_coro_wrapper", alloc::vec![vm.arg_o(&a, 0)], Cont::None)
+    let c = own_self(vm, &a, &[ty::CORO, ty::SLEEP], T::coroutine, "__await__")?;
+    vm.prelude_request("_coro_wrapper", alloc::vec![c], Cont::None)
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn agen_anext(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    vm.new_agen_op(vm.arg_o(&a, 0), ag::SEND, Value::NONE)
+    let g = own_self(vm, &a, &[ty::AGEN], T::async_generator, "__anext__")?;
+    vm.new_agen_op(g, ag::SEND, Value::NONE)
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn agen_asend(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    vm.new_agen_op(vm.arg_o(&a, 0), ag::SEND, vm.arg_o(&a, 1))
+    let g = own_self(vm, &a, &[ty::AGEN], T::async_generator, "asend")?;
+    vm.new_agen_op(g, ag::SEND, vm.arg_o(&a, 1))
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
@@ -6793,7 +6836,7 @@ fn bi_anext(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn gen_close(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    let g = vm.arg_o(&a, 0);
+    let g = own_self(vm, &a, &[ty::GEN], T::generator, "close")?;
     if vm.gen_state(g) != crate::generator::g::SUSPENDED {
         if vm.gen_state(g) == crate::generator::g::RUNNING {
             return Err(vm.err(T::ValueError, "generator already executing"));
