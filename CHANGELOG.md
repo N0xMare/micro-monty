@@ -85,7 +85,7 @@ hashes are pre-release history, kept in the private archive
   handler, `sys.exc_info()` in its body is empty, an exception thrown in
   has no stale `__context__`, and a bare `raise` raises `RuntimeError`.
   This is the first half of 0.0.2's `send()` known issue [M, own case
-  567]; the second half stands (Known issues).
+  567].
 - A generator suspended at a yield no longer keeps the dead temporaries
   its yield saved: before a collection takes roots, the suspended
   generators not cleared since they last yielded have their dead saved
@@ -100,6 +100,14 @@ hashes are pre-release history, kept in the private archive
   generator registry is charged to the memory budget, and a restore
   refuses a generator whose saved registers are not a buffer its frame
   fits. The build id moves.
+- A coroutine driven by hand with `send()`, suspended inside a handler of
+  its own and run on after its caller left its handler, gives the
+  caller's handled exception back when it returns, raises, is thrown into
+  or is closed: the caller's `sys.exc_info()` no longer reads the
+  coroutine's old exception for the rest of the module, and that
+  exception no longer stays alive (a 180 MiB one ended in `MemoryError`
+  where CPython completes). This is the second half of 0.0.2's `send()`
+  known issue, except what Known issues keeps [M, own case 570].
 
 ### Known issues
 
@@ -130,13 +138,11 @@ hashes are pre-release history, kept in the private archive
   ms where 71b9c5b stayed under 60 ms [S, the GC design review's b4
   measurements, on an earlier base; not rerun]. Marking each caller
   record cleared instead of each task would bound it.
-- A coroutine driven by hand with `send()`, suspended inside a handler of
-  its own and run on after its caller left its handler, still leaves that
-  old exception as the caller's handled exception when it returns, raises,
-  is thrown into or is closed, as in 0.0.2; a generator, and a coroutine
-  after a handler in its body that began under an earlier `send()`, see
-  that stale exception until they return, raise or are closed. Older
-  than 0.0.1.
+- A coroutine whose body enters a handler under one `send()` and is run
+  on by a later one still shows that handler's exception to its body,
+  as the one being handled, until it next returns, raises or is closed
+  (`sys.exc_info()` in its body, a bare `raise`, the `__context__` of
+  what it raises); a generator does the same. Older than 0.0.1.
 
 ## 0.0.2 (2026-11-18)
 

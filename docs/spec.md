@@ -1475,14 +1475,25 @@ engine.
 `types.coroutine` generator) wraps the iterator it returns in a delegation
 the `AWAIT` steps through the prelude (`_await_step`/`_await_throw`, a
 `Cont::AwaitStep` continuation), as `yield from` would. A yielded value
-under `coroutine.send()` suspends every coroutine frame from the `AWAIT` up
-to the one `send()` runs: each saves its registers, its `AWAIT` pc and what
-it waits on in its coroutine object (as a generator does at `YIELD`), and
-`send()` returns the value; the next `send()`/`throw()` re-runs the saved
-`AWAIT`s from the outermost. In a task, a yielded `None` yields to the
-scheduler (the task is queued again) and any other value raises
-`RuntimeError`. No Rust frame holds a suspended coroutine and no second
-dispatch loop runs.
+under `coroutine.send()` suspends every coroutine frame from the `AWAIT`
+up to the one `send()` runs: each saves its registers, its `AWAIT` pc and
+what it waits on in its coroutine object (as a generator does at `YIELD`),
+and `send()` returns the value; the next `send()`/`throw()` re-runs the
+saved `AWAIT`s from the outermost. While `send()`, `throw()` or `close()`
+runs a coroutine, its caller's handled exception is set aside
+(`coro::OUTER`) and is back when the coroutine suspends, returns, raises
+or is closed, as for a generator (`Vm::gen_leave`). A handler inside the
+body that began under an earlier `send()` restores, when it ends, the
+handled exception it found then (CPython restores the caller's current
+one), so until the coroutine next returns, raises or is closed, its body
+sees that stale exception as the one being handled: `sys.exc_info()` reads
+it, a bare `raise` re-raises it where CPython raises `RuntimeError('No
+active exception to reraise')`, an exception the coroutine or a function
+it calls raises takes it as `__context__`, and while the coroutine is
+suspended it keeps the exception alive; a generator does the same. In a
+task, a yielded `None` yields to the scheduler (the task is queued again)
+and any other value raises `RuntimeError`. No Rust frame holds a suspended
+coroutine and no second dispatch loop runs.
 
 `asyncio.create_task` spawns a scheduler task and returns its `Task`
 handle, which runs when the creating task next yields, as on CPython.

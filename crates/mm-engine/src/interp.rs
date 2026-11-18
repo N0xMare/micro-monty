@@ -664,6 +664,7 @@ impl Vm {
                     st.acc = self.exc;
                     return Unwound::Handled;
                 }
+                let coro = st.coro;
                 if st.coro != Value::NONE {
                     self.gen_raised(st.coro);
                     st.coro = Value::NONE;
@@ -672,6 +673,9 @@ impl Vm {
                     return Unwound::Uncaught;
                 };
                 let fc = self.cont_take(f.cont);
+                if matches!(fc, Cont::CoroSend) {
+                    self.coro_left(coro);
+                }
                 if !matches!(fc, Cont::None) {
                     let r = self
                         .finish(st.base, fc, Outcome::Raise)
@@ -4530,6 +4534,7 @@ impl Vm {
         match opcode {
             op::RETURN => {
                 let mut stop = false;
+                let coro = st.coro;
                 if st.coro != Value::NONE {
                     if Vm::is_gen(st.coro) {
                         self.gen_done(st.coro);
@@ -4555,6 +4560,9 @@ impl Vm {
                     }
                 }
                 let fc = self.cont_take(fr.cont);
+                if matches!(fc, Cont::CoroSend) {
+                    self.coro_left(coro);
+                }
                 pc = fr.call_pc as usize;
                 sync!();
                 let out = if stop {

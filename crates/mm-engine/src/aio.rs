@@ -558,6 +558,19 @@ impl Vm {
         }
     }
 
+    /// Coroutine `c`, run by `send()`, `throw()` or `close()`, returned or
+    /// raised out of that frame: its caller's handled exception is back,
+    /// as a generator's return restores it (`Vm::gen_leave`), and the
+    /// coroutine keeps none.
+    pub(crate) fn coro_left(&mut self, c: Value) {
+        if let Some(r) = c.as_obj() {
+            self.handled = self.slot(r, coro::OUTER);
+            let _ = self
+                .heap
+                .set_values(r, coro::HANDLED, &[Value::NONE, Value::NONE]);
+        }
+    }
+
     /// The state of coroutine `c` (`asyncio.sleep()` objects count as
     /// coroutines once awaited).
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
