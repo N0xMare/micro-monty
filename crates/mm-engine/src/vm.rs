@@ -583,6 +583,15 @@ pub(crate) struct Task {
     /// Its `contextvars` context (a dict, or `None` when empty) while it
     /// is not running.
     pub context: Value,
+    /// Its frames were cleared of their dead registers (`clear_dead`) and
+    /// it has not run since, so they hold nothing more to clear: a blocked
+    /// task's stack changes only while it runs. Never in an image; a
+    /// restored or new task has not been cleared.
+    pub cleared: bool,
+    /// The same for the saved copies of the generators and coroutines
+    /// whose frames are on its stack (`Vm::clear_running`): no copy of a
+    /// running frame is written while its task is blocked.
+    pub copies_cleared: bool,
 }
 
 impl Task {

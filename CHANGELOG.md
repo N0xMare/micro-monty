@@ -112,6 +112,18 @@ hashes are pre-release history, kept in the private archive
   drops 95 MB before its yield beside 100 MB of live data prints its
   result at fuel 5,570,145 on 0.0.2, unparked and parked, and raises
   `MemoryError` at 8,137,672 here in every mode [M].
+- A collection step is not yet bounded where every task runs between
+  collections. A collection skips the frames of an asyncio task that has
+  not run since its dead registers were last cleared, so with tasks that
+  stay blocked the longest step is no longer than before 0.0.2's
+  dead-register clearing; but the first collection after every task ran
+  walks all their frames. With 1,000 tasks of 500 frames each waking
+  between collections, the longest collection call is 44.4 to 46.5 ms
+  natively against 34.3 to 36.9 ms on 71b9c5b, the build before the
+  clearing, and on wasip1 the first step over 60 ms reads 60.3 to 63.5
+  ms where 71b9c5b stayed under 60 ms [S, the GC design review's b4
+  measurements, on an earlier base; not rerun]. Marking each caller
+  record cleared instead of each task would bound it.
 
 ## 0.0.2 (2026-11-18)
 

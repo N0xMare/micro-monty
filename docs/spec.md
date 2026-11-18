@@ -1377,10 +1377,14 @@ The table retains its high-water capacity inside the arena budget.
   remark of an incremental mark; not a lazy-sweep slice or a mark slice)
   first clears the other registers of each frame, up to the frame above:
   of the running frame at its pc, and of a caller the ones dead at its
-  call pc and at its return pc alike. An instruction that runs Python code
-  before it stores to its target registers (an unpack of an iterator,
-  `LOAD_METHOD` through a descriptor or `__getattr__`) first clears them
-  itself, since they are temporaries it fills only once that code returns.
+  call pc and at its return pc alike. A blocked task's frames change only
+  while it runs, so a task cleared and not run since is skipped, as are,
+  for `Vm::clear_running`, the copies its frames replaced; the flags for
+  this are not in an image, and a restored task is cleared again. An
+  instruction that runs Python code before it stores to its target
+  registers (an unpack of an iterator, `LOAD_METHOD` through a descriptor
+  or `__getattr__`) first clears them itself, since they are temporaries
+  it fills only once that code returns.
   So a register is a root only from the store that fills it: what an ended
   statement, an earlier use of the register or a returned callee's frame
   left there keeps nothing alive, and which objects a step that takes

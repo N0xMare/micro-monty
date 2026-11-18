@@ -858,9 +858,15 @@ impl Vm {
             // Only a step that takes roots clears: a lazy-sweep slice and a
             // mark step between root scans read no register.
             clear_dead(&mut self.stack, &self.specials, &self.codes, st, depth);
+            // A task that has not run since it was last cleared has
+            // nothing new to clear: its walk is skipped (most tasks of a
+            // program with many are blocked at any collection).
             for task in self.tasks.iter_mut().flatten() {
-                if let Some(s) = &task.st {
+                if let Some(s) = &task.st
+                    && !task.cleared
+                {
                     clear_dead(&mut task.stack, &task.specials, &self.codes, s, task.depth);
+                    task.cleared = true;
                 }
             }
             t.values(&self.stack[..top]);

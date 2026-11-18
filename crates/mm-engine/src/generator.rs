@@ -445,10 +445,14 @@ impl Vm {
         for i in 0..self.specials.len() {
             self.clear_copy(self.specials[i].coro);
         }
+        // A task cleared so and not run since is skipped (`Task::copies_cleared`).
         for t in 0..self.tasks.len() {
             let Some(task) = &self.tasks[t] else {
                 continue;
             };
+            if task.copies_cleared {
+                continue;
+            }
             let (c, n) = (
                 task.st.as_ref().map_or(Value::NONE, |s| s.coro),
                 task.specials.len(),
@@ -459,6 +463,9 @@ impl Vm {
                     .as_ref()
                     .map_or(Value::NONE, |task| task.specials[i].coro);
                 self.clear_copy(c);
+            }
+            if let Some(task) = &mut self.tasks[t] {
+                task.copies_cleared = true;
             }
         }
     }

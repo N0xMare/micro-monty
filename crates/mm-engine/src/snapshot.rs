@@ -1955,6 +1955,8 @@ impl Vm {
                 handled: t_handled,
                 awaiting,
                 context: t_context,
+                cleared: false,
+                copies_cleared: false,
             }));
         }
         let nready = need(r.count(9), "run queue")?;

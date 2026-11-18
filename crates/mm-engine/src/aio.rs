@@ -1018,6 +1018,8 @@ impl Vm {
             handled: Value::NONE,
             awaiting: Value::NONE,
             context: Value::NONE,
+            cleared: false,
+            copies_cleared: false,
         }));
         self.cur = 0;
         Ok(())
@@ -1148,6 +1150,8 @@ impl Vm {
             t.st = Some(st);
             t.handled = handled;
             t.awaiting = a;
+            t.cleared = false;
+            t.copies_cleared = false;
         }
         // A delegation whose iterator yielded `None` yields to the loop.
         if (a.is_obj_kind(ty::SLEEP as u8) && self.sleep_due(a)) || a.is_obj_kind(ty::BUF as u8) {
@@ -1390,6 +1394,8 @@ impl Vm {
             handled: Value::NONE,
             awaiting: Value::NONE,
             context,
+            cleared: false,
+            copies_cleared: false,
         };
         if i == self.tasks.len() {
             self.tasks.push(Some(task));
@@ -2110,6 +2116,8 @@ impl Vm {
             handled: Value::NONE,
             awaiting: Value::NONE,
             context: Value::NONE,
+            cleared: false,
+            copies_cleared: false,
         };
         if i == self.tasks.len() {
             self.tasks.push(Some(task));
