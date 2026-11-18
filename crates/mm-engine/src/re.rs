@@ -31,6 +31,20 @@ const NONE: u32 = u32::MAX;
 const INF: u32 = u32::MAX;
 /// Steps per `_exec` call before the run saves itself and returns.
 const SLICE: u64 = 1 << 17;
+/// A repeat past `min` folds its stack back to the group's barrier every
+/// this many iterations. Before its `min`-th iteration a possessive repeat
+/// folds after every one, since the next has no exit frame and must not
+/// backtrack into the last; from the `min`-th on each iteration runs above
+/// an exit frame that goes straight to the group's `END`, which cannot
+/// fail, so the frames below it are dead and folding them only bounds
+/// memory (64 iterations' frames). Folding every iteration walked the undo
+/// records the last fold kept each time: 216 times the fuel of fe8b1c2
+/// with 1,000 groups set under `*+`, 2.0 times on 40,000 short matches;
+/// every 64th, 4.26 and 1.02 times, and 0.27 times on a 1.2M-char
+/// possessive match [M]. Below a large `min` every iteration still folds:
+/// 1,000 groups under `{20000,}+` on 20k chars charge 493 times fe8b1c2
+/// [M]; it is charged, so steps stay bounded.
+const FOLD_EVERY: u32 = 64;
 /// Steps per fuel unit.
 const STEPS_PER_FUEL: u64 = 32;
 
@@ -70,7 +84,7 @@ mod op {
     pub const REP1: u32 = 13;
     /// `REP_INIT r until`
     pub const REP_INIT: u32 = 14;
-    /// `REP_UNTIL r min max lazy body`
+    /// `REP_UNTIL r min max kind body`: kind 0 greedy, 1 lazy, 2 possessive.
     pub const REP_UNTIL: u32 = 15;
     /// `ATOMIC`
     pub const ATOMIC: u32 = 16;
@@ -314,6 +328,9 @@ struct Run {
     ngroups: usize,
     /// The end of the last match (segment output).
     last_end: usize,
+    /// `fold`'s undo records, and the registers it has kept one of.
+    keep: Vec<u32>,
+    seen: Vec<bool>,
 }
 
 /// One match: `lastindex` and the group spans as byte offsets.
@@ -497,6 +514,50 @@ impl Run {
         None
     }
 
+    /// Drops every frame above the innermost barrier but its undo records,
+    /// and of those keeps the oldest of each register: what unwinding past
+    /// the barrier must restore. The barrier stays; a step per frame.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    fn fold(&mut self, steps: &mut u64) {
+        let mut i = self.stack.len();
+        self.keep.clear();
+        loop {
+            let Some(&tag) = self.stack.get(i.wrapping_sub(1)) else {
+                return;
+            };
+            let Some(base) = i.checked_sub(frame_len(tag)) else {
+                return;
+            };
+            *steps += 1;
+            if tag == bt::BARRIER {
+                break;
+            }
+            if tag == bt::UNDO {
+                self.keep
+                    .extend_from_slice(&[self.stack[base], self.stack[base + 1]]);
+            }
+            i = base;
+        }
+        self.stack.truncate(i);
+        if self.seen.is_empty() {
+            self.seen = vec![false; self.regs.len()];
+        }
+        // Oldest first; a register's later records are dropped.
+        for k in self.keep.as_chunks::<2>().0.iter().rev() {
+            if let Some(s) = self.seen.get_mut(k[0] as usize)
+                && !*s
+            {
+                *s = true;
+                self.stack.extend_from_slice(&[k[0], k[1], bt::UNDO]);
+            }
+        }
+        for k in self.stack[i..].as_chunks::<3>().0 {
+            if let Some(s) = self.seen.get_mut(k[0] as usize) {
+                *s = false;
+            }
+        }
+    }
+
     /// Unwinds to (and drops) the innermost barrier, applying undo records.
     #[cfg_attr(mm_shipped, optimize(size))]
     fn unwind(&mut self) -> Option<(u32, usize, u32)> {
@@ -657,7 +718,7 @@ impl Run {
                     self.pc = until as usize;
                 }
                 op::REP_UNTIL => {
-                    let (r, min, max, lazy, body) = (
+                    let (r, min, max, kind, body) = (
                         w(pc + 1)? as usize,
                         w(pc + 2)?,
                         w(pc + 3)?,
@@ -671,22 +732,40 @@ impl Run {
                     };
                     let count = cnt.wrapping_add(1);
                     let next = pc + 6;
+                    // Each iteration of a possessive repeat is atomic, the
+                    // first `min` included (sre's POSSESSIVE_REPEAT): the
+                    // ones before `min` fold here; from the `min`-th on an
+                    // exit frame lies under the next (`FOLD_EVERY`).
+                    if kind == 2 && (count < min || (count != 0 && count % FOLD_EVERY == 0)) {
+                        self.fold(steps);
+                    }
                     if count < min {
                         self.set_reg(base, count);
                         self.pc = body as usize;
                         continue;
                     }
-                    if lazy == 0 {
-                        if (max == INF || count < max) && self.pos as u32 != last {
-                            self.push(&[next as u32, self.pos as u32, bt::ALT]);
-                            self.set_reg(base, count);
-                            self.set_reg(base + 1, self.pos as u32);
-                            self.pc = body as usize;
-                        } else {
-                            self.pc = next;
-                        }
-                    } else {
+                    if kind == 1 {
                         self.push(&[r as u32, count, self.pos as u32, body, max, bt::LAZY]);
+                        self.pc = next;
+                    } else if (max == INF || count < max) && self.pos as u32 != last {
+                        // A greedy repeat that ends its atomic group or
+                        // lookaround: a failure past the exit frame reaches
+                        // the group's `END`, which drops every frame below
+                        // it, so those are dead already (`FOLD_EVERY`).
+                        if kind == 0 && count != 0 && count % FOLD_EVERY == 0 {
+                            let mut q = next;
+                            while code.get(q) == Some(&op::SAVE) {
+                                q += 2;
+                            }
+                            if code.get(q) == Some(&op::END) {
+                                self.fold(steps);
+                            }
+                        }
+                        self.push(&[next as u32, self.pos as u32, bt::ALT]);
+                        self.set_reg(base, count);
+                        self.set_reg(base + 1, self.pos as u32);
+                        self.pc = body as usize;
+                    } else {
                         self.pc = next;
                     }
                 }
@@ -1073,7 +1152,7 @@ fn check_program(code: &[u32]) -> Option<Vec<u64>> {
                 jump(w(pc + 2)?)?;
                 3
             }
-            op::REP_UNTIL if (w(pc + 1)? as usize) < nrep => {
+            op::REP_UNTIL if (w(pc + 1)? as usize) < nrep && w(pc + 4)? <= 2 => {
                 jump(w(pc + 5)?)?;
                 6
             }
@@ -1348,6 +1427,8 @@ fn exec_slice(
             check_at: 0,
             ngroups,
             last_end: 0,
+            keep: Vec::new(),
+            seen: Vec::new(),
         };
         if let Some(sw) = &saved_words {
             if sw.len() < 9 || sw[7] as usize != nregs || sw.len() < 9 + nregs {

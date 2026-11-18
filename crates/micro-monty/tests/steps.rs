@@ -2418,6 +2418,23 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "zs = sorted(ys)",
         1,
     ),
+    // `re`: a slice's budget grows with the backtrack stack (four steps a
+    // word), so a capture under a star made one slice of the whole match:
+    // 337-355 ms and 593-605 ms on fe8b1c2 at 1.59 of the reference's time [M].
+    // Possessive and atomic repeats now drop each iteration's frames, so
+    // the stack stays small and a slice is `SLICE` steps.
+    (
+        Row::Bounded,
+        "import re\ns = 'ab' * 600_000\np = re.compile(r'(a|b)*+c')",
+        "m = p.match(s)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "import re\ns = 'ab' * 600_000\np = re.compile(r'(?>(?>(?>(a|b)*)))c')",
+        "m = p.match(s)",
+        1,
+    ),
 ];
 
 /// How many more times a bounded row over the limit runs. This host has

@@ -2590,7 +2590,24 @@ lookaround, backrefs, Unicode `\w\d\s\b`; `\p{..}` rejected as in CPython.
 slice; a longer run, or arguments it does not take, continue in `re.py`'s
 `_exec` loop from the state that slice saved, a safepoint per slice. A
 search skips the start positions where none of the single-width items a
-match can begin with matches, a step per char.
+match can begin with matches, a step per char. Each iteration of a
+possessive repeat is atomic, the first `min` included, as in sre
+(`(?:a|ab){2}+` does not match `aba`; `(?>(?:a|ab){2})` does): between
+the first `min` the stack is cut back to the repeat's barrier, keeping the
+oldest undo record of each register (`conformance/own/562`). Each cut walks
+the records the last one kept, so many groups under a large `min` cost
+fuel: `(?:a|b()…()){20000,}+` with 1,000 groups on 20k chars charges
+1,636,811 units against 3,320 for fe8b1c2's single atomic group, and
+`{1000,}+` 112,209 [M].
+Past `min`, and in a greedy repeat that ends its atomic group or
+lookaround, the frames below the newest exit frame are dead (that exit
+goes straight to the group's `END`), so the cut runs every 64th iteration
+(`FOLD_EVERY`): the stack holds at most 64 iterations' frames (1.6M
+chars in 11 MB RSS, `conformance/own/563` [M]). Other greedy ones keep
+every iteration's frames: `re.fullmatch('(a|b)*', 'ab' * n)` completes
+at the default limit at n = 650,000 and raises `MemoryError` at 653,000
+[M] (16.5 stack words a char charged 12 bytes each [E]), where CPython
+completes.
 
 ### Speed
 

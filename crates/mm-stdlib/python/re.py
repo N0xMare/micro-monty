@@ -1181,6 +1181,8 @@ def _gen(code, p, flags, st):
                 _gen(code, item, flags, st)
                 code[at + 4] = len(code)
             else:
+                # A possessive repeat's barrier: `_REP_UNTIL` kind 2 cuts
+                # back to it after each iteration, so each is atomic.
                 if op == POSSESSIVE_REPEAT:
                     emit(_ATOMIC)
                 r = st[0]
@@ -1196,7 +1198,7 @@ def _gen(code, p, flags, st):
                 emit(r)
                 emit(lo)
                 emit(hi)
-                emit(1 if op == MIN_REPEAT else 0)
+                emit(1 if op == MIN_REPEAT else 2 if op == POSSESSIVE_REPEAT else 0)
                 emit(body)
                 if op == POSSESSIVE_REPEAT:
                     emit(_END)

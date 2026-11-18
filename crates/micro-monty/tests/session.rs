@@ -2696,6 +2696,28 @@ print(sorted(seen))
     );
 }
 
+#[test]
+fn a_possessive_repeat_costs_little_more_with_many_groups_set() {
+    // A possessive repeat cuts its stack back to the group's barrier,
+    // keeping an undo record per register set (`re.rs` `FOLD_EVERY`). Cut
+    // every iteration, each cut walked the records the last one kept: this
+    // match of 1,000 groups set under the repeat charged 1,639,058 units on
+    // 10210fe; cut every 64th iteration past `min`, 31,848 [M]. A match
+    // without the groups charges 629.
+    let engine = Engine::new(EngineConfig::default());
+    let mut session = Session::new(&engine).expect("session");
+    let setup = "import re\ns = 'b' + 'a' * 20_000\n\
+                 wide = re.compile('(?:a|b' + '()' * 1000 + ')*+')";
+    let p = session.start(&engine.compile(setup, "setup.py").expect("compiles"));
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    let code = engine.compile("assert wide.fullmatch(s).lastindex == 1000", "match.py");
+    session.set_fuel(Some(u64::MAX / 2));
+    let p = session.start(&code.expect("compiles"));
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    let fuel = u64::MAX / 2 - session.fuel().expect("fuel");
+    assert!(fuel < 100_000, "1,000 groups: {fuel} units");
+}
+
 /// Two rounds of big set operations near the default 256 MiB limit,
 /// where every round's sets are garbage by the next: Python 3.14 peaks
 /// at 279 MiB here. Writing a big set's new hashes in steps of their own
