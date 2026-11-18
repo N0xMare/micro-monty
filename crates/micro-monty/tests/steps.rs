@@ -2451,6 +2451,14 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "m = p.match(s)",
         1,
     ),
+    // A class with many bases: its C3 merge scans the lists for each class
+    // it takes (20,000 bases were one step of 6.1 s [M]).
+    (
+        Row::Bounded,
+        "bs = tuple([type('B', (Exception,), {}) for i in range(20_000)])",
+        "W = type('W', bs, {})",
+        1,
+    ),
 ];
 
 /// How many more times a bounded row over the limit runs. This host has

@@ -1611,30 +1611,63 @@ impl Vm {
             Ok(None) => Ok(None),
             Ok(Some(v)) => {
                 self.pop_tramps(st, depth);
-                if v == Value::UNDEFINED {
-                    self.request = None;
-                    return Err(self.err(
-                        T::TypeError,
-                        "micro-monty does not support builtin __init__ or __new__ here",
-                    ));
-                }
-                match self.finish(st.base, inner, Outcome::Value(v))? {
-                    Next::Acc(x) => Ok(Some(x)),
-                    // A builtin `__new__` (a metaclass's `type.__new__`),
-                    // then a Python `__init__`.
-                    Next::Invoke(f, a, kw, c) => {
-                        let kws = if kw == Value::NONE {
-                            Vec::new()
-                        } else {
-                            self.dict_items_vec(kw)
-                        };
-                        let (cp, rp) = self.push_tramps(st, &[cont], call_pc, ret_pc)?;
-                        self.call_vec(st, f, &a, &kws, cp, rp, c)
+                // A builtin `__new__` that hands off (`type.__new__` of a
+                // class whose merge is long): its call, then `inner`. Or a
+                // builtin `__new__` (a metaclass's `type.__new__`), then a
+                // Python `__init__`.
+                let (f, a, kw, c, then) = if v == Value::UNDEFINED {
+                    // Only a Python function to call with nothing past its
+                    // `cont`: a generator to send to, a builtin and an
+                    // `outer` continuation are `drive`'s.
+                    match self.request.take() {
+                        Some(Request::Call {
+                            func,
+                            args,
+                            kw,
+                            cont: c,
+                            outer: Cont::None,
+                        }) if func.is_obj_kind(ty::FUNC as u8) => (func, args, kw, c, inner),
+                        _ => {
+                            return Err(self.err(
+                                T::TypeError,
+                                "micro-monty does not support builtin __init__ or __new__ here",
+                            ));
+                        }
                     }
-                    _ => Err(self.err(
-                        T::TypeError,
-                        "micro-monty does not support this __new__ result",
-                    )),
+                } else {
+                    match self.finish(st.base, inner, Outcome::Value(v))? {
+                        Next::Acc(x) => return Ok(Some(x)),
+                        Next::Invoke(f, a, kw, c) => (f, a, kw, c, Cont::None),
+                        _ => {
+                            return Err(self.err(
+                                T::TypeError,
+                                "micro-monty does not support this __new__ result",
+                            ));
+                        }
+                    }
+                };
+                let kws = if kw == Value::NONE {
+                    Vec::new()
+                } else {
+                    self.dict_items_vec(kw)
+                };
+                let (cp, rp) = self.push_tramps(st, &[cont, then], call_pc, ret_pc)?;
+                match self.call_vec(st, f, &a, &kws, cp, rp, c) {
+                    Ok(None) => Ok(None),
+                    // No frame was entered (a generator function): the
+                    // continuations pushed for it have nothing to finish.
+                    Ok(Some(_)) => {
+                        self.pop_tramps(st, depth);
+                        self.request = None;
+                        Err(self.err(
+                            T::TypeError,
+                            "micro-monty does not support builtin __init__ or __new__ here",
+                        ))
+                    }
+                    Err(e) => {
+                        self.pop_tramps(st, depth);
+                        Err(e)
+                    }
                 }
             }
             Err(e) => {

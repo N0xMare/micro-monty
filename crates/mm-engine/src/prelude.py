@@ -5353,6 +5353,92 @@ def _isinstance_any(x, classes):
     return False
 
 
+def _class_big(name, bases, ns, kwargs, cell, meta):
+    # A class whose C3 merge is too long for one native step
+    # (`Vm::merge_is_long`), its bases checked: the merge, picking as
+    # the native one does the first list whose head is in no list's tail.
+    # A count per class of the tails that hold it, and a heap of the lists
+    # whose head is free, keep it from rescanning every list per pick. The
+    # heap is its own: a guest can patch `heapq`.
+    import _mm
+    seqs = []
+    seen = {}
+    for b in bases:
+        seqs.append(b.__mro__)
+        if id(b) in seen:
+            raise TypeError('duplicate base class ' + b.__name__)
+        seen[id(b)] = 1
+    seqs.append(bases)
+    tails = {}
+    for s in seqs:
+        for i in range(1, len(s)):
+            k = id(s[i])
+            tails[k] = tails.get(k, 0) + 1
+    at = [0] * len(seqs)
+    heads = {}
+    free = []
+    for j in range(len(seqs)):
+        h = id(seqs[j][0])
+        if h in heads:
+            heads[h].append(j)
+        else:
+            heads[h] = [j]
+        if h not in tails:
+            free.append(j)
+    mro = []
+    while free:
+        j = free[0]
+        last = free.pop()
+        if free:
+            i = 0
+            n = len(free)
+            while True:
+                c = 2 * i + 1
+                if c + 1 < n and free[c + 1] < free[c]:
+                    c += 1
+                if c >= n or last <= free[c]:
+                    break
+                free[i] = free[c]
+                i = c
+            free[i] = last
+        s = seqs[j]
+        if at[j] >= len(s) or tails.get(id(s[at[j]]), 0):
+            continue  # a list that moved on since it was pushed
+        head = s[at[j]]
+        mro.append(head)
+        for m in heads.pop(id(head)):
+            i = at[m] + 1
+            at[m] = i
+            if i < len(seqs[m]):
+                h = id(seqs[m][i])
+                n = tails[h] - 1  # it leaves list m's tail for its head
+                tails[h] = n
+                if h in heads:
+                    heads[h].append(m)
+                else:
+                    heads[h] = [m]
+                if n == 0:
+                    # Every list with this head is in `heads[h]` now: the
+                    # lowest stands for them all.
+                    q = min(heads[h])
+                    i = len(free)
+                    free.append(q)
+                    while i and free[(i - 1) // 2] > q:
+                        free[i] = free[(i - 1) // 2]
+                        i = (i - 1) // 2
+                    free[i] = q
+    names = {}
+    for j in range(len(seqs)):
+        if at[j] < len(seqs[j]):
+            names[seqs[j][at[j]].__name__] = 1
+    if names:
+        raise TypeError(
+            'Cannot create a consistent method resolution order (MRO) for bases '
+            + ', '.join(names)
+        )
+    return _mm.make_class(name, bases, ns, kwargs, cell, meta, tuple(mro))
+
+
 def _issubclass_any(x, classes):
     todo = [classes]
     while todo:

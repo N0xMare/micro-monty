@@ -1317,6 +1317,15 @@ const DEFS: &[Def] = &[
     m!("_mm", "caller", 2, 2, NO, NO, crate::mmmod::mm_caller),
     m!(
         "_mm",
+        "make_class",
+        7,
+        7,
+        NO,
+        NO,
+        crate::mmmod::mm_make_class
+    ),
+    m!(
+        "_mm",
         "exc_same_meta",
         2,
         2,

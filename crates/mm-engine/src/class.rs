@@ -755,10 +755,10 @@ impl Vm {
 
     /// The C3 linearization of a class with these bases (CPython's error
     /// for an inconsistent one).
-    fn c3(&mut self, bases: &[Value]) -> Result<Vec<Value>, Raised> {
+    fn c3(&mut self, bases: &[Value]) -> Result<Option<Vec<Value>>, Raised> {
         if let [b] = bases {
             // One base: merging its MRO with `[b]` leaves the MRO as is.
-            return Ok(self.mro_of(*b));
+            return Ok(Some(self.mro_of(*b)));
         }
         let mut seqs: Vec<Vec<Value>> = bases.iter().map(|&b| self.mro_of(b)).collect();
         seqs.push(bases.to_vec());
@@ -775,6 +775,11 @@ impl Vm {
                 Some((k, n)) if *k == b => *n += 1,
                 _ => tails.push((b, 1)),
             }
+        }
+        // Each class it takes scans the lists: a merge past about a million
+        // list visits is too long for one step (`None`: `_class_big`'s).
+        if seqs.len() * (tails.len() + seqs.len()) > 1 << 20 {
+            return Ok(None);
         }
         let find =
             |tails: &[(u64, u32)], v: Value| tails.binary_search_by_key(&v.to_bits(), |e| e.0);
@@ -796,7 +801,7 @@ impl Vm {
             }
             if !live {
                 self.burn(steps);
-                return Ok(out);
+                return Ok(Some(out));
             }
             let Some(head) = pick else {
                 self.burn(steps);
@@ -833,6 +838,8 @@ impl Vm {
 
     /// Creates a class from a namespace dict. `__set_name__` and
     /// `__init_subclass__` are the caller's (they run Python code).
+    /// `UNDEFINED` when the C3 merge is too long for one native step (the
+    /// bases checked): the caller hands it to the prelude's `_class_big`.
     pub(crate) fn new_class(
         &mut self,
         name: Value,
@@ -841,31 +848,16 @@ impl Vm {
     ) -> Result<Value, Raised> {
         let object = self.type_obj(T::object);
         let mut base_list: Vec<Value> = Vec::with_capacity(bases.len().max(1));
+        // CPython checks every base before it looks for a duplicate.
         for &b in bases {
-            if !Vm::is_type(b) {
-                let msg = format!(
-                    "bases must be types, not {}",
-                    String::from(self.type_name(b))
-                );
-                return Err(self.err(T::TypeError, &msg));
-            }
+            self.check_base(b)?;
+        }
+        if self.merge_is_long(bases) {
+            return Ok(Value::UNDEFINED);
+        }
+        for &b in bases {
             if base_list.contains(&b) {
                 let msg = format!("duplicate base class {}", self.class_name(b));
-                return Err(self.err(T::TypeError, &msg));
-            }
-            if let Some(t) = self.type_of_typeobj(b)
-                && t != T::object
-                && !t.is_exception()
-                && !Vm::is_bx_type(t)
-                && t != T::type_
-            {
-                let msg = if t == T::bool {
-                    String::from("type 'bool' is not an acceptable base type")
-                } else if t.module() == "re" {
-                    format!("type 're.{}' is not an acceptable base type", t.name())
-                } else {
-                    format!("micro-monty does not support subclassing '{}'", t.name())
-                };
                 return Err(self.err(T::TypeError, &msg));
             }
             base_list.push(b);
@@ -873,7 +865,66 @@ impl Vm {
         if base_list.is_empty() {
             base_list.push(object);
         }
-        let mro_rest = self.c3(&base_list)?;
+        let Some(mro_rest) = self.c3(&base_list)? else {
+            return Ok(Value::UNDEFINED);
+        };
+        self.class_with_mro(name, &base_list, ns, mro_rest)
+    }
+
+    /// CPython's error for a base that cannot be one (the duplicate check
+    /// is the caller's).
+    fn check_base(&mut self, b: Value) -> Result<(), Raised> {
+        if !Vm::is_type(b) {
+            let msg = format!(
+                "bases must be types, not {}",
+                String::from(self.type_name(b))
+            );
+            return Err(self.err(T::TypeError, &msg));
+        }
+        if let Some(t) = self.type_of_typeobj(b)
+            && t != T::object
+            && !t.is_exception()
+            && !Vm::is_bx_type(t)
+            && t != T::type_
+        {
+            let msg = if t == T::bool {
+                String::from("type 'bool' is not an acceptable base type")
+            } else if t.module() == "re" {
+                format!("type 're.{}' is not an acceptable base type", t.name())
+            } else {
+                format!("micro-monty does not support subclassing '{}'", t.name())
+            };
+            return Err(self.err(T::TypeError, &msg));
+        }
+        Ok(())
+    }
+
+    /// Whether these bases are too many for the native duplicate scan and
+    /// merge (each visits every base per base), or their MROs too long to
+    /// copy and sort in one step; `c3` tests the merge itself.
+    fn merge_is_long(&self, bases: &[Value]) -> bool {
+        let entries: usize = bases
+            .iter()
+            .map(|&b| {
+                1 + if Vm::is_class(b) {
+                    self.tuple_len(self.vslot(b, cls::MRO))
+                } else {
+                    1
+                }
+            })
+            .sum();
+        bases.len() >= 1 << 10 || entries > 1 << 19
+    }
+
+    /// The class of checked `base_list` (not empty) and MRO `mro_rest`
+    /// (without the class itself).
+    pub(crate) fn class_with_mro(
+        &mut self,
+        name: Value,
+        base_list: &[Value],
+        ns: Value,
+        mro_rest: Vec<Value>,
+    ) -> Result<Value, Raised> {
         // The layout: the first builtin type of the MRO.
         let base_t = mro_rest
             .iter()
@@ -940,13 +991,13 @@ impl Vm {
         if self.dict_get_str(d, doc_key).is_none() {
             self.dict_set(d, doc_key, Value::NONE)?;
         }
-        let bases_t = self.alloc_tuple(&base_list)?;
+        let bases_t = self.alloc_tuple(base_list)?;
         let subs = self.new_list(&[])?;
         let version = self.new_version();
         // Inline slots for instances: what the bases' instances use, or
         // what `__init__` stores on `self`, so a first instance is cached.
         let mut hint = 2;
-        for &b in &base_list {
+        for &b in base_list {
             if Vm::is_class(b)
                 && let Some(br) = b.as_obj()
             {
@@ -975,7 +1026,7 @@ impl Vm {
         mro.extend(mro_rest);
         let mro_t = self.alloc_tuple(&mro)?;
         self.set_slot(r, cls::MRO, mro_t);
-        for &b in &base_list {
+        for &b in base_list {
             if Vm::is_class(b) {
                 let l = self.vslot(b, cls::SUBS);
                 self.list_push(l, c)?;
@@ -1095,6 +1146,7 @@ impl Vm {
         cell: Value,
         meta: Value,
     ) -> Result<Value, Raised> {
+        let bases_t = bases;
         let bases = self.tuple_items(bases);
         // The metaclass: `metaclass=` or the most derived of the bases'.
         let mut meta = meta;
@@ -1143,6 +1195,27 @@ impl Vm {
             );
         }
         let c = self.new_class(name, &bases, ns)?;
+        if c == Value::UNDEFINED {
+            let cell = if cell == Value::UNDEFINED {
+                Value::NONE
+            } else {
+                cell
+            };
+            let args = vec![name, bases_t, ns, kwargs, cell, meta];
+            return self.prelude_request("_class_big", args, Cont::None);
+        }
+        self.class_made(c, kwargs, cell, meta)
+    }
+
+    /// The rest of [`Vm::build_resolved`] once class `c` is made: its
+    /// metaclass, `__class__` cell, `__set_name__` and `__init_subclass__`.
+    pub(crate) fn class_made(
+        &mut self,
+        c: Value,
+        kwargs: Value,
+        cell: Value,
+        meta: Value,
+    ) -> Result<Value, Raised> {
         if Vm::is_class(meta)
             && let Some(r) = c.as_obj()
         {

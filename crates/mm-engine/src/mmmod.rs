@@ -468,6 +468,15 @@ pub(crate) fn mm_exc_tb_here(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> 
     Ok(Value::NONE)
 }
 
+/// `_mm.make_class(name, bases, ns, kwargs, cell, meta, mro)`: the class
+/// `_class_big` checked the bases of and merged the MRO of.
+pub(crate) fn mm_make_class(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let [name, bases, ns, kwargs, cell, meta, mro] =
+        core::array::from_fn(|i| vm.arg_o(&a, i as u32));
+    let c = vm.class_with_mro(name, &vm.tuple_items(bases), ns, vm.tuple_items(mro))?;
+    vm.class_made(c, kwargs, cell, meta)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, reason = "tests")]
