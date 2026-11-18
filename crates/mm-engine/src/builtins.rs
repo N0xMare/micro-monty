@@ -7314,16 +7314,26 @@ fn pl_hash_tuple(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// sum `s`: unless `s` is an int (not a bool) in [-2**62, 2**62). From a
 /// total in that range, an int item outside i64 takes the sum out of it,
 /// so the loop needs no test of the item. One argument, as the call per
-/// item is the bench Ir rule's cost. No user code runs.
+/// item is the bench Ir rule's cost, and the `SmallInt` test first, with
+/// the rest cold: with a heap int's test ahead of it, a call was 53 V8
+/// instructions against the 24.5 saved by the shift it replaced; now 32
+/// [M]. No user code runs.
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
 fn pl_sum_off(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    let s = vm.arg_o(&a, 0);
-    let fits = s != Value::TRUE
-        && s != Value::FALSE
-        && vm
+    let s = vm.arg(&a, 0);
+    Ok(Value::from_bool(!s.is_int() && sum_off_big(vm, s)))
+}
+
+/// `_sum_off` for a total that is not a `SmallInt`: a bool, a heap int,
+/// or another type.
+#[cold]
+#[inline(never)]
+fn sum_off_big(vm: &Vm, s: Value) -> bool {
+    s == Value::TRUE
+        || s == Value::FALSE
+        || !vm
             .int_of_o(s)
-            .is_some_and(|i| (-(1 << 62)..1 << 62).contains(&i));
-    Ok(Value::from_bool(!fits))
+            .is_some_and(|i| (-(1 << 62)..1 << 62).contains(&i))
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
