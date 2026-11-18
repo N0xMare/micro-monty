@@ -1120,8 +1120,8 @@ impl Vm {
 
     /// [`Vm::probe_val`] that spends a visit of `left` per 8 slots past
     /// the first, deleted ones included, so a long chain is charged as it
-    /// is walked. Out of visits, or with [`crate::set::PY_CHUNK`] keys
-    /// reported, it stops with `Err(Hard::Py)` and its place in `at`, from
+    /// is walked. Out of visits, or just past a key only Python can
+    /// compare, it stops with `Err(Hard::Py)` and its place in `at`, from
     /// which a caller can go on (the prelude's `_dfind`) as `from`.
     /// `RESUME` false (every native lookup) stops only when out of
     /// visits, and starts at the hash's first slot.
@@ -1139,7 +1139,8 @@ impl Vm {
         at: &mut Option<(usize, u64, u64)>,
     ) -> Result<(u32, Option<u32>, u64), Hard> {
         let Some(index) = dv.index else {
-            return self.scan(dv, k, h, depth, left, undecided);
+            let from = from.filter(|_| RESUME).map_or(0, |(_, _, n)| n);
+            return self.scan::<RESUME>(dv, k, h, depth, left, undecided, from, at);
         };
         let words = self.heap.raw_words(index).unwrap_or(&[]);
         let kvs = self.heap.slot_words(dv.entries).unwrap_or(&[]);
@@ -1203,6 +1204,13 @@ impl Vm {
                     }
                     *left -= 1;
                 }
+                // Past a key only Python can compare a resumable walk
+                // stops: it goes on from here after the compare, and sees
+                // what the compare changed, as CPython's lookup does.
+                if RESUME && deferred > 0 {
+                    *at = Some((i as usize, perturb, n));
+                    break 'walk Err(Hard::Py);
+                }
             }
             if deferred > 0 {
                 break 'walk Err(Hard::Py);
@@ -1223,10 +1231,13 @@ impl Vm {
         r
     }
 
-    /// `probe_with` for a table without an index: a scan of the entries,
-    /// with each key's hash computed natively (every key is a
-    /// [`linear_key`]). The slot it returns is the entry index.
-    fn scan(
+    /// `probe_with` for a table without an index: a scan of the entries
+    /// from entry `from`, with each key's hash computed natively (every
+    /// key is a [`linear_key`]). The slot it returns is the entry index.
+    /// `RESUME` stops past a key only Python can compare, the next entry
+    /// in `at`, as [`Vm::probe_from`] does.
+    #[allow(clippy::too_many_arguments, reason = "a lookup's state")]
+    fn scan<const RESUME: bool>(
         &self,
         dv: Dv,
         k: Value,
@@ -1234,10 +1245,22 @@ impl Vm {
         depth: u32,
         left: &mut u32,
         undecided: &mut dyn FnMut(u32, Value),
+        from: u64,
+        at: &mut Option<(usize, u64, u64)>,
     ) -> Result<(u32, Option<u32>, u64), Hard> {
         let kvs = self.heap.slot_words(dv.entries).unwrap_or(&[]);
         let mut deferred = false;
-        for (e, &[kb, vb]) in (0..dv.used).zip(kvs.as_chunks::<2>().0) {
+        // Only `RESUME` starts past entry 0: the plain walk, every native
+        // lookup's, keeps the zip of e54f65f (a `skip` costs it 6 M Ir on
+        // the json bench).
+        let start = if RESUME {
+            usize::try_from(from).unwrap_or(usize::MAX)
+        } else {
+            0
+        };
+        let pairs = kvs.as_chunks::<2>().0.get(start..).unwrap_or(&[]);
+        let first = u32::try_from(start).unwrap_or(u32::MAX);
+        for (e, &[kb, vb]) in (first..dv.used).zip(pairs) {
             if kb == k.to_bits() {
                 return Ok((e, Some(e), vb));
             }
@@ -1254,6 +1277,10 @@ impl Vm {
                 Err(Hard::Py) => {
                     deferred = true;
                     undecided(e, key);
+                    if RESUME {
+                        *at = Some((0, 0, u64::from(e) + 1));
+                        return Err(Hard::Py);
+                    }
                 }
             }
         }
@@ -1293,18 +1320,23 @@ impl Vm {
         }
     }
 
-    /// For the prelude's lookups of keys with Python `__hash__`/`__eq__`:
-    /// the entry of `k` (hash `h`) if native comparison finds it, else the
-    /// `[(entry, key), ...]` whose keys Python must compare, else -1.
-    /// At most [`crate::set::PY_CHUNK`] keys come a call, as
-    /// `(list, at)` with the place `at` the next call goes on from, as
-    /// [`Vm::set_probe_py`]'s.
+    /// For the prelude's lookups of keys with Python `__hash__`/`__eq__`
+    /// (`_dfind`), CPython's lookup a key only Python can compare at a
+    /// time: the entry of `k` (hash `h`) if the walk finds it natively, -1
+    /// if it is absent, else the next such key with the place past it
+    /// ([`Vm::probe_key`]). `at` is the place the last call handed out,
+    /// after Python compared its key (`eq`, the compare's truth): a
+    /// compare that left a table other than the place's, or another key in
+    /// its entry, starts the walk again (CPython's `compare_generic`);
+    /// else an equal key is found, and an unequal one goes on from the
+    /// place, past what the compare inserted or deleted.
     pub(crate) fn dict_probe_py(
         &mut self,
         d: Value,
         k: Value,
         h: u64,
         at: Value,
+        eq: bool,
     ) -> Result<Value, Raised> {
         let Some(dv) = d
             .as_obj()
@@ -1313,10 +1345,20 @@ impl Vm {
         else {
             return Err(self.err(T::TypeError, "expected a dict"));
         };
-        let mut cands: Vec<(u32, Value)> = Vec::new();
-        let mut left = WALK;
         let table = self.vslot(d, 1);
-        let from = self.probe_place(at, table);
+        let prev = at;
+        let place = self.probe_place(at, table).filter(|&(e, key, ..)| {
+            e < 0
+                || usize::try_from(e)
+                    .ok()
+                    .and_then(|e| self.dict_entry(d, e))
+                    .is_some_and(|(x, _)| x == key)
+        });
+        if eq && let Some((e, ..)) = place {
+            return self.new_int(e);
+        }
+        let mut cand = None;
+        let mut left = WALK;
         let mut at = None;
         let found = self.probe_from::<true>(
             dv,
@@ -1324,8 +1366,8 @@ impl Vm {
             h,
             0,
             &mut left,
-            &mut |e, key| cands.push((e, key)),
-            from,
+            &mut |e, key| cand = Some((i64::from(e), key)),
+            place.map(|(_, _, p, _)| p),
             &mut at,
         );
         self.walked(left);
@@ -1333,10 +1375,7 @@ impl Vm {
             Ok((_, Some(e), _)) => self.new_int(i64::from(e)),
             Ok((_, None, _)) => Ok(Value::int(-1).unwrap_or(Value::NONE)),
             Err(Hard::Deep) => Err(self.hard(Hard::Deep)),
-            Err(Hard::Py) => {
-                let cands = cands.into_iter().map(|(e, key)| (u64::from(e), key));
-                self.probe_chunk(cands, at, table)
-            }
+            Err(Hard::Py) => self.probe_key(cand, at, table, None, prev),
         }
     }
 
@@ -1351,6 +1390,43 @@ impl Vm {
         let Some(r) = d.as_obj() else { return Ok(()) };
         let Some(dv) = self.dv(r) else { return Ok(()) };
         self.add_entry(d, r, dv, k, h, v, None, NOT_TOP)
+    }
+
+    /// The prelude's `_dict_insert`: [`Vm::dict_insert_new`], except that
+    /// a full table is first rebuilt without `k`, past a step's work in
+    /// steps (a request); `false` then, and the twin inserts again into
+    /// the room the rebuild left, so `k` is neither hashed nor compared
+    /// again (CPython's `insertdict` resizes, then takes a free slot).
+    pub(crate) fn dict_insert_twin(
+        &mut self,
+        d: Value,
+        k: Value,
+        h: u64,
+        v: Value,
+    ) -> Result<bool, Raised> {
+        let Some(r) = d.as_obj() else { return Ok(true) };
+        let Some(dv) = self.dv(r) else {
+            return Ok(true);
+        };
+        if !self.has_room(&dv, k) {
+            let budget = u64::from(dv.used).saturating_add(crate::nstep::STEP_WORK);
+            if let Some((e, i, at, n)) =
+                self.dict_resize(d, r, dv.len as usize + 1, !linear_key(k), budget)?
+            {
+                let src = self.alloc_tuple(&[])?;
+                let tables = (
+                    Value::from_ref(e, ty::BUF as u8),
+                    Value::from_ref(i, ty::RAW as u8),
+                    at,
+                    n,
+                );
+                let prog = crate::set::phase(crate::set::act::KEYS, 0, 1, 2);
+                self.bulk_with(&[d, src, v], prog, crate::set::res::NONE, tables)?;
+                return Ok(false);
+            }
+        }
+        self.dict_insert_new(d, k, h, v)?;
+        Ok(true)
     }
 
     /// Can `dv` take one more entry with key `k` as it is?
@@ -1652,7 +1728,7 @@ impl Vm {
     /// to a linear one as it is; anything else (an `index`-needing key, a
     /// full linear or indexed table, `need` over `LINEAR_MAX`) is rebuilt
     /// as an indexed table, compacting deletions, the probes past each
-    /// entry's first slot charged. A rebuild whose entries and probes pass
+    /// entry's free slots ([`FREE_SLOTS`]) charged. A rebuild whose entries and probes pass
     /// `budget` stops there: its new tables, entries read and entries
     /// moved, for the caller to go on with in steps.
     #[allow(clippy::type_complexity, reason = "a rebuild's state")]
@@ -1697,7 +1773,12 @@ impl Vm {
         }
         // Anything else becomes a compacted indexed table.
         let (entries, index) = self.dict_tables(cap_for(need))?;
-        let Some((at, n, probes)) = self.dict_move(r, entries, index, 0, usize::MAX, 0, budget)
+        // A growth in one step ends on the free slots its entries walked,
+        // as e54f65f's did: counting all 32 an entry stepped the dict
+        // bench's growths (+1.2% Ir [M]), and counting none let a growth
+        // with memory tight walk 2^20 entries' chains in one step (H1).
+        let Some((at, n, probes, _)) =
+            self.dict_move(r, entries, index, 0, usize::MAX, 0, budget, true)
         else {
             return Err(self.err(T::SystemError, "malformed dict"));
         };
@@ -1713,13 +1794,14 @@ impl Vm {
     /// Moves the live entries `at..to` of dict `r`'s table, in order, to
     /// the new indexed tables `entries` and `index` from entry `n` on,
     /// with their hashes (stored in an index, else computed: keys of a
-    /// table without one all hash natively), until the entries read and
-    /// the probes past the entries' first slots, less one per entry,
-    /// reach `budget` (entries with equal hashes each probe past all
+    /// table without one all hash natively), until the entries read, the
+    /// probes past each entry's free slots ([`FREE_SLOTS`]) and those free
+    /// slots (all of them, or with `one_step` those walked) reach `budget`
+    /// (entries with equal hashes each probe past all
     /// those placed before them). Where it stopped, the entries the new
-    /// table then holds and those probes, the work to charge on top of
-    /// the entries; `None` if an entry found no free slot (a forged
-    /// image's index). A rebuild a slice per step reads the old table,
+    /// table then holds, those probes (the work to charge on top of the
+    /// entries) and the free slots counted, uncharged; `None` if an entry
+    /// found no free slot (a forged image's index). A rebuild a slice per step reads the old table,
     /// still installed, again each step.
     #[allow(clippy::too_many_arguments, reason = "a rebuild's slice")]
     pub(crate) fn dict_move(
@@ -1731,11 +1813,12 @@ impl Vm {
         to: usize,
         mut n: u32,
         budget: u64,
-    ) -> Option<(usize, u32, u64)> {
+        one_step: bool,
+    ) -> Option<(usize, u32, u64, u64)> {
         /// Entries moved per batch, through stack buffers (no heap copies).
         const BATCH: usize = 128;
         let Some(o) = self.dv(r) else {
-            return Some((to, n, 0));
+            return Some((to, n, 0, 0));
         };
         // No more entries than the old storage holds (a restored snapshot's
         // counts are not trusted).
@@ -1744,7 +1827,7 @@ impl Vm {
         let mut kvs = [Value::UNDEFINED; 2 * BATCH];
         let mut hs = [0u64; BATCH];
         let g = Geo::new(self.heap.raw_words(index).map_or(0, |w| w.len() / 2) as u32);
-        let (from, mut probes, mut keys) = (at, 0u64, 0u64);
+        let (from, mut probes, mut free) = (at, 0u64, 0u64);
         while at < used {
             // Gather the next batch of live entries with their hashes.
             let (mut k, start) = (0, at);
@@ -1779,10 +1862,18 @@ impl Vm {
                     if let Some(w) = words.get_mut((g.cap + e) as usize) {
                         *w = h;
                     }
-                    (probes, keys) = (probes + p, keys + 1);
-                    // Entries read are bounded by `to`; only probes past
-                    // one an entry end a slice early.
-                    if probes > keys && (at - from) as u64 + probes - keys >= budget {
+                    probes += p.saturating_sub(FREE_SLOTS);
+                    // Each entry may walk its free slots: a stepped slice
+                    // counts them all where it ends, whatever it walked,
+                    // which follows the hashes' spread, so it ends at the
+                    // same entry whatever a snapshot moved (as `set_rehash`
+                    // does); a growth in one step counts those walked.
+                    free += if one_step {
+                        p.min(FREE_SLOTS)
+                    } else {
+                        FREE_SLOTS
+                    };
+                    if (at - from) as u64 + probes + free >= budget {
                         (placed, stop) = (i + 1, true);
                         break;
                     }
@@ -1798,10 +1889,10 @@ impl Vm {
                     key.is_some_and(|x| x != Value::UNDEFINED)
                 };
                 let last = (start..at).filter(live).nth(placed - 1).unwrap_or(at);
-                return Some((last + 1, n, probes - keys));
+                return Some((last + 1, n, probes, free));
             }
         }
-        Some((at.max(used), n, probes.saturating_sub(keys)))
+        Some((at.max(used), n, probes, free))
     }
 
     /// Dict `r` takes the tables [`Vm::dict_move`] filled with `n`

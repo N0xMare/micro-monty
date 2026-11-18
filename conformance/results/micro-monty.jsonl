@@ -297,7 +297,7 @@
 {"file":"function__too_many_args_two.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"function__too_many_args_zero.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"functools__gc.py","tags":["cpython"],"status":"pass","reason":""}
-{"file":"functools__lru_cache.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"functools__lru_cache.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: NameError: name 'locals' is not defined","category":"missing builtin"}
 {"file":"functools__lru_cache_async.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"functools__lru_cache_external.py","tags":["host"],"status":"pass","reason":""}
 {"file":"functools__partial.py","tags":["cpython"],"status":"pass","reason":""}
@@ -407,7 +407,7 @@
 {"file":"list__unpack_type_error.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"longint__index_error.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"longint__repeat_error.py","tags":["cpython"],"status":"pass","reason":""}
-{"file":"lookup__mutation.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"lookup__mutation.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: IndexError: list assignment index out of range","category":"unexpected IndexError"}
 {"file":"loop__break_continue.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"loop__break_finally.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"loop__break_in_function_error.py","tags":["cpython"],"status":"pass","reason":""}

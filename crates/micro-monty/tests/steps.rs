@@ -198,6 +198,30 @@ fn overdraft(engine: &Engine, setup: &str, src: &str) -> u64 {
     worst
 }
 
+/// A set of 2^22 slots, 45% full, and `big`, 2M ints whose probes each
+/// walk 16 full runs, every one free (the correctness review's AA4 rows).
+const SET_FREE_RUNS: &str = "\
+S = 1 << 22
+mask = S - 1
+qs = []
+s = set()
+r = 1
+n = 0
+while n < S * 0.45:
+    q = (r * 0x9E3779B97F4A7C15) & ((1 << 60) - 1)
+    r += 1
+    i = q & mask
+    p = q
+    for _ in range(16):
+        m = 10 if i + 9 <= mask else 1
+        for j in range(m):
+            s.add(i + j)
+        p >>= 5
+        i = (5 * i + 1 + p) & mask
+    n += 160
+    qs.append(q)
+big = qs * (2_000_000 // len(qs) + 1)";
+
 /// (row, setup, the operation, times it repeats as straight-line code):
 /// each at about the largest size the default limits allow. The phase 2
 /// packages add their sites here.
@@ -2272,6 +2296,59 @@ const SITES: &[(Row, &str, &str, usize)] = &[
     (
         Row::Bounded,
         "M = (1 << 61) - 1\nxs = [k * M for k in range(1, 10_001)]",
+        "d = {}\nfor x in xs: d[x] = None",
+        1,
+    ),
+    // Past 16,384 colliding keys a probe runs out of its walk and the
+    // prelude twin inserts (`_dset`), whose `_dict_insert` rebuilt a full
+    // table in one step: 1.2-1.3 s for the loop and 1.2-1.4 s for
+    // `dict.fromkeys` at 33,500 keys on e54f65f [M, this oracle on shipped
+    // codegen, a host at 1.4-1.7 times the reference] (at 17,000 the loop
+    // meets no full table on the twin's path). It now rebuilds in steps,
+    // then inserts: 5.0-7.3 ms and 15.8-26.0 ms [M].
+    (
+        Row::Bounded,
+        "M = (1 << 61) - 1\nxs = [k * M for k in range(1, 33_501)]",
+        "d = {}\nfor x in xs: d[x] = None",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "M = (1 << 61) - 1\nxs = [k * M for k in range(1, 33_501)]",
+        "d = dict.fromkeys(xs)",
+        1,
+    ),
+    // Set lookups that each walk their 16 free runs (uncharged) in a bulk
+    // operation's step: 151-175 ms at 2^22 slots on 71b9c5b5 [M]. A step
+    // now counts each item's free runs: 8-11 ms [M].
+    (Row::Bounded, SET_FREE_RUNS, "r = s.isdisjoint(big)", 1),
+    (Row::Bounded, SET_FREE_RUNS, "s.update(big)", 1),
+    // A set table's rebuild gave each key 16 free runs, counted nowhere,
+    // so keys whose probes share their first 8 to 16 runs in the new
+    // table rebuilt 2^18 slots in one step: 76.0-76.9 ms on a70cac6
+    // against 18.2-21.3 ms on e54f65f [M, this oracle on shipped codegen,
+    // limits 75.0-100.0 ms; plain release: 192-196 against 43-46 ms]. Each
+    // key's free runs now count toward where a rebuild slice ends:
+    // 13.4-13.7 ms [M].
+    (
+        Row::Bounded,
+        "M = (1 << 61) - 1\nxs = []\nfor sg in range(16):\n    c = (sg * 0x9E3779B97F4A7C15 + 12345) & ((1 << 54) - 1)\n    for g in range(128):\n        h = c + (g << 54)\n        if h >= M: continue\n        for j in range(80): xs.append(h + j * M)",
+        "s = set()\nfor x in xs: s.add(x)",
+        1,
+    ),
+    // A dict's growth in one step counted no free slot an entry walked,
+    // so a table of 2^20 entries, 32 to a hash and inserted round-robin,
+    // that grew beside a 46 MiB bytearray (too little memory left to grow
+    // in steps) walked every chain in one step (H1): 140-142 ms on
+    // e5c2af1 against 50.4-51.2 ms on e54f65f [M, this oracle's `gaps` on
+    // shipped codegen, one core]. It now ends on the free slots walked,
+    // as e54f65f's did: 46.6-47.2 ms [M]. The largest growth below
+    // GROW_STEPS (262,143 entries, one deleted) doubled too, 20.9-21.1 ms
+    // against 11.2-11.4 ms, but stays under the limit either way, so it
+    // has no row: a row here guards only the limit.
+    (
+        Row::Bounded,
+        "M = (1 << 61) - 1\nxs = [k * M + c for k in range(32) for c in range(1, 32_770)][:(1 << 20) + 1]\nballast = bytearray(46 << 20)",
         "d = {}\nfor x in xs: d[x] = None",
         1,
     ),

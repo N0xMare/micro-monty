@@ -1692,7 +1692,7 @@ fn grow_step(
     if index != Some(2 * cap + 1) || n > at || at > vm.dict_used(c) as u64 {
         return Err(vm.bad_step());
     }
-    let Some((done, installed)) = vm.dict_grow_slice(c, *ne, *ni, &mut at, &mut n, STEP_WORK)
+    let Some((done, installed, _)) = vm.dict_grow_slice(c, *ne, *ni, &mut at, &mut n, STEP_WORK)
     else {
         return Err(vm.bad_step());
     };

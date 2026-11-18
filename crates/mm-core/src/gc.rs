@@ -412,6 +412,10 @@ const MAX_PASSES: u32 = 8;
 /// Pending segments of each space one step sweeps (1 MiB each, about
 /// 0.1 ms [M]).
 const SWEEP_SLICE: usize = 8;
+/// Objects [`Heap::marks_tight`] leaves before the mark stack's capacity
+/// when it puts a collection off past half the slack: room for what the
+/// guest allocates between two reads of [`Heap::should_collect`].
+const MARKS_MARGIN: usize = 1024;
 
 impl Heap {
     /// Is an incremental mark in progress?
@@ -923,12 +927,19 @@ impl Heap {
     /// handler's too, though the count may be mostly garbage, which
     /// dropping makes without allocating. Due ([`Heap::marks_short`]) once
     /// the count has come half way from the last collection's to the
-    /// capacity, so a count that stays near it collects a logarithmic
-    /// number of times, not at every safepoint.
+    /// capacity, or later, up to a 64th of that count but no closer to the
+    /// capacity than [`MARKS_MARGIN`]: each of these collections marks the
+    /// whole live heap uncharged, so a live count that stays near the
+    /// capacity while its garbage is freed would otherwise collect every
+    /// half of the slack.
     fn marks_tight(&self) -> bool {
         let cap = self.mark_stack.capacity();
         let at = self.objects_at_gc.min(cap);
-        self.objects > at && self.objects - at >= (cap - at).div_ceil(2) && self.marks_short()
+        let slack = cap - at;
+        let need = slack
+            .div_ceil(2)
+            .max((at / 64).min(slack.saturating_sub(MARKS_MARGIN)));
+        self.objects > at && self.objects - at >= need && self.marks_short()
     }
 
     /// The object count is in the top quarter of the mark stack's

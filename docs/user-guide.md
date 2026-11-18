@@ -1480,6 +1480,20 @@ differs:
   identity-hashed objects can differ between runs sliced differently \[M\].
   `id` stays unique among live objects and fixed for an object's life across
   parks and restores; `is` and value-hashed containers are unaffected.
+- **An `__eq__` that changes the dict or set being searched.** A lookup
+  follows CPython's rule: it goes on from where it is, and starts again
+  when the compare replaced the table or the key it compared, so it
+  finds a key that is present. CPython tells a replaced table by its
+  address: after a compare that clears and refills the container, its
+  lookup goes on or starts again by whether its allocator gave the new
+  table the old one's block, which the program does not decide, and where
+  it goes on it can miss a key that is there and store a second equal
+  key; mm starts again. Where mm's dict table is laid out unlike
+  CPython's, `__eq__` calls after such a mutation can still differ, and
+  with them which keys the walk passes: a dict of 8 entries or fewer,
+  whose table mm keeps in another form, and a table that grows at other
+  sizes than CPython's (mm grows a small table fourfold), so an insert by
+  `__eq__` replaces it at other points \[M\].
 - **Smaller ones.** `io.StringIO.seek` accepts a float; a set display of
   constants whose hashes collide can iterate in another order; a
   dataclass's `__doc__` is `None`; `re`'s ignore-case matching misses a

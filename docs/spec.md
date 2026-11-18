@@ -457,9 +457,29 @@ messages; copy wording where behaviour matches.
   on CPython too) therefore parks on fuel, deadlines and requests. The
   budget is a constant, so parked and unparked runs take the same path. A
   set insert spends one walk for all its compares, as a lookup does. A set's
-  or dict's table rebuild charges the probes past each key's first run of
-  slots, beyond one a key, and ends a step when the slots read and those
-  probes pass its budget, so a table of colliding keys rebuilds in steps.
+  or dict's table rebuild charges the probes past each key's free runs
+  (`FREE_RUNS`) or slots (`FREE_SLOTS`), the same however addresses fall,
+  and ends a step when the slots read, those probes and the free runs or
+  slots of each key moved (a constant a key, uncharged) pass its budget,
+  so a table of colliding keys rebuilds in steps and every step ends at
+  the same key whatever a snapshot moved; a dict's growth in one step
+  counts the free slots its entries walked instead, so a growth that
+  walks long chains (memory too tight to grow in steps, say) goes on in
+  steps, as before this allowance; where it ends then follows how far keys
+  whose hashes follow addresses walked. A set's slice charges what
+  its rebuild in one step would, the probes past the free runs, and asks
+  for a clock check after it (`force_check`), since a step that charges 64
+  units or fewer reaches none (`Vm::burn`); a dict's slice charges the
+  entries it reads and the probes past the free slots. A lookup that meets a key only Python can compare
+  stops just past it (`dict_probe_py`, `set_probe_py`) and the twin
+  (`_dfind`, `_sfind`) hands the compare's truth back with the place: as
+  in CPython's lookups, a compare that replaced the table or the compared
+  slot's key starts the lookup again (only the same table goes on; CPython
+  goes on in a new table its allocator put in the old block, which mm
+  does not imitate), an equal key is found, and an
+  unequal one goes on from the place over the table as it now is; an add
+  takes a key whose compare was true before that check (`set_add_entry`).
+  No lookup probes again after a miss.
   Depth carries through set and dict probes, so nested frozensets and keys
   raise `RecursionError`. It also carries across the levels a twin runs in
   bytecode: the twins compare items with `_walk_eq`/`_walk_ord` at their

@@ -31,19 +31,11 @@ def _khash(k, what):
 
 
 def _dfind(d, k, h):
-    # As `_sfind`: the keys only Python can compare, a bounded list at a
-    # time (`dict_probe_py`).
-    r = _dict_probe(d, k, h, None)
+    # As `_sfind`, but the table is checked before an equal result counts
+    # (CPython's `compare_generic`).
+    r = _dict_probe(d, k, h, None, False)
     while type(r) is not int:
-        at = None
-        if type(r) is tuple:
-            r, at = r
-        for e, key in r:
-            if key is k or key == k:
-                return e
-        if at is None:
-            return -1
-        r = _dict_probe(d, k, h, at)
+        r = _dict_probe(d, k, h, r, r[0] >= 0 and not not (r[1] == k))
     return r
 
 
@@ -58,7 +50,10 @@ def _dset(d, k, v):
     h = _khash(k, 'dict key')
     e = _dfind(d, k, h)
     if e < 0:
-        _dict_insert(d, k, h, v)
+        # False or None: a full table was rebuilt without `k` (in steps
+        # past a step's work); then `k` goes into its room.
+        while not _dict_insert(d, k, h, v):
+            pass
     else:
         _dict_set_at(d, e, v)
 
@@ -85,32 +80,34 @@ def _set_hashed(s):
             yield p
 
 
-def _sfind(s, x, h, d=-1):
-    # The keys only Python can compare come a bounded list at a time, with
-    # where the probe goes on (`set_probe_py`). Inside a comparison at
-    # nesting `d` (see `_eq`), they compare by `_eqd`.
-    r = _set_probe(s, x, h, d if d > 0 else 0, None)
+def _sfind(s, x, h, d=-1, add=False):
+    # CPython's lookup: the native walk stops past each key only Python
+    # can compare (`set_probe_py`) and hands it with its place; with the
+    # compare's truth the walk goes on from there, or starts again if the
+    # compare replaced the table or that key. An `add` takes an equal key
+    # before that check (`set_add_entry`). The result's `__bool__` runs at
+    # once, as in `PyObject_RichCompareBool`. Inside a comparison at
+    # nesting `d` (see `_eq`), keys compare by `_eqd`.
+    n = d if d > 0 else 0
+    m = 2 if add else False
+    r = _set_probe(s, x, h, n, None, m)
     while type(r) is not int:
-        at = None
-        if type(r) is tuple:
-            r, at = r
-        for i, key in r:
-            if key is x or (key == x if d < 0 else _eqd(key, x, d + 1)):
-                return i
-        if at is None:
-            return -1
-        r = _set_probe(s, x, h, d if d > 0 else 0, at)
+        i = r[0]
+        eq = i >= 0 and not not (r[1] == x if d < 0 else _eqd(r[1], x, d + 1))
+        if eq and add:
+            return i
+        r = _set_probe(s, x, h, n, r, m or eq)
     return r
 
 
 def _sadd(s, x):
     h = _khash(x, 'set element')
-    if _sfind(s, x, h) < 0:
+    if _sfind(s, x, h, -1, True) < 0:
         _set_insert(s, x, h)
 
 
 def _sadd_h(s, x, h):
-    if _sfind(s, x, h) < 0:
+    if _sfind(s, x, h, -1, True) < 0:
         _set_insert(s, x, h)
 
 
@@ -6009,7 +6006,8 @@ def _bulk(r, prog, pc, i, res):
                     h = _khash(x, 'dict key')
                 e = _dfind(out, x, h)
                 if e < 0:
-                    _dict_insert(out, x, h, v)
+                    while not _dict_insert(out, x, h, v):
+                        pass
                 else:
                     _dict_set_at(out, e, v)
                 continue

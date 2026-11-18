@@ -1711,7 +1711,7 @@ const DEFS: &[Def] = &[
     n!("__copy__", MA, 1, 1, NO, NO, crate::re::match_copy),
     #[cfg(feature = "re")]
     n!("__deepcopy__", MA, 2, 2, NO, NO, crate::re::match_copy),
-    p!("_dict_probe", 4, 4, pl_dict_probe),
+    p!("_dict_probe", 5, 5, pl_dict_probe),
     p!("_pct", 3, 3, crate::percent::pl_pct),
     #[cfg(feature = "json")]
     p!("_json_encode", 10, 10, crate::json::pl_json_encode),
@@ -1726,7 +1726,7 @@ const DEFS: &[Def] = &[
     p!("_dict_set_at", 3, 3, pl_dict_set_at),
     p!("_dict_at", 2, 2, pl_dict_at),
     p!("_dict_del_at", 2, 2, pl_dict_del_at),
-    p!("_set_probe", 5, 5, pl_set_probe),
+    p!("_set_probe", 6, 6, pl_set_probe),
     p!("_seq_scan", 4, 4, pl_seq_scan),
     p!("_more", 1, 4, pl_more),
     p!("_dict_scan", 4, 4, pl_dict_scan),
@@ -6899,14 +6899,18 @@ fn view_dict(vm: &Vm, d: Value) -> Value {
 fn pl_dict_probe(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let h = pl_hash_arg(vm, vm.arg_o(&a, 2))?;
     let d = view_dict(vm, vm.arg_o(&a, 0));
-    vm.dict_probe_py(d, vm.arg_o(&a, 1), h, vm.arg_o(&a, 3))
+    let eq = vm.arg_o(&a, 4) == Value::TRUE;
+    vm.dict_probe_py(d, vm.arg_o(&a, 1), h, vm.arg_o(&a, 3), eq)
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn pl_dict_insert(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let h = pl_hash_arg(vm, vm.arg_o(&a, 2))?;
-    vm.dict_insert_new(vm.arg_o(&a, 0), vm.arg_o(&a, 1), h, vm.arg_o(&a, 3))?;
-    Ok(Value::NONE)
+    if vm.dict_insert_twin(vm.arg_o(&a, 0), vm.arg_o(&a, 1), h, vm.arg_o(&a, 3))? {
+        return Ok(Value::TRUE);
+    }
+    // A rebuild in steps, whose result is `None`: the twin inserts again.
+    Ok(stored(vm))
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
@@ -6951,7 +6955,20 @@ fn pl_dict_del_at(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 fn pl_set_probe(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let h = pl_hash_arg(vm, vm.arg_o(&a, 2))?;
     let depth = pl_depth(vm, vm.arg_o(&a, 3));
-    vm.set_probe_py(vm.arg_o(&a, 0), vm.arg_o(&a, 1), h, depth, vm.arg_o(&a, 4))
+    // The compare's truth, or 2 for an `add` (`_sfind`).
+    let (eq, add) = (
+        vm.arg_o(&a, 5) == Value::TRUE,
+        vm.int_of_o(vm.arg_o(&a, 5)) == Some(2),
+    );
+    vm.set_probe_py(
+        vm.arg_o(&a, 0),
+        vm.arg_o(&a, 1),
+        h,
+        depth,
+        vm.arg_o(&a, 4),
+        eq,
+        add,
+    )
 }
 
 /// `_more(src, i, items, None)`: item `i` on of a bulk operation's source
