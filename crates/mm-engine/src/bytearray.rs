@@ -273,7 +273,20 @@ impl Vm {
     }
 
     /// A byte argument as CPython's `_getbytevalue` reads it.
+    #[inline(never)]
     fn byte_arg(&mut self, v: Value) -> Result<u8, Raised> {
+        if Vm::is_intlike(v) {
+            return self.byte_value(v);
+        }
+        self.byte_arg_other(v)
+    }
+
+    /// [`Vm::byte_arg`] of anything but an int: an int subclass's value,
+    /// else the error. Out of line and cold: inlined, its unboxing added
+    /// 12 instructions to every byte argument, an int's too [M].
+    #[cold]
+    #[inline(never)]
+    fn byte_arg_other(&mut self, v: Value) -> Result<u8, Raised> {
         let v = self.int_unbx(v);
         if !Vm::is_intlike(v) {
             if self.uflags(v) & crate::class::f::INDEX != 0 {

@@ -22,7 +22,7 @@ crates/mm-engine/src/builtins.rs	to_module_twin	1
 crates/mm-engine/src/builtins.rs	view_isdisjoint	2
 crates/mm-engine/src/bytearray.rs	ba_bad_index	1
 crates/mm-engine/src/bytearray.rs	ba_source	1
-crates/mm-engine/src/bytearray.rs	byte_arg	1
+crates/mm-engine/src/bytearray.rs	byte_arg_other	1
 crates/mm-engine/src/bytearray.rs	extend	1
 crates/mm-engine/src/bytes.rs	bytes_getitem	1
 crates/mm-engine/src/bytes.rs	construct	2
