@@ -346,6 +346,12 @@ def _op_contains(c, x):
     t = type(c)
     if t is dict:
         return _dfind(c, x, _khash(x, 'dict key')) >= 0
+    if isinstance(c, dict):
+        # A dict subclass without its own `__contains__` (the dispatch
+        # loop calls that): one lookup in its table, as CPython's
+        # `dict_contains`, not the iteration fallback below, which
+        # compared every key. `dict.get` reads a subclass's table.
+        return dict.get(c, x, _op_contains) is not _op_contains
     if t is set or t is frozenset:
         return _shas(c, x)
     tn = _type_name(c)
@@ -5212,6 +5218,11 @@ def set_int_max_str_digits(maxdigits):
 
 def _slot(name, a):
     if name == '__getitem__':
+        if isinstance(a[0], dict):
+            # dict's own lookup (`dict_subscript`, `__missing__` included):
+            # `a[0][a[1]]` would call a subclass's `__getitem__`, which a
+            # `super().__getitem__(k)` in it turns into a recursion.
+            return _op_getitem(a[0], a[1])
         return a[0][a[1]]
     if name == '__setitem__':
         a[0][a[1]] = a[2]
