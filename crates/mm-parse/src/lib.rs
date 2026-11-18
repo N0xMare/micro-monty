@@ -16,6 +16,14 @@
 //! The ruff-based phase-1 path survives behind the `ruff-oracle` feature,
 //! only for the differential test against this parser.
 
+// Shipped builds only (docs/spec.md §6): `--cfg mm_shipped` with
+// `RUSTC_BOOTSTRAP=1`; stable in Rust 1.101. The expression rules marked
+// `optimize(speed)` move 80-byte `Expr`s, which `opt-level = "z"` lowers to
+// `rep movsb` on x86; wasm32 does not pay that, so they keep size there.
+#![cfg_attr(
+    all(mm_shipped, not(target_arch = "wasm32")),
+    feature(optimize_attribute)
+)]
 #![cfg_attr(not(feature = "ruff-oracle"), no_std)]
 #![allow(clippy::doc_markdown, reason = "the docs name CPython in prose")]
 #![allow(

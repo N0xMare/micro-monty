@@ -592,6 +592,7 @@ impl<'s, 'a> Parser<'s, 'a> {
         self.lines.loc(off).0
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(speed))]
     fn simple_stmts(&mut self, out: &mut Vec<Stmt>) -> R<()> {
         loop {
             let s = self.simple_stmt()?;
@@ -2200,6 +2201,7 @@ impl<'s, 'a> Parser<'s, 'a> {
     }
 
     /// `star_expressions`: one or a tuple of (starred) expressions.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(speed))]
     fn star_expressions(&mut self) -> R<Expr> {
         let s = self.tok();
         let first = self.star_expression()?;
@@ -2247,6 +2249,7 @@ impl<'s, 'a> Parser<'s, 'a> {
         self.named_expression()
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(speed))]
     fn named_expression(&mut self) -> R<Expr> {
         let s = self.start();
         let e = self.expression()?;
@@ -2401,6 +2404,7 @@ impl<'s, 'a> Parser<'s, 'a> {
     /// `BoolOp`, comparisons chain into one `Compare`, `not` is a prefix at
     /// level 3, binary operators associate left. Every node spans from the
     /// first token of its leftmost operand.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(speed))]
     fn pratt(&mut self, min: u8) -> R<Expr> {
         let s = self.start();
         let mut left = if min <= P_NOT && self.cur() == T::Not {
@@ -2559,6 +2563,7 @@ impl<'s, 'a> Parser<'s, 'a> {
         Ok(e)
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(speed))]
     fn power(&mut self) -> R<Expr> {
         let start = self.start();
         let base = if self.cur() == T::Await {
@@ -2578,6 +2583,7 @@ impl<'s, 'a> Parser<'s, 'a> {
         Ok(self.binop(start, base, BinOp::Pow, exp?))
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(speed))]
     fn primary(&mut self) -> R<Expr> {
         let s = self.start();
         let mut e = self.atom()?;
@@ -2633,6 +2639,7 @@ impl<'s, 'a> Parser<'s, 'a> {
         reason = "one grammar rule with its CPython errors"
     )]
     #[inline(never)]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(speed))]
     fn arguments(&mut self, call: bool) -> R<(Vec<Expr>, Vec<Keyword>)> {
         let mut args = Vec::new();
         let mut kws: Vec<Keyword> = Vec::new();
@@ -2795,6 +2802,7 @@ impl<'s, 'a> Parser<'s, 'a> {
         Ok(Expr::new(ExprKind::Tuple(elts), self.span(s.s)))
     }
 
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(speed))]
     fn slice(&mut self) -> R<Expr> {
         let s = self.start();
         if self.cur() == T::Star {
@@ -3009,6 +3017,7 @@ impl<'s, 'a> Parser<'s, 'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(speed))]
     fn brace_inner(&mut self, open: Tok) -> R<Expr> {
         if self.eat(T::RBrace) {
             return Ok(Expr::new(ExprKind::Dict(Vec::new()), self.span(open.s)));
@@ -3073,6 +3082,7 @@ impl<'s, 'a> Parser<'s, 'a> {
     }
 
     #[inline(never)]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(speed))]
     fn dict_rest(&mut self, open: Tok, mut items: Vec<(Option<Expr>, Expr)>) -> R<Expr> {
         loop {
             if self.eat(T::RBrace) {
