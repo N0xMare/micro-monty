@@ -780,7 +780,9 @@ are the rules above. Where the code falls short, the clause says so under
    (0.40 ms per MiB of live heap native, 1.3–1.6 times that on wasm [M]):
    one a native or the engine requests (`Vm::request_gc`: after a
    `MemoryError` is raised, after a byte job fails for memory), a
-   snapshot's and code reclamation's. The one a large result requests
+   snapshot's, code reclamation's, `Session::compile`'s for a cell that
+   does not fit, and the one a cell start runs on a heap at its wall
+   (`Vm::prepare_cell`, §9.2). The one a large result requests
    once allocation reaches half the room left (`Vm::collect_for_result`)
    runs as `gc.collect`'s does: a step per safepoint, the guest waiting
    until it ends (`Vm::collect_in_steps`). A
@@ -1776,6 +1778,28 @@ timer deadlines.
   at worst) runs in full, as do a snapshot's, code reclamation's, and one
   a native or the engine requests (`Vm::request_gc`): after a
   `MemoryError` is raised and after a byte job fails for memory.
+- **At the wall between cells.** A cell that fills the heap and drops its
+  data leaves garbage that no safepoint collects: none runs between
+  cells, and the trigger counts allocation, which a drop does not make.
+  So a cell starts (`Vm::prepare_cell`, which a host definition runs
+  first too) with a full collection, uncharged as a snapshot's,
+  when the heap is at its wall (`Heap::at_wall`): for the words or the
+  bytes space, the memory left is under the cost of its next segment
+  (1,081,344 B at full size) and its free blocks under 1/8 of the limit;
+  or the object count is at least 3/4 of the mark stack's capacity and
+  its doubling (4 bytes a slot) is more than the memory left. A start
+  refused for room anyway (a large cell's code, `reset`'s new globals)
+  runs once more after one. None runs twice unless code ran or something
+  held between cells was released (a stopped cell, an error, globals, host
+  definitions, a hint or a module dunder) since the last
+  (`Heap::idle_collected`, not in the image, clear in a restored heap,
+  which may hold a stopped cell). At 256 MiB it
+  takes 7–34 ms over garbage and 38–105 ms over live data, which it
+  repeats at each start while the heap stays at the wall, also when every
+  cell completes: 2.5M strings and 1 kB bytes objects live at 256 MiB, 200
+  cells of `n += 1` collect at each start, 25.8–32.0 ms a start, in 6.9–7.1 s
+  against 1.1–1.2 s without the collection, shipped build [M]. A session
+  kept short of the wall (90% of 256 MiB live) pays none.
 - **`gc.collect()`** asks for a collection that starts after the call
   (`Heap::force_collection`) and waits for it as a held mark does
   (`Vm::gc_held`): a step per safepoint check, no guest code and no fuel

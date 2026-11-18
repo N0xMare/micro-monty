@@ -193,6 +193,17 @@ impl Vm {
             self.reclaim_code();
             self.code_kept = self.code_charge;
         }
+        // A cell that ends with the heap at its wall leaves what it or a
+        // later cell drops (`del xs` after a fill) to no safepoint: none
+        // runs before the next cell's first object, its load's included,
+        // and every later cell was refused for room. Collected here in
+        // full and uncharged, as a snapshot's collection is, so fuel does
+        // not depend on whether the host snapshotted between cells. With
+        // live data at the wall each start pays it once
+        // (`Heap::idle_collected`).
+        if !self.gc_off && !self.heap.idle_collected && self.heap.at_wall() {
+            self.collect_now();
+        }
     }
 
     #[cold]

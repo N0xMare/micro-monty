@@ -296,6 +296,13 @@ pub struct Heap {
     pub(crate) str_pos: crate::string::StrPos,
     /// The incremental mark in progress, if any (not snapshotted).
     pub(crate) inc: crate::gc::Inc,
+    /// The engine's last full collection between cells left nothing for
+    /// the next cell's start to drop, and since then no code ran and
+    /// nothing held between cells was released, so another collection
+    /// would free only what a refused start allocated. False for a new
+    /// heap, a restored one included: its image may hold a stopped cell or
+    /// an error that the next start drops. Not snapshotted.
+    pub idle_collected: bool,
 }
 
 /// An owned reservation for native scratch storage. Keep it with the buffer;
@@ -371,6 +378,7 @@ impl Heap {
             refused: AtomicU64::new(0),
             str_pos: crate::string::StrPos::default(),
             inc: crate::gc::Inc::new(),
+            idle_collected: false,
         }
     }
 

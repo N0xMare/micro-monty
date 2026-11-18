@@ -4,8 +4,8 @@
 #![allow(clippy::expect_used, clippy::panic, reason = "tests")]
 
 use micro_monty::{
-    Engine, EngineConfig, HintGroup, HostModule, HostValue, Limits, ParkReason, Progress, Resume,
-    Session, Stream, TextCut,
+    Engine, EngineConfig, HintGroup, HostError, HostErrorKind, HostModule, HostValue, Limits,
+    ParkReason, Progress, Resume, Session, Stream, TextCut,
 };
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -237,6 +237,262 @@ ok";
         panic!("expected completion")
     };
     assert_eq!(value.repr, "50");
+}
+
+/// A cell that ends with the heap at its wall and its data garbage (a fill
+/// that raised, then dropped) leaves no safepoint to collect it: every
+/// later cell's start, a reset and a host definition were refused for
+/// room, a next cell whose load fit failed at its first object, and the
+/// session never ran a cell again. python3.14 runs them all.
+#[test]
+fn cells_after_one_that_filled_memory_run_once_its_garbage_is_collected() {
+    let strs = "xs = []\nwhile True:\n    xs.append(str(len(xs)))";
+    let chain =
+        "node = None\ntry:\n    while True:\n        node = (node,)\nexcept MemoryError:\n    pass";
+    let fills: [(u64, &str, &str); 5] = [
+        (6, strs, "del xs"),
+        (16, strs, "del xs"),
+        (6, chain, "node = None"),
+        (
+            16,
+            "def build():\n    xs = []\n    while True:\n        xs.append(str(len(xs)))\nbuild()",
+            "1",
+        ),
+        // The default limit, where the mark stack's doubling is the wall
+        // (as after `[{...} for i in range(10**9)]`); the slowest row.
+        (256, chain, "node = None"),
+    ];
+    for (mib, fill, drop) in fills {
+        let engine =
+            Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(mib << 20)));
+        let start = |session: &mut Session, src: &str| {
+            let code = engine.compile(src, "cell.py").expect("compiles");
+            match session.start(&code) {
+                Progress::Complete(_) => "ok".to_owned(),
+                Progress::Error(e) => e.type_name,
+                p => panic!("{p:?}"),
+            }
+        };
+        let filled = || {
+            let mut session = Session::new(&engine).expect("session");
+            start(&mut session, fill);
+            assert_eq!(start(&mut session, drop), "ok", "{mib} MiB: {fill}");
+            session
+        };
+        let mut session = filled();
+        for next in ["print('next')", "x = 1", "def f(): pass", "import json"] {
+            assert_eq!(start(&mut session, next), "ok", "{mib} MiB: {fill}: {next}");
+        }
+        if mib == 256 {
+            continue;
+        }
+        let mut session = filled();
+        let code = session.compile("x = 1", "cell.py").expect("fits");
+        assert_eq!(session.start(&code), Progress::Complete(None), "{mib} MiB");
+        let mut session = filled();
+        session.reset().expect("reset");
+        assert_eq!(start(&mut session, "print('next')"), "ok", "{mib} MiB");
+        let mut session = filled();
+        session
+            .define(&HostModule::untyped("tools", &["a", "b"]))
+            .expect("defined");
+        assert_eq!(start(&mut session, "import tools"), "ok", "{mib} MiB");
+    }
+}
+
+/// A cell start at the wall collects once per cell that ran since the last
+/// collection: a start refused in its load after its collection ran no
+/// cell, so the next does not collect again (a retry of the refused load
+/// collected a second time: 188–232 ms a start on a 256 MiB live heap
+/// instead of 98–105 [M]), nor does one after `Session::compile` collected,
+/// while each start after a cell that ran collects, whether that cell
+/// dropped data, failed or did nothing. A restored heap starts as not
+/// collected: its first start at the wall collects once, which frees a
+/// stopped cell it ends without resuming. The collection at a start also
+/// serves the one the last cell's `MemoryError` asked for: the cell's first
+/// safepoint does not collect again.
+#[test]
+fn a_cell_start_at_the_wall_collects_once_per_cell_that_ran() {
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(6 << 20)));
+    let start = |session: &mut Session, src: &str| {
+        let code = engine.compile(src, "cell.py").expect("compiles");
+        let before = session.gc_collections();
+        let outcome = match session.start(&code) {
+            Progress::Complete(_) => "ok".to_owned(),
+            Progress::Error(e) => e.type_name,
+            p => panic!("{p:?}"),
+        };
+        (outcome, session.gc_collections() - before)
+    };
+    let me = |n| ("MemoryError".to_owned(), n);
+    let ok = |n| ("ok".to_owned(), n);
+    let mut session = Session::new(&engine).expect("session");
+    let fill = "xs = []\ntry:\n    while True:\n        xs.append(str(len(xs)))\nexcept MemoryError:\n    pass";
+    assert_eq!(start(&mut session, fill).0, "ok");
+    // Live data at the wall: the collection frees nothing.
+    assert_eq!(start(&mut session, "y = 1"), me(1));
+    assert_eq!(start(&mut session, "y = 1"), me(0));
+    let before = session.gc_collections();
+    assert!(session.compile(&"z = 1\n".repeat(400), "big.py").is_err());
+    assert_eq!(session.gc_collections() - before, 1);
+    assert_eq!(start(&mut session, "y = 1"), me(0));
+    let image = session.snapshot().expect("snapshot");
+    let mut session = engine.restore(&image).expect("restore");
+    assert_eq!(start(&mut session, "y = 1"), me(1));
+    assert_eq!(start(&mut session, "y = 1"), me(0));
+    assert_eq!(start(&mut session, "xs = None"), ok(0));
+    assert_eq!(start(&mut session, "y = 1"), ok(1));
+    assert_eq!(start(&mut session, "y = 1"), ok(0));
+    // Cells that load, run and fail at the wall: each next start collects.
+    let mut session = Session::new(&engine).expect("session");
+    assert_eq!(start(&mut session, fill).0, "ok");
+    assert_eq!(start(&mut session, "y = 1"), me(1));
+    // Its names are interned already, so it loads at the wall.
+    let grow = "while True:\n    xs.append(str(len(xs)))";
+    assert_eq!(start(&mut session, grow), me(0));
+    assert_eq!(start(&mut session, grow), me(1));
+    assert_eq!(start(&mut session, grow), me(1));
+    // A fill that raised: the next cell's safepoints do not collect again.
+    let mut session = Session::new(&engine).expect("session");
+    let raises = "xs = []\nwhile True:\n    xs.append(str(len(xs)))";
+    assert_eq!(start(&mut session, raises).0, "MemoryError");
+    assert_eq!(start(&mut session, "del xs"), ok(1));
+    let looped = "for _ in range(3):\n    pass";
+    assert_eq!(start(&mut session, looped), ok(1));
+    assert_eq!(start(&mut session, looped), ok(0));
+    // A cell stopped at the wall with its data live, restored and ended
+    // without a resume: the first start collects once and frees it.
+    let stopped = "import tools\ndef build():\n    xs = []\n    try:\n        while True:\n            xs.append(str(len(xs)))\n    except MemoryError:\n        pass\n    tools.a()\nbuild()";
+    for cancel in [false, true] {
+        let mut session = Session::new(&engine).expect("session");
+        session
+            .define(&HostModule::untyped("tools", &["a"]))
+            .expect("defined");
+        let code = engine.compile(stopped, "fill.py").expect("compiles");
+        assert!(matches!(session.start(&code), Progress::HostCall { .. }));
+        let image = session.snapshot().expect("snapshot");
+        let mut session = engine.restore(&image).expect("restore");
+        if cancel {
+            assert!(session.cancel());
+        }
+        assert_eq!(start(&mut session, "y = 1"), ok(1), "cancel {cancel}");
+        assert_eq!(start(&mut session, "y = 1"), ok(0), "cancel {cancel}");
+    }
+    // Near the limit but short of the wall (4 MiB of 16 left, a segment
+    // is 1 MiB): no start collects.
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(16 << 20)));
+    let mut session = Session::new(&engine).expect("session");
+    let fill = engine
+        .compile("big = [bytes(4000) for _ in range(3000)]", "fill.py")
+        .expect("compiles");
+    assert!(matches!(session.start(&fill), Progress::Complete(_)));
+    let code = engine.compile("y = 1", "cell.py").expect("compiles");
+    let before = session.gc_collections();
+    for _ in 0..20 {
+        assert!(matches!(session.start(&code), Progress::Complete(_)));
+    }
+    assert_eq!(session.gc_collections() - before, 0);
+}
+
+/// The fill cell may stop and continue on another path than a start: a
+/// resume after a park or after a host call's answer, in the same session
+/// or in one restored from a snapshot taken there. A restored heap starts as
+/// collected, and a fill that only resumed there left it so: the next
+/// start neither collected nor retried, and no cell ran again.
+#[test]
+fn cells_after_a_fill_that_resumed_run_once_its_garbage_is_collected() {
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(6 << 20)));
+    let fill = "import tools\ndef build():\n    try:\n        tools.a()\n    except KeyError:\n        pass\n    xs = []\n    while True:\n        xs.append(str(len(xs)))\nbuild()";
+    let answers = [
+        Resume::Value(HostValue::None),
+        Resume::Error(HostError {
+            kind: HostErrorKind::KeyError,
+            message: "k".into(),
+            data: None,
+            class: None,
+        }),
+    ];
+    for answer in answers {
+        for restore_at_call in [false, true] {
+            for restore_at_park in [false, true] {
+                let mut session = Session::new(&engine).expect("session");
+                session
+                    .define(&HostModule::untyped("tools", &["a"]))
+                    .expect("defined");
+                let code = engine.compile(fill, "fill.py").expect("compiles");
+                let p = session.start(&code);
+                assert!(matches!(p, Progress::HostCall { .. }), "{p:?}");
+                if restore_at_call {
+                    let image = session.snapshot().expect("snapshot");
+                    session = engine.restore(&image).expect("restore");
+                }
+                session.set_fuel(Some(100_000));
+                let mut p = session.resume(answer.clone()).expect("resumes");
+                let mut parks = 0;
+                while let Progress::Parked { .. } = p {
+                    parks += 1;
+                    if restore_at_park && parks == 1 {
+                        let image = session.snapshot().expect("snapshot");
+                        session = engine.restore(&image).expect("restore");
+                    }
+                    session.set_fuel(Some(100_000));
+                    p = session.resume(Resume::Continue).expect("resumes");
+                }
+                let case = format!(
+                    "{answer:?}, restored at call {restore_at_call}, at park {restore_at_park}"
+                );
+                assert!(parks > 0, "{case}");
+                assert!(
+                    matches!(&p, Progress::Error(e) if e.type_name == "MemoryError"),
+                    "{case}: {p:?}"
+                );
+                session.set_fuel(None);
+                for next in ["print('next')", "x = 1"] {
+                    let code = engine.compile(next, "cell.py").expect("compiles");
+                    let p = session.start(&code);
+                    assert!(matches!(p, Progress::Complete(_)), "{case}: {next}: {p:?}");
+                }
+            }
+        }
+    }
+    // A cell stopped with the heap at its wall and its data still live,
+    // ended without being resumed: by the next start, a cancel or a reset,
+    // in the same session or in one restored from a snapshot taken there.
+    let fill = "import tools\ndef build():\n    xs = []\n    try:\n        while True:\n            xs.append(str(len(xs)))\n    except MemoryError:\n        pass\n    tools.a()\n    while True:\n        pass\nbuild()";
+    for end in ["start", "cancel", "reset"] {
+        for restore in [false, true] {
+            let mut session = Session::new(&engine).expect("session");
+            session
+                .define(&HostModule::untyped("tools", &["a"]))
+                .expect("defined");
+            let code = engine.compile(fill, "fill.py").expect("compiles");
+            let p = session.start(&code);
+            assert!(matches!(p, Progress::HostCall { .. }), "{p:?}");
+            session.set_fuel(Some(1_000));
+            let p = session
+                .resume(Resume::Value(HostValue::None))
+                .expect("resumes");
+            assert!(matches!(p, Progress::Parked { .. }), "{p:?}");
+            if restore {
+                let image = session.snapshot().expect("snapshot");
+                session = engine.restore(&image).expect("restore");
+            }
+            session.set_fuel(None);
+            match end {
+                "cancel" => assert!(session.cancel()),
+                "reset" => session.reset().expect("reset"),
+                _ => {}
+            }
+            for next in ["print('next')", "x = 1"] {
+                let code = engine.compile(next, "cell.py").expect("compiles");
+                let p = session.start(&code);
+                assert!(
+                    matches!(p, Progress::Complete(_)),
+                    "abandoned by {end}, restored {restore}: {next}: {p:?}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

@@ -963,7 +963,22 @@ about 300,000 characters, in this release and in 0.0.1 alike, with a
 deadline or with fuel slices \[M\]. Possessive and atomic forms and
 lookaheads (`(a|b)*+c`, `(?>(a|b)*)c`, `(?=(a|b)*)c`) stay bounded in
 this release, and patterns like `^(?:(\w+),)*$` stay under the bound to
-600,000 characters \[M\]. Count
+600,000 characters \[M\]. One
+runs, uncharged, when a cell starts on a heap at its wall: the memory left
+holds no fresh 1 MiB segment for a space whose free blocks are under an
+eighth of the limit, or not the mark stack's next doubling, as a cell
+that filled memory and dropped its data leaves it. At 256 MiB that start
+takes 7–34 ms over garbage and 38–105 ms over live data natively \[M\]
+(1.3–1.6 times that on wasm \[E\]), and it repeats at every cell start
+while the heap stays at the wall, even when the cells succeed: with 256 MiB
+filled by live strings and bytes, 200 cells of `n += 1` take 25.8–32.0 ms
+a start, 6.9–7.1 s in all against 1.1–1.2 s without it \[M\]. A
+session kept below its limit (90% of 256 MiB live: none in 200 starts
+\[M\]) never pays it. Within one cell
+it does not help: after a caught `MemoryError` and a dropped reference, a
+statement that allocates may still raise `MemoryError` \[M\];
+`gc.collect()` frees the room only if `gc` was imported before memory
+filled, and ending the cell recovers. Count
 what a cell was charged from a fuel total (`set_fuel_total`; refuel with
 `Some(n)`, not `None`), not granted fuel less `fuel()`, which stops at 0
 and misses overdrafts; `hosts/js`'s driver does.

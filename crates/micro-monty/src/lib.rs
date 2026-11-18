@@ -1780,6 +1780,13 @@ impl Session {
         self.vm.heap.marking()
     }
 
+    /// Testing: how many collections have ended in this session's heap.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn gc_collections(&self) -> u64 {
+        self.vm.heap.stats().collections
+    }
+
     /// Whether a completed cell reports the value of its last expression
     /// (default `true`). Running a script, turn it off: computing the
     /// value's text may run a user `__repr__` or `__str__`.

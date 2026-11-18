@@ -1394,6 +1394,9 @@ impl Vm {
         msgs: &HostValue,
         data: &HostValue,
     ) -> Result<(), Raised> {
+        // First, so a heap the last cell left at its wall is collected
+        // before anything here allocates.
+        self.prepare_cell();
         let pg = self.prelude_globals;
         let dk = self.intern("_host_defs")?;
         let defs = if let Some(d) = self.dict_get_str(pg, dk) {
@@ -1422,11 +1425,12 @@ impl Vm {
             ("_host_msgs", self.py_value(msgs)?),
             ("_host_data", self.py_value(data)?),
         ];
+        // The definitions these replace are released.
+        self.heap.idle_collected = false;
         for (name, v) in binds {
             let k = self.intern(name)?;
             self.dict_set(pg, k, v)?;
         }
-        self.prepare_cell();
         self.set_want_completion_text(false);
         // Shared code: its frames are hidden, so the session keeps no text.
         let entry = self.load_in(&prog.program, "<host>", "", crate::vm::GSLOT_PRELUDE)?;

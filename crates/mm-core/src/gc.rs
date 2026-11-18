@@ -917,8 +917,26 @@ impl Heap {
         }
         let available = self.available_bytes();
         (available < limit / 8 && self.stats.allocated_since_gc >= available / 2)
-            || (available < self.words.fresh_cost(1) && self.words.free_bytes() < limit / 8)
-            || (available < self.bytes.fresh_cost(1) && self.bytes.free_bytes() < limit / 8)
+            || self.no_fresh_room()
+    }
+
+    /// Whether the heap is at a wall only a collection can lift: an object
+    /// of one of its spaces needs a fresh segment that the memory left
+    /// cannot hold, or the mark stack, near its capacity, cannot double.
+    /// [`Heap::should_collect`] does not see this once little was allocated
+    /// since the last collection, though a dropped reference may have made
+    /// most of the heap garbage since (`del xs` after a fill).
+    #[must_use]
+    pub fn at_wall(&self) -> bool {
+        self.marks_short() || self.no_fresh_room()
+    }
+
+    /// A space whose free lists hold under 1/8 of the limit cannot commit
+    /// a fresh segment.
+    fn no_fresh_room(&self) -> bool {
+        let (available, eighth) = (self.available_bytes(), self.config.memory_limit / 8);
+        (available < self.words.fresh_cost(1) && self.words.free_bytes() < eighth)
+            || (available < self.bytes.fresh_cost(1) && self.bytes.free_bytes() < eighth)
     }
 
     /// The object count nears the mark stack's capacity, whose doubling

@@ -1238,6 +1238,8 @@ impl Vm {
         name: Option<&str>,
         file: Option<&str>,
     ) -> Result<(), Raised> {
+        // The names these replace are released (`Heap::idle_collected`).
+        self.heap.idle_collected = false;
         let g = self.globals;
         for (key, v) in [("__name__", name), ("__file__", file)] {
             let k = self.intern(key)?;
@@ -1264,7 +1266,10 @@ impl Vm {
         self.context = Value::NONE;
         self.exc = Value::NONE;
         self.post = None;
-        self.fresh_globals()?;
+        let fresh = self.between_cells(Vm::fresh_globals);
+        // The old globals and modules are released.
+        self.heap.idle_collected = false;
+        fresh?;
         self.reclaim_code();
         Ok(())
     }
@@ -1996,7 +2001,42 @@ impl Vm {
     /// Loads a compiled program into the code table; returns the index of
     /// its module body.
     pub fn load(&mut self, prog: &Program, filename: &str, source: &str) -> Result<u32, Raised> {
-        self.load_in(prog, filename, source, GSLOT_USER)
+        self.between_cells(|vm| vm.load_in(prog, filename, source, GSLOT_USER))
+    }
+
+    /// Runs `step`, done between cells (loading a cell, starting it, a
+    /// reset's fresh globals), once more after a full collection when it
+    /// was refused for room the limit could hold and no cell is stopped:
+    /// garbage the last cell left may be what is in the way, and with no
+    /// cell running no safepoint collects it, so every later cell failed
+    /// the same way. Not charged, as [`Vm::collect_now`] is not for
+    /// `Session::compile`: a snapshot between the cells collects instead,
+    /// and a cell's fuel must not depend on whether one was taken. As
+    /// `Vm::oom_retry_if`'s retries, one rerun at most, and a refusal it
+    /// returns dies here: the error goes to the host, not through
+    /// `Vm::unwind`, and a later cell's request past the limit must not
+    /// read it and collect.
+    pub(crate) fn between_cells<R>(
+        &mut self,
+        mut step: impl FnMut(&mut Vm) -> Result<R, Raised>,
+    ) -> Result<R, Raised> {
+        let r = match step(self) {
+            Err(Raised)
+                if !self.heap.idle_collected
+                    && !self.gc_off
+                    && self.tasks.is_empty()
+                    && self.exc_type(self.exc) == T::MemoryError
+                    && self.room_may_help() =>
+            {
+                self.collect_now();
+                step(self)
+            }
+            r => r,
+        };
+        if r.is_err() {
+            self.heap.take_refused();
+        }
+        r
     }
 
     /// [`Vm::load`] for code that runs in the globals `gslot` names (engine

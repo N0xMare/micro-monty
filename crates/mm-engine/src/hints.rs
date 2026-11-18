@@ -235,6 +235,8 @@ impl Vm {
     /// restores the default). `{module}` in it stands for the module.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub fn set_hint(&mut self, group: HintGroup, text: Option<&str>) -> Result<(), Raised> {
+        // The text this replaces is released (`Heap::idle_collected`).
+        self.heap.idle_collected = false;
         let d = self.hint_dict()?;
         let k = self.intern(group.key())?;
         match text {

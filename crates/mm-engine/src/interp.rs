@@ -248,7 +248,12 @@ impl Vm {
         let Some(code) = self.codes.get(ci as usize).cloned() else {
             return Exit::Error;
         };
-        if self.begin_cell().is_err() {
+        let n = code.code.nregs as usize + 16;
+        let begun = self.between_cells(|vm| {
+            vm.begin_cell()?;
+            vm.ensure_stack(n).inspect_err(|_| vm.end_cell())
+        });
+        if begun.is_err() {
             return Exit::Error;
         }
         // Top-level `await` runs the cell as the task of a running loop.
@@ -261,11 +266,6 @@ impl Vm {
                 break;
             }
             pc += instr_len(o);
-        }
-        let n = code.code.nregs as usize + 16;
-        if self.ensure_stack(n).is_err() {
-            self.end_cell();
-            return Exit::Error;
         }
         for v in &mut self.stack[..n] {
             *v = Value::UNDEFINED;
@@ -383,6 +383,9 @@ impl Vm {
     /// out of the main task or stops for the host.
     pub(crate) fn execute(&mut self, mut st: State, mut fault: bool) -> Exit {
         self.fuel_wanted = 0;
+        // Code runs and may drop data, whether the cell starts here or
+        // resumes: the next start at the wall must collect again.
+        self.heap.idle_collected = false;
         loop {
             let step = if fault {
                 fault = false;
@@ -930,6 +933,10 @@ impl Vm {
             coro: Value::NONE,
         };
         self.end_cell();
+        // What the ended cell left for the host was reported: dropped here,
+        // so the next start does not drop it after the collection.
+        self.exc = Value::NONE;
+        self.post = None;
         // A collection between cells (a compile that did not fit, code
         // reclamation) is not one a cell's operations ran: the retry after
         // `MemoryError` still counts what came before it, as after a
@@ -938,6 +945,14 @@ impl Vm {
         let since = self.heap.allocated_since_own_gc();
         self.collect_garbage(&st);
         self.heap.keep_allocated_since_gc(since);
+        // A collection the ended cell asked for (the retry's after a
+        // `MemoryError`) is this one, as a snapshot's drops it
+        // (`Vm::prepare_snapshot`): else the next cell's first check
+        // collected in full again.
+        self.gc_requested_done();
+        // An untaken completion text (a restored image's) is dropped by
+        // the next start.
+        self.heap.idle_collected = self.completion_text.is_none();
     }
 
     // ------------------------------------------------------------ calls

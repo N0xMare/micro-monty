@@ -108,6 +108,15 @@ hashes are pre-release history, kept in the private archive
   code's two names, so restores read 16 more bytes per code: a codemode
   template's image is 3.1% larger and its trusted restore 4.8% slower in
   Ir. The build id moves.
+- A session no longer stays unable to start a cell after memory filled:
+  a cell that filled the heap and dropped its data left garbage nothing
+  collected, so every later cell, and `reset` and host definitions beside
+  that garbage, failed with `MemoryError` and fuel 0 (older than 0.0.1). A
+  cell start on a heap at its wall now collects first, uncharged and
+  outside the step bound: 7–34 ms over 256 MiB of garbage, 38–105 ms over
+  256 MiB live, repeated at each start while the heap stays there, also
+  when the cells succeed (about 26–32 ms a start with 256 MiB of live
+  strings) [M]. `reset` over a heap full of live data still fails.
 
 ## 0.0.1 (2026-11-12)
 
