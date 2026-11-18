@@ -168,8 +168,9 @@ to `target/check/logs/<stage>.log`.
   what an image means (a `SNAPSHOT_EPOCH` bump is missing), brings a
   scenario blessed elsewhere or changes a scenario itself; `restack
   --resolved` finishes the pick it stopped at. It copies each commit's
-  author and committer, and refuses a commit authored or committed by
-  another identity than the one the commits rule below names.
+  author and committer, and refuses a commit, or a HEAD to stack onto,
+  authored or committed by another identity than the one the commits
+  rule below names.
 - Size: `cargo xtask size` compares each shipped artifact with the base
   and the last `v*` tag, both built outside the checkout. A rise past the
   base needs a git trailer `Size: <artifact> <±bytes> <why>` in the commit

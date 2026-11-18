@@ -22,7 +22,14 @@
 //! blessing under one id need not write the same bytes (a fresh session's
 //! heap can differ while the old image still continues the same), so a
 //! hand bless is noise when HEAD's image passes and a meaning change when
-//! it does not.
+//! it does not. Only the images whose bytes the bless changed are compared.
+//! When the index holds HEAD's image where the picked commit changes one
+//! (taken from the parent, kept through a resolution, or taken back), and
+//! the test passes but the pick changes `golden.rs`, restack stops too: a
+//! cell can change what runs before its park, which only its image holds.
+//! A stop that asks for a hand commit prints it whole, and every run
+//! refuses a HEAD authored or committed by another identity than
+//! AGENTS.md's.
 //!
 //! Each commit is written by `git commit-tree` with the picked commit's
 //! message byte for byte, its author, author date and committer: no hook,
@@ -34,7 +41,7 @@
 //! head's file, so they are recorded once, on the stack's tip.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     io::Write as _,
     path::Path,
@@ -44,12 +51,50 @@ use std::{
 use crate::{wasm_wall::git, workspace_root};
 
 const GOLDEN: &str = "crates/micro-monty/tests/golden";
+const GOLDEN_RS: &str = "crates/micro-monty/tests/golden.rs";
 const USAGE: &str = "usage: cargo xtask restack [--resolved <commit>] <commit|a..b>...";
 /// AGENTS.md's author and committer of every commit.
 const IDENTITY: &str = "n0x <54751288+N0xMare@users.noreply.github.com>";
 
 /// Each image's snapshot build id by file name (`None`: not an image).
 type Ids = BTreeMap<String, Option<[u8; 32]>>;
+/// Each image's bytes in the tree, by file name.
+type Images = BTreeMap<String, Vec<u8>>;
+
+/// How a run goes on after a stop.
+#[derive(PartialEq)]
+enum Next {
+    /// Run restack again from the stop; with `--resolved` when the pick is
+    /// left staged.
+    Rerun,
+    /// Commit the staged pick by hand, then restack the commits after it.
+    ByHand,
+    /// `--resolved` (a new scenario blessed elsewhere), or the hand commit
+    /// (the scenario itself changed).
+    ResolvedOrByHand,
+}
+
+/// Why a step stopped, and how a run goes on; a plain error reruns.
+struct Halt {
+    why: String,
+    next: Next,
+}
+
+impl From<String> for Halt {
+    fn from(why: String) -> Self {
+        Self {
+            why,
+            next: Next::Rerun,
+        }
+    }
+}
+
+/// A stop: why, the commit it stopped at (by index), and how to go on.
+struct Stop {
+    why: String,
+    at: usize,
+    next: Next,
+}
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let (resolved, rest) = match args {
@@ -81,6 +126,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         }
     } else if !git(&root, &["status", "--porcelain", "--untracked-files=no"])?.is_empty() {
         return Err("restack: the checkout has uncommitted changes".to_owned());
+    } else {
+        // A plain run on a clean tree starts afresh: no pick is staged for
+        // a record to name. A refused `--resolved`, or a plain run refused
+        // above, keeps it, so a mistaken command does not strand a pick.
+        let _ = fs::remove_file(&stop_file);
     }
     // A blessed commit takes the whole directory (`git add`).
     let untracked = git(
@@ -92,54 +142,12 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             "restack: {GOLDEN} has untracked files:\n{untracked}"
         ));
     }
-    let commits = commits(&root, resolved, rest)?;
-    let head = git(&root, &["rev-parse", "HEAD"])?;
-    if resolved.is_some() {
-        // The pick staged is the one restack stopped at, on the HEAD it
-        // stopped on, which passed the golden test then.
-        let stop = fs::read_to_string(&stop_file).unwrap_or_default();
-        let at = format!("{head} {}", commits[0]);
-        if stop.trim() != at {
-            return Err(format!(
-                "restack --resolved: restack did not stop at {} on this HEAD ({head}); it \
-                 stopped at `{}` (HEAD, commit)",
-                commits[0],
-                stop.trim()
-            ));
-        }
-    }
+    let commits = prepare(&root, resolved, rest, &stop_file)?;
     let start = git(&root, &["rev-parse", "--short", "HEAD"])?;
     println!("restack: {} onto {start}", count(commits.len()));
     let (mut done, mut blessed) = (0, 0);
-    if let Err((error, from)) =
-        restack(&root, &commits, resolved.is_some(), &mut done, &mut blessed)
-    {
-        let head = git(&root, &["rev-parse", "HEAD"])?;
-        let staged = !git(&root, &["diff", "--cached", "--name-only"])?.is_empty();
-        let _ = fs::remove_file(&stop_file);
-        if staged {
-            fs::write(&stop_file, format!("{head} {}\n", commits[done]))
-                .map_err(|e| format!("{}: {e}", stop_file.display()))?;
-        }
-        let short = |c: &String| c.get(..12).unwrap_or(c).to_owned();
-        let left: Vec<String> = commits[done..].iter().map(short).collect();
-        let go_on: Vec<String> = commits[from..].iter().map(short).collect();
-        let go_on = if go_on.is_empty() {
-            "nothing is left".to_owned()
-        } else {
-            format!(
-                "`cargo xtask restack {}{}`",
-                if staged { "--resolved " } else { "" },
-                go_on.join(" ")
-            )
-        };
-        return Err(format!(
-            "{error}\nrestack: started at {start}, HEAD is {}: {done} of {} restacked; \
-             not restacked: {}. To go on: {go_on}; to go back: `git reset --hard {start}`",
-            short(&head),
-            commits.len(),
-            left.join(" "),
-        ));
+    if let Err(stop) = restack(&root, &commits, resolved.is_some(), &mut done, &mut blessed) {
+        return Err(report(&root, &stop_file, &commits, &start, done, &stop)?);
     }
     let _ = fs::remove_file(&stop_file);
     println!(
@@ -148,6 +156,122 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         count(commits.len())
     );
     Ok(())
+}
+
+/// A stop's message: its reason, where restack started and HEAD is, the
+/// commits left, how to go on and how to go back. Records the stop when the
+/// pick is left staged for `--resolved`.
+fn report(
+    root: &Path,
+    stop_file: &Path,
+    commits: &[String],
+    start: &str,
+    done: usize,
+    stop: &Stop,
+) -> Result<String, String> {
+    let head = git(root, &["rev-parse", "HEAD"])?;
+    let staged = !git(root, &["diff", "--cached", "--name-only"])?.is_empty();
+    let _ = fs::remove_file(stop_file);
+    // The stop's own message stays whole when the record cannot be
+    // written; `--resolved` then refuses, as it finds no record.
+    let mut unrecorded = String::new();
+    if staged
+        && stop.next != Next::ByHand
+        && let Err(e) = fs::write(stop_file, format!("{head} {}\n", commits[done]))
+    {
+        unrecorded = format!(
+            "\nrestack: cannot record the stop in {}: {e}; `--resolved` will refuse to \
+             go on, so go back",
+            stop_file.display()
+        );
+    }
+    let short = |c: &String| c.get(..12).unwrap_or(c).to_owned();
+    let left: Vec<String> = commits[done..].iter().map(short).collect();
+    let again = |resolve: bool, from: usize| {
+        let rest: Vec<String> = commits[from.min(commits.len())..]
+            .iter()
+            .map(short)
+            .collect();
+        if rest.is_empty() {
+            "nothing is left to restack".to_owned()
+        } else {
+            format!(
+                "`cargo xtask restack {}{}`",
+                if resolve { "--resolved " } else { "" },
+                rest.join(" ")
+            )
+        }
+    };
+    let go_on = match stop.next {
+        Next::Rerun => again(staged, stop.at),
+        Next::ByHand => format!(
+            "commit it by hand as above, then {}",
+            again(false, stop.at + 1)
+        ),
+        Next::ResolvedOrByHand => format!(
+            "{} for a new scenario, or after the hand commit {}",
+            again(true, stop.at),
+            again(false, stop.at + 1)
+        ),
+    };
+    Ok(format!(
+        "{}\nrestack: started at {start}, HEAD is {}: {done} of {} restacked; \
+         not restacked: {}. To go on: {go_on}; to go back: `git reset --hard {start}`\
+         {unrecorded}",
+        stop.why,
+        short(&head),
+        commits.len(),
+        left.join(" "),
+    ))
+}
+
+/// The commits to restack, once HEAD is AGENTS.md's identity's and, with
+/// `--resolved`, the record names HEAD and the commit.
+fn prepare(
+    root: &Path,
+    resolved: Option<&String>,
+    rest: &[String],
+    stop_file: &Path,
+) -> Result<Vec<String>, String> {
+    let commits = commits(root, resolved, rest)?;
+    // A hand commit, as a stop can ask for, takes the local identity
+    // unless told otherwise; restack goes on only on top of the rule's.
+    let who = git(
+        root,
+        &["log", "-1", "--format=%h %s%n%an <%ae>%n%cn <%ce>", "HEAD"],
+    )?;
+    let [subject, author, committer] = who.lines().collect::<Vec<_>>()[..] else {
+        return Err("restack: cannot read HEAD's author and committer".to_owned());
+    };
+    if author != IDENTITY || committer != IDENTITY {
+        // `--reset-author` also takes a new author date: only for another's.
+        return Err(format!(
+            "restack: HEAD ({subject}) is authored by {author} and committed by {committer}; \
+             AGENTS.md's identity is {IDENTITY}. Mend it (`git -c user.name=n0x -c \
+             user.email=54751288+N0xMare@users.noreply.github.com commit --amend \
+             --cleanup=verbatim --no-edit{}`) before restacking onto it",
+            if author == IDENTITY {
+                ""
+            } else {
+                " --reset-author"
+            }
+        ));
+    }
+    if resolved.is_some() {
+        // The pick staged is the one restack stopped at, on the HEAD it
+        // stopped on, which passed the golden test then.
+        let head = git(root, &["rev-parse", "HEAD"])?;
+        let stop = fs::read_to_string(stop_file).unwrap_or_default();
+        if stop.trim() != format!("{head} {}", commits[0]) {
+            return Err(format!(
+                "restack --resolved: restack did not stop at {} on this HEAD ({head}); it \
+                 stopped at `{}` (HEAD, commit)",
+                commits[0],
+                stop.trim()
+            ));
+        }
+    }
+    Ok(commits)
 }
 
 fn count(commits: usize) -> String {
@@ -207,49 +331,84 @@ fn commits(root: &Path, resolved: Option<&String>, args: &[String]) -> Result<Ve
     Ok(commits)
 }
 
-/// Restacks `commits`, counting into `done` and `blessed`. A stop gives
-/// its reason and the index of the first commit a run that goes on takes.
+/// Restacks `commits`, counting into `done` and `blessed`.
 fn restack(
     root: &Path,
     commits: &[String],
     resolved: bool,
     done: &mut usize,
     blessed: &mut usize,
-) -> Result<(), (String, usize)> {
+) -> Result<(), Stop> {
     // A commit is blessed when the test fails on it, so HEAD must pass,
     // or the first pick would take HEAD's blessing. With `--resolved` the
     // tree is the pick's, and HEAD passed in the run that stopped there.
     if !resolved {
-        let head = golden(root, false).map_err(|e| (e, 0))?;
+        let stop = |why| Stop {
+            why,
+            at: 0,
+            next: Next::Rerun,
+        };
+        let head = golden(root, false).map_err(stop)?;
         if !head.status.success() {
-            return Err((
-                format!(
-                    "restack: the golden test fails on HEAD, before any pick; mend HEAD first \
-                     (bless it only if the id moved)\n{}",
-                    output(&head)
-                ),
-                0,
-            ));
+            return Err(stop(format!(
+                "restack: the golden test fails on HEAD, before any pick; mend HEAD first \
+                 (bless it only if the id moved)\n{}",
+                output(&head)
+            )));
         }
     }
     for (at, commit) in commits.iter().enumerate() {
-        let here = |e| (e, at);
-        let subject = git(root, &["log", "-1", "--format=%h %s", commit]).map_err(here)?;
+        let here = |halt: Halt| Stop {
+            why: halt.why,
+            at,
+            next: halt.next,
+        };
+        let plain = |e: String| here(e.into());
+        let subject = git(root, &["log", "-1", "--format=%h %s", commit]).map_err(plain)?;
         // HEAD's images, which passed the test: what the id moved from.
-        let before = image_ids(root, Some("HEAD")).map_err(here)?;
+        let before = image_ids(root, Some("HEAD")).map_err(plain)?;
         let how = if resolved && at == 0 {
-            take_back_unmoved(root, &subject, &before).map_err(here)?;
+            take_back_unmoved(root, &subject, &before).map_err(plain)?;
             ", resolved by hand"
-        } else if pick(root, commit, &subject).map_err(here)? {
+        } else if pick(root, commit, &subject).map_err(plain)? {
             ", the images' conflict taken from the parent"
         } else {
             ""
         };
         // Its change is HEAD's already: going on leaves it out.
-        holds_change(root, commit, &subject).map_err(|e| (e, at + 1))?;
-        let moved = bless_if_moved(root, &subject, &before).map_err(here)?;
-        transcripts_alone(root, &subject).map_err(here)?;
-        commit_as(root, commit).map_err(here)?;
+        holds_change(root, commit, &subject).map_err(|e| Stop {
+            why: e,
+            at: at + 1,
+            next: Next::Rerun,
+        })?;
+        let moved = bless_if_moved(root, commit, &subject, &before).map_err(here)?;
+        // HEAD's images pass, but a scenario's cell can change what runs
+        // before the park, which only its image holds: the transcript stays
+        // and the test cannot tell.
+        if !moved
+            && keeps_heads(root, commit).map_err(plain)?
+            && !git(
+                root,
+                &["diff", "--cached", "--name-only", "HEAD", "--", GOLDEN_RS],
+            )
+            .map_err(plain)?
+            .is_empty()
+        {
+            return Err(Stop {
+                why: format!(
+                    "restack: {subject}: the golden test passes on HEAD's images, which the \
+                     pick holds where the commit changes them, but the pick changes \
+                     {GOLDEN_RS}: a scenario's cell may run otherwise before its park, which \
+                     only its image holds. If it changes a scenario, {}; else commit it as it \
+                     is staged, with that command alone. The pick is staged, uncommitted.",
+                    hand_commit(commit)
+                ),
+                at,
+                next: Next::ByHand,
+            });
+        }
+        transcripts_alone(root, &subject).map_err(plain)?;
+        commit_as(root, commit).map_err(plain)?;
         *done += 1;
         *blessed += usize::from(moved);
         println!(
@@ -363,6 +522,36 @@ fn take_back_unmoved(root: &Path, subject: &str, before: &Ids) -> Result<(), Str
     Ok(())
 }
 
+/// Whether the index holds HEAD's image where `commit` changes one: taken
+/// from the parent at a conflict, kept through a resolution, or taken back.
+/// A new scenario's image and a clean pick's own images are not.
+fn keeps_heads(root: &Path, commit: &str) -> Result<bool, String> {
+    let changed = git(
+        root,
+        &[
+            "diff",
+            "--name-only",
+            &format!("{commit}^"),
+            commit,
+            "--",
+            GOLDEN,
+        ],
+    )?;
+    for path in changed.lines().filter(|path| path.ends_with(".mmsnap")) {
+        let head = git(
+            root,
+            &["rev-parse", "--verify", "-q", &format!("HEAD:{path}")],
+        );
+        let staged = git(root, &["rev-parse", "--verify", "-q", &format!(":{path}")]);
+        if let (Ok(head), Ok(staged)) = (head, staged)
+            && head == staged
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Says so when the staged change has transcripts and no image: the
 /// golden test, which passed, is all that judged them.
 fn transcripts_alone(root: &Path, subject: &str) -> Result<(), String> {
@@ -384,30 +573,37 @@ fn transcripts_alone(root: &Path, subject: &str) -> Result<(), String> {
 /// checks that their id moved from `before` (HEAD's), tests again and
 /// stages them (true). Otherwise the images go back to the pick's and it
 /// stops.
-fn bless_if_moved(root: &Path, subject: &str, before: &Ids) -> Result<bool, String> {
+fn bless_if_moved(root: &Path, commit: &str, subject: &str, before: &Ids) -> Result<bool, Halt> {
     let first = golden(root, false)?;
     if first.status.success() {
         return Ok(false);
     }
+    let unblessed = images(root)?;
     let bless = golden(root, true)?;
+    let mut next = Next::Rerun;
     let refused = if !bless.status.success() {
         Some(format!(
             "blessing does not mend it (a continuation differs from its transcript, or the \
              build fails)\n{}",
             output(&bless)
         ))
-    } else if let Some(id) = unmoved(before, &image_ids(root, None)?) {
+    } else if let Some(id) = unmoved(before, &{
+        let wrote = written(&unblessed, &images(root)?);
+        let mut ids = image_ids(root, None)?;
+        ids.retain(|name, _| wrote.contains(name));
+        ids
+    }) {
+        next = Next::ResolvedOrByHand;
         Some(format!(
             "the build id did not move: blessing writes the images again under an id HEAD's \
              carry ({:02x?}…). The commit either changes what an image means without moving \
              the id, which needs a SNAPSHOT_EPOCH bump (docs/spec.md §9.3); or brings a new \
              scenario whose image was blessed elsewhere: bless, `git add` the new scenario's \
              files only, and go on with `restack --resolved`; or changes a scenario itself \
-             (its cell or transcript): bless, then commit by hand as AGENTS.md's identity \
-             (`git -c user.name=n0x -c user.email=54751288+N0xMare@users.noreply.github.com \
-             commit --cleanup=verbatim -C <commit>`) and restack the commits left. The \
-             test's first failure:\n{}",
+             (its cell or transcript): {}, and restack the commits left. The test's first \
+             failure:\n{}",
             &id[..4],
+            hand_commit(commit),
             output(&first)
         ))
     } else {
@@ -420,13 +616,55 @@ fn bless_if_moved(root: &Path, subject: &str, before: &Ids) -> Result<bool, Stri
         // blessing's, as `run` refuses to start with any.
         git(root, &["checkout", "--", GOLDEN])?;
         git(root, &["clean", "-fq", "--", GOLDEN])?;
-        return Err(format!(
-            "restack: {subject}: the golden test fails, and {why}\n\
-             The pick is staged, uncommitted, with the images as the pick left them."
-        ));
+        return Err(Halt {
+            why: format!(
+                "restack: {subject}: the golden test fails, and {why}\n\
+                 The pick is staged, uncommitted, with the images as the pick left them."
+            ),
+            next,
+        });
     }
     git(root, &["add", "--", GOLDEN])?;
     Ok(true)
+}
+
+/// What a stop asks for when the scenarios changed: bless, stage the
+/// directory and commit `commit`'s message as AGENTS.md's identity.
+fn hand_commit(commit: &str) -> String {
+    format!(
+        "bless (`MM_BLESS=1 cargo test --release --locked -p micro-monty --test golden`), \
+         `git add {GOLDEN}`, then commit it as AGENTS.md's identity: `git -c user.name=n0x \
+         -c user.email=54751288+N0xMare@users.noreply.github.com commit --cleanup=verbatim \
+         -C {commit}`"
+    )
+}
+
+/// The images in the tree whose bytes are not as in `before`, or that are
+/// new: the ones a bless run changed. An image it wrote again with the
+/// same bytes holds what the failed test already judged, and an image no
+/// scenario names is left as it was.
+fn written(before: &Images, after: &Images) -> BTreeSet<String> {
+    after
+        .iter()
+        .filter(|(name, bytes)| before.get(*name) != Some(bytes))
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+fn images(root: &Path) -> Result<Images, String> {
+    let mut images = Images::new();
+    let Ok(entries) = fs::read_dir(root.join(GOLDEN)) else {
+        return Ok(images);
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.ends_with(".mmsnap") {
+            let bytes =
+                fs::read(entry.path()).map_err(|e| format!("{}: {e}", entry.path().display()))?;
+            images.insert(name, bytes);
+        }
+    }
+    Ok(images)
 }
 
 /// A build id that blessing wrote and one of HEAD's images carries, if
@@ -604,5 +842,30 @@ mod tests {
         let renamed = ids(&[("other.mmsnap", Some(1))]);
         assert_eq!(unmoved(&before, &renamed), Some([1; 32]));
         assert_eq!(unmoved(&ids(&[]), &moved), None);
+    }
+
+    #[test]
+    fn a_bless_wrote_the_images_whose_bytes_changed() {
+        let images = |entries: &[(&str, &[u8])]| -> Images {
+            entries
+                .iter()
+                .map(|&(name, bytes)| (name.to_owned(), bytes.to_vec()))
+                .collect()
+        };
+        let before = images(&[
+            ("sync.mmsnap", b"w1"),
+            ("async.mmsnap", b"w1"),
+            ("old.mmsnap", b"x"),
+        ]);
+        let after = images(&[
+            ("sync.mmsnap", b"w2"),
+            ("async.mmsnap", b"w1"),
+            ("old.mmsnap", b"x"),
+            ("new.mmsnap", b"n"),
+        ]);
+        // Other bytes of the same length count; the same bytes do not,
+        // whatever the file's timestamp.
+        let wrote: Vec<String> = written(&before, &after).into_iter().collect();
+        assert_eq!(wrote, ["new.mmsnap", "sync.mmsnap"]);
     }
 }
