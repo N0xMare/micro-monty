@@ -76,6 +76,10 @@ hashes are pre-release history, kept in the private archive
   kept them alive as long as the generator lived; the three also check
   their `self` as the other methods do (0.0.2's known issues) [M, own
   cases 557 and 566].
+- `close()` on a generator that has not started, or has finished, keeps
+  the handled exception: inside an `except` block `sys.exc_info()` and a
+  bare `raise` still see it, where 0.0.2 emptied it (0.0.2's known
+  issues) [M, own case 558].
 
 ### Known issues
 

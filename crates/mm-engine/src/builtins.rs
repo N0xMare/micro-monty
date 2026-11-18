@@ -6843,7 +6843,9 @@ fn gen_close(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         if vm.gen_state(g) == crate::generator::g::RUNNING {
             return Err(vm.err(T::ValueError, "generator already executing"));
         }
-        vm.gen_done(g);
+        // Not running: no frame to leave, so the caller's handled
+        // exception stays (`gen_done` would set it from `OUTER`).
+        vm.gen_over(g);
         return Ok(Value::NONE);
     }
     let e = vm.new_exception(T::GeneratorExit, &[])?;
