@@ -26,7 +26,7 @@ use crate::{command_output, cpython_oracle_version, python, workspace_root};
 
 /// Benchmark names in reporting order, with their file stem in `bench/`.
 /// `json` lives in `json_rows.*` so the script cannot shadow the stdlib module.
-pub(crate) const PROGRAMS: [(&str, &str); 13] = [
+pub(crate) const PROGRAMS: [(&str, &str); 14] = [
     ("startup", "startup"),
     ("fib", "fib"),
     ("loop", "loop"),
@@ -40,6 +40,7 @@ pub(crate) const PROGRAMS: [(&str, &str); 13] = [
     ("fmt", "fmt"),
     ("sort", "sort"),
     ("interp", "interp"),
+    ("held", "held"),
 ];
 
 /// The CPU benchmark processes are pinned to.

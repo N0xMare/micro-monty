@@ -206,6 +206,89 @@ while True:
     });
 }
 
+/// A collection clears a suspended generator's dead registers in its
+/// saved buffer in place: a restore refuses a generator whose `REGS` is not
+/// a `BUF` of at least its code's registers (layer 2 review, O1).
+#[test]
+fn a_generator_keeps_its_registers_in_a_buffer_its_frame_fits() {
+    let src = "\
+def g(a, b, c):
+    t = a + b + c
+    yield t
+    yield a
+x = g(1, 2, 3)
+next(x)
+while True:
+    pass
+";
+    let suspended = |vm: &Vm| {
+        let mut any = false;
+        vm.heap.for_each_object(&mut |r, h| {
+            any |= h.type_id() == ty::GEN
+                && vm.heap.get_raw(r, crate::generator::g::STATE)
+                    == Ok(crate::generator::g::SUSPENDED);
+        });
+        any
+    };
+    let gens = |vm: &Vm| {
+        let mut gens = Vec::new();
+        vm.heap.for_each_object(&mut |r, h| {
+            if h.type_id() == ty::GEN {
+                gens.push(r);
+            }
+        });
+        gens
+    };
+    // One register short.
+    refuses(src, suspended, "generator", |vm| {
+        for r in gens(vm) {
+            let short = vm.heap.alloc(ty::BUF, 0, 1, 0).expect("buffer");
+            vm.heap
+                .set(
+                    r,
+                    crate::generator::g::REGS,
+                    Value::from_ref(short, ty::BUF as u8),
+                )
+                .expect("slot");
+        }
+    });
+    // Not a buffer: another object of enough slots.
+    refuses(src, suspended, "generator", |vm| {
+        for r in gens(vm) {
+            let list = vm.heap.alloc(ty::LIST, 0, 64, 0).expect("object");
+            vm.heap
+                .set(
+                    r,
+                    crate::generator::g::REGS,
+                    Value::from_ref(list, ty::LIST as u8),
+                )
+                .expect("slot");
+        }
+    });
+}
+
+/// A snapshot leaves the session that goes on with the registry a restore
+/// rebuilds (`Vm::gens`): the same generators in the same order and
+/// capacity, whatever order the session held them in, so both walk it
+/// alike.
+#[test]
+fn a_snapshot_gives_the_session_the_registry_a_restore_rebuilds() {
+    let src = "\
+def g():
+    yield 1
+a = [g() for _ in range(25)]
+while True:
+    pass
+";
+    let mut vm = session(src, |vm| vm.gens.len() == 25);
+    vm.gens.reverse();
+    let held = vm.gens.clone();
+    let restored = restore(&mut vm).expect("restores");
+    assert_ne!(held, vm.gens);
+    assert_eq!(vm.gens, restored.gens);
+    assert_eq!(vm.gens.capacity(), restored.gens.capacity());
+}
+
 #[test]
 fn a_suspended_coroutine_resumes_at_its_await() {
     let src = "\

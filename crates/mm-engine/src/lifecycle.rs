@@ -131,7 +131,8 @@ impl Vm {
                 + self.consumed.capacity() * size_of::<(Value, crate::scratch::NativeValues)>()
                 + self.futures.capacity() * size_of::<(u64, Value)>()
                 + self.call_log.capacity() * size_of::<crate::host::CallEntry>()
-                + self.fresh.capacity() * size_of::<Value>()) as u64
+                + self.fresh.capacity() * size_of::<Value>()
+                + self.gens.capacity() * size_of::<Value>()) as u64
     }
 
     // One shared copy: inlined, it would add hundreds of bytes to each of
@@ -402,6 +403,10 @@ impl Vm {
         }
         self.code_sums = (0, 0, 0);
         Arc::make_mut(&mut self.codes).retain(|c| c.reclaim_live);
+        // The codes are renumbered: a dead set the collection above (or an
+        // earlier one) cached under an old index would be another code's.
+        // Nothing between that collection and here collects.
+        self.dead_cache.clear();
         self.sources.retain(|s| s.reclaim_index != u32::MAX);
         self.ics.clear();
         for c in Arc::make_mut(&mut self.codes).iter_mut().filter_map(unique) {

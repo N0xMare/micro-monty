@@ -48,7 +48,7 @@ FILES = {"json": "json_rows"}
 GATED = ["--toggle-collect=__libc_start_main*", "--toggle-collect=pthread_getattr_np*"]
 ORDER = [
     "startup", "fib", "loop", "dict", "str", "json", "closure",
-    "classes", "generators", "exceptions", "fmt", "sort", "interp",
+    "classes", "generators", "exceptions", "fmt", "sort", "interp", "held",
 ]
 
 

@@ -27,6 +27,32 @@ pub(crate) fn suspend_pcs(code: &mm_compile::bytecode::Code, pc: u64) -> [u32; 2
     [at, at.saturating_add(u32::try_from(len).unwrap_or(1))]
 }
 
+/// One entry of `Vm::dead_cache`: a code index + 1, a suspended pc and the
+/// registers dead where a generator suspended there waits and resumes.
+pub(crate) type DeadMemo = (u32, u32, [u64; 4]);
+/// Entries of `Vm::dead_cache`.
+pub(crate) const DEAD_CACHE: usize = 32;
+/// An empty entry of `Vm::dead_cache`: an entry keys its code as index +
+/// 1, so an all-zero one matches no code.
+const NO_MEMO: DeadMemo = (0, 0, [0; 4]);
+/// Work units of a slice of the clearing pass before an incremental mark
+/// (`Vm::clear_suspended`): a generator, or a register looked at.
+pub(crate) const CLEAR_SLICE: u64 = 1 << 17;
+
+/// The capacity [`Vm::gens`] keeps for `len` entries: `len` rounded up to
+/// four significant bits (at least 8), so at most an eighth over. A
+/// function of the length alone, so a session that never snapshotted, one
+/// that went on after a snapshot and one restored from it are charged the
+/// same for the same generators; the steps grow by an eighth or more, so
+/// growing to `n` copies `O(n)` entries.
+pub(crate) fn gens_room(len: usize) -> usize {
+    if len <= 8 {
+        return if len == 0 { 0 } else { 8 };
+    }
+    let shift = len.bit_width() - 4;
+    (((len - 1) >> shift) + 1) << shift
+}
+
 /// Generator slots.
 pub(crate) mod g {
     pub const FUNC: u32 = 0;
@@ -40,6 +66,11 @@ pub(crate) mod g {
     /// The pc of the yield the generator is suspended at.
     pub const YPC: u32 = 5;
     pub const CODE: u32 = 6;
+    /// Set in `YPC` once the copy of a suspended generator has its dead
+    /// registers cleared (`Vm::clear_suspended`); every suspension writes
+    /// `YPC` whole, which resets it, and every reader masks it
+    /// (`tests/ypc_readers.rs` lists them).
+    pub const CLEARED: u64 = 1 << 63;
     pub const CREATED: u64 = 0;
     pub const SUSPENDED: u64 = 1;
     pub const RUNNING: u64 = 2;
@@ -81,6 +112,13 @@ impl Vm {
         top: usize,
         nregs: usize,
     ) -> Result<Value, Raised> {
+        if self.gens.len() == self.gens.capacity() {
+            let extra = gens_room(self.gens.len() + 1) - self.gens.len();
+            self.reserve_execution((extra * size_of::<Value>()) as u64)?;
+            let grown = self.gens.try_reserve_exact(extra);
+            self.reserve_execution(0)?;
+            grown.map_err(|_| self.err(T::MemoryError, "generator list allocation failed"))?;
+        }
         let buf = self.alloc_buf(nregs.max(1))?;
         for i in 0..nregs {
             let v = self.stack[top + i];
@@ -110,7 +148,10 @@ impl Vm {
             );
             self.hx(res)
         }?;
-        Ok(Value::from_ref(r, kind as u8))
+        let gn = Value::from_ref(r, kind as u8);
+        // Room was reserved before the allocation.
+        self.gens.push(gn);
+        Ok(gn)
     }
 
     fn gen_raw(&self, gn: Value, i: u32) -> u64 {
@@ -151,7 +192,7 @@ impl Vm {
                 [g::FUNC, g::REGS, g::HANDLED]
                     .map(|i| Value::from_bits(word(w.get(i as usize))).unwrap_or(Value::NONE)),
                 word(w.get(g::STATE as usize)),
-                word(w.get(g::YPC as usize)) as usize,
+                (word(w.get(g::YPC as usize)) & !g::CLEARED) as usize,
                 u32::try_from(word(w.get(g::CODE as usize))).unwrap_or(0),
             ),
             _ => return Err(self.err(T::SystemError, "micro-monty: bad generator")),
@@ -223,7 +264,7 @@ impl Vm {
             field(g::REGS),
             field(g::HANDLED),
             field(g::STATE),
-            field(g::YPC),
+            field(g::YPC).map(|y| y & !g::CLEARED),
             field(g::CODE),
         ) else {
             return Ok(false);
@@ -382,7 +423,7 @@ impl Vm {
             _ => {}
         }
         self.gen_enter(st, gn, cont, call_pc, ret_pc)?;
-        let ypc = self.gen_raw(gn, g::YPC) as usize;
+        let ypc = (self.gen_raw(gn, g::YPC) & !g::CLEARED) as usize;
         st.pc = ypc;
         let bc = &self.codes[st.ci as usize].code.bytecode;
         if bc.get(ypc).map(|&w| op_of(w)) == Some(op::YIELD_FROM) {
@@ -468,6 +509,87 @@ impl Vm {
                 task.copies_cleared = true;
             }
         }
+    }
+
+    /// Clears the dead saved registers of the suspended generators in
+    /// [`Vm::gens`] not cleared since they last yielded: those dead where
+    /// each waits and where it resumes (docs/spec.md §8.3), then sets
+    /// [`g::CLEARED`] in its `YPC`. Goes on from [`Vm::gens_at`] until
+    /// `budget` work units are spent: a generator is one, plus twice its
+    /// buffer's registers (at most 256) when it is cleared, which bounds a
+    /// dead set's computation (two searches of the live table and two
+    /// chains of at most `nregs` links) and the writes. The charge does
+    /// not depend on [`Vm::dead_cache`], which is not in an image, so the
+    /// step at which the pass ends is the same in a session that went on
+    /// after a snapshot and in the one restored from it. Returns `true`
+    /// once the pass reached the end (the cursor is back at 0).
+    pub(crate) fn clear_suspended(&mut self, mut budget: u64) -> bool {
+        // An unbudgeted pass (a full collection's) covers every generator,
+        // also those a sliced pass in progress already passed and that
+        // have yielded since.
+        if budget == u64::MAX {
+            self.gens_at = 0;
+        }
+        while let Some(&gn) = self.gens.get(self.gens_at) {
+            if budget == 0 {
+                return false;
+            }
+            self.gens_at += 1;
+            budget = budget.saturating_sub(1 + self.clear_saved(gn));
+        }
+        self.gens_at = 0;
+        true
+    }
+
+    /// [`Vm::clear_suspended`] for one generator; its work beyond one unit.
+    fn clear_saved(&mut self, gn: Value) -> u64 {
+        let Some(r) = gn.as_obj() else {
+            return 0;
+        };
+        let Ok(w) = self.heap.slot_words(r) else {
+            return 0;
+        };
+        let raw = |i: u32| w.get(i as usize).copied();
+        let (Some(g::SUSPENDED), Some(ci), Some(ypc), Some(buf)) =
+            (raw(g::STATE), raw(g::CODE), raw(g::YPC), raw(g::REGS))
+        else {
+            return 0;
+        };
+        if ypc & g::CLEARED != 0 {
+            return 0;
+        }
+        let Some(b) = Value::from_bits(buf)
+            .filter(|v| v.is_obj_kind(ty::BUF as u8))
+            .and_then(Value::as_obj)
+        else {
+            return 0;
+        };
+        let (Ok(ci), Ok(pc)) = (u32::try_from(ci), u32::try_from(ypc)) else {
+            return 0;
+        };
+        let slot = (ci.wrapping_mul(0x9E37_79B9) ^ pc) as usize % DEAD_CACHE;
+        let key = ci.wrapping_add(1);
+        if self.dead_cache.is_empty() {
+            self.dead_cache.resize(DEAD_CACHE, NO_MEMO);
+        }
+        let dead = match self.dead_cache[slot] {
+            (c, p, dead) if (c, p) == (key, pc) => dead,
+            _ => {
+                let Some(code) = self.codes.get(ci as usize) else {
+                    return 0;
+                };
+                let code = &code.code;
+                let dead = crate::interp::dead_where(code, &suspend_pcs(code, ypc));
+                self.dead_cache[slot] = (key, pc, dead);
+                dead
+            }
+        };
+        let looked = self
+            .heap
+            .fill_bits(b, dead, crate::interp::DEAD)
+            .unwrap_or(0);
+        let _ = self.heap.set_raw(r, g::YPC, ypc | g::CLEARED);
+        2 * looked
     }
 
     /// [`Vm::clear_running`] for one frame's `coro`, if it is a running

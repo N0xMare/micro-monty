@@ -1,6 +1,6 @@
 # Benchmarks
 
-The seven programs of `docs/spec.md` §12, plus six that cover other common
+The seven programs of `docs/spec.md` §12, plus seven that cover other common
 Python (classes, generators, exceptions, formatting, sorting and a small
 interpreter), each as a Python file and an equivalent JavaScript file for
 QuickJS. Each prints one checksum line, the same
@@ -21,6 +21,7 @@ on every engine; `expected.txt` holds them.
 | fmt | `fmt.*` | 60k records through f-strings with format specs, `%` formatting and `str.join` |
 | sort | `sort.*` | list comprehensions; 50k tuples sorted by key functions (lambda, tuple key, reverse, stable ties) |
 | interp | `interp.*` | tokenize, parse (recursive descent) and evaluate 300 statements of a tiny language, 25 rounds |
+| held | `held.*` | 70 rounds of 6k strings and a dict of them while 20k generators are suspended (half inside a call window), then each resumed to the end |
 
 `json` lives in `json_rows.*` so the script cannot shadow Python's `json`
 module. The checksums avoid floats, so Python and JavaScript print the same. The JS

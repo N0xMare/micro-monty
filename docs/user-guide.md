@@ -143,7 +143,7 @@ entropy, so the driving loop above is the whole integration.
 
 | Resource | Setting | When it runs out |
 |---|---|---|
-| Heap | `Limits::memory` (default 256 MiB): arena, retained code and sources, caches, frames, task stacks, host-module definitions | catchable `MemoryError`; big allocations (`*`, `pow`, `<<`, `join`, ...) are checked before they start |
+| Heap | `Limits::memory` (default 256 MiB): arena, retained code and sources, caches, frames, task stacks, the generator registry (8 to 9 bytes a generator, dead ones counted until a collection prunes them), host-module definitions | catchable `MemoryError`; big allocations (`*`, `pow`, `<<`, `join`, ...) are checked before they start |
 | CPU | `Limits::fuel` per cell (default unlimited); `Session::set_fuel` for the next cell or a parked one; `Session::set_fuel_total` for all of a session's cells together. One unit per call or backward jump, plus proportional charges by long natives | parks: `Parked { reason: Fuel }` |
 | Wall time | `Session::set_deadline(Some(instant))`, or `set_deadline_with(now, deadline)` with your own clock | parks: `Parked { reason: Deadline }` (one-shot; set it again before resuming) |
 | Python stack | `Limits::recursion_depth` (default 1000) | `RecursionError` |
@@ -1491,8 +1491,9 @@ differs:
   where the result fits (three dropped `s.copy()` of a 2M-item set at 256
   MiB, as in CPython \[M\]). A retry's collection is charged, a unit per 64
   bytes of `Limits::memory` up to 2^20, so a loop that catches `MemoryError`
-  pays for each. A snapshot collects first, so it can flip an unretried
-  outcome either way, and it moves fuel totals (six `f(*big, **kw)`: 11%
+  pays for each. A suspended generator keeps no dead temporary its yield
+  saved past the next collection. A snapshot collects first, so it can
+  flip an unretried outcome either way, and it moves fuel totals (six `f(*big, **kw)`: 11%
   less with a snapshot at every park \[M\]).
 - **Fuel after a snapshot, long non-ASCII strs.** A snapshot's collection
   forgets the positions that make indexing a long non-ASCII str cheap, so

@@ -1360,9 +1360,9 @@ The table retains its high-water capacity inside the arena budget.
   found through the caller records (`Vm::clear_running`), and a mark
   already running has marked what they held. A coroutine suspended by
   `send` is cleared, when it suspends, of the registers dead where it is
-  suspended and where it resumes. A suspended generator's copy is not: it
-  keeps what its dead registers held at the yield until it yields again
-  (below).
+  suspended and where it resumes. A suspended generator's copy is cleared
+  of the same registers before a collection takes roots from an idle heap
+  (`Vm::clear_suspended`, below).
 - The VM keeps `pc`, the frame base and the accumulator in locals during
   dispatch and writes them back at safepoints, so a park is "stop the loop".
 - GC roots are the live registers of every frame on the stack. A code
@@ -1404,15 +1404,43 @@ The table retains its high-water capacity inside the arena budget.
   roots from an idle heap, and a coroutine's copy suspended by `send` only
   what its frame reads again (above); a mark already running keeps what a
   copy held when it began, as it keeps everything reachable then. A
-  suspended generator's copy keeps every register as the yield saved it
-  until it yields again, so a dead temporary saved at a yield stays a root
-  until then. Whether the copy holds it depends on whether a step that
-  takes roots ran while the generator was running, after the temporary
-  died: a mark or lazy-sweep slice does not clear, so a yield while an
-  incremental collection is in progress saves it. So a program's report
-  and fuel can depend on where a snapshot falls, and a program can raise
-  `MemoryError` where a build that cleared at every collection step
-  completed. A later release closes this.
+  suspended generator's copy (`GEN`, `AGEN`) is cleared before a
+  collection takes roots from an idle heap: the VM keeps every generator
+  in a registry (`Vm::gens`, weak: a collection's weak pass drops the
+  unmarked ones; its capacity is charged to the memory budget and is a
+  function of its length alone, the length rounded up to four
+  significant bits, kept so when it grows, after a completed collection,
+  at a snapshot and at a restore, so a session is charged the same for
+  the same generators whether or not it snapshotted), and for each
+  suspended one not cleared since it last yielded it overwrites with
+  `DEAD` the registers of the copy dead where the generator is suspended
+  and where it resumes, then sets bit 63 of its yield pc (`g::CLEARED`).
+  Every suspension writes the yield pc whole, which resets the bit, and
+  every reader masks it (`mm-engine/tests/ypc_readers.rs`). What is
+  cleared is a function of the generator's code and suspended pc, so it
+  does not depend on when the pass runs, and neither a yield nor an object
+  the mark scans pays for it. Before a full collection (a snapshot's
+  included) the pass runs whole in that step; before an incremental mark
+  it runs a slice per step (`CLEAR_SLICE` work units: a generator, plus
+  twice the registers of a copy it clears), and the mark starts at the
+  step that ends it. The guest waits for those slices as for a held mark
+  (§9.2): they run back to back, a park check between them and no guest
+  code, so no generator yields behind the pass and the guest allocates
+  nothing between the step that found the collection due and the mark. A
+  step that only goes on with the last collection's lazy sweep runs none. A generator that yields again after the pass
+  passed it, while a mark or a lazy sweep is in progress, keeps its new
+  dead registers until the next collection's pass, as anything that dies
+  during a mark does: its yield wrote the yield pc whole, so the bit is
+  clear and that pass clears the copy, whatever the collector was doing
+  at the yield. The pass clears only the copy's first 256
+  registers, the most the table can name: the compiler gives a frame at
+  most 255, so only a decoded image's frame can have more, and those past
+  256 are kept until the generator resumes. The registry is not in an
+  image: a restore rebuilds it in address order, in the walk that checks
+  each generator (a generator not done keeps its registers in a `BUF` of
+  at least its code's registers), and a snapshot rebuilds the session's
+  registry by the same walk after its collection, so the session that went
+  on and the restored one run the same passes.
 
 ### 8.4 Exceptions
 

@@ -222,6 +222,42 @@ while n < S * 0.45:
     qs.append(q)
 big = qs * (2_000_000 // len(qs) + 1)";
 
+/// The 99 arguments after the yield in [`SETUP_W100`]'s call windows.
+macro_rules! args99 {
+    () => {
+        concat!(
+            "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, ",
+            "18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, ",
+            "33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, ",
+            "48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, ",
+            "63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, ",
+            "78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, ",
+            "93, 94, 95, 96, 97, 98, 99"
+        )
+    };
+}
+
+/// 32,000 generators of one function, every other one at its second
+/// yield, each in a 100-register call window (`use(...)`'s arguments).
+const SETUP_W100: &str = concat!(
+    "def use(*a):\n",
+    "    return len(a)\n",
+    "def g(k):\n",
+    "    n = 0\n",
+    "    while True:\n",
+    "        n += use((yield n), ",
+    args99!(),
+    ")\n",
+    "        n += use(0, (yield n), ",
+    args99!(),
+    ")\n",
+    "gens = [g(i) for i in range(32_000)]\n",
+    "for i, x in enumerate(gens):\n",
+    "    next(x)\n",
+    "    if i % 2:\n",
+    "        x.send(0)\n",
+);
+
 /// (row, setup, the operation, times it repeats as straight-line code):
 /// each at about the largest size the default limits allow. The phase 2
 /// packages add their sites here.
@@ -2557,6 +2593,20 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "bs = tuple([type('B', (Exception,), {}) for i in range(20_000)])",
         "W = type('W', bs, {})",
         1,
+    ),
+    // Suspended generators of one function at two yields in turn, in a
+    // 100-register call window, under 32 MiB live, so each collection is
+    // a full one in one step, and its pass over the generator registry
+    // clears each copy suspended since the last (`Vm::clear_suspended`).
+    // The row alone, shipped, one run each at load under 3: the parent
+    // 6.4 ms, this pass 10.0 ms, limit 36 ms [M]; layer 2's mark visit
+    // read 28.1-30.6 ms against the parent's 13.3-15.4 on its reviewer's
+    // machine [S].
+    (
+        Row::Bounded,
+        SETUP_W100,
+        "junk = [str(i) * 20 for i in range(8000)]",
+        60,
     ),
 ];
 

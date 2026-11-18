@@ -79,7 +79,7 @@ const STACK_SLACK: usize = 1 << 16;
 ///   set tables;
 /// - what an opcode's operands mean, with the same format;
 /// - how frames, generators or coroutines keep their state.
-pub(crate) const SNAPSHOT_EPOCH: u32 = 10;
+pub(crate) const SNAPSHOT_EPOCH: u32 = 11;
 
 /// This build's engine fingerprint for snapshot build ids: what an image
 /// written by this engine means. The layout epoch; the codecs and every
@@ -519,6 +519,18 @@ impl Vm {
         // written from swept segments only, and the session that goes on
         // must list its free blocks as the restored one does.
         self.collect_swept(&st);
+        // The generator registry as a restore rebuilds it: in address
+        // order, its capacity `gens_room` of its length, so the session
+        // that goes on and the restored one walk it alike and are charged
+        // alike. A smaller charge always fits.
+        if let Ok(gens) = generators(&self.heap, &self.codes, false, self.gens.len()) {
+            self.gens = gens;
+            self.gens
+                .shrink_to(crate::generator::gens_room(self.gens.len()));
+            let _ = self
+                .heap
+                .set_external_bytes(self.code_charge.saturating_add(self.execution_bytes()));
+        }
         self.gc_wait = 0;
         if !waited {
             self.heap.keep_allocated_since_gc(since);
@@ -2170,9 +2182,13 @@ impl Vm {
         {
             return Err(SnapError::Corrupt("host call"));
         }
-        if check {
-            check_generators(&heap, &codes)?;
-        }
+        // The generator registry, rebuilt in address order by the walk
+        // that checks the generators.
+        let mut gens = generators(&heap, &codes, check, 0)?;
+        let room = crate::generator::gens_room(gens.len());
+        gens.try_reserve_exact(room - gens.len())
+            .map_err(|_| SnapError::TooLarge)?;
+        gens.shrink_to(room);
         // `HostArgs` setters cap the depth; keep the cap.
         host_args.max_depth = host_args.max_depth.min(1000);
 
@@ -2297,6 +2313,9 @@ impl Vm {
             synth,
             call_log,
             fresh,
+            gens,
+            gens_at: 0,
+            dead_cache: Vec::new(),
             known_modules: &[],
         };
         if rerun {
@@ -2701,39 +2720,79 @@ fn frame_owner_ok(heap: &Heap, coro: Value, ci: u32) -> bool {
     }
 }
 
-/// A generator runs its function's code (in every state: a running one's
-/// frame saves its pc at the next yield for the code the generator names),
-/// and a suspended one resumes at the instruction after its yield.
+/// Every generator and async generator, in address order (`Vm::gens`).
+/// With `check`, each must be sound: it runs its function's code (in every
+/// state: a running one's frame saves its pc at the next yield for the code
+/// the generator names), a suspended one resumes at the instruction after
+/// its yield, and one not done keeps its registers in a `BUF` of at least
+/// its code's `nregs` slots, which resuming reads and a collection clears
+/// in place (`Vm::clear_suspended`); and each coroutine a `send()`
+/// suspended resumes at its `AWAIT`. `gens_room(n)` is reserved first (a
+/// snapshot passes its registry's length, which its walk finds again);
+/// the list grows with the fallible allocator, `TooLarge` when it cannot.
 #[cfg_attr(mm_shipped, optimize(size))]
-fn check_generators(heap: &Heap, codes: &[Arc<CodeObj>]) -> Res<()> {
+fn generators(heap: &Heap, codes: &[Arc<CodeObj>], check: bool, n: usize) -> Res<Vec<Value>> {
     use crate::generator::g;
     let mut ok = true;
+    let mut gens = Vec::new();
+    let mut room = gens
+        .try_reserve_exact(crate::generator::gens_room(n))
+        .is_ok();
     heap.for_each_object(&mut |r, h| {
-        if !matches!(h.type_id(), ty::GEN | ty::AGEN) || !ok {
+        if !matches!(h.type_id(), ty::GEN | ty::AGEN) || !ok || !room {
+            return;
+        }
+        if gens.try_reserve(1).is_err() {
+            room = false;
+            return;
+        }
+        #[allow(clippy::cast_possible_truncation, reason = "type ids are below 256")]
+        gens.push(Value::from_ref(r, h.type_id() as u8));
+        if !check {
             return;
         }
         let state = heap.get_raw(r, g::STATE).unwrap_or(u64::MAX);
-        let ypc = heap.get_raw(r, g::YPC).unwrap_or(u64::MAX);
+        let ypc = heap
+            .get_raw(r, g::YPC)
+            .map_or(u64::MAX, |y| y & !g::CLEARED);
         let ci = heap.get_raw(r, g::CODE).ok();
         let func = heap.get(r, g::FUNC).ok().and_then(|f| func_code(heap, f));
         let code = ci
             .filter(|_| ci == func)
             .and_then(|i| usize::try_from(i).ok())
             .and_then(|i| codes.get(i));
+        let regs_ok = |c: &CodeObj| {
+            heap.get(r, g::REGS)
+                .ok()
+                .filter(|v| v.is_obj_kind(ty::BUF as u8))
+                .and_then(Value::as_obj)
+                .and_then(|b| heap.header(b).ok())
+                .is_some_and(|bh| bh.type_id() == ty::BUF && bh.nvals() >= c.code.nregs)
+        };
         ok = match (state, code) {
-            (g::SUSPENDED, Some(c)) => usize::try_from(ypc).is_ok_and(|p| {
-                c.code.is_instr_start(p)
-                    && matches!(
-                        c.code.bytecode.get(p).map(|&w| crate::interp::op_of(w)),
-                        Some(op::YIELD | op::YIELD_FROM)
-                    )
-            }),
-            (g::CREATED | g::RUNNING | g::DONE, Some(_)) => true,
+            (g::SUSPENDED, Some(c)) => {
+                regs_ok(c)
+                    && usize::try_from(ypc).is_ok_and(|p| {
+                        c.code.is_instr_start(p)
+                            && matches!(
+                                c.code.bytecode.get(p).map(|&w| crate::interp::op_of(w)),
+                                Some(op::YIELD | op::YIELD_FROM)
+                            )
+                    })
+            }
+            (g::CREATED | g::RUNNING, Some(c)) => regs_ok(c),
+            (g::DONE, Some(_)) => true,
             _ => false,
         };
     });
+    if !room {
+        return Err(SnapError::TooLarge);
+    }
     if !ok {
         return Err(SnapError::Corrupt("generator"));
+    }
+    if !check {
+        return Ok(gens);
     }
     // A coroutine a `send()` suspended resumes at its `AWAIT`.
     heap.for_each_object(&mut |r, h| {
@@ -2760,7 +2819,7 @@ fn check_generators(heap: &Heap, codes: &[Arc<CodeObj>]) -> Res<()> {
         });
     });
     if ok {
-        Ok(())
+        Ok(gens)
     } else {
         Err(SnapError::Corrupt("coroutine"))
     }

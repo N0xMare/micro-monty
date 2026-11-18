@@ -955,6 +955,33 @@ pub struct Vm {
     /// Coroutines the cell created, until they start (pruned as they
     /// grow): the end of the cell warns about those never awaited.
     pub(crate) fresh: Vec<Value>,
+    /// Every generator and async generator not yet found unreachable
+    /// (weak: a collection's weak pass drops the unmarked ones), charged
+    /// to the memory budget by its capacity (`Vm::execution_bytes`), which
+    /// is `crate::generator::gens_room` of its length at every point the
+    /// charge is read. Before a collection takes roots from an idle heap, the suspended ones not cleared since
+    /// they last yielded have their dead saved registers cleared
+    /// (`Vm::clear_suspended`). Not in an image: a restore rebuilds it in
+    /// address order, and a snapshot's collection sorts it so, so the
+    /// session that went on and the restored one walk it alike.
+    pub(crate) gens: Vec<Value>,
+    /// Where the clearing pass before an incremental mark goes on, a
+    /// slice per step (`Vm::clear_suspended`); 0 between passes and
+    /// between cells (`Vm::end_cell`). Within a cell the guest waits while
+    /// it is not 0 (`Vm::safepoint`), so no generator yields behind it and
+    /// the guest allocates nothing before the mark starts; a cell ended
+    /// while parked between two slices leaves the next cell a pass to
+    /// start over.
+    pub(crate) gens_at: usize,
+    /// Dead sets of suspended pcs, by code index and pc, direct-mapped
+    /// (`crate::generator::DEAD_CACHE`): a function of the code alone,
+    /// emptied once `reclaim_code` has renumbered the codes (after its own
+    /// collection, whose pass fills it under the old numbers); no other
+    /// change gives an index to another code. Not in an image;
+    /// nothing a guest sees depends on it. Made at its first use: inline,
+    /// its 1,280 bytes were copied at each move of a `Vm` (+2,625
+    /// instructions in `Session::new_with`, native startup +3,104 [M]).
+    pub(crate) dead_cache: Vec<crate::generator::DeadMemo>,
     /// Every bundled module name, enabled in this build or not
     /// ([`Vm::set_known_modules`]).
     pub(crate) known_modules: &'static [&'static str],
@@ -1162,6 +1189,9 @@ impl Vm {
             synth: Vec::new(),
             call_log: Vec::new(),
             fresh: Vec::new(),
+            gens: Vec::new(),
+            gens_at: 0,
+            dead_cache: Vec::new(),
             known_modules: &[],
         };
         vm.init()?;

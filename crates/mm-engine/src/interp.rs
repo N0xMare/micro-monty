@@ -207,8 +207,16 @@ fn clear_bits(stack: &mut [Value], code: &Code, base: usize, end: usize, dead: [
 /// `Code::dead_at`'s bits.
 pub(crate) fn dead_where(code: &Code, pcs: &[u32]) -> [u64; 4] {
     let mut dead = [u64::MAX; 4];
+    let mut last = None;
     for &pc in pcs {
-        for (all, at) in dead.iter_mut().zip(code.dead_at(pc)) {
+        // Two pcs at one live index have one dead set (a yield and the
+        // instruction after it usually do): its chain is walked once.
+        let i = code.live_index(pc);
+        if last == Some(i) {
+            continue;
+        }
+        last = Some(i);
+        for (all, at) in dead.iter_mut().zip(code.dead_in(i)) {
             *all &= at;
         }
     }
@@ -789,11 +797,13 @@ impl Vm {
         });
         // A mark the guest must wait for (`Heap::holding`: too little room
         // left to go on allocating, or after a mark that did not converge),
-        // and a collection it asked for (`Vm::gc_held`: `gc.collect`, a
-        // retry after `MemoryError`), go on a step at a time with no guest
-        // code between steps, a park check between them; a park leaves its
-        // next step owed.
-        while self.heap.holding() || self.gc_held() {
+        // a collection it asked for (`Vm::gc_held`: `gc.collect`, a retry
+        // after `MemoryError`), and the clearing pass before a mark while
+        // part way (`Vm::gens_at`: the collection is due, and a generator
+        // that yielded behind it would keep its copy), go on a step at a
+        // time with no guest code between steps, a park check between
+        // them; a park leaves its next step owed.
+        while self.heap.holding() || self.gc_held() || self.gens_at != 0 {
             if let Some(r) = self.take_park() {
                 self.gc_owed = true;
                 return Some(r);
@@ -848,6 +858,25 @@ impl Vm {
         // or a step with one due or no sweep left (`Heap::collect_step`).
         let idle = !self.heap.marking() && (self.heap.should_collect() || !self.heap.sweeping());
         if !matches!(kind, Gc::Step) || idle {
+            // Before a step starts an incremental mark, the suspended
+            // generators are cleared a slice per step (the mark starts at
+            // the step that ends the pass); before a full collection, in
+            // this step, whose mark is as long anyway. A step of an
+            // incremental collection due while the last sweep goes on only
+            // sweeps (`Heap::collect_step`): the pass waits for the step
+            // that starts the mark, or each such step would walk them all.
+            let budget = if !matches!(kind, Gc::Step) || !self.heap.incremental() {
+                Some(u64::MAX)
+            } else if self.heap.sweeping() {
+                None
+            } else {
+                Some(crate::generator::CLEAR_SLICE)
+            };
+            if let Some(budget) = budget
+                && !self.clear_suspended(budget)
+            {
+                return;
+            }
             self.clear_running(st);
         }
         let top = (st.base + self.codes[st.ci as usize].code.nregs as usize).min(self.stack.len());
@@ -973,9 +1002,26 @@ impl Vm {
                 }
             }
         };
-        let mut weak = |t: &mut mm_core::Tracer<'_>| Vm::sweep_fresh(fresh, t);
+        let gens = &mut self.gens;
+        let mut weak = |t: &mut mm_core::Tracer<'_>| {
+            Vm::sweep_fresh(fresh, t);
+            gens.retain(|&g| t.marked(g));
+        };
         if !collect(&mut self.heap, kind, &mut roots, &mut weak) {
             return;
+        }
+        // The registry's capacity is charged, so it follows the length alone
+        // (`gens_room`): once the weak pass pruned it, what a high-water
+        // mark left is given back, and a session that never snapshotted,
+        // one that went on after a snapshot and one restored from it hold
+        // the same capacity for the same generators. A smaller charge
+        // always fits.
+        let room = crate::generator::gens_room(self.gens.len());
+        if room < self.gens.capacity() {
+            self.gens.shrink_to(room);
+            let _ = self
+                .heap
+                .set_external_bytes(self.code_charge.saturating_add(self.execution_bytes()));
         }
         // Registers above a frame's top are dead (a callee's frame starts
         // at its caller's argument window, below the caller's dead

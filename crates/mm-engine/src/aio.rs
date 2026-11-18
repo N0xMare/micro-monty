@@ -1065,6 +1065,11 @@ impl Vm {
         self.iter_open = false;
         self.stop_wait = 0;
         self.gc_wait = 0;
+        // A clearing pass the ended cell left part way (it parked between
+        // two slices and was cancelled or replaced) starts over: the next
+        // cell's code runs before the collection the pass was for, and a
+        // generator behind the cursor may yield meanwhile.
+        self.gens_at = 0;
         self.oom_rerun = u64::MAX;
         self.cb_slots = 0;
         self.task_names = Value::NONE;

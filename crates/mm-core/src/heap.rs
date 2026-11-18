@@ -661,6 +661,39 @@ impl Heap {
         Ok(())
     }
 
+    /// Overwrites value slots of engine object `r` named in `bits` (the
+    /// first 256) with `fill`, which references nothing, validated once;
+    /// a slot already holding it is only read. No write barrier: the slots
+    /// then reach nothing. Returns the slots it looked at (at most 256).
+    pub fn fill_bits(&mut self, r: Ref, bits: [u64; 4], fill: Value) -> Result<u64, Error> {
+        if matches!(fill.0 >> 48, crate::value::HI_REF | crate::value::HI_BYTES) {
+            return Err(Error::BadType);
+        }
+        let (s, off) = self.words.block_mut(r.0).ok_or(Error::BadRef)?;
+        let header = Header(s.data.read(off).ok_or(Error::BadRef)?);
+        if header.type_id() < types::FIRST_ENGINE {
+            return Err(Error::BadType);
+        }
+        let n = (header.nvals() as usize).min(256);
+        let slots = s.data.get_mut(off + 1..off + 1 + n).ok_or(Error::BadSlot)?;
+        for (w, &word) in bits.iter().enumerate().take(n.div_ceil(64)) {
+            let keep = n - w * 64;
+            let mut word = if keep >= 64 {
+                word
+            } else {
+                word & ((1 << keep) - 1)
+            };
+            while word != 0 {
+                let k = w * 64 + word.trailing_zeros() as usize;
+                word &= word - 1;
+                if slots[k] != fill.0 {
+                    slots[k] = fill.0;
+                }
+            }
+        }
+        Ok(n as u64)
+    }
+
     /// Sets value slots `from..to` of engine object `r` to `UNDEFINED`,
     /// validated once: a table's keys marked empty a slice at a time. No
     /// write barrier: the slots then reach nothing, so a mark need not

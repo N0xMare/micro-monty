@@ -1373,6 +1373,276 @@ r = await gather(one(), one())
     );
 }
 
+/// Runs `cells` in one session under `stress` (`""`, `"full"` or `"inc"`),
+/// with nothing, a snapshot or a restore (`between`: 0, 1 or 2) between
+/// them; each cell's value and fuel.
+fn generator_cells(
+    engine: &Engine,
+    cells: &[&str],
+    stress: &str,
+    between: u8,
+) -> Vec<(String, u64)> {
+    let set = |s: &mut Session| match stress {
+        "full" => s.set_gc_stress(true),
+        "inc" => s.set_gc_inc_stress(true),
+        _ => {}
+    };
+    let mut session = Session::new(engine).expect("session");
+    set(&mut session);
+    session.set_fuel_total(Some(1 << 40));
+    let mut run = Vec::new();
+    for (k, cell) in cells.iter().enumerate() {
+        if between > 0 && k > 0 {
+            let image = session.snapshot().expect("snapshot");
+            if between == 2 {
+                session = engine.restore(&image).expect("restore");
+                set(&mut session);
+            }
+        }
+        let before = session.fuel_total().expect("total");
+        let code = engine.compile(cell, "cell.py").expect("compiles");
+        let p = session.start(&code);
+        let Progress::Complete(v) = p else {
+            panic!("stress {stress:?}, between {between}, cell {k}: {p:?}")
+        };
+        let repr = v.map_or_else(|| "None".into(), |v| v.repr);
+        run.push((repr, before - session.fuel_total().expect("total")));
+    }
+    run
+}
+
+#[test]
+fn a_generator_suspended_in_an_earlier_cell_keeps_no_dead_register_at_the_wall() {
+    // The generator yields, in cell 0 and again in cell 1, with the list
+    // `load()` made dead in a register; under the incremental stress mode a
+    // mark is in progress at each yield. Cell 2 fits in 6 MiB only if a
+    // collection clears the suspended generator's saved copy, whether or not
+    // a snapshot was taken between the cells, with the same fuel either way.
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(6 << 20)));
+    let cells = [
+        "def load():\n    return [bytearray(700_000) for _ in range(5)]\ndef gen():\n    n = len(load())\n    yield n\n    yield 0\n    yield 1\ng = gen()\nnext(g)",
+        "next(g)",
+        "len(load())",
+    ];
+    for stress in ["", "full", "inc"] {
+        let plain = generator_cells(&engine, &cells, stress, 0);
+        assert_eq!(plain[2].0, "5", "stress {stress:?}");
+        assert_eq!(
+            plain,
+            generator_cells(&engine, &cells, stress, 2),
+            "stress {stress:?}"
+        );
+    }
+}
+
+#[test]
+fn a_generator_at_a_code_index_reclamation_reused_gets_its_own_dead_registers() {
+    // Cell 2's long comment makes the start reclaim code: `gx` goes and
+    // `gy` takes its index, at the same yield pc. The reclamation's
+    // collection cleared `g1` and `g2` first; a dead set it remembered
+    // under `gx`'s index would clear `g3`'s live `a`, `b` and `c`.
+    let engine = Engine::new(EngineConfig::new());
+    let pad = format!("#{}\ndel g1, gx\n0", "x".repeat(20_000));
+    let cells = [
+        "def gx():\n    yield 1\n    return 0\ng1 = gx()\nnext(g1)",
+        "def gy(a, b, c):\n    yield 1\n    return (a, b, c)\ng2 = gy(1, 2, 3)\nnext(g2)",
+        &pad,
+        "import gc\ng3 = gy(4, 5, 6)\nnext(g3)\ngc.collect()\ntry:\n    next(g3)\n    r = 'no stop'\nexcept StopIteration as e:\n    r = e.value\nr",
+    ];
+    for stress in ["", "full", "inc"] {
+        let plain = generator_cells(&engine, &cells, stress, 0);
+        assert_eq!(plain[3].0, "(4, 5, 6)", "stress {stress:?}");
+        for between in [1, 2] {
+            assert_eq!(
+                plain,
+                generator_cells(&engine, &cells, stress, between),
+                "stress {stress:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_clearing_pass_before_a_mark_lets_no_guest_code_run_until_it_ends() {
+    // 40,000 generators each suspended again since the last collection
+    // with 200 registers saved make the pass before the next mark run in
+    // over a hundred slices. The guest growing `xs` meanwhile would
+    // allocate past what the due collection left room for; it waits, and
+    // the loop completes as it does without generators. Run it in slices
+    // of fuel too: a park between two slices of the pass changes nothing.
+    let engine = Engine::new(EngineConfig::new());
+    let args = (1..200)
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let params = (0..200)
+        .map(|i| format!("a{i}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let src = format!(
+        "import gc\nkeep = [(i, i) for i in range(600000)]\ndef use({params}):\n    return 1\ndef filler():\n    n = 0\n    while True:\n        n += use((yield n), {args})\nfillers = [filler() for _ in range(40000)]\nfor f in fillers:\n    next(f)\ngc.collect()\nfor f in fillers:\n    f.send(0)\nbig = bytes(3_000_000)\ni = 0\nwhile i < 6:\n    xs = []\n    xs.extend(big)\n    i += 1\n('ok', i, len(fillers), len(keep))"
+    );
+    let code = engine.compile(&src, "cell.py").expect("compiles");
+    let mut fuel = Vec::new();
+    for slice in [None, Some(997_u64)] {
+        let mut session = Session::new(&engine).expect("session");
+        session.set_fuel_total(Some(1 << 40));
+        session.set_fuel(slice);
+        let mut p = session.start(&code);
+        while let Progress::Parked { .. } = p {
+            session.set_fuel(slice);
+            p = session.resume(Resume::Continue).expect("resume");
+        }
+        let Progress::Complete(Some(v)) = p else {
+            panic!("slice {slice:?}: {p:?}")
+        };
+        assert_eq!(v.repr, "('ok', 6, 40000, 600000)", "slice {slice:?}");
+        fuel.push((1 << 40) - session.fuel_total().expect("total"));
+    }
+    assert_eq!(fuel[0], fuel[1]);
+}
+
+#[test]
+fn a_retry_after_memory_error_clears_a_generator_that_yielded_while_a_pass_was_due() {
+    // `first()` yields with its 3,000,000-item list dead in a register
+    // while a collection, and the clearing pass before it, are due; the
+    // retry of cell 1's allocation waits for a collection that clears it.
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(128 << 20)));
+    let args = (1..200)
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let setup = format!(
+        "import gc\nkeep = [(i, i) for i in range(450000)]\ndef use(*a):\n    return len(a)\ndef first():\n    n = len([[None] * 3_000_000, 1])\n    yield n\n    yield 0\ndef filler():\n    n = 0\n    while True:\n        n += use((yield n), {args})\ng = first()\nfillers = [filler() for _ in range(20000)]\nfor f in fillers:\n    next(f)\ngc.collect()\nfor f in fillers:\n    f.send(0)\na = next(g)"
+    );
+    let cells = [
+        setup.as_str(),
+        "m = len([[None] * 8_000_000, 1])\n('ok', a, m, len(keep), len(fillers))",
+    ];
+    for between in [0, 1, 2] {
+        let run = generator_cells(&engine, &cells, "", between);
+        assert_eq!(run[1].0, "('ok', 2, 2, 450000, 20000)", "between {between}");
+    }
+}
+
+#[test]
+fn a_cell_ended_between_two_slices_of_the_clearing_pass_leaves_no_part_way_pass() {
+    // The collection due while the fillers suspend again clears their
+    // 20,000 copies in slices, the guest waiting; under `gc_yield` a park
+    // falls between slices. The host cancels cell 0 there, or starts
+    // cell 1 over it: `g`, made first and so behind the pass's cursor,
+    // then yields with `big` in a dead register. The retry of cell 1's
+    // allocation waits for a collection whose pass must clear `g`'s copy.
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(128 << 20)));
+    let args = (1..200)
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let setup = format!(
+        "import gc\nkeep = [(i, i) for i in range(450000)]\ndef use(*a):\n    return len(a)\ndef first():\n    n = len([(yield 0), 1])\n    yield n - 1\n    yield 0\ndef filler():\n    n = 0\n    while True:\n        n += use((yield n), {args})\ng = first()\nnext(g)\nfillers = [filler() for _ in range(20000)]\nfor f in fillers:\n    next(f)\nbig = [None] * 3_000_000\ngc.collect()\nfor f in fillers:\n    f.send(0)"
+    );
+    let setup = engine.compile(&setup, "cell.py").expect("compiles");
+    let next = engine
+        .compile(
+            "r = g.send(big)\ndel big\nm = len([[None] * 8_000_000, 1])\n('ok', r, m, len(keep), len(fillers))",
+            "cell.py",
+        )
+        .expect("compiles");
+    // Cell 0 run through, the fuel total at each park; then the park to
+    // stop at: the middle of the last run of three or more parks with no
+    // guest code between them, the sliced pass.
+    let run = |stop: Option<(usize, bool)>| {
+        let mut s = Session::new(&engine).expect("session");
+        s.set_fuel_total(Some(1 << 40));
+        s.set_gc_yield(true);
+        let mut fuels = Vec::new();
+        let mut p = s.start(&setup);
+        while let Progress::Parked { .. } = p {
+            fuels.push(s.fuel_total().expect("total"));
+            if let Some((at, cancel)) = stop
+                && fuels.len() == at
+            {
+                if cancel {
+                    assert!(s.cancel());
+                }
+                break;
+            }
+            p = s.resume(Resume::Continue).expect("resume");
+        }
+        s.set_gc_yield(false);
+        let Progress::Complete(Some(v)) = s.start(&next) else {
+            panic!("stop {stop:?}: cell 1 did not complete")
+        };
+        (fuels, v.repr)
+    };
+    let (fuels, value) = run(None);
+    assert_eq!(value, "('ok', 1, 2, 450000, 20000)");
+    let mut held = None;
+    let mut i = 0;
+    while i < fuels.len() {
+        let j = i + fuels[i..].iter().take_while(|&&f| f == fuels[i]).count();
+        if j - i >= 3 {
+            held = Some(usize::midpoint(i, j) + 1);
+        }
+        i = j;
+    }
+    let at = held.expect("a pass in slices");
+    for cancel in [true, false] {
+        assert_eq!(
+            run(Some((at, cancel))).1,
+            value,
+            "park {at}, cancel {cancel}"
+        );
+    }
+}
+
+#[test]
+fn the_generator_registry_is_charged_alike_with_and_without_a_snapshot() {
+    // The registry's capacity, which is charged, follows its length alone:
+    // 20,000 live generators leave cell 1 the same room whether or not a
+    // snapshot or a restore came between, and `bytearray(3_350_000)` fits
+    // in each. (Under `inc` the cell may wait for a collection after a
+    // `MemoryError` where the snapshot's collection already ran, a retry
+    // charge the parent pays too at a larger size; the value is the same.)
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(6 << 20)));
+    let cells = [
+        "def g():\n    yield 1\ngs = [g() for _ in range(20000)]\n0",
+        "len(bytearray(3_350_000)), len(gs)",
+    ];
+    for stress in ["", "inc"] {
+        let plain = generator_cells(&engine, &cells, stress, 0);
+        assert_eq!(plain[1].0, "(3350000, 20000)", "stress {stress:?}");
+        for between in [1, 2] {
+            let run = generator_cells(&engine, &cells, stress, between);
+            if stress.is_empty() {
+                assert_eq!(run, plain, "between {between}");
+            } else {
+                assert_eq!(run[1].0, plain[1].0, "stress {stress:?}, between {between}");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_generator_registry_gives_back_its_room_after_a_collection() {
+    // 30,000 generators made and dropped leave the registry's capacity
+    // charged until a collection prunes it and gives the room back; cell 1
+    // fits in 6 MiB only then, with or without a snapshot between. (Under
+    // the full stress mode each of the 30,000 makes a collection that
+    // walks the registry: minutes in a debug build.)
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(6 << 20)));
+    let cells = [
+        "def g():\n    yield 1\ngs = [g() for _ in range(30000)]\ndel gs\n0",
+        "len(bytearray(3_950_000))",
+    ];
+    for stress in ["", "inc"] {
+        for between in [0, 1, 2] {
+            let run = generator_cells(&engine, &cells, stress, between);
+            assert_eq!(run[1].0, "3950000", "stress {stress:?}, between {between}");
+        }
+    }
+}
+
 #[test]
 fn a_coroutine_suspended_by_send_resumes_in_a_later_cell_and_after_restore() {
     let mut c = Cells::new();
