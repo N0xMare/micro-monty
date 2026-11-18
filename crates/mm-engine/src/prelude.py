@@ -1561,13 +1561,18 @@ def _dict_pop(a):
 
 
 def _dict_setdefault(a):
+    # One hash and one lookup, then an insert, as CPython's
+    # `dict_setdefault_ref_lock_held`: a key an `__eq__` stored meanwhile
+    # keeps its value (and CPython's second entry with it).
     d = a[0]
     k = a[1]
-    found, v = _dlookup(d, k)
-    if found:
-        return v
+    h = _khash(k, 'dict key')
+    e = _dfind(d, k, h)
+    if e >= 0:
+        return _dict_value_at(d, e)
     v = a[2] if len(a) > 2 else None
-    _dset(d, k, v)
+    while not _dict_insert(d, k, h, v):
+        pass
     return v
 
 

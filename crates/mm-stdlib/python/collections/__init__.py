@@ -756,6 +756,26 @@ class OrderedDict(dict):
             else:
                 dict.update(self, kwds)
 
+    def setdefault(self, key, default=None):
+        # CPython's `OrderedDict_setdefault_impl`, not dict's one lookup:
+        # an exact OrderedDict looks the key up, then stores it with a
+        # lookup of its own (`PyODict_SetItem`), so a key an `__eq__`
+        # stored meanwhile takes the default; a subclass goes through its
+        # `__contains__`, `__getitem__` and `__setitem__` (`key in self`
+        # binds `__contains__` as `PySequence_Contains` does; dict's own
+        # is its lookup, called straight).
+        if type(self) is OrderedDict:
+            v = dict.get(self, key, _MISSING)
+            if v is not _MISSING:
+                return v
+            dict.__setitem__(self, key, default)
+            return default
+        c = type(self).__contains__
+        if dict.__contains__(self, key) if c is dict.__contains__ else key in self:
+            return self[key]
+        self[key] = default
+        return default
+
     def popitem(self, last=True):
         b = _backing(self)
         if not b:
