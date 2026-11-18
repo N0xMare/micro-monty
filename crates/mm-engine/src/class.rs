@@ -475,11 +475,24 @@ impl Vm {
             return true;
         }
         if Vm::is_class(c) {
-            return self.mro_of(c).contains(&target);
+            // Read in place: `except` with a tuple calls this per item, and
+            // a copy of a deep MRO each time was most of a long step.
+            let mro = self.vslot(c, cls::MRO);
+            return (0..self.tuple_len(mro)).any(|k| self.vslot_o(mro, k as u32) == target);
         }
         match (self.type_of_typeobj(c), self.type_of_typeobj(target)) {
             (Some(a), Some(b)) => a.is_subclass(b),
             _ => false,
+        }
+    }
+
+    /// The MRO entries [`Vm::subclass_of`] reads for class `c` at most: a
+    /// user class's MRO; 1 for a builtin type, whose chain is a few.
+    pub(crate) fn mro_depth(&self, c: Value) -> usize {
+        if Vm::is_class(c) {
+            self.tuple_len(self.vslot(c, cls::MRO))
+        } else {
+            1
         }
     }
 

@@ -2659,6 +2659,49 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "b = isinstance(1, t)",
         1,
     ),
+    // `except` with a tuple longer than a native walk: every item checked,
+    // then matched, in the prelude (one native step at 8M items was
+    // 236-272 ms [M, reviewer]).
+    (
+        Row::Bounded,
+        "t = (KeyError,) * 8_000_000 + (ValueError,)",
+        "try:\n    raise ValueError('v')\nexcept t:\n    n = 1",
+        1,
+    ),
+    // The match visits the raised class's MRO for each item: a class 3,000
+    // deep against a walk's worth of items was one step of 111 ms [M].
+    (
+        Row::Bounded,
+        "C = Exception\nfor i in range(3000):\n    C = type('C', (C,), {})\nt = (KeyError,) * 16384",
+        "try:\n    raise C()\nexcept t:\n    n = 1\nexcept Exception:\n    n = 2",
+        1,
+    ),
+    // `isinstance` and `issubclass` charge the MRO each class item walks:
+    // the same class against the same tuple was one step of 164 ms [M].
+    (
+        Row::Bounded,
+        "C = Exception\nfor i in range(3000):\n    C = type('C', (C,), {})\nx = C()\nt = (KeyError,) * 16383",
+        "b = isinstance(x, t) or issubclass(C, t)",
+        1,
+    ),
+    // An item's metaclass MRO is looked up for `__instancecheck__`: a
+    // metaclass chain 2,000 deep against 16,383 items was one step of
+    // 2.3 s [M].
+    (
+        Row::Bounded,
+        "M = type\nfor i in range(2000):\n    M = type('M', (M,), {})\nK = M('K', (), {})\nt = (K,) * 16383",
+        "b = isinstance(1, t) or issubclass(int, t)",
+        1,
+    ),
+    // A class whose MRO passes a whole walk: an item costs at most a walk,
+    // the one MRO scan its check is, so a fresh walk always pays it (it
+    // went back and forth with the prelude until `RecursionError`).
+    (
+        Row::Bounded,
+        "def chain(n):\n    c = object\n    for i in range(n):\n        c = type('K', (c,), {})\n    return c\nBig = type('Big', tuple(chain(128) for k in range(128)), {})\nt = (int,) * 64 + (Big,)",
+        "b = issubclass(Big, t) and isinstance(Big(), t)",
+        1,
+    ),
 ];
 
 /// How many more times a bounded row over the limit runs. This host has

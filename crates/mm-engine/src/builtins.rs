@@ -1317,6 +1317,9 @@ const DEFS: &[Def] = &[
     m!("_mm", "clock", 0, 0, NO, NO, crate::mmmod::mm_clock),
     m!("_mm", "tzif", 1, 1, NO, NO, crate::mmmod::mm_tzif),
     m!("_mm", "caller", 2, 2, NO, NO, crate::mmmod::mm_caller),
+    // The prelude's `_exc_match_any`'s; in `_mm`, not a `p!` native,
+    // because those are bound at startup (1,464 instructions [M]).
+    m!("_mm", "exc_match_part", 4, 4, NO, NO, mm_exc_match_part),
     m!(
         "_mm",
         "make_class",
@@ -3490,46 +3493,52 @@ fn bi_ascii(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_str(&ascii)
 }
 
-/// Whether `hit` holds for a class in `cls`: a class or tuples of them,
-/// nested to any depth, tried left to right as CPython does. The walk is
-/// iterative and visits at most `dict::WALK` items, charged as fuel;
-/// `None` means the prelude must finish it in bytecode: the walk ran out,
-/// or an item defines `check` (`__instancecheck__`/`__subclasscheck__`).
+/// Whether `hit` holds for `v` and a class in `cls`: a class or tuples of
+/// them, nested to any depth, tried left to right as CPython does. The
+/// walk is iterative and visits at most `dict::WALK` entries, charged as
+/// fuel ([`Vm::check_cost`], with `depth`, the MRO `hit` walks). When the
+/// walk runs out, or an item defines `check`
+/// (`__instancecheck__`/`__subclasscheck__`), the prelude's `f` goes on
+/// from that item with the items still to try.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn any_class(
     vm: &mut Vm,
+    v: Value,
     cls: Value,
     check: Dn,
-    msg: &str,
+    depth: usize,
+    (f, msg): (&str, &str),
     hit: &dyn Fn(&Vm, Value) -> bool,
-) -> Result<Option<bool>, Raised> {
-    let mut left = crate::dict::WALK;
+) -> Result<Value, Raised> {
+    let mut left = crate::dict::WALK as usize;
     let mut todo = alloc::vec![cls];
     let r = loop {
         let Some(c) = todo.pop() else {
-            break Ok(Some(false));
+            break Ok(Value::FALSE);
         };
-        if left == 0 || vm.has_check(c, check) {
-            break Ok(None);
+        let cost = vm.check_cost(c, depth);
+        // A tuple is pushed without a copy; one whose items would leave
+        // more to try than the walk has left goes on in the prelude.
+        let long = c.is_obj_kind(ty::TUPLE as u8) && todo.len() + vm.tuple_len(c) > left;
+        if cost > left || long || vm.has_check(c, check) {
+            todo.push(c);
+            break match vm.new_list(&todo) {
+                Ok(l) => vm.prelude_request(f, alloc::vec![v, l], Cont::None),
+                Err(e) => Err(e),
+            };
         }
-        left -= 1;
+        left -= cost;
         if Vm::is_type(c) {
             if hit(vm, c) {
-                break Ok(Some(true));
+                break Ok(Value::TRUE);
             }
         } else if c.is_obj_kind(ty::TUPLE as u8) {
-            // Pushed without a copy of the tuple; one longer than the walk
-            // has left goes to the prelude, a visit per item.
-            let n = vm.tuple_len(c);
-            if n > left as usize {
-                break Ok(None);
-            }
-            todo.extend((0..n).rev().map(|k| vm.vslot_o(c, k as u32)));
+            todo.extend((0..vm.tuple_len(c)).rev().map(|k| vm.vslot_o(c, k as u32)));
         } else {
             break Err(vm.err(T::TypeError, msg));
         }
     };
-    vm.walked(left);
+    vm.walked(left as u32);
     r
 }
 
@@ -3542,16 +3551,19 @@ fn bi_isinstance(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if Vm::is_type(c) {
         return Ok(Value::from_bool(vm.instance_of(v, c)));
     }
-    match any_class(
+    let depth = vm.mro_depth(vm.class_of(v));
+    any_class(
         vm,
+        v,
         c,
         Dn::Instancecheck,
-        "isinstance() arg 2 must be a type, a tuple of types, or a union",
+        depth,
+        (
+            "_isinstance_any",
+            "isinstance() arg 2 must be a type, a tuple of types, or a union",
+        ),
         &|vm, c| vm.instance_of(v, c),
-    )? {
-        Some(r) => Ok(Value::from_bool(r)),
-        None => vm.prelude_request("_isinstance_any", alloc::vec![v, c], Cont::None),
-    }
+    )
 }
 
 impl Vm {
@@ -3563,6 +3575,23 @@ impl Vm {
             && self.user_method(c, name).is_some()
     }
 
+    /// What checking item `c` costs a walk: the entries [`Vm::has_check`]
+    /// may visit (its type's MRO) and, for a class, `depth` more. One
+    /// visit, as for any item, while that is at most `SHALLOW` (a walk of
+    /// them is still at most `SHALLOW * WALK` entries, well inside a step),
+    /// so ordinary classes pay as before; never more than a whole walk, so
+    /// a fresh walk can always pay its first item, the one MRO scan a
+    /// single class's check is anyway.
+    fn check_cost(&self, c: Value, depth: usize) -> usize {
+        const SHALLOW: usize = 16;
+        let n = self.mro_depth(self.class_of(c)) + if Vm::is_type(c) { depth } else { 0 };
+        if n <= SHALLOW {
+            1
+        } else {
+            n.min(crate::dict::WALK as usize)
+        }
+    }
+
     /// `isinstance`/`issubclass` against a class whose metaclass defines
     /// `name` (`__instancecheck__`/`__subclasscheck__`): its call, or the
     /// prelude's for a tuple holding such a class.
@@ -3570,20 +3599,25 @@ impl Vm {
     fn meta_check(&mut self, v: Value, c: Value, name: Dn) -> Result<Option<Value>, Raised> {
         if c.is_obj_kind(ty::TUPLE as u8) {
             // A tuple past a walk's visits goes to the prelude too, without
-            // a look at its items (`any_class` would hand it on).
+            // a look at its items (`any_class` would hand it on), and so
+            // does one whose items' metaclass MROs add up past it.
             let n = self.tuple_len(c);
+            let mut left = crate::dict::WALK as usize;
             for k in 0..n {
                 let x = self.vslot_o(c, k as u32);
-                if n > crate::dict::WALK as usize || self.has_check(x, name) {
+                let cost = self.check_cost(x, 0);
+                if n > crate::dict::WALK as usize || cost > left || self.has_check(x, name) {
                     let f = if name == Dn::Instancecheck {
                         "_isinstance_any"
                     } else {
                         "_issubclass_any"
                     };
+                    let l = self.new_list(&[c])?;
                     return self
-                        .prelude_request(f, alloc::vec![v, c], Cont::None)
+                        .prelude_request(f, alloc::vec![v, l], Cont::None)
                         .map(Some);
                 }
+                left -= cost;
             }
             return Ok(None);
         }
@@ -3592,6 +3626,46 @@ impl Vm {
         }
         self.dunder_call(c, name, &[v], Cont::None)
     }
+}
+
+/// `_mm.exc_match_part(e, types, i, check)`: items `i` on of tuple `types`,
+/// a walk's worth (`dict::WALK` visits), for `except types`
+/// (`_exc_match_any`): with `check`, each must be an exception class (else
+/// CPython's `TypeError`), a visit each; else whether one is `e`'s class or
+/// a base of it, a visit per entry of its MRO. The index to go on from, or
+/// `None` on a match.
+#[cfg_attr(mm_shipped, optimize(size))]
+fn mm_exc_match_part(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let (e, types) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
+    let check = vm.arg_o(&a, 3) == Value::TRUE;
+    let n = vm.tuple_len(types);
+    let lo = vm
+        .int_of(vm.arg_o(&a, 2))
+        .and_then(|i| usize::try_from(i).ok())
+        .unwrap_or(n)
+        .min(n);
+    let c = vm.class_of(e);
+    let cost = if check { 1 } else { vm.mro_depth(c).max(1) };
+    let hi = n.min(lo + (crate::dict::WALK as usize / cost).max(1));
+    let mut next = Value::int(hi as i64).unwrap_or(Value::NONE);
+    for k in lo..hi {
+        let t = vm.vslot_o(types, k as u32);
+        if check {
+            let ok = (Vm::is_class(t) && vm.class_base_t(t).is_exception())
+                || vm.type_of_typeobj(t).is_some_and(T::is_exception);
+            if !ok {
+                return Err(vm.err(
+                    T::TypeError,
+                    "catching classes that do not inherit from BaseException is not allowed",
+                ));
+            }
+        } else if vm.subclass_of(c, t) {
+            next = Value::NONE;
+            break;
+        }
+    }
+    vm.walked(crate::dict::WALK.saturating_sub(((hi - lo) * cost) as u32));
+    Ok(next)
 }
 
 /// `type.__new__(mcls, name, bases, ns, **kwargs)`.
@@ -5803,16 +5877,19 @@ fn bi_issubclass(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if !Vm::is_type(c) {
         return Err(vm.err(T::TypeError, "issubclass() arg 1 must be a class"));
     }
-    match any_class(
+    let depth = vm.mro_depth(c);
+    any_class(
         vm,
+        c,
         t,
         Dn::Subclasscheck,
-        "issubclass() arg 2 must be a class, a tuple of classes, or a union",
+        depth,
+        (
+            "_issubclass_any",
+            "issubclass() arg 2 must be a class, a tuple of classes, or a union",
+        ),
         &|vm, x| vm.subclass_of(c, x),
-    )? {
-        Some(r) => Ok(Value::from_bool(r)),
-        None => vm.prelude_request("_issubclass_any", alloc::vec![c, t], Cont::None),
-    }
+    )
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]

@@ -140,6 +140,12 @@ hashes are pre-release history, kept in the private archive
   call, up to 2.0 s for `isinstance` [M, on e54f65f]). A tuple longer
   than a native walk goes to the prelude, a visit per item under fuel.
   `e.args = t` keeps `t` itself, as CPython does.
+- `except t` with a tuple longer than a native walk checks it in the
+  prelude, in charged steps, in CPython's order and with its errors
+  (0.0.2's known issue: 8,000,000 classes were one step of 206 ms [M, on
+  e54f65f]); a user class's MRO is read in place, so an `except` or
+  `isinstance` over a class chain thousands deep is no longer one step of
+  110 to 258 ms.
 
 ### Known issues
 

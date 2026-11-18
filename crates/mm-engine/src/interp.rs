@@ -2754,7 +2754,24 @@ impl Vm {
         Err(self.err(T::TypeError, "exceptions must derive from BaseException"))
     }
 
-    fn exc_matches(&mut self, exc: Value, typ: Value) -> Result<bool, Raised> {
+    /// Whether `except typ` catches `exc`, as a bool; `UNDEFINED` with a
+    /// request left for the prelude's `_exc_match_any` when `typ` is a
+    /// tuple whose match is longer than a native walk (its items times the
+    /// raised class's MRO), which it checks a walk at a time under fuel.
+    fn exc_matches(&mut self, exc: Value, typ: Value) -> Result<Value, Raised> {
+        if typ.is_obj_kind(ty::TUPLE as u8)
+            && self
+                .tuple_len(typ)
+                .saturating_mul(self.mro_depth(self.class_of(exc)))
+                > crate::dict::WALK as usize
+        {
+            self.prelude_request("_exc_match_any", alloc::vec![exc, typ], Cont::None)?;
+            return Ok(Value::UNDEFINED);
+        }
+        self.exc_matches_short(exc, typ).map(Value::from_bool)
+    }
+
+    fn exc_matches_short(&mut self, exc: Value, typ: Value) -> Result<bool, Raised> {
         let user = |vm: &Vm, t: Value| Vm::is_class(t) && vm.class_base_t(t).is_exception();
         let tuple_has_class =
             typ.is_obj_kind(ty::TUPLE as u8) && self.tuple_items(typ).into_iter().any(Vm::is_class);
@@ -5100,8 +5117,12 @@ impl Vm {
             }
             op::CHECK_EXC => {
                 let e = reg!(opd!(0));
-                acc = Value::from_bool(tri!(self.exc_matches(e, acc)));
-                pc += ilen!();
+                op_result!(
+                    self.exc_matches(e, acc),
+                    1,
+                    Cont::None,
+                    ("_unreachable", &[])
+                );
             }
             op::AWAIT => {
                 sync!();

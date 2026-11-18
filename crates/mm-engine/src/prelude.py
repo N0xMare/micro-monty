@@ -5366,10 +5366,10 @@ def _import_handle_fromlist(m, name, fromlist, recursive):
 
 
 # `isinstance`/`issubclass` against nested tuples, left to right: a class
-# whose metaclass checks, or a walk longer than the native one. Iterative,
-# so any nesting depth works and fuel applies.
-def _isinstance_any(x, classes):
-    todo = [classes]
+# whose metaclass checks, or a walk longer than the native one. `todo` is
+# what is left to try, the next last, as the native walk left it.
+# Iterative, so any nesting depth works and fuel applies.
+def _isinstance_any(x, todo):
     while todo:
         c = todo.pop()
         if type(c) is tuple:
@@ -5465,8 +5465,23 @@ def _class_big(name, bases, ns, kwargs, cell, meta):
     return _mm.make_class(name, bases, ns, kwargs, cell, meta, tuple(mro))
 
 
-def _issubclass_any(x, classes):
-    todo = [classes]
+def _exc_match_any(e, types):
+    # `except types` with a tuple longer than a native walk, a walk's worth
+    # of items per call: every item checked first (CPython's
+    # `check_except_type_valid`), then matched against `e`'s class.
+    import _mm
+    i = 0
+    while i < len(types):
+        i = _mm.exc_match_part(e, types, i, True)
+    i = 0
+    while i < len(types):
+        i = _mm.exc_match_part(e, types, i, False)
+        if i is None:
+            return True
+    return False
+
+
+def _issubclass_any(x, todo):
     while todo:
         c = todo.pop()
         if type(c) is tuple:
