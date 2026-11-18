@@ -955,7 +955,15 @@ most 2^21 + 2^17 units, and a park request or deadline waits at most about
 50 ms at the default limits on every measured row \[M\]
 (`crates/micro-monty/tests/steps.rs`).
 Outside that bound are full garbage collections over a large heap, about
-0.4 ms per MiB live natively and 1.3–1.6 times that on wasm \[M\]. Count
+0.4 ms per MiB live natively and 1.3–1.6 times that on wasm \[M\]. So
+is a greedy `re` repeat over an alternation with a group, such as
+`re.match('(a|b)*c', s)`: ending a slice copies its backtrack stack, so
+one native step grows with the input and passes the 50 ms bound from
+about 300,000 characters, in this release and in 0.0.1 alike, with a
+deadline or with fuel slices \[M\]. Possessive and atomic forms and
+lookaheads (`(a|b)*+c`, `(?>(a|b)*)c`, `(?=(a|b)*)c`) stay bounded in
+this release, and patterns like `^(?:(\w+),)*$` stay under the bound to
+600,000 characters \[M\]. Count
 what a cell was charged from a fuel total (`set_fuel_total`; refuel with
 `Some(n)`, not `None`), not granted fuel less `fuel()`, which stops at 0
 and misses overdrafts; `hosts/js`'s driver does.
