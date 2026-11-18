@@ -2027,6 +2027,51 @@ impl Vm {
         Ok(found.map_err(|x| self.hard(x))?.1.is_some())
     }
 
+    /// [`Vm::dict_has_hashed`] a slice of [`WALK`] visits at a time, for a
+    /// stepped bulk operation: a lookup out of visits stops with its place
+    /// in `at` (the slot and the slots walked, the perturbation) and
+    /// `Ok(None)`, and goes on from it when called again, so one long
+    /// chain spans steps (AE1). Charged as one walk of the whole chain.
+    pub(crate) fn dict_has_from(
+        &mut self,
+        d: Value,
+        k: Value,
+        h: u64,
+        at: &mut Option<(u64, u64)>,
+    ) -> Result<Option<bool>, Raised> {
+        let Some(dv) = d.as_obj().and_then(|r| self.dv(r)) else {
+            return Ok(Some(false));
+        };
+        #[allow(clippy::cast_possible_truncation, reason = "the low half")]
+        let from = at.take().map(|(w, p)| ((w as u32) as usize, p, w >> 32));
+        let first = from.is_none();
+        let (mut left, mut py, mut stop) = (WALK, false, None);
+        let r = self.probe_from::<true>(
+            dv,
+            k,
+            h,
+            0,
+            &mut left,
+            &mut |_, _| py = true,
+            from,
+            &mut stop,
+        );
+        // As `walked`: the first visit of the whole walk is free.
+        let used = u64::from(WALK - left) + self.text_over.take();
+        let units = if first { used.saturating_sub(1) } else { used };
+        if units > 0 {
+            self.burn(units);
+        }
+        match (r, stop) {
+            (Ok((_, e, _)), _) => Ok(Some(e.is_some())),
+            (Err(Hard::Py), Some((i, p, n))) if !py => {
+                *at = Some((n << 32 | i as u64, p));
+                Ok(None)
+            }
+            (Err(x), _) => Err(self.hard(x)),
+        }
+    }
+
     /// The hash of entry `e` of dict `d` as its table stores it (computed
     /// for a table without an index, whose keys all hash natively).
     pub(crate) fn dict_hash_at(&self, d: Value, e: usize) -> Option<u64> {

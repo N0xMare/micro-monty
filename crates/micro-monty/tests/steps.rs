@@ -2415,7 +2415,9 @@ const SITES: &[(Row, &str, &str, usize)] = &[
     // 97.9 ms for `dd.keys() & zs` and 80.4 ms for `isdisjoint` with
     // 2,097,144 int keys on the probe path of 'zz', the most the default
     // limit holds, on 11110028 [M, correctness review]. The visits past it
-    // are now charged too, and a step holds one lookup.
+    // are now charged too, and a step held one lookup: 49.9 and 53.0 ms on
+    // a 54.7 ms limit on an idle machine [M, lane G] (AE1). A lookup now
+    // goes on a slice of `WALK` visits per step.
     (
         Row::Bounded,
         "mask = (1 << 22) - 1\ndef path(q, n):\n    q &= (1 << 64) - 1\n    i = (q ^ (q >> 32)) & mask\n    p, seen, out = q, set(), []\n    while len(out) < n:\n        if i not in seen:\n            seen.add(i)\n            out.append(i)\n        p >>= 5\n        i = (5 * i + 1 + p) & mask\n    return out\ndd = dict.fromkeys(path(hash('zz'), 2_097_144))\nzs = ['zz'] * 100",

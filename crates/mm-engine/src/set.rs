@@ -110,6 +110,9 @@ const BEGUN: u64 = 1 << 3;
 const SLOTS: u64 = 1 << 4;
 const CLEAN: u64 = 1 << 5;
 const WAITED: u64 = 1 << 6;
+/// The current item's lookup in a dict is part way along its chain, its
+/// place in `n` and `j` ([`Vm::dict_has_from`]): the item goes on from it.
+const PROBING: u64 = 1 << 7;
 
 /// The largest set table under the object cap (a word per slot in its
 /// key buffer and in its hashes, the header not counted).
@@ -216,6 +219,9 @@ enum Item {
     /// The phase is done before its source is (an intersection holding
     /// all of the set it probes, as CPython's `set_intersection` stops).
     End,
+    /// Not taken yet: its lookup walked a slice of a long chain
+    /// ([`PROBING`]); the step ends and the next goes on with it.
+    Yield,
 }
 
 impl Vm {
@@ -1609,6 +1615,7 @@ impl Vm {
                     match self.bulk_act(b, a, out, other, b.i as usize, x, Value::NONE, None)? {
                         Item::Next => b.i += 1,
                         Item::Wait => break,
+                        Item::Yield => return Ok(Flow::More),
                         Item::Done(v) => return Ok(Flow::Done(v)),
                         Item::End => {
                             b.pc = (b.pc & 7) + 1;
@@ -1642,11 +1649,16 @@ impl Vm {
             *units += self.bulk_unit(out, other) + if tuple { TUPLE_ITEM - 1 } else { 0 };
             free += ITEM_WALK;
             // An intersection reads a dict or a keys view as an iterable
-            // and hashes each key (`set_intersection`, `_PyDictView_Intersect`):
-            // a user `__hash__` runs, as in CPython, not the stored hash.
-            let h = h.filter(|_| a != act::AND || !src.is_obj_kind(ty::DICT as u8));
+            // and hashes each key (`set_intersection`, `_PyDictView_Intersect`),
+            // and a dict's keys view tests each item as `x in keys`
+            // (`dictviews_isdisjoint`): a user `__hash__` runs, as in
+            // CPython, not the stored hash.
+            let h = h.filter(|_| {
+                (a != act::AND || !src.is_obj_kind(ty::DICT as u8))
+                    && (a != act::DISJOINT || !other.is_obj_kind(ty::DICT as u8))
+            });
             let r = self.bulk_act(b, a, out, other, at, x, v, h);
-            if one_shot && (matches!(r, Ok(Item::Wait)) || r.is_err() && self.slow) {
+            if one_shot && (matches!(r, Ok(Item::Wait | Item::Yield)) || r.is_err() && self.slow) {
                 for &(o, i, w) in pos.iter().flatten() {
                     match (i, Value::from_bits(w)) {
                         (u32::MAX, Some(v)) => self.set_slot_o(o, 1, v),
@@ -1657,6 +1669,7 @@ impl Vm {
             match r? {
                 Item::Next => b.i = at as u64 + 1,
                 Item::Wait => {}
+                Item::Yield => return Ok(Flow::More),
                 Item::Done(v) => return Ok(Flow::Done(v)),
                 Item::End => b.pc = (b.pc & 7) + 1,
             }
@@ -2197,13 +2210,31 @@ impl Vm {
         Ok(x.map(|x| (i, x, Value::NONE, None)))
     }
 
-    /// Is `x` (hash `h`) in `other`, a set or a dict's keys?
+    /// Is `x` (hash `h`) in `other`, a set or a dict's keys? `None` when
+    /// a stepped operation's lookup in a dict stopped part way along a
+    /// long chain ([`PROBING`]).
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn bulk_has(&mut self, other: Value, x: Value, h: u64) -> Result<bool, Raised> {
+    fn bulk_has(
+        &mut self,
+        b: &mut Bulk,
+        other: Value,
+        x: Value,
+        h: u64,
+    ) -> Result<Option<bool>, Raised> {
         if Self::is_set(other) {
-            return Ok(self.set_find_r(other, x, h)?.is_some());
+            return Ok(Some(self.set_find_r(other, x, h)?.is_some()));
         }
-        self.dict_has_hashed(other, x, h)
+        if !b.step {
+            return self.dict_has_hashed(other, x, h).map(Some);
+        }
+        let mut at = (b.pc & PROBING != 0).then_some((b.n, b.j));
+        b.pc &= !PROBING;
+        let has = self.dict_has_from(other, x, h, &mut at)?;
+        if let Some((w, p)) = at {
+            (b.n, b.j) = (w, p);
+            b.pc |= PROBING;
+        }
+        Ok(has)
     }
 
     /// Adds `x` (hash `h`) to set `out`; when the table is then too full,
@@ -2356,7 +2387,9 @@ impl Vm {
                         None => self.key_hash(x)?,
                     }
                 };
-                let has = self.bulk_has(other, x, h)?;
+                let Some(has) = self.bulk_has(b, other, x, h)? else {
+                    return Ok(Item::Yield);
+                };
                 match a {
                     act::AND | act::SUB if has == (a == act::AND) => {
                         self.bulk_add(b, out, x, h, false)?;

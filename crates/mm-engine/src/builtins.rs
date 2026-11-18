@@ -8394,14 +8394,19 @@ fn set_with(
 /// lazily, as CPython does, so a generator is read no further.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn early_src(vm: &mut Vm, o: Value) -> Result<(Value, u64), Raised> {
-    let in_place = matches!(
-        o.obj_kind().map(u16::from),
-        Some(ty::LIST | ty::TUPLE | ty::SET | ty::DICT | ty::RANGE)
-    ) || matches!(vm.type_of(o), T::dict_keys | T::dict_items);
-    if !in_place {
+    if !in_place(vm, o) {
         return Err(vm.need_py());
     }
     vm.view_src(o)
+}
+
+/// Whether a bulk operation reads `o` in place: a list, tuple, set, dict,
+/// range or dict view.
+fn in_place(vm: &Vm, o: Value) -> bool {
+    matches!(
+        o.obj_kind().map(u16::from),
+        Some(ty::LIST | ty::TUPLE | ty::SET | ty::DICT | ty::RANGE)
+    ) || matches!(vm.type_of(o), T::dict_keys | T::dict_items)
 }
 
 /// Every `others` of an intersection read in place, or the whole call
@@ -8615,6 +8620,19 @@ fn view_isdisjoint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             return Err(vm.need_py());
         }
         (v, o) = (o, v);
+    }
+    // A dict's keys probed by items read in place go in steps, a lookup
+    // along a long chain a slice per step (AE1, `Vm::dict_has_from`).
+    let d = view_dict(vm, v);
+    if vm.type_of(v) == T::dict_keys && d.is_obj_kind(ty::DICT as u8) && in_place(vm, o) {
+        use crate::set::{act, phase, res};
+        let (src, items) = vm.view_src(o)?;
+        return vm.bulk(
+            &[src, d],
+            phase(act::DISJOINT | items, 0, 0, 1),
+            res::TRUE,
+            true,
+        );
     }
     // Lookups of keys with equal hashes are charged by the slots they
     // pass: past a step's work the twin goes on, a safepoint per item.
