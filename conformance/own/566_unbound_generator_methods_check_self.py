@@ -62,9 +62,9 @@ def done(o):
         o.close()
 
 
-METHODS = ((G, ('close', 'send', '__next__', '__iter__')),
+METHODS = ((G, ('close', 'send', '__next__', '__iter__', 'throw')),
            (C, ('close', 'throw', 'send', '__await__')),
-           (A, ('asend', '__anext__', '__aiter__')))
+           (A, ('asend', '__anext__', '__aiter__', 'athrow', 'aclose')))
 
 
 async def main():

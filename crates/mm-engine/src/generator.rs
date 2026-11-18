@@ -373,8 +373,9 @@ impl Vm {
             g::RUNNING => return Err(self.already_running()),
             g::CREATED | g::DONE => {
                 // Never started (or finished): it is over, and the
-                // exception is raised to the caller.
-                self.gen_set_raw(gn, g::STATE, g::DONE);
+                // exception is raised to the caller. Its frame (the bound
+                // arguments) goes: nothing reads it again.
+                self.gen_over(gn);
                 self.exc = exc;
                 return Ok(Resumed::Out(Outcome::Raise));
             }
@@ -530,6 +531,13 @@ impl Vm {
     /// The generator returned: it is done.
     pub(crate) fn gen_done(&mut self, gn: Value) {
         self.gen_leave(gn);
+        self.gen_over(gn);
+    }
+
+    /// Marks `gn` done and drops its frame and handled exception, without
+    /// leaving it: for a generator that is not running, whose `OUTER` is
+    /// not the caller's handled exception.
+    pub(crate) fn gen_over(&mut self, gn: Value) {
         if let Some(r) = gn.as_obj() {
             self.set_slot(r, g::HANDLED, Value::NONE);
             self.set_slot(r, g::REGS, Value::NONE);

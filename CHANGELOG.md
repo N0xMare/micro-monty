@@ -71,6 +71,11 @@ hashes are pre-release history, kept in the private archive
   object of another type, such as `type(gen()).close(d)`, raise CPython's
   `TypeError` and leave the object alone, where 0.0.2 wrote the
   generator's slots into it (0.0.2's known issues) [M, own case 566].
+- `throw()` into a generator that has not started, and `athrow()` or
+  `aclose()` on such an async generator, drop its arguments, where 0.0.2
+  kept them alive as long as the generator lived; the three also check
+  their `self` as the other methods do (0.0.2's known issues) [M, own
+  cases 557 and 566].
 
 ### Known issues
 

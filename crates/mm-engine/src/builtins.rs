@@ -6682,7 +6682,7 @@ fn self_iter(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 fn gen_throw(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    let g = vm.arg_o(&a, 0);
+    let g = own_self(vm, &a, &[ty::GEN], T::generator, "throw")?;
     let e = thrown(vm, &a)?;
     vm.request = Some(Request::Throw {
         gn: g,
@@ -6796,13 +6796,15 @@ fn agen_asend(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn agen_athrow(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let g = own_self(vm, &a, &[ty::AGEN], T::async_generator, "athrow")?;
     let e = thrown(vm, &a)?;
-    vm.new_agen_op(vm.arg_o(&a, 0), ag::THROW, e)
+    vm.new_agen_op(g, ag::THROW, e)
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn agen_aclose(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    vm.new_agen_op(vm.arg_o(&a, 0), ag::CLOSE, Value::NONE)
+    let g = own_self(vm, &a, &[ty::AGEN], T::async_generator, "aclose")?;
+    vm.new_agen_op(g, ag::CLOSE, Value::NONE)
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
