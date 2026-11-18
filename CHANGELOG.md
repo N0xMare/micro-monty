@@ -80,6 +80,12 @@ hashes are pre-release history, kept in the private archive
   the handled exception: inside an `except` block `sys.exc_info()` and a
   bare `raise` still see it, where 0.0.2 emptied it (0.0.2's known
   issues) [M, own case 558].
+- A coroutine first driven by `send()` inside its caller's `except`
+  block no longer takes the caller's exception as its own: after the
+  handler, `sys.exc_info()` in its body is empty, an exception thrown in
+  has no stale `__context__`, and a bare `raise` raises `RuntimeError`.
+  This is the first half of 0.0.2's `send()` known issue [M, own case
+  567]; the second half stands (Known issues).
 
 ### Known issues
 
@@ -124,6 +130,13 @@ hashes are pre-release history, kept in the private archive
   ms where 71b9c5b stayed under 60 ms [S, the GC design review's b4
   measurements, on an earlier base; not rerun]. Marking each caller
   record cleared instead of each task would bound it.
+- A coroutine driven by hand with `send()`, suspended inside a handler of
+  its own and run on after its caller left its handler, still leaves that
+  old exception as the caller's handled exception when it returns, raises,
+  is thrown into or is closed, as in 0.0.2; a generator, and a coroutine
+  after a handler in its body that began under an earlier `send()`, see
+  that stale exception until they return, raise or are closed. Older
+  than 0.0.1.
 
 ## 0.0.2 (2026-11-18)
 

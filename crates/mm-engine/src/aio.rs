@@ -789,7 +789,13 @@ impl Vm {
             };
             if self.cont_take(fr.cont) == Cont::CoroSend {
                 let outer = self.slot(r, coro::OUTER);
-                let inner = self.handled;
+                // The caller's handled exception is not the coroutine's
+                // own (`Vm::gen_leave` keeps none either).
+                let inner = if self.handled == outer {
+                    Value::NONE
+                } else {
+                    self.handled
+                };
                 let _ = self
                     .heap
                     .set_values(r, coro::HANDLED, &[inner, Value::NONE]);
