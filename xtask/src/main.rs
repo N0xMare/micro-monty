@@ -276,8 +276,10 @@ fn main() -> ExitCode {
 /// `test`'s own cases run. Durability is the longest stage, and its
 /// chains of `mm` processes slow most under load: its release `mm` builds
 /// before the other stages in `target/`, and it alone (with that build)
-/// runs at normal priority, the rest at `nice` 10. The step-time oracle
-/// measures wall time, so it runs last, alone.
+/// runs at normal priority, the rest at `nice` 10. The cross-target
+/// durability run comes after it: its heaviest `mm` runs at `nice` 10
+/// beside durability's pass the oracle's 120 s wall limit. The step-time
+/// oracle measures wall time, so it runs last, alone.
 #[allow(clippy::too_many_lines, reason = "one flat list of stages")]
 fn check(args: &[String]) -> Result<(), String> {
     let (mut serial, mut release_gate, mut landing_tier) = (false, false, false);
@@ -505,8 +507,10 @@ fn check(args: &[String]) -> Result<(), String> {
                 "wasm32-wasip1",
                 "--check",
             ])),
+        // After durability too, whatever the cache holds: beside it, at
+        // `nice` 10, its heaviest cases ran past the 120 s wall limit [M].
         Stage::new("durability-cross")
-            .after(&["conformance-wasip1"])
+            .after(&["conformance-wasip1", "durability"])
             .run(mm_task(&["durability", "--cross-target"])),
         // Every recorded real cell replayed through mm-cell-worker.
         Stage::new("real-replay")
