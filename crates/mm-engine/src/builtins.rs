@@ -3219,7 +3219,7 @@ fn aio_set_result(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             "micro-monty: only asyncio.Future() futures can be settled by the program",
         ));
     }
-    if !vm.settle_pending(f, true, v) {
+    if !vm.settle_pending(f, true, v)? {
         return Err(vm.err(T::InvalidStateError, "invalid state"));
     }
     Ok(Value::NONE)
@@ -3246,7 +3246,7 @@ fn aio_set_exc(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if !e.is_obj_kind(ty::EXC as u8) && !vm.instance_of(e, vm.type_obj(T::BaseException)) {
         return Err(vm.err(T::TypeError, "invalid exception object"));
     }
-    if !vm.settle_pending(f, false, e) {
+    if !vm.settle_pending(f, false, e)? {
         return Err(vm.err(T::InvalidStateError, "invalid state"));
     }
     vm.note_unretrieved(f);
@@ -3390,7 +3390,7 @@ pub(crate) fn aio_set(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if !vm.is_loop_future(f) {
         return Err(vm.err(T::TypeError, "an asyncio.Future is required"));
     }
-    if !vm.settle_pending(f, true, v) {
+    if !vm.settle_pending(f, true, v)? {
         return Err(vm.err(T::InvalidStateError, "invalid state"));
     }
     Ok(Value::NONE)

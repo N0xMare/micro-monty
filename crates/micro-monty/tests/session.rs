@@ -3631,3 +3631,79 @@ fn a_dropped_fill_is_free_after_its_memory_error() {
         assert!(n * 10 >= alone * 9, "{fill}: {n} of {alone}");
     }
 }
+
+/// Runs `cells` in order on one session under `limits`; each cell's
+/// progress and output.
+fn run_cells(limits: Limits, cells: &[&str]) -> Vec<(Progress, String)> {
+    let engine = Engine::new(EngineConfig::new().with_limits(limits));
+    let mut session = Session::new(&engine).expect("session");
+    let out = Arc::new(Mutex::new(String::new()));
+    let sink = Arc::clone(&out);
+    session.set_output(Box::new(move |s: &str| {
+        sink.lock().expect("output lock").push_str(s);
+    }));
+    cells
+        .iter()
+        .map(|src| {
+            let code = engine.compile(src, "test.py").expect("compiles");
+            let progress = session.start(&code);
+            let text = core::mem::take(&mut *out.lock().expect("output lock"));
+            (progress, text)
+        })
+        .collect()
+}
+
+/// Loop futures kept in globals keep their done callbacks after their cell
+/// ends; settling them in a later cell queues those callbacks. That queue
+/// growth was never reserved (cell end forgets the callbacks' slots), so
+/// near the memory limit the next task switch found the execution charge
+/// past the limit and lost the main task: `SystemError: micro-monty: no
+/// task can run`, every callback dropped [M, fe8b1c2]. Settling now
+/// reserves the room first, or raises `MemoryError` and leaves the future
+/// pending, also for a future of the settling cell whose reserved room the
+/// stale callbacks took; the session goes on, and a later cell settles
+/// what is left and runs every callback of it. Cell 2 collects after it
+/// drops its fill: what follows (the `print`) needs room, and without the
+/// collection it is on an edge of the limit that moves with the base.
+#[test]
+fn stale_done_callbacks_settled_near_the_memory_limit_raise_memory_error() {
+    let cells = run_cells(
+        Limits::new().with_memory(4 << 20),
+        &[
+            "import asyncio\nawait asyncio.sleep(0)\nran = 0\nlive = 0\n\
+             def cb(x):\n    global ran\n    ran += 1\n\
+             def inc(x):\n    global live\n    live += 1\n\
+             fs = [asyncio.get_running_loop().create_future() for _ in range(100)]\n\
+             for f in fs:\n    for _ in range(200):\n        f.add_done_callback(cb)\n",
+            "import asyncio\nimport gc\nh = asyncio.get_running_loop().create_future()\n\
+             for _ in range(300):\n    h.add_done_callback(inc)\n\
+             pad = []\ntry:\n    while True:\n        pad.append(bytearray(4096))\n\
+             except MemoryError:\n    del pad[-2:]\n\
+             n = 0\ntry:\n    for f in fs:\n        f.set_result(1)\n        n += 1\n\
+             except MemoryError:\n    pass\n\
+             try:\n    h.set_result(1)\nexcept MemoryError:\n    pass\n\
+             pad = None\ngc.collect()\nawait asyncio.sleep(0)\nprint(n, h.done())\n",
+            "import asyncio\nran = live = 0\nleft = [f for f in fs + [h] if not f.done()]\n\
+             for f in left:\n    f.set_result(1)\n\
+             await asyncio.sleep(0)\nprint(len(left) - (h in left), h in left, ran, live)\n",
+        ],
+    );
+    let (p, out) = &cells[1];
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    let n: u64 = out
+        .split_whitespace()
+        .next()
+        .and_then(|w| w.parse().ok())
+        .expect("n");
+    assert!(n < 100, "the limit stopped no settle: {out}");
+    let (p, out) = &cells[2];
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    let got: Vec<&str> = out.split_whitespace().collect();
+    let [stale, h_left, ran, live] = got[..] else {
+        panic!("{out}")
+    };
+    assert_eq!(stale, (100 - n).to_string(), "{out}");
+    let stale: u64 = stale.parse().expect("int");
+    assert_eq!(ran, (stale * 200).to_string(), "{out}");
+    assert_eq!(live, if h_left == "True" { "300" } else { "0" }, "{out}");
+}

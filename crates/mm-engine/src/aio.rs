@@ -1110,7 +1110,11 @@ impl Vm {
         self.gathers.shrink_to_fit();
         self.futures.shrink_to_fit();
         self.consumed.shrink_to_fit();
-        let _ = self.reserve_execution(0);
+        let exc = self.exc;
+        if self.reserve_execution(0).is_err() {
+            self.heap.take_refused();
+            self.exc = exc;
+        }
     }
 
     /// Ends every task but the main one, which is running (when the
@@ -1150,7 +1154,11 @@ impl Vm {
         self.iter_left = 0;
         self.iter_open = false;
         self.stop_wait = 0;
-        let _ = self.reserve_execution(0);
+        let exc = self.exc;
+        if self.reserve_execution(0).is_err() {
+            self.heap.take_refused();
+            self.exc = exc;
+        }
     }
 
     /// Saves the running task, blocked on `a` (queued again at once if `a`
@@ -1455,8 +1463,16 @@ impl Vm {
         let handle = t.handle;
         let saved = t.st.take();
         // Task buffers move without a new charge; replacing the previous
-        // task's completed buffers releases their reservation.
-        self.reserve_execution(0)?;
+        // task's completed buffers releases their reservation. This only
+        // lowers the charge, and the task's registers are already taken,
+        // so a failure (a charge an earlier growth left past the limit) is
+        // left to the next reservation, which raises `MemoryError` in a
+        // task, instead of losing this one.
+        let exc = self.exc;
+        if self.reserve_execution(0).is_err() {
+            self.heap.take_refused();
+            self.exc = exc;
+        }
         if let Some(st) = saved {
             return Ok(Some(st));
         }
@@ -2303,15 +2319,45 @@ impl Vm {
         v.is_obj_kind(ty::FUTURE as u8) && self.raw_of(v, aw::AUX) == LOOP_FUTURE
     }
 
-    /// Settles a pending awaitable; `false` if it was already done.
+    /// Settles a pending awaitable; `false` if it was already done, and
+    /// `MemoryError`, with nothing changed, if its callbacks have no room.
     #[cfg(feature = "asyncio")]
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
-    pub(crate) fn settle_pending(&mut self, a: Value, ok: bool, v: Value) -> bool {
+    pub(crate) fn settle_pending(&mut self, a: Value, ok: bool, v: Value) -> Result<bool, Raised> {
         if self.raw_of(a, aw::STATE) != aw::PENDING {
-            return false;
+            return Ok(false);
         }
+        self.reserve_done_callbacks(a)?;
         self.settle(a, ok, v);
-        true
+        Ok(true)
+    }
+
+    /// Reserves run-queue room for the done callbacks of loop future `a`
+    /// before the program settles it. `cb_slots` holds the room of the
+    /// callbacks registered on pending awaitables in this cell, so it
+    /// covers every callback of a future of this cell. A future kept in
+    /// globals from an earlier cell holds callbacks whose room ended with
+    /// that cell (`end_cell`); settling it queues them all, so what
+    /// `cb_slots` cannot cover is reserved here. A settle that queues more
+    /// than `cb_slots` covers takes room from other futures' callbacks,
+    /// which reserve it again when they settle.
+    #[cfg(feature = "asyncio")]
+    fn reserve_done_callbacks(&mut self, a: Value) -> Result<(), Raised> {
+        let w = self.vslot(a, aw::WAITERS);
+        let callable = |x: Value| x.as_int().is_none() && !x.is_obj_kind(ty::GATHER as u8);
+        // Counted in place: the waiters are guest-sized, so no copy.
+        let k = if w.is_obj_kind(ty::TUPLE as u8) {
+            (0..self.tuple_len(w))
+                .filter(|&i| callable(self.vslot(w, u32::try_from(i).unwrap_or(0))))
+                .count()
+        } else {
+            usize::from(w != Value::NONE && callable(w))
+        };
+        let uncovered = k.saturating_sub(self.cb_slots);
+        if uncovered == 0 {
+            return Ok(());
+        }
+        self.reserve_scheduler(self.tasks.len(), self.gathers.len(), uncovered)
     }
 
     /// The pending awaitable state as `asyncio.Future` reports it: 0
@@ -2410,6 +2456,10 @@ impl Vm {
                 }
                 Some(ty::FUTURE) if pending && self.raw_of(v, aw::AUX) != STOP_FUTURE => {
                     let id = self.raw_of(v, aw::AUX);
+                    #[cfg(feature = "asyncio")]
+                    if id == LOOP_FUTURE {
+                        self.reserve_done_callbacks(v)?;
+                    }
                     self.settle_cancelled(v, msg, Value::NONE);
                     if id < STOP_FUTURE {
                         // The host call it stands for is abandoned.
