@@ -350,6 +350,10 @@ pub(crate) struct Rules<'a> {
     /// raises its floor wherever it rose, past its own limit or not, or
     /// the next landing fails on the same geomean.
     pub(crate) swept: &'a dyn Fn(&str) -> bool,
+    /// How far `name`'s count of one build may read below a floor `f` of
+    /// it and still be the same count: 0 for an exact count ([`exact`]);
+    /// replay-ir's sessions race inside the worker.
+    pub(crate) band: fn(&str, u64) -> u64,
 }
 
 /// The geomean of `head`'s ratios to `floors` over the names `of` takes
@@ -380,6 +384,11 @@ pub(crate) fn lower(f: u64, base: Option<u64>) -> u64 {
     base.map_or(f, |b| f.min(b))
 }
 
+/// [`Rules::band`] of a count that repeats exactly.
+pub(crate) fn exact(_: &str, _: u64) -> u64 {
+    0
+}
+
 impl Rules<'_> {
     /// Whether the head's count `h` raises a floor `f`: a rise past the
     /// limit that an accept line covers, so a line that lists more names
@@ -388,6 +397,17 @@ impl Rules<'_> {
     fn raises(&self, name: &str, h: u64, f: u64) -> bool {
         h > f
             && ((self.swept)(name) || (self.past)(name, h, f) && (self.accepted)(name, ratio(h, f)))
+    }
+
+    /// Whether the head's count `h` lowers a floor `f`: below it by more
+    /// than the band.
+    fn lowers(&self, name: &str, h: u64, f: u64) -> bool {
+        h.saturating_add((self.band)(name, f)) < f
+    }
+
+    /// Whether `a` and `b` are one count, within the band.
+    fn same(&self, name: &str, a: u64, b: u64) -> bool {
+        a.abs_diff(b) <= (self.band)(name, a.max(b))
     }
 }
 
@@ -465,20 +485,22 @@ pub(crate) fn judge(
             build: sides.head_build.to_owned(),
             key: key.clone(),
         };
+        let held = have.get(name) == Some(&at_head);
         let (line, why) = match floors.get(name) {
             // A count the base has no floor for: the head's file may seed
-            // it at or below the head's count, never above.
+            // it at or below the head's count, never above it by more than
+            // the band (a racing count's seed is the lowest of its reads).
             None => {
                 let seed = have
                     .get(name)
-                    .filter(|f| f.count <= h && f.key == *key)
+                    .filter(|f| !rules.lowers(name, h, f.count) && f.key == *key)
                     .cloned();
                 let line = seed.unwrap_or(at_head);
                 against.insert(name.clone(), line.count);
                 (line, "a new count".to_owned())
             }
             // A drop leaves the floor as it is; `--write-floors` lowers it.
-            Some(f) if h < f.count && (write || have.get(name) == Some(&at_head)) => {
+            Some(f) if rules.lowers(name, h, f.count) && (write || held) => {
                 (at_head, String::new())
             }
             Some(f) if rules.raises(name, h, f.count) => {
@@ -590,7 +612,7 @@ fn pre_tag(
                 None
             };
             if let Some((which, n)) = held
-                && s.count != n
+                && !rules.same(name, s.count, n)
             {
                 errors.push(format!(
                     "{gate}: {name}'s floor {} is on the {which}'s build, which counts {n}; {seed}",
@@ -630,7 +652,9 @@ fn seed(root: &Path, gate: &str, sides: &Sides<'_>, rules: &Rules<'_>) -> Result
             continue;
         };
         let (count, build) = match sides.base_counts.get(name) {
-            Some(&t) if t <= h && !rules.raises(name, h, t) => (t, tag_build.as_str()),
+            Some(&t) if !rules.lowers(name, h, t) && !rules.raises(name, h, t) => {
+                (t, tag_build.as_str())
+            }
             _ => (h, sides.head_build),
         };
         want.insert(
@@ -752,6 +776,7 @@ mod tests {
             accepted: &accepted,
             past: &past,
             swept: &|_| false,
+            band: exact,
         };
         // The file as the base has it: the raise and the new count are
         // missing; fib's gain passes and leaves its floor; str keeps its.
@@ -799,6 +824,7 @@ mod tests {
             accepted: &none_accepted,
             past: &past,
             swept: &|_| false,
+            band: exact,
         };
         let (_, errors) = judge(&dir, "native-ir", &sides, &no_line, true).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
@@ -835,6 +861,7 @@ mod tests {
                 accepted,
                 past: &past,
                 swept: &|_| false,
+                band: exact,
             };
             judge(&dir, "native-ir", &sides, &rules, write).unwrap()
         };
@@ -895,6 +922,7 @@ mod tests {
             accepted: &never,
             past: &past,
             swept: &program,
+            band: exact,
         };
         let (_, errors) = judge(&dir, "native-ir", &sides, &swept, false).unwrap();
         assert_eq!(
@@ -916,10 +944,67 @@ mod tests {
             accepted: &never,
             past: &past,
             swept: &|_| false,
+            band: exact,
         };
         write(&dir, "native-ir", &base).unwrap();
         let (_, errors) = judge(&dir, "native-ir", &sides, &not_swept, false).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A count that races (replay-ir's sessions): a drop passes either way,
+    /// and `--write-floors` lowers the floor only past the band.
+    #[test]
+    fn a_count_within_its_band_keeps_the_floor() {
+        let base = Floors::from([("s".to_owned(), floor(10_000, "b-1"))]);
+        let (dir, sha) = repo("band", &base);
+        let keys = keys(&["s"], "k");
+        let none = Counts::new();
+        let never = |_: &str, _: f64| false;
+        let rules = Rules {
+            accepted: &never,
+            past: &past,
+            swept: &|_| false,
+            band: |_, f| f / 1_000,
+        };
+        for (h, moves) in [(9_990, false), (9_989, true)] {
+            let head = counts(&[("s", h)]);
+            let sides = Sides {
+                base: &sha,
+                tag: false,
+                head: &head,
+                base_counts: &none,
+                keys: &keys,
+                head_build: "b-2",
+                recounted: &none,
+            };
+            write(&dir, "native-ir", &base).unwrap();
+            let (against, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
+            assert_eq!(against["s"], 10_000);
+            assert!(errors.is_empty(), "{h}: {errors:?}");
+            judge(&dir, "native-ir", &sides, &rules, true).unwrap();
+            let written = here(&dir, "native-ir").unwrap()["s"].count;
+            assert_eq!(written, if moves { h } else { 10_000 }, "{h}");
+        }
+        fs::remove_dir_all(&dir).unwrap();
+        // The same where the base has no floors (a gate's first landing):
+        // the seed the head's file holds stands within the band.
+        let (dir, sha) = repo("band-new", &Floors::new());
+        write(&dir, "native-ir", &base).unwrap();
+        for (h, moves) in [(9_990, false), (9_989, true)] {
+            let head = counts(&[("s", h)]);
+            let sides = Sides {
+                base: &sha,
+                tag: false,
+                head: &head,
+                base_counts: &none,
+                keys: &keys,
+                head_build: "b-2",
+                recounted: &none,
+            };
+            let (_, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
+            assert_eq!(!errors.is_empty(), moves, "{h}: {errors:?}");
+        }
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -940,6 +1025,7 @@ mod tests {
             accepted: &no_line,
             past: &past,
             swept: &|_| false,
+            band: exact,
         };
         // Host b counts 4 more on fib than host a does, on every build.
         let (keys_a, keys_b) = (keys(&["fib", "dict"], "k-a"), keys(&["fib", "dict"], "k-b"));
@@ -1029,6 +1115,7 @@ mod tests {
             accepted: &line,
             past: &past,
             swept: &|_| false,
+            band: exact,
         };
         let (_, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
         assert!(
@@ -1080,6 +1167,7 @@ mod tests {
             accepted: &accepted,
             past: &past,
             swept: &|_| false,
+            band: exact,
         };
         let good = Floors::from([
             ("fib".to_owned(), floor(999, "b-head")),

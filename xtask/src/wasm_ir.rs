@@ -258,6 +258,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             accepted: &raised,
             past: &past,
             swept: &|_| false,
+            band: floors::exact,
         },
         false,
     )?;
@@ -271,6 +272,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             accepted: &raised,
             past: &past,
             swept: &|name| swept && name != "startup",
+            band: floors::exact,
         },
         write,
     )?;

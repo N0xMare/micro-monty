@@ -294,6 +294,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             accepted: &raised,
             past: &past,
             swept: &|_| false,
+            band: floors::exact,
         },
         false,
     )?;
@@ -319,6 +320,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
                 name.split_once('/')
                     .is_some_and(|(g, _)| swept.contains(&g))
             },
+            band: floors::exact,
         },
         write,
     )?;
