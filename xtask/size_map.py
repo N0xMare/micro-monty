@@ -778,7 +778,9 @@ def out_dir_blobs(target_dir, target):
     blobs = {}
     build = target_dir / target / "release" / "build"
     for crate in ("mm-stdlib", "mm-engine"):
-        dirs = sorted((d for d in build.glob(f"{crate}-*/out") if any(d.iterdir())),
+        # `build/<crate>-<hash>/out`, or `build/<crate>/<hash>/out` (cargo's newer build-dir layout).
+        found = [*build.glob(f"{crate}-*/out"), *build.glob(f"{crate}/*/out")]
+        dirs = sorted((d for d in found if any(d.iterdir())),
                       key=lambda d: d.stat().st_mtime)
         if not dirs:
             continue
@@ -990,7 +992,8 @@ def prelude_sections(target):
     """Packed prelude bytes per `# ---- section` of prelude.py: each unit's
     record (prelude_units.rs) charged its chunk's packed/unpacked ratio."""
     build = TARGET_DIR / target / "release" / "build"
-    dirs = sorted((d for d in build.glob("mm-engine-*/out") if (d / "prelude_units.rs").exists()),
+    found = [*build.glob("mm-engine-*/out"), *build.glob("mm-engine/*/out")]
+    dirs = sorted((d for d in found if (d / "prelude_units.rs").exists()),
                   key=lambda d: d.stat().st_mtime)
     if not dirs:
         return {}
