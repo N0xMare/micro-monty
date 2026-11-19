@@ -18,13 +18,13 @@
 //! conformance results) reuses the sizes of one that had them; the
 //! recipe is in the key, not in the inputs.
 //!
-//! - Any growth past the base, one byte or more, needs git trailers
-//!   `Size: <artifact> <±bytes> <why>` in the commits since the base, each
-//!   giving its own commit's change, whose `<bytes>` summed cover the
-//!   rise and exceed the change by at most [`slack`]. A commit that a
+//! - Any growth past the base, one byte or more, needs a git trailer
+//!   `Size: <artifact> <±bytes> <why>` naming the artifact in a commit
+//!   since the base: it says why, and the measured net change is what is
+//!   judged, so the trailers' bytes need not add up to it. A commit that a
 //!   later one reverts counts for nothing. Growth in a tree with
 //!   uncommitted changes, untracked build inputs included, always fails:
-//!   no commit message can cover it.
+//!   no commit message can explain it.
 //! - Growth past the release needs a budget: the last line
 //!   `<tag> <artifact> <±bytes> <why>` for that release and artifact in
 //!   [`BUDGET`] as the base holds it, 0 without one. The owner raises it by
@@ -218,12 +218,6 @@ fn trailers(log: &str) -> Vec<(String, i128)> {
     out
 }
 
-/// How far the trailers may overstate a rise: a rebase moves sizes a
-/// little, but `Size: hello.wasm +999999` must not cover anything.
-fn slack(covered: i128) -> i128 {
-    (covered / 10).max(1024)
-}
-
 /// Why the head's sizes fail against the `base`'s, the `release`'s (its
 /// tag and sizes) and that release's `budgets`, given the `trailers`
 /// since the base ([`trailers`]).
@@ -253,38 +247,18 @@ fn judge(
             ));
         }
     }
-    // The trailers since the base, summed: each records its own commit's
-    // change, and the measured rise is the net of every commit since the
-    // base, so a commit that shrinks the artifact without a trailer leaves
-    // part of the sum unused, within the slack.
-    let covered = |artifact: &str| -> i128 {
-        trailers
-            .iter()
-            .filter(|(a, _)| a == artifact)
-            .map(|(_, n)| n)
-            .sum()
-    };
+    // A rise needs a reason, not arithmetic: the net change is measured
+    // here, and each trailer's bytes are its own commit's, on its own base.
+    let named = |artifact: &str| trailers.iter().any(|(a, _)| a == artifact);
     for (artifact, &bytes) in head {
         let mut line = format!("size: {artifact} {bytes} bytes");
         if let Some(&old) = base.get(artifact) {
             let delta = i128::from(bytes) - i128::from(old);
-            let covered = covered(artifact);
             let _ = write!(line, ", base {old} ({delta:+})");
-            if covered != 0 {
-                let _ = write!(line, ", trailers {covered:+}");
-            }
-            if delta > covered {
+            if delta > 0 && !named(artifact) {
                 failed.push(format!(
-                    "{artifact} grew {delta:+} bytes past the base, {covered:+} of it in `Size:` \
-                     trailers: commit it with the trailer `Size: {artifact} {:+} <why>`",
-                    delta - covered
-                ));
-            } else if covered - delta.max(0) > slack(covered) {
-                failed.push(format!(
-                    "the `Size:` trailers for {artifact} add up to {covered:+} bytes, but it \
-                     changed by {delta:+}: a trailer gives its commit's own change (a shrink may \
-                     carry a negative one), within {} bytes",
-                    slack(covered)
+                    "{artifact} grew {delta:+} bytes past the base and no commit since it says \
+                     why: commit it with the trailer `Size: {artifact} {delta:+} <why>`"
                 ));
             }
         }
@@ -579,7 +553,7 @@ mod tests {
 
     #[test]
     #[allow(clippy::many_single_char_names, reason = "commits a to d")]
-    fn a_rise_needs_trailers_covering_it_and_the_release_a_budget() {
+    fn a_rise_needs_a_trailer_naming_it_and_the_release_a_budget() {
         let release = sizes(&[("hello.wasm", 900), ("hello", 5000)]);
         let base = sizes(&[("hello.wasm", 1000), ("hello", 5000)]);
         let none = BTreeMap::new();
@@ -606,36 +580,15 @@ mod tests {
         }
         let own = t(&record("a", "", &["hello +1 a table"]));
         assert_eq!(judge(&head, &base, None, &none, &own), ok);
-        // Each trailer gives its own commit's rise, so they add up: +600
-        // and +500 cover +1,024 though neither alone does; a third commit
-        // shrinking it by 100 without a trailer still passes; +600 and
-        // +300 do not cover it.
+        // The trailer is the reason, not arithmetic: the net change is
+        // what is measured, so one commit naming the artifact speaks for
+        // a rise its bytes do not add up to (a rebase moves sizes, a later
+        // commit shrinks it), in either direction.
         let head = sizes(&[("hello.wasm", 2024), ("hello", 5000)]);
-        let first = record("a", "A", &["hello.wasm +600 a table"]);
-        let second = record("b", "B", &["hello.wasm +500 another table"]);
-        assert_eq!(judge(&head, &base, None, &none, &t(&first)).len(), 1);
-        assert_eq!(judge(&head, &base, None, &none, &t(&second)).len(), 1);
-        let both = format!("{second}{first}");
-        assert_eq!(judge(&head, &base, None, &none, &t(&both)), ok);
-        let shrunk = sizes(&[("hello.wasm", 1924), ("hello", 5000)]);
-        let with_shrink = format!("{second}{}{first}", record("c", "Trim a table", &[]));
-        assert_eq!(judge(&shrunk, &base, None, &none, &t(&with_shrink)), ok);
-        let short = format!("{}{first}", record("c", "C", &["hello.wasm +300 a third"]));
-        assert_eq!(judge(&head, &base, None, &none, &t(&short)).len(), 1);
-        // Trailers far past the change fail: +999999 covers nothing, and
-        // a shrink that leaves more than the slack unused needs its own
-        // negative trailer.
-        let wide = t(&record("a", "", &["hello.wasm +999999 a table"]));
-        let failed = judge(&head, &base, None, &none, &wide);
-        assert!(failed[0].contains("add up to +999999"), "{failed:?}");
-        let big = sizes(&[("hello.wasm", 31_000), ("hello", 5000)]);
-        let rise = record("a", "A", &["hello.wasm +30000 a table"]);
-        let fell = sizes(&[("hello.wasm", 21_000), ("hello", 5000)]);
-        let cut = format!("{}{rise}", record("b", "B", &[]));
-        assert_eq!(judge(&big, &base, None, &none, &t(&rise)), ok);
-        assert_eq!(judge(&fell, &base, None, &none, &t(&cut)).len(), 1);
-        let cut = format!("{}{rise}", record("b", "B", &["hello.wasm -10000 the cut"]));
-        assert_eq!(judge(&fell, &base, None, &none, &t(&cut)), ok);
+        for bytes in ["+600", "+1024", "+999999"] {
+            let named = t(&record("a", "A", &[&format!("hello.wasm {bytes} a table")]));
+            assert_eq!(judge(&head, &base, None, &none, &named), ok, "{bytes}");
+        }
         // A reverted commit's trailer covers nothing: A +1,024 with its
         // trailer, B reverts A, C rises +1,024 without one: fails. A revert
         // of the revert counts A again.

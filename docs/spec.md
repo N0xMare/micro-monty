@@ -1044,9 +1044,10 @@ own recipe, so a change to the recipe, such as the `wasm-opt` flags, is
 charged like any other rise; an older one (v0.0.1) is built with this
 checkout's recipe and its own toolchain. The head's artifact names must
 be the base's and the release's. Any rise past the base, one byte or
-more, needs git trailers `Size: <artifact> <±bytes> <why>` in the commits
-since the base, each giving its own commit's change, whose bytes summed
-cover the rise and exceed the change by at most a tenth (at least 1 KiB);
+more, needs a git trailer `Size: <artifact> <±bytes> <why>` naming the
+artifact in a commit since the base, as its reason; the measured net
+change is what is judged, so the trailers' bytes need not add up to it
+(owner, 2026-11-19);
 a commit a later one reverts counts for nothing, and a rise with
 uncommitted changes, untracked build inputs included, always fails. A
 rise past the release must stay within that release's budget in

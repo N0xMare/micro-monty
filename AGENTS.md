@@ -185,9 +185,10 @@ to `target/check/logs/<stage>.log`.
 - Size: `cargo xtask size` compares each shipped artifact with the base
   and the last `v*` tag, both built outside the checkout. A rise past the
   base needs a git trailer `Size: <artifact> <±bytes> <why>` in the commit
-  that makes it; the trailers since the base must add up to the change
-  within 10% (at least 1 KiB), a reverted commit's trailer counts for
-  nothing, and an uncommitted rise always fails. A rise past the tag must
+  that makes it, as its reason: the gate judges the measured net change,
+  not the trailers' sum (owner, 2026-11-19). A reverted commit's trailer
+  counts for nothing, and an uncommitted rise always fails. A rise past
+  the tag must
   fit that release's budget in `xtask/size-budget.txt`, read from the
   base, with signed bytes; only the owner adds budget lines, and one
   lands before the growth it allows. A push is judged once, head against
