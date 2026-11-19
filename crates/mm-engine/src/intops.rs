@@ -1124,7 +1124,7 @@ fn mag_cmp_le(x: &[u8], y: &[u8]) -> (Ordering, usize) {
     if x.len() != y.len() {
         return (x.len().cmp(&y.len()), 0);
     }
-    if x == y {
+    if mm_core::bytes_eq(x, y) {
         return (Ordering::Equal, x.len());
     }
     let ((xr, xw), (yr, yw)) = (x.as_rchunks::<8>(), y.as_rchunks::<8>());

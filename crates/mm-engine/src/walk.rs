@@ -540,7 +540,7 @@ impl Vm {
                 }
                 let (p, q) = (self.bytes_data(a), self.bytes_data(b));
                 self.spend_text(left, eq_bytes(p, q));
-                return leaf(p == q);
+                return leaf(mm_core::bytes_eq(p, q));
             }
             if let (Some(x), Some(y)) = (self.int_of_o(a), self.int_of_o(b)) {
                 return leaf(x == y);

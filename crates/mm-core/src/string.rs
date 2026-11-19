@@ -191,6 +191,25 @@ fn leads8(w: [u8; 8]) -> usize {
     8 - (cont.wrapping_mul(0x0101_0101_0101_0101) >> 56) as usize
 }
 
+/// `a == b`. On musl 32 bytes at a time: a slice compare is one libc
+/// `memcmp` call, a byte loop there (about 7× glibc's time on 60 MB
+/// \[M\]), where fixed-size compares inline to vector code. Elsewhere the
+/// libc's `memcmp` (or the wasm guest's) is faster than the chunks: 10%
+/// on glibc \[M\].
+#[must_use]
+#[inline]
+pub fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
+    #[cfg(target_env = "musl")]
+    {
+        let ((wa, ta), (wb, tb)) = (a.as_chunks::<32>(), b.as_chunks::<32>());
+        a.len() == b.len() && wa.iter().zip(wb).all(|(x, y)| x == y) && ta == tb
+    }
+    #[cfg(not(target_env = "musl"))]
+    {
+        a == b
+    }
+}
+
 /// Lead bytes in `b`: the chars that start in it.
 fn count_leads(b: &[u8]) -> usize {
     let (chunks, rest) = b.as_chunks::<8>();
@@ -624,7 +643,7 @@ impl Heap {
         }
         let ba = self.bytes(Value(da).as_byte_ref().ok_or(Error::BadType)?)?;
         let bb = self.bytes(Value(db).as_byte_ref().ok_or(Error::BadType)?)?;
-        Ok((ba == bb, ba.len().min(bb.len())))
+        Ok((bytes_eq(ba, bb), ba.len().min(bb.len())))
     }
 
     /// `str_eq_n`'s answer when it read fewer than 64 bytes of text; `None` when it
