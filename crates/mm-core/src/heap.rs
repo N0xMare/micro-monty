@@ -1237,6 +1237,14 @@ impl Heap {
         self.stats.live_bytes = self.stats.live_bytes.saturating_sub(units * 8);
     }
 
+    /// Gives back committed memory no live block needs, without moving
+    /// any (`Space::shrink`): for a reset, right after a full collection.
+    pub fn shrink(&mut self) {
+        self.finish_sweep();
+        self.words.shrink();
+        self.bytes.shrink();
+    }
+
     /// Sweeps what the last collection left to allocation, so that every
     /// block with a start bit is live: before walking objects or writing a
     /// snapshot.

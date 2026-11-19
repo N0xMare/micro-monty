@@ -2311,7 +2311,7 @@ Session::start(&Code) -> Progress
 Session::resume(Resume) -> Result<Progress, ResumeError>          // Unexpected | UnknownCall | AlreadySettled
 Session::cancel() -> bool                                         // drops the cell's frames, tasks, futures; keeps globals
 Session::snapshot(&mut self) / snapshot_with_limit(max_bytes) -> Result<Vec<u8>, SnapshotError>   // output capped at the memory limit by default
-Session::reset() -> Result<(), PyException>                       // keeps loaded bundled code and prelude parts
+Session::reset() -> Result<(), PyException>                       // keeps loaded bundled code and prelude parts; gives back committed memory
 Session::reset_to(&SessionTemplate) -> Result<(), SnapshotError> // a fresh session plus the template's setup, keeping what reset keeps
 SessionTemplate::capture(&Engine, &mut Session) / instantiate() / image() / from_image(..)
 Engine::with_module_cache(bytes) / with_host_code_in_snapshots(bool)

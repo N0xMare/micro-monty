@@ -2341,6 +2341,9 @@ impl Session {
     /// modules' code and the prelude's parts, charged to its memory limit,
     /// so importing a module again after a reset charges less fuel than its
     /// first import did. [`Session::reset_to`] keeps none of it.
+    /// Memory the cells committed and no longer use is given back without
+    /// moving any object: each heap segment keeps the smallest capacity
+    /// that covers its last live block, and an empty one is released.
     ///
     /// # Errors
     ///

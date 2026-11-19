@@ -474,6 +474,68 @@ h.g = g";
     }
 }
 
+/// A reset gives back what earlier cells committed (`Heap::shrink`): after
+/// a heap filled with 4 KB buffers, 1 MB and 2 MB fit again and 200 KB
+/// buffers fit as many times as in a new session with the same imports, on
+/// either side of a snapshot and restore; after `reset_to`, as in a new
+/// session.
+#[test]
+fn a_reset_gives_back_what_a_full_heap_committed() {
+    let engine = wall_engine(3);
+    let fits = |s: &mut Session| {
+        let src = "ys = []\ntry:\n    while True:\n        ys.append(bytearray(200_000))\n\
+                   except MemoryError:\n    pass\nn = len(ys)\ndel ys\nn";
+        match s.start(&engine.compile(src, "cell.py").expect("compiles")) {
+            Progress::Complete(Some(c)) => c.repr,
+            p => panic!("{p:?}"),
+        }
+    };
+    let new = |imports: &str| {
+        let mut s = Session::new(&engine).expect("session");
+        assert_eq!(wall_cell(&engine, &mut s, imports), "ok");
+        s.reset().expect("reset");
+        s
+    };
+    let full = || {
+        let mut s = Session::new(&engine).expect("session");
+        let fill = format!("import json\n{}", fill_with("bytearray(4000)"));
+        assert_eq!(wall_cell(&engine, &mut s, &fill), "ok");
+        assert_eq!(
+            wall_cell(&engine, &mut s, "b = bytearray(1_000_000)"),
+            "MemoryError"
+        );
+        s
+    };
+    let template =
+        micro_monty::SessionTemplate::capture(&engine, &mut new("pass")).expect("captures");
+    let mut sessions = Vec::new();
+    let mut s = full();
+    s.reset().expect("reset");
+    sessions.push(("reset", s, new("import json")));
+    let mut s = full();
+    s.reset().expect("reset");
+    let s = engine
+        .restore(&s.snapshot().expect("snapshot"))
+        .expect("restores");
+    sessions.push(("reset, restore", s, new("import json")));
+    let mut s = full();
+    let mut s = engine
+        .restore(&s.snapshot().expect("snapshot"))
+        .expect("restores");
+    s.reset().expect("reset");
+    sessions.push(("restore, reset", s, new("import json")));
+    let mut s = full();
+    s.reset_to(&template).expect("resets to the template");
+    sessions.push(("reset_to", s, new("pass")));
+    for (how, mut s, mut fresh) in sessions {
+        assert_eq!(fits(&mut s), fits(&mut fresh), "{how}");
+        for n in ["1_000_000", "2_000_000"] {
+            let src = format!("b = bytearray({n})\ndel b");
+            assert_eq!(wall_cell(&engine, &mut s, &src), "ok", "{how}: {n}");
+        }
+    }
+}
+
 fn wall_cell(engine: &Engine, session: &mut Session, src: &str) -> String {
     let code = engine.compile(src, "cell.py").expect("compiles");
     match session.start(&code) {

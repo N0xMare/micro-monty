@@ -46,6 +46,12 @@ hashes are pre-release history, kept in the private archive
 
 ### Fixed
 
+- `reset()` gives back the memory earlier cells committed and no longer
+  use, without moving an object: after a cell filled a 3 MiB heap with
+  4 KB buffers, a 1 MB `bytearray` raised `MemoryError` after the reset
+  and a 200 KB fill fit 4 buffers against a new session's 15; now 1 MB
+  and 2 MB fit and the fill fits 15, also across a snapshot and restore
+  [M].
 - A reset session is a new one to the program: `sys.setrecursionlimit`
   no longer survives `reset()`, and guest code can no longer set or
   delete attributes of the functions and classes the prelude defines

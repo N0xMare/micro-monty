@@ -111,6 +111,8 @@ pub(crate) trait Store {
     fn grow(&mut self, units: usize);
     /// Zero-fills the storage up to `units` units if it holds fewer.
     fn fill_to(&mut self, units: usize);
+    /// Keeps room for `units` units only, and the contents below them.
+    fn shrink(&mut self, units: usize);
     /// Units initialized.
     fn units(&self) -> usize;
     fn read(&self, unit: usize) -> Option<u64>;
@@ -147,6 +149,10 @@ impl Store for Vec<u64> {
         if self.len() < units {
             self.resize(units, 0);
         }
+    }
+    fn shrink(&mut self, units: usize) {
+        self.truncate(units);
+        self.shrink_to(units);
     }
     #[inline]
     fn units(&self) -> usize {
@@ -217,6 +223,10 @@ impl Store for Vec<u8> {
         if self.len() < units * 8 {
             self.resize(units * 8, 0);
         }
+    }
+    fn shrink(&mut self, units: usize) {
+        self.truncate(units * 8);
+        self.shrink_to(units * 8);
     }
     #[inline]
     fn units(&self) -> usize {
@@ -1241,6 +1251,68 @@ impl<S: Store> Space<S> {
         }
         self.arm_run();
         out
+    }
+
+    /// After a full sweep (`pending` empty): each normal segment keeps the
+    /// smallest capacity from `FIRST` that covers its last block and that
+    /// block's room, and an empty bump segment is released, so what a full
+    /// heap committed is given back. Addresses do not change, and the rule
+    /// reads only where live blocks are, which a restore reproduces. The
+    /// free lists are filed again.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub(crate) fn shrink(&mut self) {
+        self.run = (0, 0, 0);
+        self.lists.clear();
+        for idx in 1..self.segs.len() {
+            let (Some(s), Some(m)) = (self.segs.get_mut(idx), self.marks.get_mut(idx)) else {
+                continue;
+            };
+            if !s.present || s.large {
+                continue;
+            }
+            let Some(w) = s.starts.iter().rposition(|&w| w != 0) else {
+                // Only the bump segment stays present empty after a sweep.
+                self.release(idx);
+                if idx == self.bump {
+                    self.bump = 0;
+                }
+                continue;
+            };
+            let last = w * 64 + 63 - s.starts[w].leading_zeros() as usize;
+            let units = s.data.read(last).map_or(0, |h| S::units_for(header_len(h)));
+            let room = if units > SMALL_MAX {
+                medium_room(units)
+            } else {
+                units
+            };
+            let cap = (last + room)
+                .min(s.top)
+                .next_power_of_two()
+                .clamp(S::FIRST, SEG_UNITS);
+            if cap < s.cap() {
+                let old = s.cost();
+                s.data.shrink(cap);
+                s.cap = u32::try_from(cap).unwrap_or(0);
+                s.top = s.top.min(cap);
+                for b in [&mut s.starts, &mut *m] {
+                    let mut v = core::mem::take(b).into_vec();
+                    v.truncate(cap / 64);
+                    *b = v.into_boxed_slice();
+                }
+                self.committed -= old - s.cost();
+            }
+            m.copy_from_slice(&s.starts);
+            walk(
+                &mut self.lists,
+                s,
+                m,
+                idx,
+                idx == self.bump,
+                &mut Sweep::default(),
+            );
+            m.fill(0);
+        }
+        self.arm_run();
     }
 
     /// Lazy sweep: reuses what the last collection found dead before more

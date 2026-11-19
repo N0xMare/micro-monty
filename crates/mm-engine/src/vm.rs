@@ -1546,6 +1546,12 @@ impl Vm {
         // The emptied tables, if new ones replaced them, are released.
         self.heap.idle_collected = false;
         self.reclaim_code();
+        // What the cells committed and no longer need is given back, so a
+        // reset session has the room a new one has (`Heap::shrink`): after
+        // a collection, as code reclamation leaves its constants to the
+        // next one.
+        self.collect_now();
+        self.heap.shrink();
         Ok(())
     }
 
