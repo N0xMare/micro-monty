@@ -245,6 +245,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         &floors::Rules {
             accepted: &raised,
             past: &|name: &str, h: u64, o: u64| LIMITS.past(name, h, o),
+            swept: &|_| false,
         },
         write,
     )?;

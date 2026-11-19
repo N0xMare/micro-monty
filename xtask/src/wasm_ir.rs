@@ -238,21 +238,39 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             .iter()
             .any(|a| a.names(None, name) && r <= a.ceiling())
     };
+    let floor_sides = floors::Sides {
+        base: &base_sha,
+        tag,
+        head: &totals[0],
+        base_counts: &totals[1],
+        keys: &keys,
+        head_build: &head_build,
+        recounted: &recounted,
+    };
+    let past = |name: &str, h: u64, o: u64| LIMITS.past(name, h, o);
+    // An accepted geomean past its limit against the floors raises every
+    // program that rose, so the next landing does not fail on it again.
+    let (floor, _) = floors::judge(
+        &root,
+        "wasm-ir",
+        &floor_sides,
+        &floors::Rules {
+            accepted: &raised,
+            past: &past,
+            swept: &|_| false,
+        },
+        false,
+    )?;
+    let geo = floors::geomean(&totals[0], &floor, &|name| name != "startup");
+    let swept = geo > GEOMEAN_LIMIT && raised("geomean", geo);
     let (against, errors) = floors::judge(
         &root,
         "wasm-ir",
-        &floors::Sides {
-            base: &base_sha,
-            tag,
-            head: &totals[0],
-            base_counts: &totals[1],
-            keys: &keys,
-            head_build: &head_build,
-            recounted: &recounted,
-        },
+        &floor_sides,
         &floors::Rules {
             accepted: &raised,
-            past: &|name: &str, h: u64, o: u64| LIMITS.past(name, h, o),
+            past: &past,
+            swept: &|name| swept && name != "startup",
         },
         write,
     )?;

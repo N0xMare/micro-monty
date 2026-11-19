@@ -268,24 +268,54 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             .iter()
             .any(|a| a.names(Some(g), p) && r <= a.ceiling())
     };
+    let this_build = floors::build_id(&root, None)?;
+    let floor_sides = floors::Sides {
+        base: &base_sha,
+        tag,
+        head: &all[0],
+        base_counts: &all[1],
+        keys: &keys,
+        head_build: &this_build,
+        recounted: &recounted,
+    };
+    let past = |_: &str, h: u64, o: u64| {
+        #[allow(clippy::cast_precision_loss, reason = "a ratio of counts")]
+        let r = h as f64 / o.max(1) as f64;
+        r > PROGRAM_LIMIT
+    };
+    // A guest's accepted geomean past its limit against the floors raises
+    // every program of that guest that rose, so the next landing does not
+    // fail on it again.
+    let (at_floor, _) = floors::judge(
+        &root,
+        "v8-ir",
+        &floor_sides,
+        &floors::Rules {
+            accepted: &raised,
+            past: &past,
+            swept: &|_| false,
+        },
+        false,
+    )?;
+    let swept: Vec<&str> = GUESTS
+        .iter()
+        .map(|g| label(g))
+        .filter(|g| {
+            let prefix = format!("{g}/");
+            let geo = floors::geomean(&all[0], &at_floor, &|name| name.starts_with(&prefix));
+            geo > GEOMEAN_LIMIT && raised(&format!("{g}/geomean"), geo)
+        })
+        .collect();
     let (against, errors) = floors::judge(
         &root,
         "v8-ir",
-        &floors::Sides {
-            base: &base_sha,
-            tag,
-            head: &all[0],
-            base_counts: &all[1],
-            keys: &keys,
-            head_build: &floors::build_id(&root, None)?,
-            recounted: &recounted,
-        },
+        &floor_sides,
         &floors::Rules {
             accepted: &raised,
-            past: &|_: &str, h: u64, o: u64| {
-                #[allow(clippy::cast_precision_loss, reason = "a ratio of counts")]
-                let r = h as f64 / o.max(1) as f64;
-                r > PROGRAM_LIMIT
+            past: &past,
+            swept: &|name| {
+                name.split_once('/')
+                    .is_some_and(|(g, _)| swept.contains(&g))
             },
         },
         write,

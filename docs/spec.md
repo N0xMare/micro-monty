@@ -2942,6 +2942,20 @@ raise, else the lower count; the gate on the combined tree then sets it.
 What is lost against counting every commit is which commit moved a
 count.
 
+Known limits (review of the floors, D2 to D9; Low, left as they are):
+floors are trusted per host class. A push that moves or adds a floor line
+writes it under its host's key, so it passes only on that host; another
+host judges it with `--base <tag>` (D2). At a tag base a line under
+another host's key is recounted, not checked, so a hand edit there is
+caught only by a host with that key (D3), and a floor may be raised by
+hand up to an accept line's ceiling for a rise under the limit (D4). A
+stale key is not rewritten until the next seed, so each fresh checkout
+recounts its build (D5). A new count's line may name any build until the
+next pre-tag check (D6). A mark is its attribute and its function's name,
+so one moved between two functions of one name in a file is not an added
+mark (D7). The pre-tag check forces the seed only when the first push
+after a tag is judged against the tag (D9).
+
 **Recorded sessions.** The bench programs reach a small part of the
 engine (one size change marked 261 functions; they ran 20 of them [M]),
 so the release gate also counts the 160 recorded real sessions: `cargo
@@ -3110,7 +3124,8 @@ opens a draft release.
   rise carries the table and a `Wasm-IR-Accepted: <names> <ceiling>
   <reason>` line in its commit message (`MM_WASM_IR_ACCEPT` with the same
   text before committing), which passes only the names it lists up to the
-  ceiling and raises only their floors. A revision's counts are cached in
+  ceiling and raises only their floors (an accepted geomean past its
+  limit, those of every program that rose). A revision's counts are cached in
   `target/wasm-ir/cache/`, keyed by the counting method, the wasmtime,
   wasm-opt and valgrind versions, wasm-opt's wasip1 arguments and
   features, the host, the recipe and the toolchain, and each program's count by a hash of its `bench/*.py` source.

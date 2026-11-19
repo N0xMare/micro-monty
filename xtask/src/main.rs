@@ -746,6 +746,7 @@ const RELEASE_GATE_PATHS: &[&str] = &[
     // What only they read: replay-ir's workload and lockstep driver, and
     // v8-ir's host JS, which every v8-ir key hashes.
     "conformance/codemode/real/gate.py",
+    "conformance/codemode/real/carry.py",
     "conformance/codemode/real/traces.tar.xz",
     "hosts/js/src/",
     "hosts/js/bench/count.ts",

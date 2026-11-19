@@ -124,7 +124,7 @@ to `target/check/logs/<stage>.log`.
   `xtask/src/wasm.rs` or `shipped.rs`; the release-gate-only Ir gates'
   code (`xtask/src/v8_ir.rs`, `replay_ir.rs`, `accept.rs`, `floors.rs`),
   `xtask/ir-floors/v8-ir.txt` and what only they read
-  (`conformance/codemode/real/gate.py` and `traces.tar.xz`;
+  (`conformance/codemode/real/gate.py`, `carry.py` and `traces.tar.xz`;
   `hosts/js/src/`, `hosts/js/bench/count.ts`, `hosts/js/package.json`);
   `rust-toolchain.toml`,
   `Cargo.lock`, `.cargo/` or `.agents/setup`. A line of a `[profile.*]`
@@ -196,7 +196,9 @@ to `target/check/logs/<stage>.log`.
   such as `Native-IR-Accepted: dict,startup 1.006 <reason>`. It passes
   only the names it lists (programs, `sessions`, `sessions-calls` or
   `geomean`; v8-ir may put `plain/` or `bundle/` before one) up to the
-  ceiling ratio, and raises only the floors of those past a limit.
+  ceiling ratio, and raises only the floors of those past a limit; an
+  accepted geomean past its limit raises the floor of every program in
+  it that rose.
   `MM_IR_ACCEPT`, `MM_WASM_IR_ACCEPT` and `MM_V8_IR_ACCEPT` with the same
   text stand for the line in an uncommitted tree only. A tag starts new
   floors: the first commit after it is `just seed-floors`, which runs each

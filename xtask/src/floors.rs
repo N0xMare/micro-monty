@@ -341,14 +341,35 @@ pub(crate) struct Rules<'a> {
     pub(crate) accepted: &'a dyn Fn(&str, f64) -> bool,
     /// `name`'s count `head` is past the gate's limit over `other`.
     pub(crate) past: &'a dyn Fn(&str, u64, u64) -> bool,
+    /// `name` is part of a geomean that is past its limit against the
+    /// floors and that an accept line covers ([`geomean`]): its count
+    /// raises its floor wherever it rose, past its own limit or not, or
+    /// the next landing fails on the same geomean.
+    pub(crate) swept: &'a dyn Fn(&str) -> bool,
+}
+
+/// The geomean of `head`'s ratios to `floors` over the names `of` takes
+/// that both hold, for [`Rules::swept`].
+#[allow(clippy::cast_precision_loss, reason = "a ratio of counts")]
+pub(crate) fn geomean(head: &Counts, floors: &Counts, of: &dyn Fn(&str) -> bool) -> f64 {
+    let (mut product, mut n) = (1.0_f64, 0_i32);
+    for (name, &h) in head.iter().filter(|(name, _)| of(name)) {
+        if let Some(&f) = floors.get(name) {
+            product *= ratio(h, f);
+            n += 1;
+        }
+    }
+    product.powf(1.0 / f64::from(n.max(1)))
 }
 
 impl Rules<'_> {
-    /// Whether the head's count `h` raises a floor `f`: only a rise past
-    /// the limit that an accept line covers, so a line that lists more
-    /// names than rose leaves their floors where they are.
+    /// Whether the head's count `h` raises a floor `f`: a rise past the
+    /// limit that an accept line covers, so a line that lists more names
+    /// than rose leaves their floors where they are; or any rise of a
+    /// count in an accepted geomean ([`Rules::swept`]).
     fn raises(&self, name: &str, h: u64, f: u64) -> bool {
-        h > f && (self.past)(name, h, f) && (self.accepted)(name, ratio(h, f))
+        h > f
+            && ((self.swept)(name) || (self.past)(name, h, f) && (self.accepted)(name, ratio(h, f)))
     }
 }
 
@@ -717,6 +738,7 @@ mod tests {
         let rules = Rules {
             accepted: &accepted,
             past: &past,
+            swept: &|_| false,
         };
         // The file as the base has it: the gain, the raise and the new
         // count are each missing; str keeps its floor.
@@ -763,6 +785,7 @@ mod tests {
         let no_line = Rules {
             accepted: &none_accepted,
             past: &past,
+            swept: &|_| false,
         };
         let (_, errors) = judge(&dir, "native-ir", &sides, &no_line, true).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
@@ -770,6 +793,71 @@ mod tests {
             here(&dir, "native-ir").unwrap()["dict"],
             floor(2_000, "b-1")
         );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The review's WH mutant (wasm-ir): every program +0.45%, under the
+    /// program limit, the geomean past its limit and accepted. The risen
+    /// floors move to the head, so the next landing does not fail on the
+    /// same geomean; with the geomean's rise not accepted, nothing moves.
+    #[test]
+    fn an_accepted_geomean_raises_the_floors_of_what_rose() {
+        let names = ["a", "b", "c", "startup"];
+        let base: Floors = names
+            .iter()
+            .map(|n| ((*n).to_owned(), floor(10_000, "b-1")))
+            .collect();
+        let (dir, sha) = repo("geomean", &base);
+        let keys = keys(&names, "k");
+        let head = counts(&[
+            ("a", 10_045),
+            ("b", 10_045),
+            ("c", 10_000),
+            ("startup", 10_001),
+        ]);
+        let none = Counts::new();
+        let sides = Sides {
+            base: &sha,
+            tag: false,
+            head: &head,
+            base_counts: &none,
+            keys: &keys,
+            head_build: "b-2",
+            recounted: &none,
+        };
+        let never = |_: &str, _: f64| false;
+        let program = |name: &str| name != "startup";
+        let floors_now: Counts = base.iter().map(|(n, f)| (n.clone(), f.count)).collect();
+        assert!(geomean(&head, &floors_now, &program) > 1.002);
+        let swept = Rules {
+            accepted: &never,
+            past: &past,
+            swept: &program,
+        };
+        let (_, errors) = judge(&dir, "native-ir", &sides, &swept, false).unwrap();
+        assert_eq!(
+            errors.iter().filter(|e| e.contains("must hold")).count(),
+            2,
+            "{errors:?}"
+        );
+        judge(&dir, "native-ir", &sides, &swept, true).unwrap();
+        let written = here(&dir, "native-ir").unwrap();
+        assert_eq!(written["a"], floor(10_045, "b-2"));
+        assert_eq!(written["b"], floor(10_045, "b-2"));
+        assert_eq!(written["c"], floor(10_000, "b-1"), "c did not rise");
+        assert_eq!(
+            written["startup"],
+            floor(10_000, "b-1"),
+            "not in the geomean"
+        );
+        let not_swept = Rules {
+            accepted: &never,
+            past: &past,
+            swept: &|_| false,
+        };
+        write(&dir, "native-ir", &base).unwrap();
+        let (_, errors) = judge(&dir, "native-ir", &sides, &not_swept, false).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -789,6 +877,7 @@ mod tests {
         let rules = Rules {
             accepted: &no_line,
             past: &past,
+            swept: &|_| false,
         };
         // Host b counts 4 more on fib than host a does, on every build.
         let (keys_a, keys_b) = (keys(&["fib", "dict"], "k-a"), keys(&["fib", "dict"], "k-b"));
@@ -880,6 +969,7 @@ mod tests {
         let rules = Rules {
             accepted: &line,
             past: &past,
+            swept: &|_| false,
         };
         let (_, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
         assert!(
@@ -892,6 +982,10 @@ mod tests {
 
     /// The base a tag: the pre-tag check, and `--write-floors` seeding.
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one scratch repository, case by case"
+    )]
     fn at_a_tag_the_floors_are_the_tag_s_and_seeding_writes_them() {
         let (dir, sha) = repo("tag", &Floors::new());
         git(&dir, &["tag", "v0.0.9"]).unwrap();
@@ -926,6 +1020,7 @@ mod tests {
         let rules = Rules {
             accepted: &accepted,
             past: &past,
+            swept: &|_| false,
         };
         let good = Floors::from([
             ("fib".to_owned(), floor(999, "b-head")),
