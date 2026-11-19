@@ -1509,6 +1509,8 @@ impl Vm {
     /// Unreachable user code is reclaimed; host functions and modules stay.
     pub fn reset(&mut self) -> Result<(), Raised> {
         self.end_cell();
+        // `sys.setrecursionlimit` is the session's program state too.
+        self.recursion_limit = self.recursion_ceiling;
         self.handled = Value::NONE;
         self.context = Value::NONE;
         self.exc = Value::NONE;

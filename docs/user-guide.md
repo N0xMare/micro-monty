@@ -1579,6 +1579,15 @@ differs:
 
 ### Other differences from CPython
 
+- **Stdlib functions and classes are read-only.** Setting or deleting an
+  attribute of a function or class defined by the engine's own stdlib code
+  (`asyncio.Lock.x = 1`, `json.dumps.cache = {}`, `del asyncio.Queue.put`)
+  raises CPython's error for a builtin function or an immutable type,
+  where CPython allows it for its Python-level stdlib objects: these
+  objects are shared by every reset of a session, so a change would reach
+  the next cell. Instances, subclasses and module attributes
+  (`json.dumps = my_dumps`, gone after a reset) work as in CPython.
+
 - **Sorting.** `sorted` and `list.sort` are a stable merge sort that calls
   only `<`. For a total order the result is CPython's, but `__lt__` is
   called on other pairs and a different number of times, and a mixed-type

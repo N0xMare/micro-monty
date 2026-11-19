@@ -46,6 +46,13 @@ hashes are pre-release history, kept in the private archive
 
 ### Fixed
 
+- A reset session is a new one to the program: `sys.setrecursionlimit`
+  no longer survives `reset()`, and guest code can no longer set or
+  delete attributes of the functions and classes the prelude defines
+  (`asyncio.Future.leak = 1`, `json.dumps.x = 1`), which every reset of a
+  session shares. It gets CPython's `AttributeError` for a builtin
+  function or `TypeError` for an immutable type; instances, subclasses
+  and module attributes stay writable.
 - A session whose heap is at its wall no longer keeps failing cell starts
   with `MemoryError` and fuel 0 beside garbage it could collect. A start
   at the wall reclaims dead code with its one collection, whether or not

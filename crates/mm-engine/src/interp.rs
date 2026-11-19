@@ -4121,7 +4121,12 @@ impl Vm {
                                 r => op_unit!(r.map(|_| ()), 6, ("_unreachable", &[])),
                             }
                         } else {
-                            op_unit!(self.setattr(o, name, acc), 6, ("_unreachable", &[]));
+                            let set = if code.gslot == crate::vm::GSLOT_PRELUDE {
+                                self.setattr(o, name, acc)
+                            } else {
+                                self.guest_setattr(o, name, acc)
+                            };
+                            op_unit!(set, 6, ("_unreachable", &[]));
                         }
                     }
                     op::LOAD_METHOD => {
@@ -4870,7 +4875,12 @@ impl Vm {
             }
             op::DEL_ATTR => {
                 let name = code.names[opd!(0)];
-                op_unit!(self.delattr(acc, name), 3, ("_unreachable", &[]));
+                let del = if code.gslot == crate::vm::GSLOT_PRELUDE {
+                    self.delattr(acc, name)
+                } else {
+                    self.guest_delattr(acc, name)
+                };
+                op_unit!(del, 3, ("_unreachable", &[]));
             }
             op::DEL_ITEM => {
                 let o = reg!(opd!(0));

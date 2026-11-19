@@ -6,7 +6,7 @@ use crate::class::Dn;
 use crate::class::f;
 use crate::scratch::{NativeValues, NativeVec};
 use crate::types::{T, ty};
-use crate::vm::{Raised, Vm, exc_slot, fn_slot};
+use crate::vm::{GSLOT_PRELUDE, Raised, Vm, exc_slot, fn_slot};
 use alloc::{format, string::String, vec, vec::Vec};
 use core::cmp::Ordering;
 use mm_compile::ast::BinOp;
@@ -3542,7 +3542,11 @@ impl Vm {
             (T::function, "__kwdefaults__") if obj.is_obj_kind(ty::FUNC as u8) => {
                 Some(self.vslot_hot(obj, fn_slot::KWDEFAULTS))
             }
-            (T::function, "__dict__") if obj.is_obj_kind(ty::FUNC as u8) => {
+            // A prelude function's would let a cell change it for the
+            // session's later cells ([`Vm::refuse_prelude_change`]).
+            (T::function, "__dict__")
+                if obj.is_obj_kind(ty::FUNC as u8) && !self.is_prelude_fn(obj) =>
+            {
                 Some(self.func_dict(obj)?)
             }
             (T::function, "__module__") if obj.is_obj_kind(ty::HOSTFN as u8) => {
@@ -3680,6 +3684,96 @@ impl Vm {
             return T::BaseException;
         }
         t
+    }
+
+    /// Refuses guest code's change to an attribute of a function or class
+    /// the prelude defined: those outlive `reset`, so a change would reach
+    /// every later cell of the session. Its own code (the prelude's) may.
+    /// A function is the prelude's when its code is; a class, when the
+    /// prelude's globals bind it (`__module__ == '__main__'` is the user's
+    /// at once). CPython's errors for a builtin function and an immutable
+    /// type.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub(crate) fn refuse_prelude_change(
+        &mut self,
+        obj: Value,
+        name: Value,
+        delete: bool,
+    ) -> Result<(), Raised> {
+        if obj.is_obj_kind(ty::FUNC as u8) {
+            if self.is_prelude_fn(obj) {
+                let n = self.str_ref(name);
+                let msg = if delete {
+                    format!("'builtin_function_or_method' object has no attribute '{n}'")
+                } else {
+                    format!(
+                        "'builtin_function_or_method' object has no attribute '{n}' and no __dict__ for setting new attributes"
+                    )
+                };
+                return Err(self.err(T::AttributeError, &msg));
+            }
+            return Ok(());
+        }
+        if !Vm::is_class(obj) {
+            return Ok(());
+        }
+        let module = self
+            .find_interned("__module__")
+            .and_then(|k| self.dict_lookup_str(self.vslot(obj, crate::class::cls::DICT), k));
+        if module.is_some_and(|m| Vm::is_str(m) && self.str_ref(m) == "__main__") {
+            return Ok(());
+        }
+        let pg = self.prelude_globals;
+        let bound = (0..u32::try_from(self.dict_used(pg)).unwrap_or(u32::MAX))
+            .any(|e| self.dict_entry_at(pg, e).is_some_and(|(_, v)| v == obj));
+        if bound {
+            let msg = format!(
+                "cannot {} '{}' attribute of immutable type '{}'",
+                if delete { "delete" } else { "set" },
+                self.str_ref(name),
+                self.class_name(obj)
+            );
+            return Err(self.err(T::TypeError, &msg));
+        }
+        Ok(())
+    }
+
+    /// Whether function `f`'s code is the prelude's: loaded from its
+    /// source. Two kinds run in the prelude's globals and are not: a typed
+    /// host module's (`Vm::run_host_defs`) and what `_mm.signature` made
+    /// (`Vm::add_code`: a typed host function, a dataclass's `__init__`,
+    /// a namedtuple's `__new__`). Those are the session's or the guest's
+    /// own, so their attributes stay the guest's to set, and a typed host
+    /// function's outlive a reset as the function does.
+    pub(crate) fn is_prelude_fn(&self, f: Value) -> bool {
+        let ci = self.vslot_raw_of(f, fn_slot::CODE);
+        usize::try_from(ci)
+            .ok()
+            .and_then(|i| self.codes.get(i))
+            .is_some_and(|c| {
+                c.gslot == GSLOT_PRELUDE
+                    && self
+                        .sources
+                        .get(c.source as usize)
+                        .is_some_and(|s| s.host.is_none())
+            })
+    }
+
+    /// `obj.name = v` by guest code ([`Vm::refuse_prelude_change`]).
+    pub(crate) fn guest_setattr(
+        &mut self,
+        obj: Value,
+        name: Value,
+        v: Value,
+    ) -> Result<(), Raised> {
+        self.refuse_prelude_change(obj, name, false)?;
+        self.setattr(obj, name, v)
+    }
+
+    /// `del obj.name` by guest code ([`Vm::refuse_prelude_change`]).
+    pub(crate) fn guest_delattr(&mut self, obj: Value, name: Value) -> Result<(), Raised> {
+        self.refuse_prelude_change(obj, name, true)?;
+        self.delattr(obj, name)
     }
 
     /// `del obj.name` (a call request may be left).

@@ -275,6 +275,16 @@ evaluated, matching deferred annotations).
   `|=`) raises `TypeError`, so code that relies on writing through
   `globals()` is refused rather than silently diverging
   (`conformance/own/373`). There is no writable `globals()` or `locals()`.
+- Functions and classes the prelude defines (the native modules' Python
+  parts: `asyncio.Lock`, `asyncio.Future`, `json.dumps`, `sys.exit`, ...)
+  are shared by every reset of a session, so guest code cannot set or
+  delete their attributes, nor reach a function's `__dict__`: it gets
+  CPython's error for a builtin function (`AttributeError`) or an immutable
+  type (`TypeError`). CPython allows it for its Python-level stdlib objects.
+  Their instances, subclasses and the modules' own attributes
+  (`json.dumps = f`) stay writable, as do a typed host function's
+  attributes, which outlive a reset with the function; a reset drops the modules, so the next
+  import has the originals. `reset` also restores the recursion limit.
 - Code-mode stdlib: `json.loads` takes all five hooks (with one, the
   native scanner keeps number and constant literals as text and objects as
   flat pairs, and a prelude pass calls the hooks children first in document

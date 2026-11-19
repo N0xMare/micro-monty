@@ -89,6 +89,48 @@ fn globals_persist_across_cells_until_reset() {
     );
 }
 
+/// A reset session is a new one to the program: a lowered recursion limit
+/// and changes to the stdlib's shared functions and classes do not
+/// outlive it. Those changes are refused; module attributes, instances
+/// and subclasses stay writable, and a reset drops the modules.
+#[test]
+fn nothing_a_cell_changes_in_the_stdlib_outlives_a_reset() {
+    let mut c = Cells::new();
+    c.value("import sys\nsys.setrecursionlimit(77)");
+    for (src, error) in [
+        ("import asyncio\nasyncio.Future.leak = 1", "AttributeError"),
+        ("import asyncio\nasyncio.Lock.leak = 1", "TypeError"),
+        ("import asyncio\ndel asyncio.Queue.put", "TypeError"),
+        (
+            "import json\nsetattr(json.dumps, 'leak', 1)",
+            "AttributeError",
+        ),
+        ("import json\njson.dumps.__dict__", "AttributeError"),
+        (
+            "import sys\nobject.__setattr__(sys.exit, '__name__', 'x')",
+            "AttributeError",
+        ),
+    ] {
+        assert_eq!(c.error(src).0, error, "{src}");
+    }
+    assert_eq!(
+        c.value(
+            "import asyncio, json\nclass L(asyncio.Lock):\n    pass\n\
+             L.x = 1\nlock = asyncio.Lock()\nlock.y = 2\njson.dumps = len\n\
+             [L.x, lock.y, json.dumps([1, 2])]"
+        ),
+        "[1, 2, 2]"
+    );
+    c.session.reset().expect("reset");
+    assert_eq!(
+        c.value(
+            "import sys, json, asyncio\n\
+             [sys.getrecursionlimit(), json.dumps([1, 2]), hasattr(asyncio.Future, 'leak')]"
+        ),
+        "[1000, '[1, 2]', False]"
+    );
+}
+
 #[test]
 fn globals_is_a_read_only_view_across_cells() {
     // Decision G2: reads see the session's globals as earlier cells left

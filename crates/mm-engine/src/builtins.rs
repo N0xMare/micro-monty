@@ -5941,7 +5941,7 @@ fn bi_setattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
     // Attribute names compare by identity: intern computed ones.
     let n = vm.intern_value(n)?;
-    vm.setattr(o, n, v)?;
+    vm.guest_setattr(o, n, v)?;
     Ok(if vm.request.is_some() {
         Value::UNDEFINED
     } else {
@@ -5958,7 +5958,7 @@ fn bi_delattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
     // Attribute names compare by identity: intern computed ones.
     let n = vm.intern_value(n)?;
-    vm.delattr(o, n)?;
+    vm.guest_delattr(o, n)?;
     Ok(if vm.request.is_some() {
         Value::UNDEFINED
     } else {
@@ -6587,9 +6587,10 @@ fn object_setattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if vm.user_class(o).is_some() {
         vm.generic_setattr(o, n, v)?;
     } else if Vm::is_class(o) {
+        vm.refuse_prelude_change(o, n, false)?;
         vm.class_setattr(o, n, v)?;
     } else {
-        vm.setattr(o, n, v)?;
+        vm.guest_setattr(o, n, v)?;
     }
     Ok(if vm.request.is_some() {
         Value::UNDEFINED
@@ -6610,9 +6611,10 @@ fn object_delattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if vm.user_class(o).is_some() {
         vm.generic_delattr(o, n)?;
     } else if Vm::is_class(o) {
+        vm.refuse_prelude_change(o, n, true)?;
         vm.class_delattr(o, n)?;
     } else {
-        vm.delattr(o, n)?;
+        vm.guest_delattr(o, n)?;
     }
     Ok(if vm.request.is_some() {
         Value::UNDEFINED
