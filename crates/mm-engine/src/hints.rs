@@ -269,17 +269,23 @@ impl Vm {
         Ok(d)
     }
 
-    /// Group `group`'s sentence for `module`, or empty when blanked.
+    /// The sentence the host set for `group` ([`Vm::set_hint`]), if any.
     #[cfg_attr(mm_shipped, optimize(size))]
-    pub(crate) fn hint_text(&mut self, group: HintGroup, module: &str) -> String {
-        let over = self
-            .find_interned("_hints")
+    pub(crate) fn hint_override(&self, group: HintGroup) -> Option<String> {
+        self.find_interned("_hints")
             .and_then(|k| self.dict_get_str(self.prelude_globals, k))
             .zip(self.find_interned(group.key()))
             .and_then(|(d, k)| self.dict_get_str(d, k))
             .filter(|v| Vm::is_str(*v))
-            .map(|v| String::from(self.str_ref(v)));
-        let text = over.unwrap_or_else(|| String::from(group.default_text()));
+            .map(|v| String::from(self.str_ref(v)))
+    }
+
+    /// Group `group`'s sentence for `module`, or empty when blanked.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub(crate) fn hint_text(&mut self, group: HintGroup, module: &str) -> String {
+        let text = self
+            .hint_override(group)
+            .unwrap_or_else(|| String::from(group.default_text()));
         let mut text = text.replace("{module}", module);
         if text.contains("{names}") {
             text = text.replace("{names}", &asyncio_names());

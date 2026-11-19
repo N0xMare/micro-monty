@@ -114,6 +114,7 @@ mod walk;
 
 pub use aio::FutureStatus;
 pub use hints::{HintGroup, asyncio_names};
+pub use lifecycle::Counters;
 pub use modules::{BUNDLED, is_bundled};
 
 pub use builtins::{Native, find_method, method_names, native};

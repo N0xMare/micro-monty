@@ -753,6 +753,9 @@ pub struct SessionTemplate {
     /// image's host code resolves against in the engine's cache only
     /// grows, so the walks would find what they found then.
     checked: std::sync::OnceLock<()>,
+    /// The captured session's counters at its last reset and at the
+    /// capture: how far its setup moved them ([`Session::reset_to`]).
+    setup: (mm_engine::Counters, mm_engine::Counters),
 }
 
 impl SessionTemplate {
@@ -775,11 +778,14 @@ impl SessionTemplate {
             engine: engine.clone(),
             image: session.snapshot()?,
             checked: std::sync::OnceLock::new(),
+            setup: (session.reset_mark, session.vm.counters()),
         })
     }
 
     /// A template from an image [`SessionTemplate::image`] returned (by
-    /// this build), checked by restoring it once.
+    /// this build), checked by restoring it once. [`Session::reset_to`]
+    /// does not know how far its setup moved the session's call ids, task
+    /// numbers and safepoint phase, and counts it as not at all.
     ///
     /// # Errors
     ///
@@ -790,6 +796,7 @@ impl SessionTemplate {
             engine: engine.clone(),
             image,
             checked: std::sync::OnceLock::from(()),
+            setup: Default::default(),
         })
     }
 
@@ -1385,7 +1392,9 @@ impl Engine {
             next_fuel: None,
             fuel_total,
             poisoned: None,
+            reset_mark: mm_engine::Counters::default(),
         };
+        session.reset_mark = session.vm.counters();
         session.apply(settings);
         Ok(session)
     }
@@ -1588,6 +1597,10 @@ pub struct Session {
     /// Set by a contained engine panic: the message every later call
     /// reports. The heap may be half-mutated, so it is never touched again.
     poisoned: Option<String>,
+    /// The VM's [`mm_engine::Counters`] at the last reset (or when the
+    /// session was made or restored): a template captured from it holds
+    /// how far its setup moved them ([`Session::reset_to`]).
+    reset_mark: mm_engine::Counters,
 }
 
 impl fmt::Debug for Session {
@@ -1643,7 +1656,9 @@ impl Session {
                     next_fuel: None,
                     fuel_total: None,
                     poisoned: None,
+                    reset_mark: mm_engine::Counters::default(),
                 };
+                session.reset_mark = session.vm.counters();
                 session.apply(settings);
                 Ok(session)
             }
@@ -2310,6 +2325,10 @@ impl Session {
     /// The old globals and modules are emptied in place, so an object that
     /// outlives the reset (such as one kept on a host function's attribute)
     /// sees them empty.
+    /// The session also keeps what it loaded for earlier cells: the bundled
+    /// modules' code and the prelude's parts, charged to its memory limit,
+    /// so importing a module again after a reset charges less fuel than its
+    /// first import did. [`Session::reset_to`] keeps none of it.
     ///
     /// # Errors
     ///
@@ -2319,10 +2338,73 @@ impl Session {
         self.guarded(|s| {
             s.stop = Vec::new();
             let reset = s.vm.reset().map_err(|_| s.exception());
+            s.reset_mark = s.vm.counters();
             test_hooks::point("reset");
             reset
         })
         .unwrap_or_else(Err)
+    }
+
+    /// [`Session::reset`], then the setup `template` was captured after,
+    /// without running it: the session takes the template's globals,
+    /// modules, host definitions and heap from its image, read as
+    /// [`SessionTemplate::instantiate`] reads it, and keeps everything a
+    /// reset keeps that the image does not settle. Kept: the host-side
+    /// settings, deadline and park handle, the limits (memory, fuel,
+    /// recursion as `sys.setrecursionlimit` left it), the fuel total and
+    /// a fuel set for the next cell, the last-expression flag, text limit
+    /// and cut, host arguments, local time zone and hint overrides. The
+    /// call ids, task numbers and safepoint phase continue from this
+    /// session's, moved on as the setup moved them between the captured
+    /// session's last reset and the capture.
+    ///
+    /// Nothing earlier cells loaded stays (unlike [`Session::reset`]):
+    /// when the template was captured from a new session after its setup,
+    /// the next cell's output, fuel and memory are those of a new session
+    /// after that setup, as after any restore; they are those of `reset`
+    /// and a re-run of the setup when the cells since the last reset
+    /// loaded nothing the setup did not. This holds for a setup that reads
+    /// no clock or entropy, and for a session whose host definitions are
+    /// the captured session's (the template's replace them). The setup's
+    /// fuel is not charged to the fuel total again.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Engine::restore`] (the session is unchanged then),
+    /// [`SnapshotError::Poisoned`] for a poisoned session, and
+    /// [`SnapshotError::TooLarge`] if a hint override does not fit (the
+    /// session is reset to the template without it).
+    pub fn reset_to(&mut self, template: &SessionTemplate) -> Result<(), SnapshotError> {
+        if self.poisoned.is_some() {
+            return Err(SnapshotError::Poisoned);
+        }
+        let engine = template.engine.with_limits(Limits {
+            memory: self.vm.heap.memory_limit(),
+            recursion_depth: self.vm.recursion_ceiling(),
+            fuel: self.cell_fuel,
+        });
+        let trusted = template.checked.get().is_some();
+        let image = contain(|| image::read(&engine, &template.image, trusted)).unwrap_or_else(
+            |payload| {
+                Err(SnapshotError::Internal {
+                    message: internal_error_message(payload.as_ref(), "the session is unchanged"),
+                })
+            },
+        )?;
+        if !image.stop.is_empty() {
+            return Err(SnapshotError::Busy);
+        }
+        let _ = template.checked.set(());
+        let (from, to) = template.setup;
+        let now = self.vm.counters();
+        let counters = now.advanced(from, to);
+        let mut vm = image.vm;
+        let adopted = vm.adopt(&mut self.vm, counters);
+        self.vm = vm;
+        self.stop = Vec::new();
+        self.stop_charge = None;
+        self.reset_mark = now;
+        adopted.map_err(|_| SnapshotError::TooLarge)
     }
 
     /// Whether an engine panic poisoned this session (see the crate docs).

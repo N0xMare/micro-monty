@@ -2301,7 +2301,8 @@ Session::start(&Code) -> Progress
 Session::resume(Resume) -> Result<Progress, ResumeError>          // Unexpected | UnknownCall | AlreadySettled
 Session::cancel() -> bool                                         // drops the cell's frames, tasks, futures; keeps globals
 Session::snapshot(&mut self) / snapshot_with_limit(max_bytes) -> Result<Vec<u8>, SnapshotError>   // output capped at the memory limit by default
-Session::reset() -> Result<(), PyException>
+Session::reset() -> Result<(), PyException>                       // keeps loaded bundled code and prelude parts
+Session::reset_to(&SessionTemplate) -> Result<(), SnapshotError> // a fresh session plus the template's setup, keeping what reset keeps
 SessionTemplate::capture(&Engine, &mut Session) / instantiate() / image() / from_image(..)
 Engine::with_module_cache(bytes) / with_host_code_in_snapshots(bool)
 
@@ -2365,7 +2366,15 @@ ride in snapshots, and the host-call path gains only a `_host_defs` lookup
 when a host function is built. Binding uses `_mm.signature`; annotation
 checks raise `TypeError` at the call; there is no static checker (§1).
 `Session::stubs()` renders `.pyi` text. `SessionTemplate` is a snapshot
-taken after setup that instantiates by restore.
+taken after setup that instantiates by restore. `Session::reset_to`
+restores it into an existing session in place of `reset` and a re-run of
+the setup: the session keeps its host-side settings, park handle, limits,
+fuel state, host arguments, local zone and hint overrides, and its call
+ids, task numbers and safepoint phase continue, moved on as the setup
+moved them. Unlike `reset`, which keeps the bundled code and prelude parts
+earlier cells loaded (charged to the session), it keeps nothing they
+loaded: the next cell's output, fuel and memory are a new session's after
+the setup.
 
 ### 10.2 An embedding example: the cell-protocol worker (`mm-cell-worker`)
 
@@ -2383,7 +2392,7 @@ It shows how a host maps a frame protocol onto the facade:
 | `NestedResult` (batched) | `resume(Batch)`; `Delivery{Accepted}` once the interpreter's next event proves it consumed the batch |
 | `Yielded` ← `Parked(window)`; `Resume { window }` | `resume(Continue)` with a new window |
 | `Cancel` | `Session::cancel()` discards the cell's frames, tasks and futures (no `finally` blocks run) and keeps globals and the worker |
-| `Reset` | `Session::reset()` |
+| `Reset` | deferred to the next `StartCell`: `Session::reset_to` the state kept after its bootstrap if the bootstrap is the same, else `Session::reset()` and the bootstrap |
 | `CellDone` | `Complete` / `Error` |
 | `Shutdown` | `ResourceReport` |
 
@@ -2395,7 +2404,11 @@ when its window ends), and Cancel, which ends the cell with `Failed{"cell
 cancelled by the host", generation_lost: false}` and keeps the worker. For
 the SDK presentation it accepts `sdk_stubs` and runs the cells (the harness
 sends `Reset` and the SDK bootstrap as a Monty prelude) without a pre-run
-type check, which is the harness's. Against a local checkout of plak it
+type check, which is the harness's. The harness resends the SDK bootstrap
+with every cell after a `Reset`: the worker keeps the state the bootstrap
+leaves on a new or just-reset session (a `SessionTemplate`, once per
+worker and bootstrap) and resets to it while the bootstrap stays the same,
+instead of resetting, compiling and running it again. Against a local checkout of plak it
 passes 46 of 48 of plak's worker-driven protocol tests [M]; the two failures
 are Monty-only behaviour (the allocator ceiling) and the SDK test's
 type-error cell, which expects a checker.

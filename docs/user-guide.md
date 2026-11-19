@@ -790,6 +790,19 @@ instead of draining them. Key them by build id and setup code, not by their
 bytes: captures differ where imports read the clock or entropy. A template
 written natively restores on both wasm targets of the same build id.
 
+**Resetting to a template.** A host that resets a session and runs the same
+setup before every cell (a presentation whose cells start fresh) calls
+`session.reset_to(&template)` instead: the setup's state is restored into
+the session it already holds, so its output callback, clock, entropy,
+deadline, park handle, limits, fuel total, host arguments and hint
+overrides stay as a reset leaves them, and call ids and `Task-N` names
+continue. Capture the template from a new session (or one just reset) after
+the setup. The next cell sees a new session after the setup: unlike
+`reset`, which keeps the bundled code and prelude parts earlier cells
+loaded (charged to the session, so a re-import costs less fuel), it keeps
+nothing earlier cells loaded. When those cells loaded nothing beyond the
+setup, it is exactly `reset` and the setup, fuel and memory included.
+
 **When it pays.** With a warm module cache, instantiating a template that
 imported json, asyncio, re, collections and datetime takes about 1.1 ms,
 and one with decimal, statistics, zoneinfo, html.parser and tomllib about

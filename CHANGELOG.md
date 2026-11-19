@@ -213,6 +213,19 @@ hashes are pre-release history, kept in the private archive
   `xml.etree.ElementTree` reports ill-formed bytes as `ParseError` (it
   reads `e.start`, and raised `AttributeError`). The build id moves.
 
+### Added
+
+- `Session::reset_to(&SessionTemplate)`: reset a session to the state a
+  template was captured in, in place of `reset` and a re-run of the setup.
+  The session keeps its host-side settings, park handle, limits, fuel
+  state and hint overrides; call ids, `Task-N` numbers and the safepoint
+  phase continue. It keeps nothing earlier cells loaded, so the next
+  cell's output, fuel and memory are those of a new session after the
+  setup (`reset`, documented now, keeps loaded bundled code and prelude
+  parts). `mm-cell-worker` uses it for py-sdk cells: a `Reset` waits for
+  the next `StartCell`, and a bootstrap equal to the one whose state the
+  worker kept is not compiled or run again.
+
 ### Known issues
 
 - A start at the wall reclaims dead code, and with it the names only

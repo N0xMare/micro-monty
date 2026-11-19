@@ -227,6 +227,7 @@ fn spawn_reader(
 }
 
 /// One private host function the bootstrap defined.
+#[derive(Clone)]
 struct Binding {
     tool: String,
     input: BindingInput,
@@ -344,6 +345,18 @@ struct Worker {
     session: Box<dyn CellSession>,
     out: Arc<Mutex<Out>>,
     bindings: Option<HashMap<String, Binding>>,
+    /// A `Reset` came and the session has not been reset for it yet: the
+    /// next `StartCell` resets it, to the kept state if its bootstrap is
+    /// [`Worker::kept`].
+    reset_due: bool,
+    /// The session was just reset for a `Reset`: a bootstrap run now
+    /// leaves the state the session keeps. (A presentation that resets
+    /// before its cells sends the same bootstrap again; one that does not,
+    /// py-ptc, never needs the state.)
+    after_reset: bool,
+    /// The bootstrap of the state the session kept ([`CellSession::keep`])
+    /// and its bindings.
+    kept: Option<(MontyBootstrap, HashMap<String, Binding>)>,
     running: Option<Running>,
     inbox: mpsc::Receiver<Input>,
     control: Arc<Control>,
@@ -441,6 +454,9 @@ impl Worker {
             session,
             out,
             bindings: None,
+            reset_due: false,
+            after_reset: false,
+            kept: None,
             running: None,
             inbox,
             control,
@@ -520,9 +536,9 @@ impl Worker {
                 if self.running.is_some() {
                     return Err(Lost::protocol("reset while a cell runs"));
                 }
-                self.session
-                    .reset()
-                    .map_err(|error| Lost::engine(format!("interpreter reset failed: {error}")))?;
+                // Done by the next cell, which may restore the kept state
+                // instead of resetting and running its bootstrap again.
+                self.reset_due = true;
                 self.bindings = None;
                 Ok(())
             }
@@ -563,6 +579,7 @@ impl Worker {
                 return Err(Lost::protocol("a micro-monty cell needs a Monty prelude"));
             }
         };
+        let bootstrap = self.reset_for(bootstrap)?;
         self.running = Some(Running {
             cell,
             ..Running::default()
@@ -577,6 +594,7 @@ impl Worker {
                 generation_lost: true,
             });
         }
+        self.after_reset = false;
         {
             let mut out = lock(&self.out);
             out.cell = Some(cell);
@@ -602,9 +620,48 @@ impl Worker {
         self.drive(progress)
     }
 
+    /// The reset a `Reset` asked for, before the cell with `bootstrap`
+    /// starts: to the kept state when the bootstrap is the one it was kept
+    /// after (the bootstrap is then done), else a reset. Returns the
+    /// bootstrap left to run.
+    fn reset_for(
+        &mut self,
+        bootstrap: Option<MontyBootstrap>,
+    ) -> Result<Option<MontyBootstrap>, Lost> {
+        if !self.reset_due {
+            return Ok(bootstrap);
+        }
+        self.reset_due = false;
+        if let (Some(bootstrap), Some((kept, bindings))) = (&bootstrap, &self.kept)
+            && bootstrap == kept
+            && self.session.reset_to_kept()
+        {
+            self.bindings = Some(bindings.clone());
+            return Ok(None);
+        }
+        self.session
+            .reset()
+            .map_err(|error| Lost::engine(format!("interpreter reset failed: {error}")))?;
+        self.after_reset = true;
+        Ok(bootstrap)
+    }
+
     /// Defines the session's tool functions before its first cell and runs
-    /// the bootstrap source; its prints are not part of the cell.
+    /// the bootstrap source; its prints are not part of the cell. Run on a
+    /// session just reset, it keeps the state it leaves.
     fn bootstrap(&mut self, bootstrap: MontyBootstrap) -> Result<(), String> {
+        let keep = self.after_reset && !bootstrap.source.is_empty();
+        let kept = keep.then(|| bootstrap.clone());
+        self.run_bootstrap(bootstrap)?;
+        if let Some(kept) = kept {
+            self.session.keep();
+            let bindings = self.bindings.clone().unwrap_or_default();
+            self.kept = Some((kept, bindings));
+        }
+        Ok(())
+    }
+
+    fn run_bootstrap(&mut self, bootstrap: MontyBootstrap) -> Result<(), String> {
         const FAILED: &str = "Python tool bootstrap failed: ";
         if self.bindings.is_some() {
             return Err("Python tool bootstrap repeated".into());

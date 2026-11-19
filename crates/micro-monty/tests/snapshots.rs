@@ -2728,3 +2728,244 @@ seen
         assert_eq!(outcome(&p), "complete Some(\"[1, 20]\")");
     }
 }
+
+/// The setup a template is captured after, run again after `reset` in the
+/// sessions [`Session::reset_to`] is compared with. Its tool calls and
+/// tasks move the counters a reset keeps; it reads no entropy or clock.
+const SETUP: &str = "\
+from collections import namedtuple
+import asyncio, os, sys
+Point = namedtuple('Point', ['x', 'y'], defaults=[0])
+class Tools:
+    async def call(n):
+        return tool(n)
+async def warm():
+    return [await t for t in [asyncio.ensure_future(Tools.call(i)) for i in range(2)]]
+asyncio.run(warm())
+del warm
+def _count(n):
+    i = 0
+    while i < n:
+        yield i
+        i += 1
+_ticks = _count(100)
+next(_ticks)
+";
+
+/// Cells that leave behind what a reset keeps counting or keeps: host call
+/// ids, task numbers, the entropy source's position, a lowered recursion
+/// limit, the safepoint phase, suspended generators holding dead data (in
+/// the generator registry), and the setup's generator advanced. They load
+/// nothing the setup did not.
+const BEFORE: [&str; 2] = [
+    "\
+sys.setrecursionlimit(321)
+def held():
+    n = len(bytearray(200_000))
+    yield n
+    yield 2
+kept = [held() for _ in range(40)]
+for k in kept:
+    next(k)
+next(_ticks)
+async def main():
+    return [await t for t in [asyncio.ensure_future(Tools.call(i)) for i in range(3)]]
+print(asyncio.run(main()), os.urandom(2).hex())
+for i in range(1000):
+    pass
+",
+    "x = [Point(i) for i in range(7)]\nprint(tool(len(x)))\n",
+];
+
+/// Cells that load what the setup did not: bundled modules and prelude
+/// parts, which a reset keeps (charged to the session) and a template
+/// does not have.
+const LOADING: &str = "\
+import json, random, re, statistics
+print(json.dumps({'a': [1, 2]}), re.sub('a+', '-', 'baaac'), statistics.mean([1, 2, 4]))
+print(sorted({3, 1, 2}), dict.fromkeys('ab'), list(reversed(range(3))))
+";
+
+/// What a cell can see after the reset: call ids and task names, entropy,
+/// the limits and the setup's suspended generator.
+const AFTER: &str = "\
+async def main():
+    t = asyncio.ensure_future(Tools.call(5))
+    return asyncio.current_task().get_name(), t.get_name(), await t
+print(asyncio.run(main()), Point(1), tool('x'), os.urandom(2).hex(), sys.getrecursionlimit())
+print(next(_ticks), next(_ticks), 'kept' in globals())
+";
+
+/// Globals, then how many 4 KB buffers fit before `MemoryError`: what is
+/// charged to the session, with the fuel `run_cell` reports.
+const FILL: &str = "\
+print(sorted(k for k in globals() if not k.startswith('__')))
+xs = []
+try:
+    while True:
+        xs.append(bytearray(4000))
+except MemoryError:
+    pass
+print(len(xs))
+";
+
+#[derive(Clone, Copy, Debug)]
+enum Run {
+    Plain,
+    /// Parks every 997 fuel units and continues.
+    Parked,
+    /// Also snapshots at every park.
+    Snapshotted,
+    /// Also restores at every park, into a new session.
+    Restored,
+}
+
+fn counting_settings(out: &Arc<Mutex<String>>) -> SessionSettings {
+    let mut s = SessionSettings::default();
+    let sink = Arc::clone(out);
+    s.output = Some(Box::new(move |_, t: &str| {
+        sink.lock().expect("output lock").push_str(t);
+    }));
+    s.wall_clock = Some(Box::new(|| 1_700_000_000.0));
+    let mut counter = 0u8;
+    s.entropy = Some(Box::new(move |b: &mut [u8]| {
+        for byte in b {
+            counter = counter.wrapping_add(37);
+            *byte = counter;
+        }
+    }));
+    s
+}
+
+/// Runs `src` the `run` way: its output, host calls with their ids, outcome
+/// and the fuel it charged.
+fn run_cell(s: &mut Session, e: &Engine, out: &Arc<Mutex<String>>, src: &str, run: Run) -> String {
+    const SLICE: u64 = 997;
+    let mut log = String::new();
+    let sliced = !matches!(run, Run::Plain);
+    s.set_fuel(Some(if sliced { SLICE } else { 1 << 40 }));
+    let mut granted = if sliced { SLICE } else { 1 << 40 };
+    let mut p = s.start(&e.compile(src, "cell.py").expect("compiles"));
+    loop {
+        p = match p {
+            Progress::Parked { .. } => {
+                if matches!(run, Run::Snapshotted | Run::Restored) {
+                    let image = s.snapshot().expect("snapshot");
+                    if matches!(run, Run::Restored) {
+                        let park_settings = counting_settings(out);
+                        // The entropy source continues as the host's would.
+                        let mut moved = e.restore_with(&image, park_settings).expect("restores");
+                        std::mem::swap(s, &mut moved);
+                    }
+                }
+                s.set_fuel(Some(SLICE));
+                granted += SLICE;
+                s.resume(Resume::Continue).expect("resumes")
+            }
+            Progress::HostCall {
+                call, name, args, ..
+            } => {
+                let _ = writeln!(log, "call {call} {name} {args:?}");
+                let answer = args.first().cloned().unwrap_or(HostValue::None);
+                s.resume(Resume::Value(answer)).expect("resumes")
+            }
+            done => {
+                let used = granted - s.fuel().unwrap_or(0);
+                let text = std::mem::take(&mut *out.lock().expect("output lock"));
+                let _ = write!(log, "{text}{}\nfuel {used}\n", outcome(&done));
+                return log;
+            }
+        };
+    }
+}
+
+/// `reset_to` is a fresh session and the setup, with the counters, limits,
+/// settings and hint overrides a reset keeps; it is reset and the setup
+/// exactly when the cells before it loaded nothing the setup did not.
+#[test]
+fn reset_to_a_template_is_a_fresh_session_and_its_setup() {
+    let engine =
+        Engine::new(EngineConfig::default().with_limits(Limits::new().with_memory(3 << 20)));
+    let tools = HostModule::untyped("", &["tool"]);
+    let setup = |s: &mut Session, out: &Arc<Mutex<String>>| {
+        s.define(&tools).expect("defines");
+        run_cell(s, &engine, out, SETUP, Run::Plain)
+    };
+    let session = |out: &Arc<Mutex<String>>| {
+        let mut s = Session::new_with(&engine, counting_settings(out)).expect("session");
+        s.set_hint(micro_monty::HintGroup::DataLibraries, Some("use a tool"))
+            .expect("hint");
+        s
+    };
+    let out = Arc::new(Mutex::new(String::new()));
+    let mut capture = session(&out);
+    setup(&mut capture, &out);
+    // Captured after a reset that follows a cell: the template counts what
+    // the setup moved, not the cell.
+    run_cell(&mut capture, &engine, &out, BEFORE[1], Run::Plain);
+    capture.reset().expect("resets");
+    setup(&mut capture, &out);
+    let template = SessionTemplate::capture(&engine, &mut capture).expect("captures");
+    for run in [Run::Plain, Run::Parked, Run::Snapshotted, Run::Restored] {
+        // As reset and the setup.
+        let mut transcripts = Vec::new();
+        for reset_to in [false, true] {
+            let out = Arc::new(Mutex::new(String::new()));
+            let mut s = session(&out);
+            let mut log = setup(&mut s, &out);
+            for cell in BEFORE {
+                log += &run_cell(&mut s, &engine, &out, cell, run);
+            }
+            if reset_to {
+                s.reset_to(&template).expect("resets to the template");
+            } else {
+                s.reset().expect("resets");
+                setup(&mut s, &out);
+            }
+            // Saved between cells too, right after the reset.
+            if matches!(run, Run::Snapshotted | Run::Restored) {
+                let image = s.snapshot().expect("snapshot");
+                if matches!(run, Run::Restored) {
+                    s = Engine::new(EngineConfig::default().with_limits(engine.limits()))
+                        .restore_with(&image, counting_settings(&out))
+                        .expect("restores on a new engine");
+                }
+            }
+            for cell in [AFTER, FILL, "import numpy"] {
+                log += &run_cell(&mut s, &engine, &out, cell, run);
+            }
+            transcripts.push(log);
+        }
+        assert_eq!(transcripts[1], transcripts[0], "{run:?}");
+        for shown in [
+            "call 9 tool",
+            "'Task-17', 'Task-18'",
+            "321",
+            "1 2 False",
+            "use a tool",
+        ] {
+            assert!(
+                transcripts[0].contains(shown),
+                "{shown}: {}",
+                transcripts[0]
+            );
+        }
+        // As a fresh session and the setup, after cells that loaded more.
+        let fill = |s: &mut Session, out| run_cell(s, &engine, out, FILL, run);
+        let out = Arc::new(Mutex::new(String::new()));
+        let mut fresh = session(&out);
+        setup(&mut fresh, &out);
+        let expected = fill(&mut fresh, &out);
+        let mut s = session(&out);
+        setup(&mut s, &out);
+        run_cell(&mut s, &engine, &out, LOADING, run);
+        s.reset_to(&template).expect("resets to the template");
+        assert_eq!(fill(&mut s, &out), expected, "{run:?}");
+        // Where a reset keeps what the cells loaded.
+        s.reset_to(&template).expect("resets to the template");
+        run_cell(&mut s, &engine, &out, LOADING, run);
+        s.reset().expect("resets");
+        setup(&mut s, &out);
+        assert_ne!(fill(&mut s, &out), expected, "{run:?}");
+    }
+}

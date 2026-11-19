@@ -8,7 +8,9 @@ use std::{
     time::Instant,
 };
 
-use micro_monty::{Engine, EngineConfig, HostArgs, HostModule, Limits, Progress, Resume, Session};
+use micro_monty::{
+    Engine, EngineConfig, HostArgs, HostModule, Limits, Progress, Resume, Session, SessionTemplate,
+};
 
 use crate::lock;
 
@@ -62,6 +64,16 @@ pub trait CellSession {
     /// # Errors
     /// The reset failed; the worker is lost.
     fn reset(&mut self) -> Result<(), String>;
+    /// Keeps the session's state now (between cells, just after a reset or
+    /// at its start and a bootstrap) for [`CellSession::reset_to_kept`].
+    /// The default keeps nothing.
+    fn keep(&mut self) {}
+    /// A reset followed by the bootstrap [`CellSession::keep`] followed,
+    /// without running it again; `false` (and nothing done) if nothing
+    /// is kept or it cannot be restored. The default has nothing kept.
+    fn reset_to_kept(&mut self) -> bool {
+        false
+    }
     /// The deadline at which a running cell parks.
     fn set_deadline(&mut self, at: Option<Instant>);
     /// Where prints go: stdout and stderr, merged in production order.
@@ -137,12 +149,19 @@ impl CellEngine for NativeEngine {
         if let Some(setup) = &self.setup {
             setup(&mut session);
         }
-        Ok(Box::new(Native { session }))
+        Ok(Box::new(Native {
+            session,
+            engine,
+            kept: None,
+        }))
     }
 }
 
 struct Native {
     session: Session,
+    engine: Engine,
+    /// The state [`CellSession::keep`] kept.
+    kept: Option<SessionTemplate>,
 }
 
 impl CellSession for Native {
@@ -174,6 +193,23 @@ impl CellSession for Native {
 
     fn reset(&mut self) -> Result<(), String> {
         self.session.reset().map_err(|error| error.message)
+    }
+
+    fn keep(&mut self) {
+        self.kept = SessionTemplate::capture(&self.engine, &mut self.session).ok();
+    }
+
+    fn reset_to_kept(&mut self) -> bool {
+        let Some(kept) = &self.kept else {
+            return false;
+        };
+        if self.session.reset_to(kept).is_ok() {
+            return true;
+        }
+        // Not restored (the memory limit, say): the caller resets and
+        // runs the bootstrap again.
+        self.kept = None;
+        false
     }
 
     fn set_deadline(&mut self, at: Option<Instant>) {

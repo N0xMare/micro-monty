@@ -11,7 +11,7 @@ use crate::class::{Shape, inst};
 use crate::generator::g;
 use crate::host::HostModule;
 use crate::types::ty;
-use crate::vm::{CodeObj, Frame, Ic, Raised, Ready, Source, Task, Vm, exc_slot, fn_slot};
+use crate::vm::{CodeObj, Frame, Ic, Raised, Ready, Source, TICKS, Task, Vm, exc_slot, fn_slot};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Reference {
@@ -33,7 +33,103 @@ impl CodeObj {
     }
 }
 
+/// What a session keeps counting across [`Vm::reset`] that a host or a
+/// cell can observe: the next host call id, the tasks numbered (`Task-N`)
+/// and the safepoint phase, where regular checks fall
+/// (`Vm::reset_ticks`). A session that restarts from a state captured
+/// elsewhere ([`Vm::adopt`]) continues these, not the capture's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Counters {
+    calls: u64,
+    tasks: u64,
+    phase: i32,
+}
+
+impl Counters {
+    /// These counters moved on as they did from `from` to `to`.
+    #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub fn advanced(self, from: Counters, to: Counters) -> Counters {
+        Counters {
+            calls: self.calls.wrapping_add(to.calls.wrapping_sub(from.calls)),
+            tasks: self.tasks.wrapping_add(to.tasks.wrapping_sub(from.tasks)),
+            phase: (self.phase + to.phase - from.phase).rem_euclid(TICKS),
+        }
+    }
+}
+
 impl Vm {
+    /// [`Counters`] now (between cells).
+    #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub fn counters(&self) -> Counters {
+        let used = i32::try_from(self.ticks_used()).unwrap_or(0);
+        Counters {
+            calls: self.next_call,
+            tasks: self.task_counter,
+            phase: (self.sp_phase + used) % TICKS,
+        }
+    }
+
+    /// This VM, read from an image, takes the place of `old` between
+    /// cells: it keeps what a reset of `old` would have kept and an image
+    /// does not hold or holds as of its capture. Moved over: the host
+    /// side (output, clocks, deadline, entropy, zone source, park flag,
+    /// module cache, GC testing modes), the limits (memory, recursion, as
+    /// lowered by `sys.setrecursionlimit`), the settings (host arguments,
+    /// local zone, hint overrides) and `old`'s host call names when this
+    /// image's are a prefix of them; `counters` replace this image's.
+    ///
+    /// # Errors
+    ///
+    /// A `MemoryError` if a hint override does not fit.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub fn adopt(&mut self, old: &mut Vm, counters: Counters) -> Result<(), Raised> {
+        self.output = old.output.take();
+        self.clock = old.clock.take();
+        self.deadline = old.deadline;
+        self.wall_clock = old.wall_clock.take();
+        self.entropy = old.entropy.take();
+        self.zone_source = old.zone_source.take();
+        self.park = Arc::clone(&old.park);
+        self.module_cache = old.module_cache.take();
+        self.host_code_in_snapshots = old.host_code_in_snapshots;
+        self.known_modules = old.known_modules;
+        self.host_args = old.host_args;
+        self.local_zone = old.local_zone.take();
+        // Read within `old`'s limit, so what it holds fits it.
+        self.heap.set_memory_limit(old.heap.memory_limit());
+        self.recursion_limit = old.recursion_limit;
+        self.recursion_ceiling = old.recursion_ceiling;
+        self.gc_off = old.gc_off;
+        self.gc_yield = old.gc_yield;
+        if old.gc_stress {
+            self.set_gc_stress(true);
+        }
+        if old.gc_inc_stress {
+            self.set_gc_inc_stress(true);
+        }
+        if old.host_ids.starts_with(&self.host_ids) && old.host_ids.len() > self.host_ids.len() {
+            self.host_ids = core::mem::take(&mut old.host_ids);
+            self.reserve_code(0)?;
+        }
+        self.next_call = counters.calls;
+        self.task_counter = counters.tasks;
+        // Phase `counters.phase` with no safepoint run since, and a period
+        // that ends by the next multiple of `TICKS` from there.
+        self.ticks = self.tick_period;
+        self.tick_spare = 0;
+        self.sp_phase = counters.phase;
+        self.reset_ticks();
+        for group in crate::HintGroup::ALL {
+            let text = old.hint_override(group);
+            if text != self.hint_override(group) {
+                self.set_hint(group, text.as_deref())?;
+            }
+        }
+        Ok(())
+    }
+
     /// Exact-sized tables that never grow after construction, plus the park
     /// flag's shared allocation (including its counters and alignment).
     #[cfg_attr(mm_shipped, optimize(size))]

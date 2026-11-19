@@ -548,6 +548,48 @@ fn globals_persist_across_cells_and_reset_clears_them() {
     assert_eq!(worker.shutdown(), Some(0));
 }
 
+/// py-sdk's pattern: `Reset`, then each cell with the same bootstrap. The
+/// worker restores the state the bootstrap left instead of running it
+/// again: what a cell changed, bootstrap objects included, is gone, call
+/// ids keep counting, and another bootstrap runs as sent.
+#[test]
+fn reset_cells_with_the_same_bootstrap_each_start_from_it() {
+    let sdk = |extra: &str| {
+        let mut b = bootstrap();
+        b.source.push_str("class T:\n    n = 0\n");
+        b.source.push_str(extra);
+        b
+    };
+    let mut worker = Worker::configured();
+    let mut last_call = 0;
+    for cell in 0..4 {
+        worker.send(&HostFrame::Reset);
+        let extra = if cell == 3 { "T.n = 10\n" } else { "" };
+        worker.start(
+            cell,
+            "T.n += 1\nnames = sorted(k for k in globals() if k == 'leaked')\nleaked = 1\n\
+             (await fetch({})), T.n, names",
+            Some(sdk(extra)),
+        );
+        let (call, _, _) = worker.nested_call(cell);
+        assert!(
+            call > last_call,
+            "call ids continue: {call} after {last_call}"
+        );
+        last_call = call;
+        assert!(matches!(worker.recv(), WorkerFrame::Waiting { .. }));
+        worker.deliver(cell, call, Ok(CellValue::Str("ok".into())));
+        assert_eq!(worker.recv(), accepted(cell, call));
+        let n = if cell == 3 { 11 } else { 1 };
+        assert_eq!(
+            result(worker.finish(cell).1),
+            Ok(format!("('ok', {n}, [])")),
+            "cell {cell}"
+        );
+    }
+    assert_eq!(worker.shutdown(), Some(0));
+}
+
 const LONG_LOOP: &str = "total = 0\nfor i in range(3_000_000):\n    total += i % 7\n    if i % 1_000_000 == 0:\n        print('at', i)\ntotal";
 
 #[test]
