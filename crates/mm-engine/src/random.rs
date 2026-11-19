@@ -187,9 +187,13 @@ pub(crate) fn mt_seed(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
     let data = vm.bytes_data(key_v);
     let mut key: Vec<u32> = Vec::with_capacity(data.len() / 4 + 1);
-    for c in data.chunks(4) {
+    // Whole words as fixed-size reads, the tail apart: a slice copy of a
+    // run-time length is a `memcpy` call per word.
+    let (words, tail) = data.as_chunks::<4>();
+    key.extend(words.iter().map(|c| u32::from_le_bytes(*c)));
+    if !tail.is_empty() {
         let mut w = [0u8; 4];
-        w[..c.len()].copy_from_slice(c);
+        w[..tail.len()].copy_from_slice(tail);
         key.push(u32::from_le_bytes(w));
     }
     while key.len() > 1 && key.last() == Some(&0) {

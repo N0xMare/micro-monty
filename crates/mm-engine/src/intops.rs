@@ -277,14 +277,15 @@ impl Vm {
             return None;
         }
         let (neg, bytes) = self.heap_int_parts(v);
-        let mut mag: Vec<u32> = bytes
-            .chunks(4)
-            .map(|c| {
-                let mut w = [0u8; 4];
-                w[..c.len()].copy_from_slice(c);
-                u32::from_le_bytes(w)
-            })
-            .collect();
+        // Whole limbs as fixed-size reads, the tail apart: a slice copy
+        // of a run-time length is a `memcpy` call per limb.
+        let (whole, tail) = bytes.as_chunks::<4>();
+        let mut mag: Vec<u32> = whole.iter().map(|c| u32::from_le_bytes(*c)).collect();
+        if !tail.is_empty() {
+            let mut w = [0u8; 4];
+            w[..tail.len()].copy_from_slice(tail);
+            mag.push(u32::from_le_bytes(w));
+        }
         while mag.last() == Some(&0) {
             mag.pop();
         }

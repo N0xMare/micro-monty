@@ -968,14 +968,15 @@ impl Big {
 
     /// From little-endian bytes, as two's complement if `signed`.
     pub fn from_bytes_le(b: &[u8], signed: bool) -> Big {
-        let mut v: Vec<u32> = b
-            .chunks(4)
-            .map(|c| {
-                let mut w = [0u8; 4];
-                w[..c.len()].copy_from_slice(c);
-                u32::from_le_bytes(w)
-            })
-            .collect();
+        // Whole limbs as fixed-size reads, the tail apart: a slice copy
+        // of a run-time length is a `memcpy` call per limb.
+        let (whole, tail) = b.as_chunks::<4>();
+        let mut v: Vec<u32> = whole.iter().map(|c| u32::from_le_bytes(*c)).collect();
+        if !tail.is_empty() {
+            let mut w = [0u8; 4];
+            w[..tail.len()].copy_from_slice(tail);
+            v.push(u32::from_le_bytes(w));
+        }
         if signed && b.last().is_some_and(|x| x >> 7 == 1) {
             let ext = b.len() % 4;
             if ext != 0
