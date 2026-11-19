@@ -672,7 +672,7 @@ impl Vm {
                     return Unwound::Uncaught;
                 };
                 let fc = self.cont_take(f.cont);
-                if fc != Cont::None {
+                if !matches!(fc, Cont::None) {
                     let r = self
                         .finish(st.base, fc, Outcome::Raise)
                         .and_then(|n| match n {
