@@ -748,6 +748,25 @@ impl Heap {
                 let len = (n - at).min(256);
                 slots.copy_within(from + at..from + at + len, to + at);
             }
+        } else if cfg!(target_env = "musl") && from < to && to - from < 8 {
+            // On musl, a short move up (`insert(0, x)`) goes through a
+            // stack buffer as two forward copies per 2 KiB, from the top
+            // down: musl's `memmove` copies an overlapping move up
+            // backwards with `std; rep movsb`, 16 times glibc's time [M],
+            // which the step oracle's queue test catches. Elsewhere the
+            // one `memmove` is faster (18% on glibc [M]).
+            let mut buf = [0u64; 256];
+            let mut end = n;
+            while end > 0 {
+                let len = end.min(256);
+                let at = end - len;
+                buf[..len].copy_from_slice(&slots[from + at..from + end]);
+                // Kept: without it LLVM fuses the two copies back into
+                // the one overlapping `memmove`.
+                let buf = core::hint::black_box(&mut buf);
+                slots[to + at..to + end].copy_from_slice(&buf[..len]);
+                end = at;
+            }
         } else {
             slots.copy_within(from..from + n, to);
         }
