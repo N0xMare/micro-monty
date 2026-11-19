@@ -1229,12 +1229,17 @@ impl Heap {
         let capacity = capacity
             .checked_next_power_of_two()
             .ok_or(Error::OutOfMemory)?;
-        let extra = capacity.saturating_sub(self.mark_stack.capacity()) as u64 * 4;
+        if capacity <= self.mark_stack.capacity() {
+            return Ok(());
+        }
+        let extra = (capacity - self.mark_stack.capacity()) as u64 * 4;
         if extra > self.available_bytes() {
             return Err(self.refuse(extra));
         }
+        // Beyond the entries a mark has on the stack: the capacity is then
+        // `capacity` exactly, as charged.
         self.mark_stack
-            .try_reserve_exact(capacity)
+            .try_reserve_exact(capacity - self.mark_stack.len().min(capacity))
             .map_err(|_| Error::OutOfMemory)
     }
 
@@ -1322,5 +1327,24 @@ fn check_engine(type_id: u16, flags: u8) -> Result<(), Error> {
         Err(Error::BadType)
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A mark in flight has entries on the stack: growing it then must
+    /// end at the capacity the growth was admitted and is charged for,
+    /// not that many slots past the entries.
+    #[test]
+    fn growing_the_mark_stack_with_entries_on_it_reserves_what_it_charges() {
+        let mut heap = Heap::new(HeapConfig::default());
+        assert!(heap.reserve_marks(64).is_ok());
+        heap.mark_stack.extend(0..40);
+        let before = heap.available_bytes();
+        assert!(heap.reserve_marks(100).is_ok());
+        assert_eq!(heap.mark_stack.capacity(), 128);
+        assert_eq!(before - heap.available_bytes(), 64 * 4);
     }
 }

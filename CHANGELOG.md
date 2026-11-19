@@ -79,6 +79,10 @@ hashes are pre-release history, kept in the private archive
   session shares. It gets CPython's `AttributeError` for a builtin
   function or `TypeError` for an immutable type; instances, subclasses
   and module attributes stay writable.
+- Growing the mark stack during an incremental mark reserves the
+  capacity it charges: it reserved that many slots beyond the entries on
+  the stack, up to 4 bytes per object uncharged, and a restored session
+  then had other room than the one that went on.
 - A restore no longer moves where a cached call's frame sits. A restore
   empties the call caches, and the call that missed one put the callee's
   frame above all of the caller's registers where a hit runs it in place,
