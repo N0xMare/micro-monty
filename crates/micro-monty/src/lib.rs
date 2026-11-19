@@ -2180,6 +2180,9 @@ impl Session {
     /// async driver has, and set its first slice).
     fn start_cell(&mut self, code: &Code, refuel: bool) -> Progress {
         self.guarded(|s| {
+            // The stopped cell, if any, is cancelled here, also when the new
+            // one is then refused: its stop and charge go now.
+            s.drop_stop();
             s.vm.prepare_cell();
             s.vm.clear_call_log();
             if refuel {
@@ -2248,6 +2251,10 @@ impl Session {
                 }
             }
         }
+        // The stop is over once the cell goes on: its record and charge go
+        // now, not after the slice, which must have the room a session
+        // that never parked has.
+        self.drop_stop();
         let exit = self.metered(|vm| match resume {
             Resume::Value(v) => vm.resume_value(v),
             Resume::Error(e) => vm.resume_error(e),
@@ -2268,7 +2275,7 @@ impl Session {
     /// whether a cell was stopped.
     pub fn cancel(&mut self) -> bool {
         self.guarded(|s| {
-            s.stop = Vec::new();
+            s.drop_stop();
             let cancelled = s.vm.cancel();
             test_hooks::point("cancel");
             cancelled
@@ -2344,7 +2351,7 @@ impl Session {
     /// released. The session is reset all the same; only `__name__` is unset.
     pub fn reset(&mut self) -> Result<(), PyException> {
         self.guarded(|s| {
-            s.stop = Vec::new();
+            s.drop_stop();
             let reset = s.vm.reset().map_err(|_| s.exception());
             s.reset_mark = s.vm.counters();
             test_hooks::point("reset");
@@ -2419,8 +2426,7 @@ impl Session {
         vm.adopt(&mut self.vm, now.advanced(from, to))
             .map_err(|_| SnapshotError::TooLarge)?;
         self.vm = vm;
-        self.stop = Vec::new();
-        self.stop_charge = None;
+        self.drop_stop();
         self.reset_mark = now;
         Ok(())
     }
@@ -2464,7 +2470,7 @@ impl Session {
             match contain(|| op(self)) {
                 Ok(done) => return Ok(done),
                 Err(payload) => {
-                    self.stop = Vec::new();
+                    self.drop_stop();
                     self.poisoned = Some(internal_error_message(
                         payload.as_ref(),
                         "the session is poisoned",
@@ -2484,13 +2490,7 @@ impl Session {
     }
 
     fn progress(&mut self, exit: Exit) -> Progress {
-        self.stop_charge = None;
-        // Keep a small buffer for the next stop; let a large one go.
-        if self.stop.capacity() > STOP_SLACK {
-            self.stop = Vec::new();
-        } else {
-            self.stop.clear();
-        }
+        self.drop_stop();
         match exit {
             Exit::Complete(v) => {
                 if !self.returns_last_expr {
@@ -2607,6 +2607,17 @@ impl Session {
         }
         self.stop_charge = self.vm.heap.reserve_scratch(self.stop.len()).ok();
         p
+    }
+
+    /// Forgets the kept stop and its charge together. The buffer stays
+    /// for the next stop unless it is larger than `STOP_SLACK`.
+    fn drop_stop(&mut self) {
+        self.stop_charge = None;
+        if self.stop.capacity() > STOP_SLACK {
+            self.stop = Vec::new();
+        } else {
+            self.stop.clear();
+        }
     }
 
     fn exception(&mut self) -> PyException {

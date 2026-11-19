@@ -83,6 +83,23 @@ hashes are pre-release history, kept in the private archive
   not from its first scratch reservation, which a restored session had
   not made: a parked session had 24 bytes less room than one restored
   from its image.
+- A resumed slice has the room of a run that never parked: the stop a
+  park reports, charged while the host holds it, was released only once
+  the resumed slice had run, and `cancel`, `reset` and a new cell's start
+  kept its charge until the next stop. 8 bytes near the wall: a fill to
+  the limit then `print` completed unparked and raised `MemoryError`
+  parked; asyncio's start rule queued one entry fewer with 13 units less
+  fuel parked, at 22 of 64 limits 8 bytes apart from 6 MiB, and at none
+  after [M]. With this and the three retry, `CALL` and wait fixes below,
+  near-limit random programs at 2 to 8 MiB, under the default GC or
+  incremental marks in slices of 4,096, that differ between a plain run
+  and parks every 997 or 20,011 units: 43 of 1,200 before, none after;
+  asyncio programs, 58 of 600 before, none after; plain programs on
+  wasm32-wasip1, 7 of 400 before, none after [M]. These fixes do not move
+  the build id.
+  This is plain against parked only: a snapshot at a stop still collects,
+  so a session that was snapshotted or restored can still end with
+  another outcome or fuel than the plain run near the limit.
 - The stop a session keeps for `Session::pending` is charged the same in
   the session that took a snapshot and in one restored from it, by its
   length: the first charged its reused buffer's capacity. The buffer's

@@ -1935,3 +1935,100 @@ fn a_cell_cancelled_inside_a_retrys_wait_leaves_no_wait_to_the_next_cell() {
     assert!(rows.len() >= 4, "{rows:?}");
     assert_eq!(rows, vec![rows[0]; rows.len()]);
 }
+
+#[test]
+fn a_park_leaves_the_resumed_slice_the_room_of_an_unparked_run() {
+    // The heap is filled to the wall (4 KiB blocks, then done callbacks
+    // at a 24-byte grain), so whether the last `print` fits is decided by
+    // a few bytes. The stop a park reports is charged while the host holds
+    // it; it was kept through the resumed slice, so the parked run raised
+    // `MemoryError` at `print` where the unparked run completed.
+    let src = "\
+import asyncio
+await asyncio.sleep(0)
+d = asyncio.get_running_loop().create_future()
+d.set_result(0)
+def cb(f):
+    pass
+pad = []
+try:
+    while True:
+        pad.append(bytearray(4096))
+except MemoryError:
+    del pad[-2:]
+n = 0
+try:
+    while True:
+        d.add_done_callback(cb)
+        n += 1
+except MemoryError:
+    pass
+del d, pad
+print(n)
+";
+    let run = |src: &str, name: &str, limit: u64, slice: Option<u64>| {
+        let engine = Engine::new(
+            EngineConfig::new().with_limits(micro_monty::Limits::new().with_memory(limit)),
+        );
+        let out = Arc::new(Mutex::new(String::new()));
+        let mut s = session(&engine, &out);
+        s.set_fuel_total(Some(1 << 60));
+        let code = engine.compile(src, name).expect("compiles");
+        s.set_fuel(slice);
+        let mut p = s.start(&code);
+        let mut parks = 0;
+        while let Progress::Parked { .. } = p {
+            parks += 1;
+            s.set_fuel(slice);
+            p = s.resume(Resume::Continue).expect("resumes");
+        }
+        let used = (1 << 60) - s.fuel_total().expect("total");
+        let text = out.lock().expect("output lock").clone();
+        (outcome(&p), text, used, parks)
+    };
+    // The edge also moves with the layout (the filename's length is
+    // enough), so both are varied.
+    let mut cases = 0;
+    for name in (1..=8).map(|n| "f".repeat(n)) {
+        for limit in [6 << 20, (6 << 20) + 8, (6 << 20) + 16] {
+            let (outcome, text, used, _) = run(src, &name, limit, None);
+            for slice in [997, 20_011] {
+                let parked = run(src, &name, limit, Some(slice));
+                assert!(parked.3 > 2, "slice {slice}: {} parks", parked.3);
+                assert_eq!(
+                    (&parked.0, &parked.1, parked.2),
+                    (&outcome, &text, used),
+                    "{name}, limit {limit}, slice {slice}"
+                );
+                cases += 1;
+            }
+        }
+    }
+    assert_eq!(cases, 48);
+    // A second shape, without asyncio: the largest `bytearray` that fits,
+    // found by halving, then `print` with the heap as full as it was
+    // left. Parked, the 8 bytes made the search end lower and `print` fit
+    // where the unparked run raised `MemoryError` (4 MiB, default GC).
+    let halving = "\
+lo, hi = 1 << 20, 4 << 20
+while hi - lo > 1:
+    mid = (lo + hi) // 2
+    try:
+        b = bytearray(mid)
+        b = None
+        lo = mid
+    except MemoryError:
+        hi = mid
+print(lo)
+";
+    let plain = run(halving, "halving.py", 4 << 20, None);
+    for slice in [1, 997, 20_011] {
+        let parked = run(halving, "halving.py", 4 << 20, Some(slice));
+        assert!(parked.3 > 2, "slice {slice}: {} parks", parked.3);
+        assert_eq!(
+            (&parked.0, &parked.1, parked.2),
+            (&plain.0, &plain.1, plain.2),
+            "halving, slice {slice}"
+        );
+    }
+}

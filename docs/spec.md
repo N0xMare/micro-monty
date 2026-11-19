@@ -2600,7 +2600,19 @@ bound owned capacities, not an allocator's transient peak or process RSS.
   preflight before cloning; reclamation and failed loads release. Bundled
   and synthesized code count too. Bytecode verification uses one scratch
   bit per byte of code; loading reserves the largest such workspace across
-  retained codes, so a same-budget restore can verify.
+  retained codes, so a same-budget restore can verify. Code is charged by
+  its buffers' capacities: compiled code keeps the growth slack of its
+  bytecode and tables, which a restore decodes without, so a restored
+  session is charged less for the same compiled code than the session it
+  came from (46,820 against 39,056 bytes in a 2 MiB session [M]). A plain
+  run and a parked one hold the same code and are charged alike; host
+  signature code has its decode's capacities either way.
+- **The kept stop.** The stop a session keeps for `Session::pending` is
+  charged by its length while the host holds it, in the session that
+  stopped and in one restored from its image alike, and its charge goes
+  with it: at the resume once the call is accepted, and wherever the stop
+  is dropped. Its buffer is reused from stop to stop; the room it has past
+  the stop, at most 4,096 bytes, is not charged.
 - **Host modules.** Retained names, constant keys, nested host-value
   buffers and their tables. Registration counts the new clone before
   allocating it; replacement keeps the old definition live until success,
