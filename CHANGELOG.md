@@ -79,6 +79,14 @@ hashes are pre-release history, kept in the private archive
   session shares. It gets CPython's `AttributeError` for a builtin
   function or `TypeError` for an immutable type; instances, subclasses
   and module attributes stay writable.
+- A restore no longer moves where a cached call's frame sits. A restore
+  empties the call caches, and the call that missed one put the callee's
+  frame above all of the caller's registers where a hit runs it in place,
+  so each restore in a recursion moved the deeper frames up and the stack
+  could grow past a doubling the session that went on never needed: at
+  4 MiB beside a 3,800 KiB pad, `f(900)` printed `ok` going on and raised
+  `MemoryError` restored at every park of 7 units [M]. The call that fills
+  the cache now runs the callee in place too.
 - A session whose heap is at its wall no longer keeps failing cell starts
   with `MemoryError` and fuel 0 beside garbage it could collect. A start
   at the wall reclaims dead code with its one collection, whether or not

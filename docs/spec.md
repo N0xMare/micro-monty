@@ -1384,7 +1384,13 @@ The table retains its high-water capacity inside the arena budget.
   overlays its call window's `R[r]` and `R[r+1]`: the caller's function and a
   link small int (`ret_pc:23 | caller code index:16 | base offset:9`). Frames
   whose caller record does not fit (continuations, generator and coroutine
-  callers) store offset 0 and keep a full record on a side stack. Restore
+  callers) store offset 0 and keep a full record on a side stack. A call
+  that `Ic::Call` caches (a Python function with simple parameters, called
+  with exactly its positional ones, not a generator or coroutine) runs the
+  callee in place at its call window, whether the cache hit or the call
+  is the one that fills it; other calls put the frame above the caller's
+  registers. So where a frame sits, and how far the stack grows, does not
+  depend on what the caches hold, which a restore empties. Restore
   validates the header chain. Code objects sit in one flat table indexed by
   the link's code index. The register count per code object is fixed by the
   compiler.

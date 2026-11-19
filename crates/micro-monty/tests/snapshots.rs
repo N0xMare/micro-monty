@@ -844,6 +844,41 @@ print(len(keep), sum(len(k) for k in keep), keep[123], keep[-1])
     assert_eq!((got, outcome(&p)), (want, want_outcome));
 }
 
+/// A restore empties the call caches, and the call that missed one put
+/// the callee's frame above all of the caller's registers, where a hit
+/// runs it in place: each restore in a recursion moved every deeper frame
+/// up, so the stack grew past a doubling the session that went on never
+/// needed. At 4 MiB beside a 3,800 KiB pad, `f(900)` printed `ok` going
+/// on and `ME` restored at every park of 7 units [M].
+#[test]
+fn a_restore_does_not_move_the_frames_of_cached_calls() {
+    let args = vec!["n"; 200].join(", ");
+    let src = format!(
+        "pad = bytes(3800 * 1024)\ndef h(*a):\n    return 0\ndef f(n):\n    if n:\n        r = f(n - 1)\n    else:\n        r = 0\n    t = h({args})\n    return r\ntry:\n    f(900)\n    print('ok')\nexcept MemoryError:\n    print('ME')\n"
+    );
+    let e = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(4 << 20)));
+    let run = |restore: bool| {
+        let out = Arc::new(Mutex::new(String::new()));
+        let mut s = Session::new(&e).expect("session");
+        attach(&mut s, &out);
+        s.set_fuel(Some(7));
+        let mut p = s.start(&e.compile(&src, "frames.py").expect("compiles"));
+        while let Progress::Parked { .. } = p {
+            if restore {
+                s = e
+                    .restore(&s.snapshot().expect("snapshot"))
+                    .expect("restore");
+                attach(&mut s, &out);
+            }
+            s.set_fuel(Some(7));
+            p = s.resume(Resume::Continue).expect("resumes");
+        }
+        out.lock().expect("output lock").clone()
+    };
+    assert_eq!(run(false), "ok\n");
+    assert_eq!(run(true), "ok\n");
+}
+
 /// A fast-path call puts its callee's frame at the caller's argument
 /// window, below the caller's dead temporaries, which a collection there
 /// does not trace; a native that calls back into Python puts its frame

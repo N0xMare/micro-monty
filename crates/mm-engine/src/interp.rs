@@ -1326,22 +1326,26 @@ impl Vm {
                 return Err(self.err(T::SystemError, "bad code index"));
             };
             let nregs = code.code.nregs as usize;
-            self.ensure_stack(top + nregs + 1)?;
             let p = &code.code.params;
             let argc = p.argcount as usize;
             let simple = nkw == 0 && p.is_simple();
-            if simple && npos == argc {
+            // What `Ic::Call` caches: the call's fast path runs the callee
+            // in place, its arguments its first registers. The miss that
+            // fills the cache puts the frame there too, so where a frame
+            // sits, and how far the stack grows, does not depend on whether
+            // the cache was filled (a restore empties it).
+            let fits = simple && npos == argc;
+            let cached = ic.filter(|_| fits && !code.code.is_coroutine && !code.code.is_generator);
+            let top = if cached.is_some() { args } else { top };
+            self.ensure_stack(top + nregs + 1)?;
+            if let Some(slot) = cached {
+                self.ics[slot] = Ic::Call {
+                    func: callee,
+                    code: cidx,
+                };
+            } else if fits {
                 for i in 0..npos {
                     self.stack[top + i] = self.stack[args + i];
-                }
-                if let Some(slot) = ic
-                    && !code.code.is_coroutine
-                    && !code.code.is_generator
-                {
-                    self.ics[slot] = Ic::Call {
-                        func: callee,
-                        code: cidx,
-                    };
                 }
             } else if simple
                 && npos < argc
