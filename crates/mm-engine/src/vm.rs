@@ -103,16 +103,24 @@ pub(crate) fn decoders(
     Ok(t)
 }
 
+/// The sections of a bundled program that [`Packing::unpack`] unpacks, a
+/// bit each: all of them, and those a restore reads (all but the
+/// instructions, [`mm_compile::section::OP`] on).
+const ALL_SECTIONS: u16 = (1 << mm_compile::section::COUNT) - 1;
+const META_SECTIONS: u16 = (1 << mm_compile::section::OP) - 1;
+
 impl Packing {
-    /// The program packed in `code`, admitting each unpacked section and
-    /// the decoded buffers within `budget`.
-    fn decode(
+    /// The sections of the program packed in `code` that `want` names,
+    /// unpacked; the others are left empty. Admits every section within
+    /// `budget` as unpacked.
+    fn unpack(
         &'static self,
         code: &[u8],
         cache: Option<&dyn ModuleCache>,
         unpackers: &mut Unpackers,
         budget: &mut u64,
-    ) -> Result<Program, mm_compile::DecodeError> {
+        want: u16,
+    ) -> Result<[Vec<u8>; mm_compile::section::COUNT], mm_compile::DecodeError> {
         use mm_compile::{DecodeError, section::COUNT};
         let mut lens = [0usize; COUNT];
         let mut rest = code;
@@ -136,12 +144,41 @@ impl Packing {
             let len = if k == COUNT - 1 { rest.len() } else { len };
             let (part, tail) = rest.split_at_checked(len).ok_or(DecodeError::Invalid)?;
             rest = tail;
+            if want & 1 << k == 0 {
+                mm_compile::pack::admit_shared(part, budget)?;
+                continue;
+            }
             sections[k] =
                 decoders(k, self.headers[k], cache, unpackers)?.unpack_bounded(part, budget)?;
         }
-        let refs: [&[u8]; COUNT] = core::array::from_fn(|k| sections[k].as_slice());
+        Ok(sections)
+    }
+
+    /// The program packed in `code`, admitting each unpacked section and
+    /// the decoded buffers within `budget`; without its instructions if
+    /// `deferred`.
+    fn decode(
+        &'static self,
+        code: &[u8],
+        cache: Option<&dyn ModuleCache>,
+        unpackers: &mut Unpackers,
+        budget: &mut u64,
+        deferred: bool,
+    ) -> Result<Program, mm_compile::DecodeError> {
+        let want = if deferred {
+            META_SECTIONS
+        } else {
+            ALL_SECTIONS
+        };
+        let sections = self.unpack(code, cache, unpackers, budget, want)?;
+        let refs: [&[u8]; mm_compile::section::COUNT] =
+            core::array::from_fn(|k| sections[k].as_slice());
         let shared = mm_compile::SharedStrings::new(self.text, self.ends);
-        Program::decode_sections(&refs, shared, budget)
+        if deferred {
+            Program::decode_sections_deferred(&refs, shared, budget)
+        } else {
+            Program::decode_sections(&refs, shared, budget)
+        }
     }
 }
 
@@ -150,38 +187,35 @@ impl StdModule {
     /// budget including unpacking, the string pool and the owned Program
     /// that stays alive while its codes are loaded. A cached module charges
     /// `budget` the workspace its decoding took, so a session's accounting
-    /// and errors do not depend on what the cache holds.
+    /// and errors do not depend on what the cache holds. `deferred` leaves
+    /// a packed module's instructions out ([`Vm::load_bytecode`] decodes
+    /// them on first use), charged all the same, and takes a cached
+    /// module either way; without it, a cached module without its
+    /// instructions is decoded again, and offered in its place.
     pub(crate) fn decode(
         &self,
         i: usize,
         cache: Option<&dyn ModuleCache>,
         unpackers: &mut Unpackers,
         budget: &mut u64,
+        deferred: bool,
     ) -> Result<Arc<DecodedModule>, mm_compile::DecodeError> {
-        if let Some(m) = cache.and_then(|c| c.get(i)) {
+        if let Some(m) = cache
+            .and_then(|c| c.get(i))
+            .filter(|m| deferred || !m.deferred())
+        {
             *budget = budget
                 .checked_sub(m.workspace)
                 .ok_or(mm_compile::DecodeError::TooLarge)?;
             return Ok(m);
         }
         let start = *budget;
-        #[cfg(feature = "host-bundle")]
-        let fetched = {
-            let (at, len) = self.external;
-            let mut b = alloc::vec![0; len as usize];
-            if !cache.is_some_and(|c| c.bundle(1, at, &mut b)) {
-                return Err(mm_compile::DecodeError::Invalid);
-            }
-            b
-        };
-        #[cfg(feature = "host-bundle")]
-        let code: &[u8] = &fetched;
-        #[cfg(not(feature = "host-bundle"))]
-        let code = self.code;
+        let code = self.packed(cache)?;
+        let deferred = deferred && self.packing.is_some();
         let program = if let Some(p) = self.packing {
-            p.decode(code, cache, unpackers, budget)?
+            p.decode(&code, cache, unpackers, budget, deferred)?
         } else {
-            let bytes = mm_compile::pack::unpack_bounded(code, budget)?;
+            let bytes = mm_compile::pack::unpack_bounded(&code, budget)?;
             Program::decode_bounded(&bytes, budget)?
         };
         let m = Arc::new(DecodedModule {
@@ -193,6 +227,84 @@ impl StdModule {
         }
         Ok(m)
     }
+
+    /// The module's packed code; with `host-bundle`, read from `cache`'s
+    /// bundle.
+    #[cfg_attr(
+        not(feature = "host-bundle"),
+        expect(clippy::unnecessary_wraps, reason = "fallible with host-bundle")
+    )]
+    fn packed(
+        &self,
+        cache: Option<&dyn ModuleCache>,
+    ) -> Result<alloc::borrow::Cow<'static, [u8]>, mm_compile::DecodeError> {
+        #[cfg(feature = "host-bundle")]
+        {
+            let (at, len) = self.external;
+            let mut b = alloc::vec![0; len as usize];
+            if !cache.is_some_and(|c| c.bundle(1, at, &mut b)) {
+                return Err(mm_compile::DecodeError::Invalid);
+            }
+            Ok(alloc::borrow::Cow::Owned(b))
+        }
+        #[cfg(not(feature = "host-bundle"))]
+        {
+            let _ = cache;
+            Ok(alloc::borrow::Cow::Borrowed(self.code))
+        }
+    }
+}
+
+/// Decodes the instructions of the bundled program that `codes[ci]`
+/// belongs to, if a restore left them out
+/// ([`mm_compile::bytecode::Code::bytecode_deferred`]), and gives each of its codes
+/// still without them the decoded code. Charges nothing: the restore
+/// charged the full decode. A restored code is a stdlib module's (its
+/// `gslot`, its module's codes from `module_base`) or a prelude unit's (its
+/// source's unit, from `module_base`); `Invalid` if the bundle is corrupt.
+pub(crate) fn load_bytecode_in(
+    codes: &mut [Arc<CodeObj>],
+    ci: usize,
+    sources: &[Source],
+    stdlib: &[StdModule],
+    cache: Option<&dyn ModuleCache>,
+    unpackers: &mut Unpackers,
+) -> Result<(), mm_compile::DecodeError> {
+    use mm_compile::DecodeError::Invalid;
+    let c = codes.get(ci).ok_or(Invalid)?;
+    if !c.code.bytecode_deferred() {
+        return Ok(());
+    }
+    let (base, gslot, source) = (c.module_base as usize, c.gslot, c.source);
+    // The whole program, from the cache or decoded again (and offered to
+    // it in place of the one without instructions).
+    let program = if let Some(k) = gslot.checked_sub(GSLOT_STD) {
+        let k = k as usize;
+        let m = stdlib.get(k).ok_or(Invalid)?;
+        m.decode(k, cache, unpackers, &mut { u64::MAX }, false)?
+    } else {
+        let unit = sources
+            .get(source as usize)
+            .and_then(|s| s.unit)
+            .ok_or(Invalid)?;
+        crate::prelude::unit_program(unit, cache, unpackers, u64::MAX, None)?
+    };
+    for (e, code) in codes.iter_mut().skip(base).zip(&program.program.codes) {
+        // The program's codes still without instructions: a restore
+        // checked that each sits at its index from `module_base`.
+        if e.module_base as usize == base
+            && e.gslot == gslot
+            && e.source == source
+            && e.code.bytecode_deferred()
+        {
+            debug_assert_eq!(e.code.buffer_bytes(), code.buffer_bytes());
+            Arc::make_mut(e).code = code.clone();
+        }
+    }
+    if codes[ci].code.bytecode_deferred() {
+        return Err(Invalid);
+    }
+    Ok(())
 }
 
 /// A bundled module's decoded program, shared through a [`ModuleCache`].
@@ -204,6 +316,17 @@ pub struct DecodedModule {
 }
 
 impl DecodedModule {
+    /// Whether its codes' instructions are left out
+    /// ([`mm_compile::bytecode::Code::bytecode_deferred`]): a restore decoded it.
+    /// Such a module takes the bytes the full one would.
+    #[must_use]
+    pub fn deferred(&self) -> bool {
+        self.program
+            .codes
+            .first()
+            .is_some_and(|c| c.bytecode_deferred())
+    }
+
     /// The bytes it keeps alive: code objects, their shared allocations and
     /// buffers.
     #[must_use]
@@ -242,9 +365,11 @@ impl PreludeChunk {
 /// [`Vm::set_module_cache`]). Modules are indexed like
 /// [`VmConfig::stdlib`], chunks below [`crate::PRELUDE_CHUNKS`].
 pub trait ModuleCache: Send + Sync {
-    /// Module `i`, if the cache holds it.
+    /// Module `i`, if the cache holds it; perhaps without its
+    /// instructions ([`DecodedModule::deferred`]).
     fn get(&self, i: usize) -> Option<Arc<DecodedModule>>;
-    /// A module `i` a session decoded; the cache may keep it or not.
+    /// A module `i` a session decoded; the cache may keep it or not. A
+    /// module with its instructions should replace one without.
     fn offer(&self, i: usize, module: &Arc<DecodedModule>);
     /// Prelude chunk `c`, if the cache holds it.
     fn prelude_chunk(&self, c: usize) -> Option<Arc<PreludeChunk>>;
@@ -252,13 +377,14 @@ pub trait ModuleCache: Send + Sync {
     /// not.
     fn offer_prelude_chunk(&self, c: usize, chunk: &Arc<PreludeChunk>);
     /// The decoded program of prelude unit `u` (below
-    /// [`crate::PRELUDE_UNITS`]), if the cache holds it.
+    /// [`crate::PRELUDE_UNITS`]), if the cache holds it; perhaps without
+    /// its instructions.
     fn prelude_unit(&self, u: usize) -> Option<Arc<DecodedModule>> {
         let _ = u;
         None
     }
     /// A prelude unit `u`'s program a restore decoded; the cache may keep
-    /// it or not.
+    /// it or not, as [`ModuleCache::offer`].
     fn offer_prelude_unit(&self, u: usize, program: &Arc<DecodedModule>) {
         let _ = (u, program);
     }
@@ -381,8 +507,11 @@ pub(crate) struct Source {
 }
 
 /// A loaded code object: the compiler's code plus its materialised
-/// constants and names. Immutable during execution; lives outside the arena
-/// in the code table, which uniquely owns it during between-cell compaction.
+/// constants and names. Immutable during execution, but for a restored
+/// bundled code's instructions, decoded on first use
+/// ([`Vm::load_bytecode`]); lives outside the arena in the code table,
+/// which uniquely owns it during between-cell compaction.
+#[derive(Clone)]
 pub(crate) struct CodeObj {
     pub code: Arc<Code>,
     pub consts: Vec<Value>,

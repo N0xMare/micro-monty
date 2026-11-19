@@ -19,6 +19,9 @@ use mm_core::Value;
 /// The pcs a frame suspended at `pc` waits at: the suspending instruction
 /// (a `throw` raises there) and the one after it (a resume runs there).
 pub(crate) fn suspend_pcs(code: &mm_compile::bytecode::Code, pc: u64) -> [u32; 2] {
+    // Code that suspended has run, so has its instructions: a restore
+    // decodes those of every suspended generator and coroutine.
+    debug_assert!(!code.bytecode_deferred(), "a suspended code was decoded");
     let at = u32::try_from(pc).unwrap_or(u32::MAX);
     let len = code
         .bytecode
@@ -198,10 +201,15 @@ impl Vm {
             _ => return Err(self.err(T::SystemError, "micro-monty: bad generator")),
         };
         let [func, regs, handled] = fields;
-        let nregs = self
-            .codes
-            .get(cidx as usize)
-            .map_or(0, |c| c.code.nregs as usize);
+        // A created generator's code may still be left out: its first
+        // fetch decodes it (`Rare::Load`). A suspended one's has run.
+        let nregs = self.codes.get(cidx as usize).map_or(0, |c| {
+            debug_assert!(
+                state == g::CREATED || !c.code.bytecode_deferred(),
+                "a suspended generator's code was decoded"
+            );
+            c.code.nregs as usize
+        });
         let new_base = st.base + self.codes[st.ci as usize].code.nregs as usize + HDR;
         self.ensure_stack(new_base + nregs + 1)?;
         // The registers in one copy.
@@ -284,6 +292,10 @@ impl Vm {
             return Ok(false);
         };
         let nregs = code.code.nregs as usize;
+        debug_assert!(
+            state == g::CREATED || !code.code.bytecode_deferred(),
+            "a suspended generator's code was decoded"
+        );
         if !code.code.freevars.is_empty()
             || self.depth as usize + 1 >= self.recursion_limit as usize
             || self.specials.len() == self.specials.capacity()

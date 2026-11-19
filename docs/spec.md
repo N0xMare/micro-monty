@@ -1108,10 +1108,13 @@ modules, ten for the prelude's parts) are built once and kept in the
 facade `Engine`'s cache (`pack::Tables`, about 90 KB for all of them [M]),
 else by the session for one cell or one restore; each unpacking is still
 charged its decoder workspace, so a session's charges do not depend on
-whether the tables existed. The prelude is packed the same way, in chunks of units (one
-per top-level `def`, class, instance or literal binding), and a unit is
-built in a session on the first lookup of its name (`mm-engine/src/prelude.rs`);
-no prelude Python runs at session start. The stdlib and the prelude are
+whether the tables existed. A restore unpacks a program's instruction
+sections only when its code first runs, and then decodes the whole
+program again (§9.3). The prelude is packed the
+same way, in chunks of units (one per top-level `def`, class, instance or
+literal binding), and a unit is built in a session on the first lookup of
+its name (`mm-engine/src/prelude.rs`); no prelude Python runs at session
+start. The stdlib and the prelude are
 part of the one engine module: a default build, the shipped guest
 included, carries their packed bytecode in its data segments. The bundle
 guest (`host-bundle`) keeps the same bytes in the custom sections
@@ -2193,6 +2196,37 @@ output callback, the wall clock, entropy, the zone source, the text cut,
 `int_bits_text`, GC stress), the deadline and park flag, which the host sets
 per run, and `Session::set_gc_yield`, which a host sets again after a
 restore. Inline caches and char positions start empty.
+
+**Bundled code on restore.** An image names bundled-module and prelude
+code by reference, and a restore decodes each program it names without its
+instructions: it unpacks the string, index and metadata sections and
+builds every code object but its bytecode
+(`Program::decode_sections_deferred`), so every check of the image against
+the code (constant and name counts, keyword-name tuples, inline caches,
+code indices) still runs at restore. When a code of that program first
+runs, the program is decoded whole, as an import decodes it (the module
+cache's copy when it has one), and its codes still without instructions
+take theirs: in the dispatch loop, whose first fetch of such a code finds
+a placeholder word (`bytecode::DEFERRED`, an opcode no compiled code
+holds) and leaves the hot path for the unknown-opcode one, so a frame
+start pays no check; when a class reads `__init__`'s stores and when a
+loop callback enters `_aio_callback` at its `CALL_EX`
+(`Vm::load_bytecode`). Decoding the whole program again keeps one decoder:
+an instructions-only pass would save 2.2% of a durable replay's
+instructions for about 5 KB per shipped artifact [M]. Programs that a
+frame, a stopped state or a suspended generator or coroutine of the image
+runs in are decoded during the restore, whose checks read their pcs; a
+suspended generator's are decoded on a trusted restore too, as its resumes
+and a collection (which clears its dead saved registers) read its
+instructions without a check. A code without its instructions keeps their
+buffer reserved (holding the placeholder), and the restore charges the
+unpacking of the left-out sections as if it had run
+(`pack::admit_shared`), so a restored session's memory charge is the same
+before and after the decode, and the same as a session's that loaded the
+code itself; the decode burns no fuel and charges nothing. A corrupt
+`host-bundle` read at that point raises `SystemError` in the cell, as an
+import's does. The engine's module cache keeps such programs too and takes
+the decoded one in their place.
 
 Host-call ids survive a restore: the restored session accepts the same
 `Resume`, and `Session::pending` re-reports the stop (a host call with its

@@ -20,6 +20,7 @@ use crate::vm::{
 use alloc::{format, string::String, sync::Arc, vec::Vec};
 use core::sync::atomic::Ordering;
 use mm_compile::ast::BinOp;
+use mm_compile::bytecode::DEFERRED;
 use mm_compile::bytecode::{Code, instr_len, op, operand};
 use mm_core::Value;
 
@@ -42,6 +43,12 @@ enum Rare {
     Next,
     /// The frame changed: reload it.
     Frames,
+    /// The frame's code is restored code about to run first, its
+    /// instructions left out ([`mm_compile::bytecode::DEFERRED`] at its
+    /// pc, in the loop's copy of the table): decode them
+    /// ([`Vm::load_bytecode`]) if no other path has, and reload the frame.
+    /// Its pc is 0, as a restore decodes the code of every frame it holds.
+    Load,
     /// Leave the loop with this flow.
     Exit(Flow),
 }
@@ -4421,6 +4428,14 @@ impl Vm {
                         match r {
                             Ok(Rare::Next) => {}
                             Ok(Rare::Frames) => continue 'frames,
+                            Ok(Rare::Load) => {
+                                // Without the loop's copy of the table, it
+                                // changes in place.
+                                drop(core::mem::take(&mut codes));
+                                tri!(self.load_frame_code(st.ci, pc));
+                                codes = self.codes.clone();
+                                continue 'frames;
+                            }
                             Ok(Rare::Exit(f)) => return Ok(f),
                             Err(f) => return Err(f),
                         }
@@ -5232,6 +5247,11 @@ impl Vm {
             op::LDA_DEREF | op::STA_DEREF => {
                 let _ = self.not_a_cell();
                 fail!(false);
+            }
+            // The placeholder of code left out, in the loop's copy of the
+            // table (`self.codes` may hold it decoded since).
+            _ if u32::from(opcode) == DEFERRED & 0xff => {
+                return Ok(Rare::Load);
             }
             _ => {
                 let _ = self.err(

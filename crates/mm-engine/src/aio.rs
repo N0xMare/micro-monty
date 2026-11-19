@@ -2478,6 +2478,9 @@ impl Vm {
     ) -> Result<State, Raised> {
         use mm_compile::bytecode::{instr_len, op, operand};
         let mut st = self.bottom_call(func, &params)?;
+        // Its instructions are read here, not in the dispatch loop: a
+        // restore may have left them out (`Vm::load_bytecode`).
+        self.load_bytecode(st.ci)?;
         // Arguments that are not a list or tuple (a handle's `_args` the
         // program replaced): `_aio_callback` runs from its start, and its
         // `f(*args)` raises the `TypeError`, reported as the callback's.

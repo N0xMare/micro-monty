@@ -8,7 +8,7 @@
 
 use micro_monty::{
     Engine, EngineConfig, HostModule, HostValue, Limits, Progress, Resume, Session,
-    SessionSettings, SnapshotError, Stream, TextCut,
+    SessionSettings, SessionTemplate, SnapshotError, Stream, TextCut,
 };
 use std::{
     fmt::Write as _,
@@ -1875,7 +1875,7 @@ except KeyError as e:
     assert_eq!(*zones.lock().expect("zones lock"), ["Mars/Olympus"]);
 
     // A template's instances take them the same way.
-    let template = micro_monty::SessionTemplate::capture(&engine, &mut restored).expect("captures");
+    let template = SessionTemplate::capture(&engine, &mut restored).expect("captures");
     let (out, zones) = sinks();
     let mut instance = template
         .instantiate_with(host_settings(&out, &zones))
@@ -2590,4 +2590,141 @@ fn a_park_at_a_skipped_handle_restores() {
     text.push_str(&out.lock().expect("lock"));
     assert!(parks > 250, "{parks}");
     assert_eq!((text, HELD_TOTAL - s.fuel_total().expect("total")), plain);
+}
+
+/// A restore decodes a bundled program's instructions only when one of its
+/// codes first runs (`Vm::load_bytecode`). That must not show: the same
+/// image restored on a fresh engine (instructions left out) and on an
+/// engine whose module cache holds the stdlib modules prints, charges
+/// memory and burns fuel alike after every cell, through decodes of
+/// reached code (a suspended `heapq.merge` generator, `json`, `collections`,
+/// prelude units) and a reclamation of dropped user code; and both print
+/// and burn what the session that wrote the image does. (Their code
+/// charge is below the writer's by its tables' spare capacity, as before
+/// instructions were left out [M].)
+#[test]
+fn a_restore_charges_the_same_whether_bundled_code_is_decoded() {
+    use micro_monty::test_hooks::code_state;
+    let setup = r"
+import json, collections, heapq
+class P:
+    def __init__(self, v):
+        self.v = v
+it = heapq.merge([1, 4, 5], [2, 3])
+first = next(it)
+def f(x):
+    return json.dumps(collections.Counter(x).most_common(2))
+";
+    let cells = [
+        "f('abracadabra')",
+        "list(it)",
+        "def g():\n    return P(2)\ng().v",
+        "del g\nimport re\nre.sub('a', 'b', 'banana')",
+        "f('mississippi'), first",
+    ];
+    let e = engine();
+    let mut original = Session::new(&e).expect("session");
+    let p = original.start(&e.compile(setup, "s.py").expect("compiles"));
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    let image = original.snapshot().expect("snapshot");
+    let fresh = engine();
+    let mut lazy = fresh.restore(&image).expect("restore");
+    let warm = engine();
+    let mut warming = Session::new(&warm).expect("session");
+    assert!(matches!(
+        warming.start(&warm.compile(setup, "s.py").expect("compiles")),
+        Progress::Complete(_)
+    ));
+    let mut decoded = warm.restore(&image).expect("restore");
+    let (charge, _, left_out) = code_state(&lazy);
+    // The warm engine holds the modules, not the prelude units the image
+    // names: a few of their codes are still left out.
+    assert!(left_out > 100, "{left_out} codes left out");
+    assert!(code_state(&decoded).2 < left_out / 4);
+    assert_eq!(code_state(&decoded).0, charge);
+    assert_eq!(code_state(&decoded).1, code_state(&lazy).1);
+    let mut sessions = [&mut original, &mut lazy, &mut decoded];
+    for s in &mut sessions {
+        s.set_fuel_total(Some(1 << 40));
+    }
+    for cell in cells {
+        let runs: Vec<_> = sessions
+            .iter_mut()
+            .map(|s| {
+                let code = s.compile(cell, "c.py").expect("compiles");
+                let p = outcome(&s.start(&code));
+                let (charge, available, _) = code_state(s);
+                (p, s.fuel_total(), charge, available)
+            })
+            .collect();
+        assert_eq!(runs[1], runs[2], "{cell}: restored, then decoded or not");
+        assert_eq!(runs[0].0, runs[1].0, "{cell}: original and restored");
+        assert_eq!(runs[0].1, runs[1].1, "{cell}: fuel");
+    }
+    assert!(
+        code_state(&lazy).2 > 0,
+        "unreached bundled code stays as it was"
+    );
+    assert!(code_state(&lazy).2 < left_out, "reached code was decoded");
+}
+
+/// A template's trusted instantiation skips the checks that decode the
+/// code of a suspended generator, but still decodes it: a collection reads
+/// the instructions at the yield of a suspended generator it has not
+/// cleared, before anything resumes it (debug builds assert they are
+/// there). A snapshot that collects first writes them cleared; one that
+/// does not leaves this the only decode. No module cache, so each
+/// instantiation decodes for itself.
+#[test]
+fn a_trusted_restore_collects_around_a_suspended_bundled_generator() {
+    let e = Engine::with_module_cache(EngineConfig::default(), 0);
+    let mut s = Session::new(&e).expect("session");
+    let setup = "import heapq\nit = heapq.merge([1, 4, 5], [2, 3], [0, 6])\nfirst = next(it)";
+    let p = s.start(&e.compile(setup, "s.py").expect("compiles"));
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    let template = SessionTemplate::capture(&e, &mut s).expect("template");
+    // The first instantiation is checked, the second trusted.
+    for _ in 0..2 {
+        let mut t = template.instantiate().expect("instantiates");
+        let cell = "import gc\ngc.collect()\n[first, *it]";
+        let p = t.start(&e.compile(cell, "c.py").expect("compiles"));
+        assert_eq!(outcome(&p), "complete Some(\"[0, 1, 2, 3, 4, 5, 6]\")");
+    }
+}
+
+/// A loop callback enters `_aio_callback`'s frame at its `CALL_EX` without
+/// the dispatch loop (`Vm::enter_callback` reads its instructions), so on a
+/// restore that left the prelude unit's instructions out it decodes them
+/// first: the callback runs as it does in the session that went on.
+#[test]
+fn a_restored_loop_runs_a_callback_whose_prelude_code_is_not_decoded() {
+    let setup = r"
+import asyncio
+seen = []
+async def main():
+    asyncio.get_running_loop().call_soon(seen.append, 1)
+    await asyncio.sleep(0)
+asyncio.run(main())
+";
+    let cell = r"
+def note(x):
+    seen.append(x * 10)
+async def again():
+    asyncio.get_running_loop().call_soon(note, 2)
+    await asyncio.sleep(0)
+asyncio.run(again())
+seen
+";
+    let e = engine();
+    let mut s = Session::new(&e).expect("session");
+    let p = s.start(&e.compile(setup, "s.py").expect("compiles"));
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    let image = s.snapshot().expect("snapshot");
+    let fresh = engine();
+    let mut restored = fresh.restore(&image).expect("restore");
+    for s in [&mut s, &mut restored] {
+        let code = s.compile(cell, "c.py").expect("compiles");
+        let p = s.start(&code);
+        assert_eq!(outcome(&p), "complete Some(\"[1, 20]\")");
+    }
 }

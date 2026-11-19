@@ -147,6 +147,77 @@ impl Vm {
         self.hx_hot(res)
     }
 
+    /// The code charge (the session's code table, bundled workspace and
+    /// loaded programs) and how many codes a restore left without their
+    /// instructions; for tests.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn code_state(&self) -> (u64, usize) {
+        let deferred = self
+            .codes
+            .iter()
+            .filter(|c| c.code.bytecode_deferred())
+            .count();
+        (self.code_bytes(), deferred)
+    }
+
+    /// Decodes the instructions of restored bundled code `ci` before it
+    /// first runs or is read ([`crate::vm::load_bytecode_in`]); nothing for
+    /// any other code. It burns no fuel and charges nothing (the restore
+    /// charged the full decode), so a cell runs the same whether its
+    /// session was restored or not.
+    pub(crate) fn load_bytecode(&mut self, ci: u32) -> Result<(), Raised> {
+        if self
+            .codes
+            .get(ci as usize)
+            .is_some_and(|c| c.code.bytecode_deferred())
+        {
+            return self.decode_bytecode(ci);
+        }
+        Ok(())
+    }
+
+    /// [`Vm::load_bytecode`] for the frame at `pc` of code `ci`, whose
+    /// fetch in the dispatch loop's copy of the table found the
+    /// placeholder ([`mm_compile::bytecode::DEFERRED`]); `SystemError` if
+    /// the code holds opcode 255 there once decoded, which no compiled code
+    /// does. Out of line, so the dispatch loop's registers stay as they are.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn load_frame_code(&mut self, ci: u32, pc: usize) -> Result<(), Raised> {
+        use mm_compile::bytecode::DEFERRED;
+        self.load_bytecode(ci)?;
+        if self
+            .codes
+            .get(ci as usize)
+            .and_then(|c| c.code.bytecode.get(pc))
+            .is_none_or(|&w| w & 0xff == DEFERRED & 0xff)
+        {
+            return Err(self.err(crate::types::T::SystemError, "bad opcode 255 (length 1)"));
+        }
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn decode_bytecode(&mut self, ci: u32) -> Result<(), Raised> {
+        let cache = self.module_cache.clone();
+        crate::vm::load_bytecode_in(
+            &mut Arc::make_mut(&mut self.codes)[..],
+            ci as usize,
+            &self.sources,
+            self.stdlib,
+            cache.as_deref(),
+            &mut self.unpackers,
+        )
+        .map_err(|_| {
+            self.err(
+                crate::types::T::SystemError,
+                "micro-monty: a bundled module is corrupt",
+            )
+        })
+    }
+
     /// Reserve before loading; reconcile unused clone/table capacity afterward.
     /// Cache this cold scan so stack growth never walks every loaded code.
     pub(crate) fn reserve_code(&mut self, additional: u64) -> Result<(), Raised> {

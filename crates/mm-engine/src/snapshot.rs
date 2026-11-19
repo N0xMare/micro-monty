@@ -523,7 +523,7 @@ impl Vm {
         // order, its capacity `gens_room` of its length, so the session
         // that goes on and the restored one walk it alike and are charged
         // alike. A smaller charge always fits.
-        if let Ok(gens) = generators(&self.heap, &self.codes, false, self.gens.len()) {
+        if let Ok(gens) = generators(&self.heap, None, false, self.gens.len()) {
             self.gens = gens;
             self.gens
                 .shrink_to(crate::generator::gens_room(self.gens.len()));
@@ -1329,9 +1329,48 @@ fn sends_ok(code: &Code) -> bool {
     true
 }
 
+/// What decodes a restored bundled code's instructions where a check
+/// needs them: the codes a frame runs, a stopped state is at or a
+/// suspended generator or coroutine resumes in.
+struct Bundled<'a> {
+    sources: &'a [Source],
+    stdlib: &'static [crate::vm::StdModule],
+    cache: Option<&'a dyn crate::vm::ModuleCache>,
+    unpackers: &'a mut crate::vm::Unpackers,
+}
+
+impl Bundled<'_> {
+    /// Decodes the instructions of `codes[ci]`'s program, if they were
+    /// left out; any other code, or an index out of range, is left to
+    /// the check.
+    fn load(&mut self, codes: &mut [Arc<CodeObj>], ci: u32) -> Res<()> {
+        if !codes
+            .get(ci as usize)
+            .is_some_and(|c| c.code.bytecode_deferred())
+        {
+            return Ok(());
+        }
+        crate::vm::load_bytecode_in(
+            codes,
+            ci as usize,
+            self.sources,
+            self.stdlib,
+            self.cache,
+            self.unpackers,
+        )
+        .map_err(|_| SnapError::Corrupt("bundled code"))
+    }
+}
+
 /// Checks a raw state against the code table and its stack.
 #[cfg_attr(mm_shipped, optimize(size))]
-fn check_state(codes: &[Arc<CodeObj>], s: RawState, stack_len: usize) -> Res<State> {
+fn check_state(
+    codes: &mut [Arc<CodeObj>],
+    bundled: &mut Bundled<'_>,
+    s: RawState,
+    stack_len: usize,
+) -> Res<State> {
+    bundled.load(codes, s.ci)?;
     let code = need(codes.get(s.ci as usize), "state code")?;
     if !code.code.is_instr_start(s.pc) || s.base + code.code.nregs as usize > stack_len {
         return Err(SnapError::Corrupt("state"));
@@ -1355,7 +1394,8 @@ fn check_state(codes: &[Arc<CodeObj>], s: RawState, stack_len: usize) -> Res<Sta
 #[allow(clippy::too_many_arguments, reason = "one reader's state")]
 fn check_frames(
     heap: &Heap,
-    codes: &[Arc<CodeObj>],
+    codes: &mut [Arc<CodeObj>],
+    bundled: &mut Bundled<'_>,
     stack: &[Value],
     specials: &[Frame],
     depth: u32,
@@ -1380,6 +1420,7 @@ fn check_frames(
     }
     let mut callee = base;
     for f in &frames {
+        bundled.load(codes, f.code)?;
         let code = need(codes.get(f.code as usize), "frame code")?;
         let at = |pc: u32| code.code.is_instr_start(pc as usize);
         let nregs = code.code.nregs as usize;
@@ -1605,6 +1646,9 @@ impl Vm {
         let mut std_globals = Vec::with_capacity(nstd);
         let mut std_prog: Option<(usize, Arc<crate::vm::DecodedModule>)> = None;
         let mut unit_prog: Option<([u16; 2], Arc<crate::vm::DecodedModule>)> = None;
+        // A prelude chunk unpacked without its instructions, for the units
+        // after the first that the image names in it.
+        let mut partial = None;
         let mut unpackers = None;
         for _ in 0..nstd {
             let first = need(r.u32(), "bundled modules")?;
@@ -1633,6 +1677,7 @@ impl Vm {
             let kind = need(r.u8(), "code")?;
             let mut host_at = None;
             let mut unit_at = None;
+            let mut std_at = None;
             let code = match kind {
                 CODE_TRAMPOLINE if ci == tramp => {
                     let c = CodeObj::trampoline(ci, 0).code;
@@ -1657,8 +1702,16 @@ impl Vm {
                         // target; this one may need more (wider pointers).
                         let allowance = budget.saturating_add(std_scratch);
                         let mut workspace = allowance;
+                        // Instructions are decoded when a code first runs
+                        // (`Vm::load_bytecode`), charged here all the same.
                         let p = stdlib[k]
-                            .decode(k, module_cache.as_deref(), &mut unpackers, &mut workspace)
+                            .decode(
+                                k,
+                                module_cache.as_deref(),
+                                &mut unpackers,
+                                &mut workspace,
+                                true,
+                            )
                             .map_err(|e| match e {
                                 mm_compile::DecodeError::Invalid => {
                                     SnapError::Corrupt("bundled code")
@@ -1682,6 +1735,7 @@ impl Vm {
                         "bundled code",
                     )?;
                     charge(&mut budget, c.buffer_bytes())?;
+                    std_at = Some((k, first));
                     c.clone()
                 }
                 CODE_HOST => {
@@ -1707,14 +1761,17 @@ impl Vm {
                         // consecutive.
                         drop(unit_prog.take());
                         let allowance = budget.saturating_add(std_scratch);
-                        let p =
-                            crate::prelude::unit_program(unit, module_cache.as_deref(), allowance)
-                                .map_err(|e| match e {
-                                    mm_compile::DecodeError::Invalid => {
-                                        SnapError::Corrupt("prelude code")
-                                    }
-                                    mm_compile::DecodeError::TooLarge => SnapError::TooLarge,
-                                })?;
+                        let p = crate::prelude::unit_program(
+                            unit,
+                            module_cache.as_deref(),
+                            &mut unpackers,
+                            allowance,
+                            Some(&mut partial),
+                        )
+                        .map_err(|e| match e {
+                            mm_compile::DecodeError::Invalid => SnapError::Corrupt("prelude code"),
+                            mm_compile::DecodeError::TooLarge => SnapError::TooLarge,
+                        })?;
                         if p.workspace > std_scratch {
                             charge(&mut budget, p.workspace - std_scratch)?;
                             std_scratch = p.workspace;
@@ -1776,6 +1833,18 @@ impl Vm {
             }
             let [name, qualname] = both;
             if module_base > ci || (source != u32::MAX && source as usize >= sources.len()) {
+                return Err(SnapError::Corrupt("code"));
+            }
+            // Whose instructions a first run decodes (`load_bytecode_in`):
+            // a stdlib module's codes from its first, in its globals. Every
+            // other code has its instructions.
+            if let Some((k, first)) = std_at
+                && (module_base != first
+                    || u64::from(gslot) != crate::vm::GSLOT_STD as u64 + k as u64)
+            {
+                return Err(SnapError::Corrupt("bundled code"));
+            }
+            if std_at.is_none() && unit_at.is_none() && code.bytecode_deferred() {
                 return Err(SnapError::Corrupt("code"));
             }
             if let Some((unit, at)) = unit_at {
@@ -1947,6 +2016,12 @@ impl Vm {
             &mut budget,
             ntasks as u64 * size_of::<Option<Task>>() as u64,
         )?;
+        let mut bundled = Bundled {
+            sources: &sources,
+            stdlib,
+            cache: module_cache.as_deref(),
+            unpackers: &mut unpackers,
+        };
         let mut tasks = Vec::with_capacity(ntasks);
         for _ in 0..ntasks {
             if !need(r.bool(), "task")? {
@@ -1961,7 +2036,7 @@ impl Vm {
             let t_depth = need(r.u32(), "frames")?;
             let t_specials = read_frames(r, &mut budget)?;
             let st = read_opt_state(r)?
-                .map(|s| check_state(&codes, s, t_stack.len()))
+                .map(|s| check_state(&mut codes, &mut bundled, s, t_stack.len()))
                 .transpose()?;
             tasks.push(Some(Task {
                 handle,
@@ -2139,14 +2214,15 @@ impl Vm {
 
         // Cross-checks: every state, frame, continuation and task index.
         let saved = match saved {
-            Some(s) => Some(check_state(&codes, s, stack.len())?),
+            Some(s) => Some(check_state(&mut codes, &mut bundled, s, stack.len())?),
             None => None,
         };
         charge(&mut budget, nconts as u64)?;
         let mut held = vec![false; nconts];
         check_frames(
             &heap,
-            &codes,
+            &mut codes,
+            &mut bundled,
             &stack,
             &specials,
             depth,
@@ -2157,7 +2233,8 @@ impl Vm {
         for t in tasks.iter().flatten() {
             check_frames(
                 &heap,
-                &codes,
+                &mut codes,
+                &mut bundled,
                 &t.stack,
                 &t.specials,
                 t.depth,
@@ -2191,7 +2268,7 @@ impl Vm {
         }
         // The generator registry, rebuilt in address order by the walk
         // that checks the generators.
-        let mut gens = generators(&heap, &codes, check, 0)?;
+        let mut gens = generators(&heap, Some((&mut codes[..], &mut bundled)), check, 0)?;
         let room = crate::generator::gens_room(gens.len());
         gens.try_reserve_exact(room - gens.len())
             .map_err(|_| SnapError::TooLarge)?;
@@ -2317,7 +2394,7 @@ impl Vm {
             std_scratch,
             module_cache,
             host_code_in_snapshots: false,
-            unpackers: None,
+            unpackers,
             synth,
             call_log,
             fresh,
@@ -2754,7 +2831,8 @@ fn frame_owner_ok(heap: &Heap, coro: Value, ci: u32) -> bool {
 }
 
 /// Every generator and async generator, in address order (`Vm::gens`).
-/// With `check`, each must be sound: it runs its function's code (in every
+/// On a restore (`restored`), the bundled code of a suspended one has its
+/// bytecode loaded, trusted or not. With `check`, each must be sound: it runs its function's code (in every
 /// state: a running one's frame saves its pc at the next yield for the code
 /// the generator names), a suspended one resumes at the instruction after
 /// its yield, and one not done keeps its registers in a `BUF` of at least
@@ -2764,7 +2842,12 @@ fn frame_owner_ok(heap: &Heap, coro: Value, ci: u32) -> bool {
 /// snapshot passes its registry's length, which its walk finds again);
 /// the list grows with the fallible allocator, `TooLarge` when it cannot.
 #[cfg_attr(mm_shipped, optimize(size))]
-fn generators(heap: &Heap, codes: &[Arc<CodeObj>], check: bool, n: usize) -> Res<Vec<Value>> {
+fn generators(
+    heap: &Heap,
+    mut restored: Option<(&mut [Arc<CodeObj>], &mut Bundled<'_>)>,
+    check: bool,
+    n: usize,
+) -> Res<Vec<Value>> {
     use crate::generator::g;
     let mut ok = true;
     let mut gens = Vec::new();
@@ -2781,19 +2864,32 @@ fn generators(heap: &Heap, codes: &[Arc<CodeObj>], check: bool, n: usize) -> Res
         }
         #[allow(clippy::cast_possible_truncation, reason = "type ids are below 256")]
         gens.push(Value::from_ref(r, h.type_id() as u8));
-        if !check {
+        let Some((codes, bundled)) = restored.as_mut() else {
             return;
-        }
+        };
         let state = heap.get_raw(r, g::STATE).unwrap_or(u64::MAX);
         let ypc = heap
             .get_raw(r, g::YPC)
             .map_or(u64::MAX, |y| y & !g::CLEARED);
         let ci = heap.get_raw(r, g::CODE).ok();
         let func = heap.get(r, g::FUNC).ok().and_then(|f| func_code(heap, f));
-        let code = ci
+        let ci = ci
             .filter(|_| ci == func)
-            .and_then(|i| usize::try_from(i).ok())
-            .and_then(|i| codes.get(i));
+            .and_then(|i| u32::try_from(i).ok());
+        // A suspended generator's code has run: a resume and a collection
+        // (`Vm::clear_saved`) read its instructions without a check. A
+        // created one's first fetch decodes it (`Rare::Load`).
+        if state == g::SUSPENDED
+            && let Some(i) = ci
+            && bundled.load(codes, i).is_err()
+        {
+            ok = false;
+            return;
+        }
+        if !check {
+            return;
+        }
+        let code = ci.and_then(|i| codes.get(i as usize));
         let regs_ok = |c: &CodeObj| {
             heap.get(r, g::REGS)
                 .ok()
@@ -2824,9 +2920,9 @@ fn generators(heap: &Heap, codes: &[Arc<CodeObj>], check: bool, n: usize) -> Res
     if !ok {
         return Err(SnapError::Corrupt("generator"));
     }
-    if !check {
+    let Some((codes, bundled)) = restored.filter(|_| check) else {
         return Ok(gens);
-    }
+    };
     // A coroutine a `send()` suspended resumes at its `AWAIT`.
     heap.for_each_object(&mut |r, h| {
         if h.type_id() != ty::CORO || !ok {
@@ -2838,12 +2934,18 @@ fn generators(heap: &Heap, codes: &[Arc<CodeObj>], check: bool, n: usize) -> Res
             return;
         }
         let pc = heap.get_raw(r, crate::aio::coro::PC).unwrap_or(u64::MAX);
-        let code = heap
+        let ci = heap
             .get(r, crate::aio::coro::FUNC)
             .ok()
             .and_then(|f| func_code(heap, f))
-            .and_then(|ci| usize::try_from(ci).ok())
-            .and_then(|i| codes.get(i));
+            .and_then(|ci| u32::try_from(ci).ok());
+        if let Some(i) = ci
+            && bundled.load(codes, i).is_err()
+        {
+            ok = false;
+            return;
+        }
+        let code = ci.and_then(|i| codes.get(i as usize));
         ok = code.is_some_and(|c| {
             usize::try_from(pc).is_ok_and(|p| {
                 c.code.is_instr_start(p)

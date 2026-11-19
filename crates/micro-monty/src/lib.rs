@@ -190,12 +190,12 @@ pub const DEFAULT_MODULE_CACHE: u64 = 8 << 20;
 /// with the prelude's chunks unpacked once, up to a byte limit; past it,
 /// sessions decode their own as without one.
 struct ModuleCache {
-    slots: Vec<std::sync::OnceLock<Arc<mm_engine::DecodedModule>>>,
+    slots: Vec<ProgramSlot>,
     chunks: Vec<std::sync::OnceLock<Arc<mm_engine::PreludeChunk>>>,
     /// Prelude units' programs a restore decoded, by unit: allocated on
     /// the first offer, so an engine that restores none pays nothing
     /// (none without the chunk cache).
-    units: std::sync::OnceLock<Vec<std::sync::OnceLock<Arc<mm_engine::DecodedModule>>>>,
+    units: std::sync::OnceLock<Vec<ProgramSlot>>,
     /// The bundled code's decoder tables, by header
     /// ([`mm_engine::decoder_headers`]): built once per engine.
     decoders: Vec<std::sync::OnceLock<Arc<mm_compile::pack::Tables>>>,
@@ -205,7 +205,44 @@ struct ModuleCache {
     free: AtomicU64,
 }
 
+/// A cached program: a restore's may lack its instructions until a
+/// session decodes them and offers the whole one in its place.
+type ProgramSlot = std::sync::RwLock<Option<Arc<mm_engine::DecodedModule>>>;
+
 impl ModuleCache {
+    /// The program in `slot`.
+    fn program(slot: Option<&ProgramSlot>) -> Option<Arc<mm_engine::DecodedModule>> {
+        slot?
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Puts `m` in `slot` if it is empty and fits, or in place of one
+    /// without its instructions (the same bytes, [`mm_engine::DecodedModule::deferred`]).
+    fn offer_program(&self, slot: Option<&ProgramSlot>, m: &Arc<mm_engine::DecodedModule>) {
+        let Some(slot) = slot else {
+            return;
+        };
+        let mut held = slot
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let old = match &*held {
+            None => 0,
+            Some(old) if old.deferred() && !m.deferred() => old.bytes(),
+            Some(_) => return,
+        };
+        if self
+            .free
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |free| {
+                (free + old).checked_sub(m.bytes())
+            })
+            .is_ok()
+        {
+            *held = Some(m.clone());
+        }
+    }
+
     /// Puts `v` of `n` bytes in `slot` if it is empty and fits.
     fn offer<V>(&self, slot: Option<&std::sync::OnceLock<Arc<V>>>, v: &Arc<V>, n: u64) {
         let Some(slot) = slot else {
@@ -251,11 +288,11 @@ impl mm_engine::ModuleCache for ModuleCache {
     }
 
     fn get(&self, i: usize) -> Option<Arc<mm_engine::DecodedModule>> {
-        self.slots.get(i)?.get().cloned()
+        ModuleCache::program(self.slots.get(i))
     }
 
     fn offer(&self, i: usize, module: &Arc<mm_engine::DecodedModule>) {
-        ModuleCache::offer(self, self.slots.get(i), module, module.bytes());
+        self.offer_program(self.slots.get(i), module);
     }
 
     fn prelude_chunk(&self, c: usize) -> Option<Arc<mm_engine::PreludeChunk>> {
@@ -267,7 +304,7 @@ impl mm_engine::ModuleCache for ModuleCache {
     }
 
     fn prelude_unit(&self, u: usize) -> Option<Arc<mm_engine::DecodedModule>> {
-        self.units.get()?.get(u)?.get().cloned()
+        ModuleCache::program(self.units.get()?.get(u))
     }
 
     fn offer_prelude_unit(&self, u: usize, program: &Arc<mm_engine::DecodedModule>) {
@@ -276,10 +313,10 @@ impl mm_engine::ModuleCache for ModuleCache {
         }
         let units = self.units.get_or_init(|| {
             (0..mm_engine::PRELUDE_UNITS)
-                .map(|_| std::sync::OnceLock::new())
+                .map(|_| ProgramSlot::default())
                 .collect()
         });
-        ModuleCache::offer(self, units.get(u), program, program.bytes());
+        self.offer_program(units.get(u), program);
     }
 
     fn decoders(&self, k: usize) -> Option<Arc<mm_compile::pack::Tables>> {
@@ -974,6 +1011,13 @@ pub mod test_hooks {
         ARMED.set(Some(op));
     }
 
+    /// `session`'s code charge, the bytes its memory limit has left and
+    /// how many of its codes a restore left without their instructions.
+    pub fn code_state(session: &crate::Session) -> (u64, u64, usize) {
+        let (charge, deferred) = session.vm.code_state();
+        (charge, session.vm.heap.available_bytes(), deferred)
+    }
+
     /// `template`'s image, to corrupt it before an instantiation.
     pub fn template_image(template: &mut crate::SessionTemplate) -> &mut Vec<u8> {
         &mut template.image
@@ -1153,7 +1197,7 @@ impl Engine {
             Arc::new(ModuleCache {
                 slots: mm_stdlib::MODULES
                     .iter()
-                    .map(|_| std::sync::OnceLock::new())
+                    .map(|_| ProgramSlot::default())
                     .collect(),
                 chunks: (0..chunks).map(|_| std::sync::OnceLock::new()).collect(),
                 units: std::sync::OnceLock::new(),
@@ -1217,7 +1261,7 @@ impl Engine {
                 .slots
                 .iter()
                 .chain(c.units.get().into_iter().flatten())
-                .filter_map(|s| s.get())
+                .filter_map(|s| ModuleCache::program(Some(s)))
                 .map(|m| m.bytes())
                 .sum();
             let chunks: u64 = c

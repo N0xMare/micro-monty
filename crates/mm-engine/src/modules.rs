@@ -664,6 +664,7 @@ impl Vm {
                     self.module_cache.as_deref(),
                     &mut self.unpackers,
                     &mut remaining,
+                    false,
                 )
                 .map_err(|e| match e {
                     mm_compile::DecodeError::TooLarge => self.err(T::MemoryError, ""),

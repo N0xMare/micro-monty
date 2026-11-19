@@ -374,6 +374,8 @@ struct In<'a> {
     pool: Vec<Arc<str>>,
     budget: Option<u64>,
     split: bool,
+    /// Instructions are left out ([`Program::decode_sections_deferred`]).
+    deferred: bool,
     /// The shared strings (index `i < shared.len()`), each made an
     /// `Arc` on its first use (`memo`); `pool` holds the rest.
     shared: SharedStrings<'a>,
@@ -466,6 +468,7 @@ impl<'a> In<'a> {
             pool: Vec::new(),
             budget: Some(budget),
             split: false,
+            deferred: false,
             shared: SharedStrings::default(),
             memo: Vec::new(),
         }
@@ -522,6 +525,14 @@ impl<'a> In<'a> {
     fn words(&mut self) -> Option<Vec<u32>> {
         if self.split {
             let n = usize::try_from(self.u64()?).ok()?;
+            if self.deferred {
+                // Room for the words, so the code's buffers are the full
+                // decode's, holding the placeholder until they come.
+                self.charge(n as u64 * 4)?;
+                let mut words = Vec::with_capacity(n.max(1));
+                words.push(crate::bytecode::DEFERRED);
+                return Some(words);
+            }
             // At most two words per opcode.
             if n > 2 * self.code[0].len() {
                 return None;
@@ -963,10 +974,35 @@ impl Program {
         shared: SharedStrings<'_>,
         budget: &mut u64,
     ) -> Result<Program, DecodeError> {
+        Self::decode_split(sections, shared, budget, false)
+    }
+
+    /// [`Program::decode_sections`] without the instructions, whose
+    /// sections ([`section::OP`] on) it does not read: each code's
+    /// `bytecode` is empty, with capacity for its words
+    /// ([`Code::bytecode_deferred`]). It admits what the full decode
+    /// admits, and the codes' buffers are the full decode's.
+    pub fn decode_sections_deferred(
+        sections: &[&[u8]; SECTIONS],
+        shared: SharedStrings<'_>,
+        budget: &mut u64,
+    ) -> Result<Program, DecodeError> {
+        Self::decode_split(sections, shared, budget, true)
+    }
+
+    fn decode_split(
+        sections: &[&[u8]; SECTIONS],
+        shared: SharedStrings<'_>,
+        budget: &mut u64,
+        deferred: bool,
+    ) -> Result<Program, DecodeError> {
         let mut r = In::new(sections[section::POOL], *budget);
         r.index = sections[section::INDEX];
-        r.code = core::array::from_fn(|k| sections[section::OP + k]);
+        if !deferred {
+            r.code = core::array::from_fn(|k| sections[section::OP + k]);
+        }
         r.split = true;
+        r.deferred = deferred;
         r.shared = shared;
         let result = (|| {
             let n = shared.len();

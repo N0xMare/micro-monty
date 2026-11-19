@@ -3136,3 +3136,68 @@ fn no_opt_in_module_slice_charges_more_than_one_step_past_its_fuel() {
         "native steps {OVERDRAFT} units past a slice: {over:#?}"
     );
 }
+
+/// A restore leaves a bundled program's instructions out until one of its
+/// codes first runs (docs/spec.md §9.3), so the step that enters it also
+/// unpacks and decodes them, on a fresh engine with its decoder tables to
+/// build: no such step runs longer than the limit. The rows are the
+/// largest bundled modules (`decimal` packs to 28 KB, `datetime` to
+/// 19 KB) and the most imported one; each also times its import on a fresh
+/// engine, which decodes the whole module in one step.
+#[test]
+#[cfg_attr(debug_assertions, ignore = "release only: cargo xtask check runs it")]
+fn no_first_run_of_restored_bundled_code_runs_longer_than_the_limit() {
+    let limit = LIMIT.mul_f64(
+        speed(&Engine::new(EngineConfig::default()))
+            .0
+            .clamp(0.5, 2.0),
+    );
+    // The longest step of `src` in `s`, parking at every safepoint that
+    // reads the clock.
+    let worst_step = |s: &mut Session, src: &str| {
+        let code = s.compile(src, "step.py").expect("compiles");
+        let mut worst = Duration::ZERO;
+        let mut t = Instant::now();
+        s.set_deadline(Some(t));
+        let mut p = s.start(&code);
+        loop {
+            worst = worst.max(t.elapsed());
+            if p != (Progress::Parked {
+                reason: ParkReason::Deadline,
+            }) {
+                break;
+            }
+            t = Instant::now();
+            s.set_deadline(Some(t));
+            p = s.resume(Resume::Continue).expect("resumes");
+        }
+        assert!(matches!(p, Progress::Complete(_)), "{src}: {p:?}");
+        s.set_deadline(None);
+        worst
+    };
+    for (setup, src) in [
+        ("import decimal", "x = decimal.Decimal('1.25') * 3"),
+        (
+            "import datetime",
+            "x = datetime.date(2026, 11, 19).isoformat()",
+        ),
+        (
+            "import collections",
+            "x = collections.Counter('abracadabra')",
+        ),
+    ] {
+        let engine = Engine::new(EngineConfig::default());
+        let mut s = Session::new(&engine).expect("session");
+        let import = worst_step(&mut s, setup);
+        let image = s.snapshot().expect("snapshot");
+        let fresh = Engine::new(EngineConfig::default());
+        let mut s = fresh.restore(&image).expect("restore");
+        let worst = worst_step(&mut s, src);
+        println!("steps: {setup}: longest step {import:.2?}; restored, then {src}: {worst:.2?}");
+        assert!(import < limit, "{setup}: {import:?} against {limit:?}");
+        assert!(
+            worst < limit,
+            "{setup}, restored: {worst:?} against {limit:?}"
+        );
+    }
+}

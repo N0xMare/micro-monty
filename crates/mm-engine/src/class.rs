@@ -1026,7 +1026,7 @@ impl Vm {
         }
         let init_key = self.dn(Dn::Init)?;
         if let Some(init) = self.dict_get_str(d, init_key) {
-            hint = hint.max(self.init_stores(init));
+            hint = hint.max(self.init_stores(init)?);
         }
         let r = {
             let res = self.heap.alloc_init(
@@ -1059,16 +1059,18 @@ impl Vm {
 
     /// How many distinct attributes `init`, if a Python function, stores
     /// on its first parameter (`self.name = ...` in its own code).
-    fn init_stores(&self, init: Value) -> u64 {
+    fn init_stores(&mut self, init: Value) -> Result<u64, Raised> {
         if !init.is_obj_kind(ty::FUNC as u8) {
-            return 0;
+            return Ok(0);
         }
-        let Some(code) = init
+        let ci = init
             .as_obj()
-            .and_then(|r| usize::try_from(self.raw(r, fn_slot::CODE)).ok())
-            .and_then(|i| self.codes.get(i))
-        else {
-            return 0;
+            .and_then(|r| u32::try_from(self.raw(r, fn_slot::CODE)).ok());
+        if let Some(ci) = ci {
+            self.load_bytecode(ci)?;
+        }
+        let Some(code) = ci.and_then(|i| self.codes.get(i as usize)) else {
+            return Ok(0);
         };
         let bc = &code.code.bytecode;
         let mut names = [0usize; MAX_INLINE as usize];
@@ -1090,7 +1092,7 @@ impl Vm {
             }
             pc += mm_compile::bytecode::instr_len(op);
         }
-        n as u64
+        Ok(n as u64)
     }
 
     /// A `staticmethod` or `classmethod` around `func`.
@@ -2281,7 +2283,7 @@ impl Vm {
         if name == self.dn(Dn::Init)?
             && let Some(r) = c.as_obj()
         {
-            let hint = self.init_stores(v).min(MAX_INLINE);
+            let hint = self.init_stores(v)?.min(MAX_INLINE);
             if self.raw(r, cls::HINT) < hint {
                 self.set_raw(r, cls::HINT, hint);
             }

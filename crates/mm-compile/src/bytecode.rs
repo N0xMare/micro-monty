@@ -625,12 +625,32 @@ pub struct Program {
     pub warnings: Vec<(crate::ast::Pos, String)>,
 }
 
+/// The instructions of a code whose own are still to be decoded
+/// ([`Code::bytecode_deferred`]): one word of opcode 255, which no
+/// compiled code holds and `verify` refuses, so an interpreter that
+/// fetches it takes its unknown-opcode path, off the hot one, and decodes
+/// the code there.
+pub const DEFERRED: u32 = u32::MAX;
+
 impl Code {
     /// Maximum temporary buffer capacity used by [`Self::verify`], excluding
     /// allocator metadata. Instruction-boundary queries allocate nothing.
     #[must_use]
     pub fn verify_scratch_bytes(&self) -> usize {
-        self.bytecode.len().div_ceil(8)
+        let words = if self.bytecode_deferred() {
+            self.bytecode.capacity()
+        } else {
+            self.bytecode.len()
+        };
+        words.div_ceil(8)
+    }
+
+    /// Whether the instructions are still to be decoded
+    /// ([`Program::decode_sections_deferred`]): `bytecode` is the one word
+    /// [`DEFERRED`], with capacity for them.
+    #[must_use]
+    pub fn bytecode_deferred(&self) -> bool {
+        self.bytecode.as_slice() == [DEFERRED]
     }
 
     /// Checks that `self` is safe to run although it was not compiled in

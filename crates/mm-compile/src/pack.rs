@@ -176,6 +176,17 @@ pub fn unpack_shared_bounded(
     unpack_with(n, None, header, body, budget)
 }
 
+/// Deducts from `budget` what [`unpack_shared_bounded`] of `src` would on
+/// success, without unpacking it: a part whose unpacking is put off is
+/// charged as if it had been unpacked.
+pub fn admit_shared(src: &[u8], budget: &mut u64) -> Result<(), crate::DecodeError> {
+    let (n, _) = unpacked_len(src).ok_or(crate::DecodeError::Invalid)?;
+    *budget = budget
+        .checked_sub((n + scratch()) as u64)
+        .ok_or(crate::DecodeError::TooLarge)?;
+    Ok(())
+}
+
 /// The `n` bytes `body` codes, with `tables`, else with the decoders of
 /// `header` built now; admits `n` and the decoder workspace first.
 fn unpack_with(

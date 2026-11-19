@@ -58,7 +58,13 @@ pub(crate) fn fingerprint() -> u64 {
     PRELUDE_HASH
 }
 
-/// The parts of chunk `chunk`, unpacked within `budget`; with
+/// The parts of a chunk, a bit each: all of them, and those a restore
+/// reads (all but the instructions, [`mm_compile::section::OP`] on).
+const ALL_PARTS: u16 = (1 << PARTS) - 1;
+const META_PARTS: u16 = ((1 << mm_compile::section::OP) - 1) | (1 << RECORDS);
+
+/// The parts of chunk `chunk` that `want` names, unpacked within
+/// `budget`; the others are left empty, charged as if unpacked. With
 /// `host-bundle`, its packed bytes come from `cache`'s bundle.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn unpack_parts(
@@ -66,6 +72,7 @@ fn unpack_parts(
     cache: Option<&dyn ModuleCache>,
     unpackers: &mut Unpackers,
     budget: &mut u64,
+    want: u16,
 ) -> Result<[Vec<u8>; PARTS], DecodeError> {
     let end = *CHUNK_END.get(chunk).ok_or(DecodeError::Invalid)? as usize;
     let start = match chunk {
@@ -101,10 +108,15 @@ fn unpack_parts(
         let len = if k == PARTS - 1 { r.0.len() } else { len };
         let part = r.take(len).ok_or(DecodeError::Invalid)?;
         let start = if k == 0 { 0 } else { HEADER_END[k - 1] };
-        let header = CHUNKS
-            .get(start..HEADER_END[k])
-            .ok_or(DecodeError::Invalid)?;
-        parts[k] = decoders(COUNT + k, header, cache, unpackers)?.unpack_bounded(part, budget)?;
+        if want & 1 << k == 0 {
+            mm_compile::pack::admit_shared(part, budget)?;
+        } else {
+            let header = CHUNKS
+                .get(start..HEADER_END[k])
+                .ok_or(DecodeError::Invalid)?;
+            parts[k] =
+                decoders(COUNT + k, header, cache, unpackers)?.unpack_bounded(part, budget)?;
+        }
         // One part's decoders at a time: all but the last give their
         // workspace back, so the chunk peaks at its parts plus one.
         if k < PARTS - 1 {
@@ -121,12 +133,14 @@ fn parts_of(c: &PreludeChunk) -> [&[u8]; PARTS] {
 }
 
 /// The program sections and the rest of the record of the unit whose
-/// record is at `at`, `len` long, in `parts`' records.
+/// record is at `at`, `len` long, in `parts`' records: those of the parts
+/// `want` names, the others left empty.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn locate<'a>(
     parts: &[&'a [u8]; PARTS],
     at: usize,
     len: usize,
+    want: u16,
 ) -> Option<([&'a [u8]; COUNT], Rd<'a>)> {
     let records = parts[RECORDS];
     // The units before it in the chunk: where its sections start.
@@ -144,7 +158,9 @@ fn locate<'a>(
     let mut sections: [&[u8]; COUNT] = [&[]; COUNT];
     for (k, s) in sections.iter_mut().enumerate() {
         let n = r.len()?;
-        *s = parts[k].get(offsets[k]..offsets[k].checked_add(n)?)?;
+        if want & 1 << k != 0 {
+            *s = parts[k].get(offsets[k]..offsets[k].checked_add(n)?)?;
+        }
     }
     Some((sections, r))
 }
@@ -157,13 +173,13 @@ pub fn prelude_programs() -> Option<Vec<Program>> {
     let mut out = Vec::new();
     let mut unpackers = None;
     for c in 0..CHUNK_END.len() {
-        let owned = unpack_parts(c, None, &mut unpackers, &mut { u64::MAX }).ok()?;
+        let owned = unpack_parts(c, None, &mut unpackers, &mut { u64::MAX }, ALL_PARTS).ok()?;
         let parts: [&[u8]; PARTS] = core::array::from_fn(|k| owned[k].as_slice());
         for u in UNITS
             .iter()
             .filter(|u| matches!(u[4], FUNC | CLASS) && usize::from(u[1]) == c)
         {
-            let (sections, _) = locate(&parts, usize::from(u[2]), usize::from(u[3]))?;
+            let (sections, _) = locate(&parts, usize::from(u[2]), usize::from(u[3]), ALL_PARTS)?;
             let shared = SharedStrings::new(TEXT, ENDS);
             out.push(Program::decode_sections(&sections, shared, &mut { u64::MAX }).ok()?);
         }
@@ -177,11 +193,18 @@ pub fn prelude_programs() -> Option<Vec<Program>> {
 /// there. From `cache` when it holds it; else decoded from its chunk (the
 /// cache's, or unpacked), and both offered to it. Its workspace is the
 /// most the unpacking or the decode held, the same either way; `TooLarge`
-/// if that is over `budget`.
+/// if that is over `budget`. With `deferred`, a decoded program leaves its
+/// instructions out ([`Vm::load_bytecode`] decodes them on first use),
+/// charged all the same, and takes a cached program either way; a chunk
+/// unpacked without them is not offered to the cache but kept in
+/// `deferred` for the next unit. Without it, a cached program without its
+/// instructions is decoded again, and offered in its place.
 pub(crate) fn unit_program(
     unit: [u16; 2],
     cache: Option<&dyn ModuleCache>,
+    unpackers: &mut Unpackers,
     budget: u64,
+    deferred: Option<&mut Option<(u16, Arc<PreludeChunk>)>>,
 ) -> Result<Arc<DecodedModule>, DecodeError> {
     let [chunk, at] = unit;
     let (i, len) = UNITS
@@ -190,35 +213,51 @@ pub(crate) fn unit_program(
         .find(|(_, u)| u[1] == chunk && u[2] == at && matches!(u[4], FUNC | CLASS))
         .map(|(i, u)| (i, usize::from(u[3])))
         .ok_or(DecodeError::Invalid)?;
-    if let Some(p) = cache.and_then(|c| c.prelude_unit(i)) {
+    let lazy = deferred.is_some();
+    if let Some(p) = cache
+        .and_then(|c| c.prelude_unit(i))
+        .filter(|p| lazy || !p.deferred())
+    {
         return if p.workspace > budget {
             Err(DecodeError::TooLarge)
         } else {
             Ok(p)
         };
     }
-    let c = match cache.and_then(|c| c.prelude_chunk(chunk.into())) {
-        Some(c) if c.workspace > budget => return Err(DecodeError::TooLarge),
-        Some(c) => c,
-        None => {
+    let c = match (cache.and_then(|c| c.prelude_chunk(chunk.into())), deferred) {
+        (Some(c), _) if c.workspace > budget => return Err(DecodeError::TooLarge),
+        (Some(c), _) => c,
+        (None, Some(Some((k, c)))) if *k == chunk => {
+            if c.workspace > budget {
+                return Err(DecodeError::TooLarge);
+            }
+            c.clone()
+        }
+        (None, kept) => {
             let mut remaining = budget;
-            // The engine's decoder tables, when it has them, serve every
-            // unit a restore decodes.
-            let parts = unpack_parts(chunk.into(), cache, &mut None, &mut remaining)?;
+            let want = if lazy { META_PARTS } else { ALL_PARTS };
+            let parts = unpack_parts(chunk.into(), cache, unpackers, &mut remaining, want)?;
             let c = Arc::new(PreludeChunk {
                 parts,
                 workspace: budget - remaining,
             });
-            if let Some(cache) = cache {
-                cache.offer_prelude_chunk(chunk.into(), &c);
+            match (kept, cache) {
+                (Some(kept), _) => *kept = Some((chunk, c.clone())),
+                (None, Some(cache)) => cache.offer_prelude_chunk(chunk.into(), &c),
+                (None, None) => {}
             }
             c
         }
     };
-    let (sections, _) = locate(&parts_of(&c), at.into(), len).ok_or(DecodeError::Invalid)?;
+    let want = if lazy { META_PARTS } else { ALL_PARTS };
+    let (sections, _) = locate(&parts_of(&c), at.into(), len, want).ok_or(DecodeError::Invalid)?;
     let mut remaining = budget;
-    let program =
-        Program::decode_sections(&sections, SharedStrings::new(TEXT, ENDS), &mut remaining)?;
+    let shared = SharedStrings::new(TEXT, ENDS);
+    let program = if lazy {
+        Program::decode_sections_deferred(&sections, shared, &mut remaining)?
+    } else {
+        Program::decode_sections(&sections, shared, &mut remaining)?
+    };
     let p = Arc::new(DecodedModule {
         program,
         workspace: c.workspace.max(budget - remaining),
@@ -371,7 +410,7 @@ impl Vm {
             }
         } else {
             let c = self.unpack_chunk(chunk)?;
-            let built = match locate(&parts_of(&c), at.into(), len.into()) {
+            let built = match locate(&parts_of(&c), at.into(), len.into(), ALL_PARTS) {
                 Some((sections, mut r)) => {
                     self.build_unit(name, kind, [chunk, at], &sections, &mut r)?
                 }
@@ -429,7 +468,7 @@ impl Vm {
             let parts = parts_of(&c);
             places[i] = [chunk, at];
             let (at, len) = (usize::from(at), usize::from(len));
-            if let Some((sections, _)) = locate(&parts, at, len)
+            if let Some((sections, _)) = locate(&parts, at, len, ALL_PARTS)
                 && let Some(record) = parts[RECORDS].get(at..at + len)
             {
                 let mut flat = Vec::new();
@@ -460,7 +499,7 @@ impl Vm {
                 let start = if k == 0 { 0 } else { ends[k - 1] };
                 flat.get(start..ends[k]).unwrap_or(&[])
             });
-            let built = match locate(&parts, 0, parts[RECORDS].len()) {
+            let built = match locate(&parts, 0, parts[RECORDS].len(), ALL_PARTS) {
                 Some((sections, mut r)) => {
                     self.build_unit(k, kind, places[i], &sections, &mut r)?
                 }
@@ -506,6 +545,7 @@ impl Vm {
                 cache.as_deref(),
                 &mut self.unpackers,
                 &mut remaining,
+                ALL_PARTS,
             )
             .map_err(|e| self.decode_error(e))?;
             let c = Arc::new(PreludeChunk {

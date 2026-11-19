@@ -1015,7 +1015,11 @@ of linear memory aborts instead of raising `MemoryError`.
 **The module cache is the Engine's.** The first session of an `Engine` that
 imports or restores a bundled module decodes its bytecode, which the Engine
 keeps for every later session of it and its clones, on any thread. A
-session is charged the same with the cache cold, warm or off, so its
+restore decodes a bundled module's instructions only when its code first
+runs, so a process or wasm instance that restores on a fresh `Engine`
+unpacks the instructions of the modules a session reaches, not of every
+module it imported. A session is charged the same with the cache cold,
+warm or off, and whether its bundled code is decoded yet or not, so its
 results do not change (`tests/sessions.rs`). The cache lives outside every
 session's limit, up to `Engine::with_module_cache(config, max_bytes)`
 (`Engine::new`: `DEFAULT_MODULE_CACHE`, 8 MiB; 0 turns it off; past it a

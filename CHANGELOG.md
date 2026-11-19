@@ -33,6 +33,16 @@ hashes are pre-release history, kept in the private archive
   49.9 G) and its native p50 falls from 1.09 to 0.97 ms [M]. Charges and
   behavior do not change: each unpacking is still charged its decoder
   workspace.
+- A restore decodes the bundled modules and prelude units its image names
+  without their instructions, and decodes a program whole only when one
+  of its codes first runs; every check of the image still runs at
+  restore. With the table reuse above, a restore on a fresh `Engine`
+  takes 26% fewer instructions over 6,241 recorded code-mode images
+  (54.4 G to 40.0 G; on a warm `Engine` 27.0 G either way), its p50 falls
+  from 1.13 to 0.77 ms natively and from 2.68 to 1.77 ms on a new
+  wasmtime instance, and a durable replay of the 158 typical recorded
+  sessions takes 6.5% fewer instructions in all (108.7 G to 101.7 G) [M].
+  Charges and fuel do not depend on whether code was decoded yet.
 
 ### Fixed
 
