@@ -346,6 +346,34 @@ fn cells_after_one_that_filled_memory_run_once_its_garbage_is_collected() {
     }
 }
 
+/// A reset over a heap its globals fill with live data, at the mark
+/// stack's wall: its new globals were refused, and the collection before
+/// the rerun freed nothing, as the old globals still held it all; the
+/// reset failed and changed nothing.
+/// The fill runs in a function the session keeps, so reclamation frees
+/// nothing before the reset.
+#[test]
+fn a_reset_over_a_heap_full_of_live_globals_resets_the_session() {
+    let engine = wall_engine(64);
+    let mut session = Session::new(&engine).expect("session");
+    let kept = "def fill():\n    xs = []\n    try:\n        while True:\n            xs.append(str(len(xs)))\n    except MemoryError:\n        pass\n    return xs\nxs = fill()";
+    assert_eq!(wall_cell(&engine, &mut session, kept), "ok");
+    assert_eq!(wall_cell(&engine, &mut session, "y = 1"), "MemoryError");
+    session.reset().expect("reset");
+    assert_eq!(wall_cell(&engine, &mut session, "xs"), "NameError");
+    let check = "assert __name__ == '__main__'\nys = [str(i) for i in range(1000)]";
+    assert_eq!(wall_cell(&engine, &mut session, check), "ok");
+    // The same at 6 MiB after `__name__` was deleted and its interned
+    // name collected: the old globals let go before it is interned again.
+    let engine = wall_engine(6);
+    let mut session = Session::new(&engine).expect("session");
+    session.set_module_dunders(None, None).expect("set");
+    assert_eq!(wall_cell(&engine, &mut session, kept), "ok");
+    assert_eq!(wall_cell(&engine, &mut session, "y = 1"), "MemoryError");
+    session.reset().expect("reset");
+    assert_eq!(wall_cell(&engine, &mut session, check), "ok");
+}
+
 fn wall_cell(engine: &Engine, session: &mut Session, src: &str) -> String {
     let code = engine.compile(src, "cell.py").expect("compiles");
     match session.start(&code) {

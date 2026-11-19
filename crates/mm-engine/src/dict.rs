@@ -2108,6 +2108,26 @@ impl Vm {
         Ok(Some(v))
     }
 
+    /// Removes every entry in place and keeps the tables, so it allocates
+    /// nothing, where [`Vm::dict_clear`] gives an indexed dict new small
+    /// ones: `Vm::reset` lets go of what a full heap's globals hold before
+    /// it collects.
+    pub(crate) fn dict_empty(&mut self, d: Value) {
+        let Some(r) = d.as_obj() else { return };
+        let Some(dv) = self.dv(r) else { return };
+        let slots = 2 * if dv.inline > 0 { dv.inline } else { dv.used };
+        let _ = self.heap.clear_values(dv.entries, 0, slots);
+        if let Some(index) = dv.index
+            && let Ok(words) = self.heap.raw_words_mut(index)
+        {
+            // Words `0..cap` are the slots; the hashes and version follow.
+            let cap = words.len() / 2;
+            words[..cap].fill(0);
+        }
+        self.set_counts(r, 0, 0);
+        self.bump_version(d, r);
+    }
+
     /// Removes every entry. An indexed dict stays indexed (and keeps
     /// counting versions); another clears its entries in place.
     pub(crate) fn dict_clear(&mut self, d: Value) -> Result<(), Raised> {

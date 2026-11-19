@@ -43,6 +43,17 @@ hashes are pre-release history, kept in the private archive
   ticks the guest ran through as it spans, as well as the wall time, and
   one stretch the guest does not run counts as one tick. The new test
   failed 20 of 20 runs before [M].
+- `Session::reset` over a heap full of live data resets the session: it
+  returned `MemoryError` and reset nothing, as its new globals were refused
+  while the old ones still held the data. The old globals and modules are
+  now emptied in place first, allocating nothing (6 and 64 MiB, a kept
+  list of strs filling the heap) [M]. An object that outlives the reset
+  through the host, such as one kept on a host function's attribute, sees
+  them emptied: a kept `globals()` view shows only `__name__`, an iterator
+  over it stopped part way raises `RuntimeError: dictionary changed size
+  during iteration`, and a kept `NameError` raised again loses its "Did
+  you mean" suggestion. A `MemoryError` from `reset` now means the
+  session was reset with only `__name__` unset.
 
 ### Known issues
 

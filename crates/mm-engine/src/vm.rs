@@ -1193,14 +1193,18 @@ impl Vm {
     }
 
     /// New globals (`__name__` = `'__main__'`) and an empty module table.
+    /// Made whole before either replaces the session's: a refusal leaves
+    /// the old ones in place, never new globals without `__name__` beside
+    /// the old modules.
     fn fresh_globals(&mut self) -> Result<(), Raised> {
-        self.globals = self.new_globals_dict(8)?;
-        self.modules = self.new_dict()?;
-        self.std_globals.fill(Value::NONE);
+        let g = self.new_globals_dict(8)?;
+        let modules = self.new_dict()?;
         let n = self.intern("__name__")?;
         let m = self.intern("__main__")?;
-        let g = self.globals;
         self.dict_set(g, n, m)?;
+        self.globals = g;
+        self.modules = modules;
+        self.std_globals.fill(Value::NONE);
         self.gver = self.gver.wrapping_add(1);
         self.ics.fill(Ic::Empty);
         Ok(())
@@ -1277,13 +1281,36 @@ impl Vm {
         self.context = Value::NONE;
         self.exc = Value::NONE;
         self.post = None;
-        // Not idle: the step releases the old globals before it is done
-        // allocating, so a collection can help its rerun.
+        // The old globals and modules let go of what they hold first, in
+        // place and allocating nothing: over a heap full of it, the new
+        // globals were refused and the rerun's collection freed nothing,
+        // as they still held it. From here the session is reset.
+        let (g, modules) = (self.globals, self.modules);
+        self.dict_empty(g);
+        self.dict_empty(modules);
+        // Released without allocating (`Heap::idle`): the reruns below may
+        // collect it.
         self.heap.idle_collected = false;
-        let fresh = self.between_cells(Vm::fresh_globals);
-        // The old globals and modules are released.
+        self.std_globals.fill(Value::NONE);
+        self.gver = self.gver.wrapping_add(1);
+        self.ics.fill(Ic::Empty);
+        // `__name__` back to '__main__' in the emptied table, which has room
+        // for it. Its names may need room (a deleted `__name__` may have
+        // been collected): after a collection, which now frees the old
+        // data, they fit unless the session's own tables fill the limit.
+        // Refused even then, the session stays reset without `__name__`,
+        // as after `set_module_dunders(None, None)`.
+        self.between_cells(|vm| {
+            let n = vm.intern("__name__")?;
+            let m = vm.intern("__main__")?;
+            vm.dict_set(g, n, m)
+        })?;
+        // New tables as a new session's when they fit, after a collection
+        // if they did not: else the emptied ones, as big as the old, stay.
+        let _ = self.between_cells(Vm::fresh_globals);
+        self.exc = Value::NONE;
+        // The emptied tables, if new ones replaced them, are released.
         self.heap.idle_collected = false;
-        fresh?;
         self.reclaim_code();
         Ok(())
     }

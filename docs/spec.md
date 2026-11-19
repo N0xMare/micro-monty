@@ -1802,7 +1802,12 @@ timer deadlines.
   freed this way, so a start whose reclamation dropped code and that is
   then refused collects twice. That reclamation also drops the names
   only the dead code held, so a later cell that uses one again can be
-  refused at the wall where the dead code, kept, would have let it run. A
+  refused at the wall where the dead code, kept, would have let it run.
+  `reset` first empties the old globals and modules in place, allocating
+  nothing, so that collection frees what they held; if new tables still
+  do not fit, the emptied ones stay, and the session is reset all the
+  same; only `__name__`, if its interned name was collected and still
+  finds no room, is left unset, and `reset` reports the `MemoryError`. A
   module body's name is interned when a function is made from it, not
   when it loads, so a cell such as `del xs` loads without allocating.
   None runs twice unless, since the last, code ran, something held

@@ -115,7 +115,8 @@ entropy, so the driving loop above is the whole integration.
   type_name, value }`, where `value` is the result as a `HostValue` when it
   converts. `set_last_expr_value(false)` turns that off for scripts, so no
   user `__repr__` runs. `start` cancels a cell that is still stopped.
-- **Reset.** `Session::reset()` clears globals and imported modules. Host
+- **Reset.** `Session::reset()` clears globals and imported modules, also
+  when they fill the memory limit with live data. Host
   functions and host modules stay. `set_module_dunders` sets `__name__` and
   `__file__` (a new session runs as `__main__`).
 - **Errors.** `CompileError` (a `SyntaxError`, including "micro-monty does not
