@@ -74,8 +74,9 @@ test in its own process; a row over the limit prints `OVER`).
 
 `check` runs its stages at the same time (`xtask/src/check.rs`): `mm`,
 durability and the workspace tests at normal priority, the rest at `nice`
-10, and the step-time oracle's wall-time half last, alone; each stage logs
-to `target/check/logs/<stage>.log`.
+10, and the step-time oracle's wall-time half last, alone (in the release
+gate, on musl too: `steps-musl`); each stage logs to
+`target/check/logs/<stage>.log`.
 
 ## Working agreements
 

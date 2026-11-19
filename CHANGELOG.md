@@ -24,10 +24,11 @@ hashes are pre-release history, kept in the private archive
   nothing more for any other exception.
 - `x86_64-unknown-linux-musl` is a tested platform: `cargo xtask check`'s
   `musl` stage builds `mm` there as shipped (static-pie), runs the own
-  cases and Monty's corpus on it, and runs the worker's tests there. The
-  workspace tests, durability, the step-time oracle and the recorded
-  sessions (in memory and durable, and on the seccomp-filtered worker
-  binary) also pass on it [M].
+  cases and Monty's corpus on it, and runs the worker's tests there; the
+  release gate's `steps-musl` stage runs the timed step-time oracle there.
+  The workspace tests, durability and the recorded sessions (in memory
+  and durable, and on the seccomp-filtered worker binary) also pass on it
+  [M].
 
 ### Changed
 

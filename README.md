@@ -34,11 +34,10 @@ runs every case and recorded session as glibc does, but slower: its `malloc`,
 memory and 82% with a snapshot and restore at every host call [M, 0.0.3];
 a global allocator such as mimalloc in the host binary recovers half to
 three quarters of it [M]. The step bound (docs/spec.md §5) holds there:
-the step-time oracle passes on musl [M], which `cargo xtask check` does not
-run for want of time. The wasm targets `wasm32-wasip1` and
-`wasm32-unknown-unknown` are supported builds, gated with the native ones
-(the facade, the mm-wasm guest under wasmtime, and snapshots restored across
-targets).
+the step-time oracle passes on musl [M], and the release gate runs it
+there. The wasm targets `wasm32-wasip1` and `wasm32-unknown-unknown` are
+supported builds, gated with the native ones (the facade, the mm-wasm guest
+under wasmtime, and snapshots restored across targets).
 
 ## Using it
 

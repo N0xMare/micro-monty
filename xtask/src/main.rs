@@ -418,6 +418,7 @@ fn check(args: &[String]) -> Result<(), String> {
     let debug_cargo = |args: &[&str]| command(cargo, args, Some(&debug));
     let release_cargo = |args: &[&str]| command(cargo, args, None);
     let host = host_target()?;
+    let musl = host.replace("-linux-gnu", "-linux-musl");
     let shipped_mm = root.join(format!("target/{host}/release/mm"));
     // The step-time oracle times the shipped native code: built as
     // `shipped_build` builds (std rebuilt, `-Cpanic=immediate-abort`, no
@@ -443,14 +444,15 @@ fn check(args: &[String]) -> Result<(), String> {
         "steps",
     ];
     let steps_dir = root.join("target/check/steps");
-    let steps_cargo = |args: &[&str]| {
-        let mut command = command(cargo, args, Some(&steps_dir));
+    let steps_cargo_in = |dir: &Path, args: &[&str]| {
+        let mut command = command(cargo, args, Some(dir));
         command
             .env("RUSTC_BOOTSTRAP", "1")
             .env("RUSTFLAGS", shipped::SHIPPED_RUSTFLAGS)
             .env_remove("CARGO_ENCODED_RUSTFLAGS");
         command
     };
+    let steps_cargo = |args: &[&str]| steps_cargo_in(&steps_dir, args);
     let clippy = |package: &[&str]| {
         let mut args = vec!["clippy"];
         args.extend_from_slice(package);
@@ -669,7 +671,6 @@ fn check(args: &[String]) -> Result<(), String> {
             ir.env("MM", &shipped_mm);
             ir
         }));
-        let musl = host.replace("-linux-gnu", "-linux-musl");
         let musl_mm = root.join(format!("target/{musl}/release/mm"));
         // musl, the main embedder's Linux target (README "Platforms"):
         // `malloc` and the string functions are musl's, the binaries link
@@ -677,8 +678,8 @@ fn check(args: &[String]) -> Result<(), String> {
         // calls. `mm` built there as shipped runs the own cases and the
         // corpus, and the worker's tests run there. The engine brings its
         // own libm, so durability and the other engine tests would repeat
-        // the glibc stages. The step-time oracle, which passes there, is
-        // not run: timed alone, it would add about 6 minutes.
+        // the glibc stages. The step-time oracle runs there in the release
+        // gate (`steps-musl`).
         stages.push(
             Stage::new("musl")
                 .after(&["shipped-mm", "test"])
@@ -785,6 +786,39 @@ fn check(args: &[String]) -> Result<(), String> {
                 .concat(),
             )),
     );
+    if release_gate && cfg!(target_os = "linux") {
+        // The timed oracle on musl too, whose `memcpy`, `memcmp` and
+        // `memmove` are slow where glibc's are not (README "Platforms"):
+        // it guards the musl-only copy paths, such as `move_values`' stack
+        // buffer, which a toolchain could fuse back into a `memmove`. In
+        // the release gate only: run alone, it adds about 6 minutes.
+        let musl_steps: Vec<&str> = steps
+            .iter()
+            .map(|&a| if a == host { musl.as_str() } else { a })
+            .collect();
+        let musl_dir = root.join("target/check/steps-musl");
+        stages.push(
+            Stage::new("steps-musl-build")
+                .after(&["steps-build"])
+                .run(steps_cargo_in(
+                    &musl_dir,
+                    &[&musl_steps[..], &["--no-run"]].concat(),
+                )),
+        );
+        stages.push(
+            Stage::new("steps-musl")
+                .after(&["steps-musl-build"])
+                .alone()
+                .run(steps_cargo_in(
+                    &musl_dir,
+                    &[
+                        &musl_steps[..],
+                        &["--", "--skip", "slice_charges", "--test-threads=1"],
+                    ]
+                    .concat(),
+                )),
+        );
+    }
     if !release_gate {
         let mut kept = DEV_STAGES.to_vec();
         kept.extend(adds.iter().flat_map(|(stages, _)| stages.iter().copied()));
