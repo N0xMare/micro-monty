@@ -2660,3 +2660,214 @@ fn the_module_cache_stops_at_its_limit_and_sessions_decode_past_it() {
         "{outcomes:?}"
     );
 }
+
+impl Cells {
+    /// Runs `src` compiled as `name`; the uncaught exception it ends in.
+    fn failure(&mut self, name: &str, src: &str) -> micro_monty::PyException {
+        let code = self.engine.compile(src, name).expect("compiles");
+        match self.session.start(&code) {
+            Progress::Error(e) => e,
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+/// The report a host shows a model for a host call that failed: the cell's
+/// frames down to the line that made the call, then the host's class and
+/// message; nothing of the prelude, the stdlib or the engine. The same text
+/// after a snapshot and restore at every stop (docs/user-guide.md, "The
+/// error report").
+#[test]
+#[allow(clippy::too_many_lines, reason = "one scenario, step by step")]
+fn a_failed_host_call_reports_the_calling_line_and_the_hosts_class() {
+    let tools = HostModule {
+        name: "tools".to_owned(),
+        functions: vec![HostSignature::any("fetch")],
+        exceptions: vec![micro_monty::HostException {
+            name: "ToolError".to_owned(),
+            base: HostErrorKind::ValueError,
+            doc: String::new(),
+        }],
+        ..HostModule::default()
+    };
+    let at_top = "\
+Traceback (most recent call last):
+  File \"<cell 3>\", line 3, in <module>
+    tools.fetch(1)
+    ~~~~~~~~~~~^^^
+";
+    let awaited = "\
+Traceback (most recent call last):
+  File \"<cell 3>\", line 2, in <module>
+    r = await tools.fetch(1)
+        ^^^^^^^^^^^^^^^^^^^^
+";
+    let in_run = "\
+Traceback (most recent call last):
+  File \"<cell 3>\", line 4, in <module>
+    asyncio.run(main())
+    ~~~~~~~~~~~^^^^^^^^
+  File \"<cell 3>\", line 3, in main
+    return await tools.fetch(1)
+           ^^^^^^^^^^^^^^^^^^^^
+";
+    let in_task = "\
+Traceback (most recent call last):
+  File \"<cell 3>\", line 6, in <module>
+    asyncio.run(main())
+    ~~~~~~~~~~~^^^^^^^^
+  File \"<cell 3>\", line 5, in main
+    return await asyncio.create_task(work())
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File \"<cell 3>\", line 3, in work
+    return await tools.fetch(1)
+           ^^^^^^^^^^^^^^^^^^^^
+";
+    let cells = [
+        ("import tools\nx = 1\ntools.fetch(1)", at_top),
+        ("import tools\nr = await tools.fetch(1)", awaited),
+        (
+            "import tools, asyncio\nasync def main():\n    return await tools.fetch(1)\n\
+             asyncio.run(main())",
+            in_run,
+        ),
+        (
+            "import tools, asyncio\nasync def work():\n    return await tools.fetch(1)\n\
+             async def main():\n    return await asyncio.create_task(work())\n\
+             asyncio.run(main())",
+            in_task,
+        ),
+    ];
+    let errors = [
+        (
+            HostError::new(HostErrorKind::KeyError, "no such id"),
+            "KeyError: 'no such id'\n",
+        ),
+        (
+            HostError {
+                class: Some("tools.ToolError".to_owned()),
+                ..HostError::new(HostErrorKind::Exception, "quota exceeded")
+            },
+            "tools.ToolError: quota exceeded\n",
+        ),
+    ];
+    for restore in [false, true] {
+        let mut c = Cells::new();
+        c.session.define(&tools).expect("defined");
+        for (error, last) in &errors {
+            for (src, frames) in cells {
+                let code = c.engine.compile(src, "<cell 3>").expect("compiles");
+                let mut p = c.session.start(&code);
+                let e = loop {
+                    if restore {
+                        let image = c.session.snapshot().expect("snapshot");
+                        c.session = c.engine.restore(&image).expect("restores");
+                    }
+                    let answer = match p {
+                        // Not awaited, the call answers in place.
+                        Progress::HostCall { .. } if !src.contains("await") => {
+                            Resume::Error(error.clone())
+                        }
+                        Progress::HostCall { .. } => Resume::Future,
+                        Progress::Waiting { ref calls } => Resume::Batch(
+                            calls.iter().map(|&id| (id, Err(error.clone()))).collect(),
+                        ),
+                        Progress::Error(e) => break e,
+                        other => panic!("{other:?}"),
+                    };
+                    p = c.session.resume(answer).expect("resumes");
+                };
+                assert_eq!(e.traceback, format!("{frames}{last}"), "restore {restore}");
+                assert!(!e.truncated);
+            }
+        }
+    }
+}
+
+/// An error inside a bundled stdlib function shows the cell's frames only:
+/// `CPython` would add the stdlib's own (`json/decoder.py`, ...).
+#[test]
+fn an_error_inside_the_stdlib_reports_the_cells_frames_only() {
+    let mut c = Cells::new();
+    let e = c.failure(
+        "<cell 1>",
+        "import json\ndef parse(s):\n    return json.loads(s)\nparse('{bad')",
+    );
+    assert_eq!(
+        e.traceback,
+        "\
+Traceback (most recent call last):
+  File \"<cell 1>\", line 4, in <module>
+    parse('{bad')
+    ~~~~~^^^^^^^^
+  File \"<cell 1>\", line 3, in parse
+    return json.loads(s)
+           ~~~~~~~~~~^^^
+json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+"
+    );
+}
+
+/// Frames show the name each cell was compiled with, also a function's
+/// frame from an earlier cell of the session.
+#[test]
+fn frames_show_the_name_each_cell_was_compiled_with() {
+    let mut c = Cells::new();
+    for (name, src) in [
+        ("<cell 1>", "def f(x):\n    return g(x) + 1\n"),
+        ("<cell 2>", "def g(x):\n    return {}[x]\n"),
+    ] {
+        let code = c.engine.compile(src, name).expect("compiles");
+        assert_eq!(c.session.start(&code), Progress::Complete(None));
+    }
+    assert_eq!(
+        c.failure("<cell 3>", "y = 2\nf('k')").traceback,
+        "\
+Traceback (most recent call last):
+  File \"<cell 3>\", line 2, in <module>
+    f('k')
+    ~^^^^^
+  File \"<cell 1>\", line 2, in f
+    return g(x) + 1
+           ~^^^
+  File \"<cell 2>\", line 2, in g
+    return {}[x]
+           ~~^^^
+KeyError: 'k'
+"
+    );
+}
+
+/// Recursion collapses where `CPython`'s identical consecutive lines do;
+/// a cycle of functions or a chain of distinct ones does not, and the text
+/// limit bounds the whole report: `Head` keeps its beginning, `HeadTail`
+/// its beginning and its last line.
+#[test]
+fn the_report_is_bounded_by_the_text_limit() {
+    let mut c = Cells::new();
+    let deep = c.failure("<cell 1>", "def f(n):\n    return f(n + 1)\nf(0)");
+    assert!(
+        deep.traceback.ends_with(
+            "  [Previous line repeated 996 more times]\n\
+             RecursionError: maximum recursion depth exceeded\n"
+        ),
+        "{}",
+        deep.traceback
+    );
+    assert!(deep.traceback.len() < 1_000 && !deep.truncated);
+    let cycle = "def a(n): return b(n + 1)\ndef b(n): return c(n + 1)\n\
+                 def c(n): return a(n + 1)\na(0)";
+    let whole = c.failure("<cell 1>", cycle);
+    assert!(whole.traceback.len() > 90_000 && !whole.truncated);
+    c.session.set_text_limit(2_000);
+    let head = c.failure("<cell 1>", cycle);
+    assert!(head.truncated && head.traceback.len() <= 2_000);
+    assert!(whole.traceback.starts_with(&head.traceback));
+    c.session.set_text_cut(TextCut::HeadTail);
+    let both = c.failure("<cell 1>", cycle);
+    assert!(both.truncated && both.traceback.len() <= 2_000);
+    assert!(
+        both.traceback
+            .ends_with("RecursionError: maximum recursion depth exceeded\n")
+    );
+}

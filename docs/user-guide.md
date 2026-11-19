@@ -698,6 +698,35 @@ available, the asyncio surface, the limits and the calling conventions.
 session's memory limit may be smaller) and what is left of its fuel total.
 Add `Session::stubs()` for the host's own functions.
 
+**The error report.** `PyException::traceback` is what a host shows the
+model for an uncaught error (`message` is `str(e)`, for classifying it).
+Its contract:
+1. CPython 3.14's shape: the header, each frame as `File "...", line N,
+   in f` with its source line and carets, `ExcType: message` last, both
+   chaining forms, and `add_note` notes after the message
+   (`conformance/own/575`, compared with CPython).
+2. The same text for the same failure in every run, parked, snapshotted
+   or restored (the durability gate compares the own cases' reports).
+   What can differ: an address-derived value in a message (a default
+   `<X object at 0x…>` repr, `id()`), and where a report is cut when
+   rendering passes the deadline (`truncated` is then set).
+3. About the program only: the cell's frames down to the line that
+   failed. A host call's error shows the calling line and the host's class
+   and message, sync or awaited, in `asyncio.run` or a task; no frame of
+   the prelude, the bundled stdlib or the engine shows, where CPython would
+   show the stdlib's own frames (`json/decoder.py`, `asyncio/runners.py`).
+4. Bounded: identical consecutive lines collapse to `[Previous line
+   repeated N more times]`, as in CPython; a cycle of functions or a long
+   chain of distinct ones does not (a three-function cycle at the default
+   recursion limit renders about 92 KB), and the text limit
+   (`Session::set_text_limit`) bounds the whole report and sets
+   `truncated`. `TextCut::Head` keeps the beginning, so a cut report loses
+   its `ExcType: message` line; `TextCut::HeadTail` keeps the beginning and
+   the end, which is that line unless notes follow it.
+5. Named by the embedder: frames show the file name each cell was compiled
+   with (`File "<cell 3>", line 2`), also for a function defined in an
+   earlier cell.
+
 **Long results.** A completion's `repr` and `str` are cut at the text limit
 (1 MiB by default, or the memory limit if that is less): `TextCut::Head`
 keeps the beginning, `TextCut::HeadTail` both ends around `... [N bytes
