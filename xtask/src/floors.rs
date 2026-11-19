@@ -14,27 +14,29 @@
 //!   build id on the first-parent line since the last tag) instead of
 //!   trusting it.
 //!
-//! Against the base's file ([`judge`]), the head's file must be what the
-//! head's counts make of it:
-//! - a count below its floor lowers the floor to it, in the same change:
-//!   an unrecorded gain must not become headroom;
+//! Against the base's file ([`judge`]), floors bind upward only (owner's
+//! decision, 2026-11-19):
+//! - a count below its floor passes and leaves the file alone;
+//!   `--write-floors` lowers it to the head's count when someone runs it,
+//!   and each tag's seed does;
 //! - a floor rises only to the head's count, and only with an accept line
 //!   ([`crate::accept`]) that names the count with a ceiling at or above
 //!   the rise over the floor;
+//! - a new count needs a line at or below the head's count once;
 //! - any other floor stays as the base has it.
 //!
-//! `--write-floors` writes that file. Against a `v*` tag as the base
-//! (`just pretag`), the head's floors are checked against the tag's counts
-//! and the head's instead: none above the tag's count without a line since
-//! the tag, none above the head's. There `--write-floors` seeds the file
+//! So a drop followed by a rise back to the old floor passes until the
+//! floors are next lowered. `--write-floors` writes that file. Against a
+//! `v*` tag as the base (`just pretag`), the head's floors are checked
+//! against the tag's counts instead: none above the tag's count without a
+//! line since the tag. There `--write-floors` seeds the file
 //! from the tag ([`seed`]): each floor is the tag's count with the tag's
 //! build, or the head's where the head counts less, whatever the file held
 //! before, so a release starts its floors at its own counts (`just
 //! seed-floors`, the first commit after a tag).
 //!
 //! Two landings that both change a floor conflict on its line. Take the
-//! raise when one side is an accepted raise, else the lower count; the
-//! gate on the combined tree then sets it to the combined count.
+//! raise when one side is an accepted raise, else the lower count.
 
 use std::{collections::BTreeMap, env, fmt::Write as _, fs, path::Path, process::Command};
 
@@ -459,9 +461,9 @@ pub(crate) fn judge(
                 against.insert(name.clone(), line.count);
                 (line, "a new count".to_owned())
             }
-            Some(f) if h < f.count => {
-                let why = format!("the head's {h} is below the floor {}", f.count);
-                (at_head, why)
+            // A drop leaves the floor as it is; `--write-floors` lowers it.
+            Some(f) if h < f.count && (write || have.get(name) == Some(&at_head)) => {
+                (at_head, String::new())
             }
             Some(f) if rules.raises(name, h, f.count) => {
                 let why = format!(
@@ -520,8 +522,9 @@ pub(crate) fn judge(
 /// - A line on the tag's build holds the tag's count and one on the head's
 ///   build the head's, so a floor cannot be lowered or relabelled by hand.
 /// - No floor is above the tag's count without an accept line since the
-///   tag, or above the head's count; and a rise past the limit that a line
-///   accepts has raised its floor to the head's count, as a landing does.
+///   tag; and a rise past the limit that a line accepts has raised its
+///   floor to the head's count, as a landing does. A floor above the
+///   head's count passes, as in a landing.
 fn pre_tag(
     root: &Path,
     gate: &str,
@@ -586,12 +589,6 @@ fn pre_tag(
             errors.push(format!(
                 "{gate}: {name}'s floor {f} is above the tag's count {t}, and no accept line \
                  since the tag raises it so far"
-            ));
-        }
-        if h < f {
-            errors.push(format!(
-                "{gate}: {name} is {h}, below its floor {f}: lower the floor (`cargo xtask \
-                 {gate} --base {tag} --write-floors`)"
             ));
         }
         if rules.raises(name, h, f) {
@@ -740,13 +737,12 @@ mod tests {
             past: &past,
             swept: &|_| false,
         };
-        // The file as the base has it: the gain, the raise and the new
-        // count are each missing; str keeps its floor.
+        // The file as the base has it: the raise and the new count are
+        // missing; fib's gain passes and leaves its floor; str keeps its.
         let (against, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
         assert_eq!(against["loop"], 3_000);
         let wrong: Vec<&String> = errors.iter().filter(|e| e.contains("must hold")).collect();
-        assert_eq!(wrong.len(), 3, "{errors:?}");
-        assert!(wrong.iter().any(|e| e.contains("fib\t990\tb-2")));
+        assert_eq!(wrong.len(), 2, "{errors:?}");
         assert!(wrong.iter().any(|e| e.contains("dict\t2012\tb-2")));
         assert!(wrong.iter().any(|e| e.contains("aio\t500\tb-2")));
         // A new count may be seeded below the head, never above it.
@@ -769,6 +765,7 @@ mod tests {
         let (_, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
         let written = here(&dir, "native-ir").unwrap();
+        assert_eq!(written["fib"], floor(990, "b-2"), "--write-floors lowers");
         assert_eq!(written["loop"], floor(3_000, "b-1"));
         assert_eq!(written["str"], floor(4_000, "b-1"));
         // A floor lowered below what the head counts, or raised without a
@@ -793,6 +790,55 @@ mod tests {
             here(&dir, "native-ir").unwrap()["dict"],
             floor(2_000, "b-1")
         );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Floors bind upward only: a drop passes with the file unchanged, a
+    /// rise back to the floor passes, and a rise past it fails without an
+    /// accept line and passes with one once written.
+    #[test]
+    fn a_drop_passes_and_only_a_rise_past_the_floor_needs_a_line() {
+        let base = Floors::from([("fib".to_owned(), floor(1_000, "b-1"))]);
+        let (dir, sha) = repo("upward", &base);
+        let keys = keys(&["fib"], "k");
+        let none = Counts::new();
+        let never = |_: &str, _: f64| false;
+        let line = |_: &str, r: f64| r <= 1.02;
+        let judged = |h: u64, accepted: &dyn Fn(&str, f64) -> bool, write: bool| {
+            let head = counts(&[("fib", h)]);
+            let sides = Sides {
+                base: &sha,
+                tag: false,
+                head: &head,
+                base_counts: &none,
+                keys: &keys,
+                head_build: "b-2",
+                recounted: &none,
+            };
+            let rules = Rules {
+                accepted,
+                past: &past,
+                swept: &|_| false,
+            };
+            judge(&dir, "native-ir", &sides, &rules, write).unwrap()
+        };
+        for h in [950, 1_000, 1_005] {
+            let (against, errors) = judged(h, &never, false);
+            assert!(errors.is_empty(), "{h}: {errors:?}");
+            assert_eq!(against["fib"], 1_000);
+            assert_eq!(here(&dir, "native-ir").unwrap(), base, "{h}");
+        }
+        // The floor is a bound: past it by more than the limit fails here
+        // (the gate's own comparison fails it without a line, too).
+        let (_, errors) = judged(1_010, &line, false);
+        assert!(
+            errors.iter().any(|e| e.contains("fib\t1010\tb-2")),
+            "{errors:?}"
+        );
+        judged(1_010, &line, true);
+        let (_, errors) = judged(1_010, &line, false);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(here(&dir, "native-ir").unwrap()["fib"], floor(1_010, "b-2"));
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -924,19 +970,16 @@ mod tests {
             .unwrap();
             assert_eq!(here(&dir, "native-ir").unwrap(), base);
         }
-        // A count that moves takes this host's line.
+        // A drop passes with the file unchanged; written, it takes this
+        // host's line.
         let gain = counts(&[("fib", 994), ("dict", 2_000)]);
-        let (_, errors) = judge(
-            &dir,
-            "native-ir",
-            &side(&keys_b, &gain, &head_b),
-            &rules,
-            false,
-        )
-        .unwrap();
-        assert!(
-            errors.len() == 2 && errors[0].contains("fib\t994\tb-2\tk-b"),
-            "{errors:?}"
+        let gained = side(&keys_b, &gain, &head_b);
+        let (_, errors) = judge(&dir, "native-ir", &gained, &rules, false).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        judge(&dir, "native-ir", &gained, &rules, true).unwrap();
+        assert_eq!(
+            here(&dir, "native-ir").unwrap()["fib"],
+            keyed(994, "b-2", "k-b")
         );
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -1048,7 +1091,6 @@ mod tests {
                 "on the head's build, which counts 500",
             ),
             ("loop", floor(3_000, "b-gone"), "just seed-floors v0.0.9"),
-            ("fib", floor(1_002, &tb), "fib is 999, below its floor 1002"),
         ];
         for (name, line, says) in cases {
             let mut bad = good.clone();
@@ -1060,6 +1102,10 @@ mod tests {
             );
             assert_eq!(here(&dir, "native-ir").unwrap()[name], line);
         }
+        // A floor above the head's count passes at a tag too.
+        let mut above = good.clone();
+        above.insert("fib".to_owned(), floor(1_002, &tb));
+        assert!(check(&above).is_empty(), "{:?}", check(&above));
         let mut gone = good.clone();
         gone.remove("str");
         assert!(check(&gone)[0].contains("no floor for str"));

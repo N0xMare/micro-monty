@@ -79,7 +79,7 @@
 //! `V8-IR-Accepted: <names> <ceiling> <reason>` line in a commit since the
 //! base covers it; a name is a program or `geomean`, with `plain/` or
 //! `bundle/` before it for one guest. Unrelated commits move a program by
-//! 0.00-0.06% [M]. Fewer instructions always pass, and lower the floor.
+//! 0.00-0.06% [M]. Fewer instructions always pass and leave the floor file alone.
 
 use std::{
     collections::BTreeMap,

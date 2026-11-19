@@ -2913,9 +2913,11 @@ differ by a constant of about 337K Ir, 0.10% of the smallest [M].
 blob ids of what a shipped build reads) and its key (the counting method,
 the tools' versions, glibc and the CPU class valgrind shows, the program's
 source). The gates compare the head with the base and the floor and build
-no history (owner, 2026-11-14). The head's file must be what the head
-makes of the base's: a count below its floor lowers the floor in the same
-change, so an unrecorded gain does not become headroom; a floor rises
+no history (owner, 2026-11-14). Floors bind upward only (owner,
+2026-11-19): a count below its floor passes and leaves the file as it is,
+so a drop then a rise back to the old floor passes until the floors are
+next lowered (`--write-floors` when someone runs it, or a tag's seed); a
+floor rises
 only to the head's count and only with an accept line whose ceiling
 covers the rise, for a name past a limit; a new count is seeded at or
 below the head's. `--write-floors` writes the file; a moved line names the
@@ -2929,7 +2931,8 @@ are rewritten only by a moved count or a seed. With `--base` at
 a tag (`just pretag`) the head is compared with the tag, and every floor
 must be on the tag's first-parent line up to the head, hold the tag's
 count where it names the tag's build and the head's where it names the
-head's, and hold an accepted rise at the head's count; each failure names
+head's, and hold an accepted rise at the head's count (a floor above the
+head's count passes); each failure names
 `just seed-floors`. `--write-floors` there seeds the file from the tag,
 each floor at the tag's count with the tag's build (the head's where the
 head counts less or rises with an accept line), whatever the file held;

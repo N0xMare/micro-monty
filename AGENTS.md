@@ -153,11 +153,12 @@ to `target/check/logs/<stage>.log`.
   at the last `v*` tag (the pre-tag check makes that seed happen), kept
   in `xtask/ir-floors/<gate>.txt` with the build that set it and its count
   key (counting method, tools, host, program source), so steps under a
-  limit cannot add up and no gate builds history. A change that lowers a
-  count lowers its floor in the same commit, and `check` fails a head
-  below its floor whose file is not lowered: `cargo xtask <gate>
-  --write-floors` writes it; a moved line names the build of the push's
-  tip, so in a push of several commits it is written at the tip. A floor
+  limit cannot add up and no gate builds history. Floors bind upward
+  only (owner): a count below its floor passes with no file change, so a
+  drop then a rise back to the old floor passes until the floors are next
+  lowered, by `cargo xtask <gate> --write-floors` when someone runs it or
+  by the tag's seed. A new count needs a line once, at or below its count.
+  A written line names the build of the push's tip. A floor
   rises only to the head's count, with an accept line that covers the rise
   and is past a limit. A stale floor (another key) is recounted on its
   build and judged against the recount; the file keeps the base's line

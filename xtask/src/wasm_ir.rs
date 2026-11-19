@@ -37,7 +37,7 @@
 //! Unrelated commits move the run loop's register allocation by up to
 //! about 1% either way; the floor bounds a creep of commits each under the
 //! limits. Fewer instructions always pass, with the table printed, and
-//! lower the floor. An intended rise takes `Wasm-IR-Accepted: <names>
+//! leave the floor file alone. An intended rise takes `Wasm-IR-Accepted: <names>
 //! <ceiling> <reason>` in its commit message (`MM_WASM_IR_ACCEPT` with the
 //! same text before committing), which passes only the names it lists up
 //! to the ceiling and raises their floors to the head's counts.
