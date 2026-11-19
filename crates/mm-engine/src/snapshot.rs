@@ -1,11 +1,15 @@
 //! FULL snapshots of a session (docs/spec.md §9.3).
 //!
-//! [`Vm::write_snapshot`] collects garbage, then writes the heap (mm-core's
-//! segment form), the sources and code table, and every VM register: the
+//! [`Vm::write_snapshot`] collects nothing and writes the session exactly
+//! as it is: the heap (mm-core's segment form, garbage, free blocks and the
+//! collector's state included), the sources and code table, every VM
+//! register and the VM's side of the collector's schedule: the
 //! frame stack and continuations, the scheduler's tasks, run queue and host
 //! futures, the pending host call, globals, modules, shapes, host modules
-//! and limits. Inline caches, constructor caches and scratch buffers are not
-//! written; they start empty. Host-owned state (the output callback, the
+//! and limits, and the capacities of the tables the memory limit charges.
+//! Inline caches, constructor caches and the builtin's consumed iterators
+//! are not written; they start empty (a snapshot drops the last from the
+//! session too). Host-owned state (the output callback, the
 //! clock and deadline, the park flag) is not part of a session's image.
 //!
 //! [`Vm::read_snapshot`] trusts nothing: every count is checked against the
@@ -61,9 +65,6 @@ const CODE_STDLIB: u8 = 3;
 const CODE_HOST: u8 = 4;
 const CODE_PRELUDE: u8 = 5;
 
-/// Stack slots kept above the live registers of a restored stack, at most.
-const STACK_SLACK: usize = 1 << 16;
-
 /// The engine's layout epoch, part of the snapshot build id
 /// (`micro_monty::build_id`, docs/spec.md §9.3). The id hashes this file,
 /// mm-core's heap codec and mm-compile's code codec whole, and every
@@ -79,7 +80,7 @@ const STACK_SLACK: usize = 1 << 16;
 ///   set tables;
 /// - what an opcode's operands mean, with the same format;
 /// - how frames, generators or coroutines keep their state.
-pub(crate) const SNAPSHOT_EPOCH: u32 = 18;
+pub(crate) const SNAPSHOT_EPOCH: u32 = 19;
 
 /// This build's engine fingerprint for snapshot build ids: what an image
 /// written by this engine means. The layout epoch; the codecs and every
@@ -228,13 +229,13 @@ fn put_frames(out: &mut Sink<'_>, frames: &[Frame]) {
     }
 }
 
-/// A stack: its length, then the live registers below `live`.
+/// A stack: its length, then every register.
 #[cfg_attr(mm_shipped, optimize(size))]
-fn put_stack(out: &mut Sink<'_>, stack: &[Value], live: usize) {
-    // Capped as `read_stack` caps it, so a restored session saves the same
-    // length (a deep call's stack keeps its length after it returns).
-    put_len(out, stack.len().min(live + STACK_SLACK));
-    put_values(out, stack.get(..live).unwrap_or(stack));
+fn put_stack(out: &mut Sink<'_>, stack: &[Value]) {
+    // Every register: those above the live top are not traced, but a later
+    // frame whose registers cover them is, as in the session that goes on.
+    put_len(out, stack.len());
+    put_values(out, stack);
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
@@ -421,7 +422,7 @@ pub(crate) fn put_host(out: &mut Vec<u8>, v: &HostValue) {
 }
 
 impl Vm {
-    /// Collects garbage, then appends the session's FULL image to `out`.
+    /// Appends the session's FULL image to `out`, collecting nothing.
     /// Call it while the session is stopped: between cells, parked, at a
     /// host call or waiting on host futures.
     ///
@@ -430,17 +431,16 @@ impl Vm {
     /// [`NotAtSafepoint`] if a builtin's request is still pending (never
     /// the case when the session has returned to the host).
     #[cfg_attr(mm_shipped, optimize(size))]
-    pub fn write_snapshot(&mut self, out: &mut Vec<u8>) -> Result<(), NotAtSafepoint> {
+    pub fn write_snapshot(&self, out: &mut Vec<u8>) -> Result<(), NotAtSafepoint> {
         self.write_snapshot_to(&mut Sink::Buf(out))
     }
 
     /// Streams [`Vm::write_snapshot`]'s form without owning an output buffer.
     /// Returns the same safepoint error as that method.
     #[cfg_attr(mm_shipped, optimize(size))]
-    pub fn write_snapshot_to(&mut self, out: &mut Sink<'_>) -> Result<(), NotAtSafepoint> {
+    pub fn write_snapshot_to(&self, out: &mut Sink<'_>) -> Result<(), NotAtSafepoint> {
         self.prepare_snapshot()?;
         self.emit_snapshot(out);
-        self.place_gathers(true);
         Ok(())
     }
 
@@ -455,7 +455,7 @@ impl Vm {
     /// [`NotAtSafepoint`], as [`Vm::write_snapshot`].
     #[cfg_attr(mm_shipped, optimize(size))]
     pub fn write_snapshot_sized(
-        &mut self,
+        &self,
         header: &[u8],
         trailer: usize,
         limit: usize,
@@ -472,81 +472,21 @@ impl Vm {
             out.extend_from_slice(header);
             self.emit_snapshot(&mut Sink::Buf(&mut out));
         }
-        self.place_gathers(true);
         Ok(fits.then_some(out))
     }
 
-    /// Readies the session for [`Vm::emit_snapshot`]: drops what the image
-    /// does not keep and collects garbage.
+    /// Readies the session for [`Vm::emit_snapshot`]. Nothing is
+    /// collected and nothing the collector or the charges read changes: the
+    /// image holds the session exactly as it is, garbage, marks and free
+    /// lists included, so the session that goes on and a restored one are
+    /// the same session (docs/spec.md §9.3).
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn prepare_snapshot(&mut self) -> Result<(), NotAtSafepoint> {
-        if self.request.is_some() {
+    fn prepare_snapshot(&self) -> Result<(), NotAtSafepoint> {
+        if self.request.is_some()
+            || (self.saved.is_none() && self.codes.get(self.tramp as usize).is_none())
+        {
             return Err(NotAtSafepoint);
         }
-        // What the last builtin consumed is dead once it returned (it
-        // belongs to that instruction, `Vm::fresh_consumed`); drop it so it
-        // is not kept alive.
-        self.consumed.clear();
-        self.partial = None;
-        // Restart the scheduler's check interval in both continuations:
-        // otherwise their next check, and therefore collection, can differ.
-        self.sched_turns = 0;
-        // The stopped task's registers are the GC's running frame; between
-        // cells and while waiting, no frame runs (an empty trampoline frame).
-        let st = if let Some(s) = &self.saved {
-            s.clone()
-        } else {
-            if self.codes.get(self.tramp as usize).is_none() {
-                return Err(NotAtSafepoint);
-            }
-            State {
-                pc: 0,
-                base: 0,
-                ci: self.tramp,
-                acc: Value::NONE,
-                func: Value::NONE,
-                coro: Value::NONE,
-            }
-        };
-        self.gc_requested_done();
-        // The dunder-name cache is not saved (a restored session refills it
-        // on use); drop it so it keeps nothing alive the restore would not.
-        self.dunders.clear();
-        // The bytes allocated since the engine's last collection are kept
-        // through this one for the retry after `MemoryError`, which needs
-        // 1 MiB of them (`Vm::oom_retry_if`), so a cell parked, snapshotted
-        // and restored counts what an unparked one does; not for the
-        // collection trigger, which this collection paid. Both counts are
-        // in the image (`Heap::write_snapshot_to`).
-        // A collection the guest waits for (`gc.collect`, a retry after
-        // `MemoryError`) is this one: it started after the wait began. It
-        // resets the count, as that collection would have, unparked.
-        let waited = self.gc_wait != 0 && self.heap.stats().collections < self.gc_wait;
-        let since = self.heap.allocated_since_own_gc();
-        // Swept at once, in the order a restore sweeps: the image is
-        // written from swept segments only, and the session that goes on
-        // must list its free blocks as the restored one does.
-        self.collect_swept(&st);
-        // The generator registry as a restore rebuilds it: in address
-        // order, its capacity `gens_room` of its length, so the session
-        // that goes on and the restored one walk it alike and are charged
-        // alike. A smaller charge always fits.
-        if let Ok(gens) = generators(&self.heap, None, false, self.gens.len()) {
-            self.gens = gens;
-            self.gens
-                .shrink_to(crate::generator::gens_room(self.gens.len()));
-            let _ = self
-                .heap
-                .set_external_bytes(self.code_charge.saturating_add(self.execution_bytes()));
-        }
-        self.gc_wait = 0;
-        if !waited {
-            self.heap.keep_allocated_since_gc(since);
-        }
-        // The tracked gathers as an image holds them: no holes, and no
-        // place in a gather (the writers put the places back).
-        self.pack_gathers();
-        self.place_gathers(false);
         Ok(())
     }
 
@@ -747,8 +687,7 @@ impl Vm {
         }
 
         // The running task's stack and frames, and its registers if stopped.
-        let live = self.saved.as_ref().map_or(0, |s| live_top(&self.codes, s));
-        put_stack(out, &self.stack, live);
+        put_stack(out, &self.stack);
         put_u32(out, self.depth);
         put_frames(out, &self.specials);
         put_opt_state(out, self.saved.as_ref());
@@ -765,11 +704,7 @@ impl Vm {
             put_value(out, t.handled);
             put_value(out, t.awaiting);
             put_value(out, t.context);
-            put_stack(
-                out,
-                &t.stack,
-                t.regs().map_or(0, |s| live_top(&self.codes, s)),
-            );
+            put_stack(out, &t.stack);
             put_u32(out, t.depth);
             put_frames(out, &t.specials);
             put_opt_state(out, t.regs());
@@ -797,9 +732,8 @@ impl Vm {
                 }
             }
         }
-        // The tasks, not the holes their wakes left.
-        put_len(out, self.blocked.len() - self.blocked_holes);
-        for &b in self.blocked.iter().filter(|&&b| b != crate::vm::HOLE) {
+        put_len(out, self.blocked.len());
+        for &b in &self.blocked {
             put_len(out, b);
         }
         put_values(out, &self.gathers);
@@ -808,12 +742,14 @@ impl Vm {
         put_u32(out, self.stop_wait);
         put_len(out, self.cb_slots);
         put_len(out, self.queue_spare());
+        put_u8(out, self.sched_turns as u8);
         put_u64(out, self.task_counter);
         put_value(out, self.task_names);
         put_value(out, self.context);
         put_value(out, self.escape);
         put_value(out, self.cancelling);
         put_value(out, self.run_handled);
+        put_bool(out, self.asyncgens_listed);
         put_values(out, &self.unretrieved);
         put_u8(out, self.loop_flags);
         put_len(out, self.futures.len());
@@ -867,16 +803,144 @@ impl Vm {
             put_u8(out, status.code());
         }
         put_values(out, &self.fresh);
+        // The generator registry as it is, in its order, and where the
+        // clearing pass goes on: a snapshot neither collects nor rebuilds
+        // it, so the restored session runs the passes the one that went on
+        // runs.
+        put_values(out, &self.gens);
+        put_len(out, self.gens_at);
+        // The VM's side of the collector's schedule and of the charges:
+        // nothing collects before an image, so a restored session goes on
+        // with them where the one that went on does.
+        put_bool(out, self.gc_owed);
+        put_bool(out, self.gc_pending);
+        put_u32(out, self.tick_spare.cast_unsigned());
+        put_u64(out, self.gc_wait);
+        put_bool(out, self.oom_wait);
+        put_u64(out, self.oom_defer_at);
+        put_values(out, &self.dunders);
+        put_u64(out, self.code_charge);
+        put_u64(out, self.code_kept);
+        put_u64(out, self.heap.external_bytes());
+        // Capacities the charges count (`Vm::code_bytes`,
+        // `Vm::execution_bytes`): a restore reserves them again.
+        for c in self.capacities() {
+            put_len(out, c);
+        }
     }
-}
 
-/// The end of the live registers of a stopped task: its frame's top.
-#[cfg_attr(mm_shipped, optimize(size))]
-fn live_top(codes: &[Arc<CodeObj>], st: &State) -> usize {
-    st.base
-        + codes
-            .get(st.ci as usize)
-            .map_or(0, |c| c.code.nregs as usize)
+    /// The capacities of the tables the memory limit charges by capacity,
+    /// in the order [`Vm::reserve_capacities`] takes them.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    fn capacities(&self) -> Vec<usize> {
+        let mut c = alloc::vec![
+            self.stack.capacity(),
+            self.specials.capacity(),
+            self.conts.capacity(),
+            self.cont_free.capacity(),
+            self.tasks.capacity(),
+            self.ready.capacity(),
+            self.blocked.capacity(),
+            self.gathers.capacity(),
+            self.futures.capacity(),
+            self.call_log.capacity(),
+            self.fresh.capacity(),
+            self.consumed.capacity(),
+            self.unretrieved.capacity(),
+            self.sbuf.capacity(),
+            self.codes.capacity(),
+            self.sources.capacity(),
+            self.ics.capacity(),
+            self.synth.capacity(),
+            self.shapes.capacity(),
+            self.host_modules.capacity(),
+            self.host_ids.capacity(),
+            self.gens.capacity(),
+            self.shared_chars.capacity(),
+        ];
+        for t in self.tasks.iter().flatten() {
+            c.extend([t.stack.capacity(), t.specials.capacity()]);
+        }
+        for s in &self.shapes {
+            c.extend([s.names.capacity(), s.trans.capacity()]);
+        }
+        c
+    }
+
+    /// Reserves the capacities [`Vm::capacities`] wrote, each charged to
+    /// `budget` first.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    fn reserve_capacities(&mut self, caps: &[usize], ics_len: usize, budget: &mut u64) -> Res<()> {
+        fn grow<T>(v: &mut Vec<T>, cap: usize, budget: &mut u64) -> Res<()> {
+            let extra = cap.saturating_sub(v.capacity());
+            charge(budget, (extra * size_of::<T>()) as u64)?;
+            v.try_reserve_exact(cap - v.len().min(cap))
+                .map_err(|_| SnapError::TooLarge)
+        }
+        let mut caps = caps.iter().copied();
+        let mut cap = || need(caps.next(), "capacities");
+        grow(&mut self.stack, cap()?, budget)?;
+        grow(&mut self.specials, cap()?, budget)?;
+        grow(&mut self.conts, cap()?, budget)?;
+        grow(&mut self.cont_free, cap()?, budget)?;
+        grow(&mut self.tasks, cap()?, budget)?;
+        let ready = cap()?;
+        charge(
+            budget,
+            (ready.saturating_sub(self.ready.capacity()) * size_of::<Ready>()) as u64,
+        )?;
+        self.ready
+            .try_reserve_exact(ready - self.ready.len().min(ready))
+            .map_err(|_| SnapError::TooLarge)?;
+        grow(&mut self.blocked, cap()?, budget)?;
+        grow(&mut self.gathers, cap()?, budget)?;
+        grow(&mut self.futures, cap()?, budget)?;
+        grow(&mut self.call_log, cap()?, budget)?;
+        grow(&mut self.fresh, cap()?, budget)?;
+        grow(&mut self.consumed, cap()?, budget)?;
+        grow(&mut self.unretrieved, cap()?, budget)?;
+        let sbuf = cap()?;
+        charge(budget, sbuf as u64)?;
+        self.sbuf
+            .try_reserve_exact(sbuf)
+            .map_err(|_| SnapError::TooLarge)?;
+        grow(Arc::make_mut(&mut self.codes), cap()?, budget)?;
+        grow(&mut self.sources, cap()?, budget)?;
+        let ics_cap = cap()?;
+        grow(&mut self.synth, cap()?, budget)?;
+        grow(&mut self.shapes, cap()?, budget)?;
+        grow(&mut self.host_modules, cap()?, budget)?;
+        grow(&mut self.host_ids, cap()?, budget)?;
+        grow(&mut self.gens, cap()?, budget)?;
+        // Empty or its full room: the cache's slots refill as it is used
+        // (`Vm::shared_str`), and only its capacity is charged.
+        grow(&mut self.shared_chars, cap()?, budget)?;
+        for t in self.tasks.iter_mut().flatten() {
+            grow(&mut t.stack, cap()?, budget)?;
+            grow(&mut t.specials, cap()?, budget)?;
+        }
+        for s in &mut self.shapes {
+            grow(&mut s.names, cap()?, budget)?;
+            grow(&mut s.trans, cap()?, budget)?;
+        }
+        // The inline-cache table is allocated last, on purpose: every load
+        // grows it by exactly its code's caches (`Vm::load_in`), and the
+        // host's allocator extends a block in place only while nothing was
+        // allocated after it. With a table reserved behind it each load of
+        // a restored session copied the whole table (12.6 M of 311 M
+        // instructions in a recorded SDK session). No test can hold this
+        // without `unsafe` (it is the host allocator's layout, not engine
+        // state), so keep this the last allocation of a restore.
+        charge(
+            budget,
+            (ics_cap.saturating_sub(ics_len) * size_of::<crate::vm::Ic>()) as u64,
+        )?;
+        self.ics
+            .try_reserve_exact(ics_cap.max(ics_len))
+            .map_err(|_| SnapError::TooLarge)?;
+        self.ics.resize(ics_len, crate::vm::Ic::Empty);
+        Ok(())
+    }
 }
 
 // ------------------------------------------------------------- reading
@@ -918,10 +982,11 @@ impl Rd<'_, '_> {
 /// Does `v`, if a reference, name an object of its kind?
 #[cfg_attr(mm_shipped, optimize(size))]
 fn ref_ok(heap: &Heap, v: Value) -> bool {
+    if !heap.snapshot_ref_live(v) {
+        return false;
+    }
     match (v.as_obj(), v.obj_kind()) {
-        (Some(o), Some(kind)) => heap
-            .object_words(o)
-            .is_ok_and(|(h, _)| h.type_id() == u16::from(kind)),
+        (Some(o), Some(kind)) => heap.header(o).is_ok_and(|h| h.type_id() == u16::from(kind)),
         _ => true,
     }
 }
@@ -1070,22 +1135,18 @@ fn read_frames(r: &mut Rd<'_, '_>, budget: &mut u64) -> Res<Vec<Frame>> {
     Ok(frames)
 }
 
-/// A stack as written: live registers, padded with `UNDEFINED` to its
-/// length (capped at `STACK_SLACK` above the live part).
+/// A stack as written: every register.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn read_stack(r: &mut Rd<'_, '_>, budget: &mut u64) -> Res<Vec<Value>> {
     let len = read_index(r, "stack")?;
-    let live = need(r.count(8), "stack")?;
-    if len < live {
+    if need(r.count(8), "stack")? != len {
         return Err(SnapError::Corrupt("stack"));
     }
-    let len = len.min(live + STACK_SLACK);
     charge(budget, len as u64 * size_of::<Value>() as u64)?;
     let mut stack = Vec::with_capacity(len);
-    for _ in 0..live {
+    for _ in 0..len {
         stack.push(need(r.value(), "stack")?);
     }
-    stack.resize(len, Value::UNDEFINED);
     Ok(stack)
 }
 
@@ -2102,13 +2163,16 @@ impl Vm {
             });
         }
         let nblocked = need(r.count(4), "blocked")?;
-        if nblocked > ntasks {
-            return Err(SnapError::Corrupt("blocked"));
-        }
-        charge(&mut budget, ntasks as u64 * size_of::<usize>() as u64)?;
-        let mut blocked = Vec::with_capacity(ntasks);
+        charge(&mut budget, nblocked as u64 * size_of::<usize>() as u64)?;
+        let mut blocked = Vec::with_capacity(nblocked);
+        let mut blocked_holes = 0;
         for k in 0..nblocked {
             let i = read_index(r, "blocked")?;
+            if i == u32::MAX as usize {
+                blocked.push(crate::vm::HOLE);
+                blocked_holes += 1;
+                continue;
+            }
             // Its place in the list (`Task::at`): a task is listed once.
             if let Some(Some(t)) = tasks.get_mut(i) {
                 if t.at != crate::vm::NOT_BLOCKED {
@@ -2124,6 +2188,7 @@ impl Vm {
         for _ in 0..ngathers {
             gathers.push(need(r.value(), "gathers")?);
         }
+        let gathers_holes = gathers.iter().filter(|&&g| g == Value::UNDEFINED).count();
         let iter_left = read_index(r, "run queue")?;
         if iter_left > ready.len() {
             return Err(SnapError::Corrupt("run queue"));
@@ -2132,6 +2197,9 @@ impl Vm {
         let stop_wait = need(r.u32(), "run queue")?;
         let cb_slots = read_index(r, "run queue")?;
         let spare = read_index(r, "run queue")?;
+        // The full domain of the encoded byte is exactly the valid interval.
+        const { assert!(crate::aio::SCHED_TURNS == 256) };
+        let sched_turns = u32::from(need(r.u8(), "run queue")?);
         let task_counter = need(r.u64(), "run queue")?;
         let task_names = need(r.value(), "run queue")?;
         let context = need(r.value(), "run queue")?;
@@ -2142,6 +2210,7 @@ impl Vm {
             return Err(SnapError::Corrupt("run queue"));
         }
         let run_handled = need(r.value(), "run queue")?;
+        let asyncgens_listed = need(r.bool(), "run queue")?;
         let nun = need(r.count(8), "run queue")?;
         charge(&mut budget, nun as u64 * size_of::<Value>() as u64)?;
         let mut unretrieved = Vec::with_capacity(nun);
@@ -2257,9 +2326,55 @@ impl Vm {
         for _ in 0..nfresh {
             fresh.push(need(r.value(), "coroutines")?);
         }
-        if r.remaining() != 0 {
-            return Err(SnapError::Corrupt("trailing bytes"));
+        let ngens = need(r.count(8), "generators")?;
+        charge(&mut budget, ngens as u64 * size_of::<Value>() as u64)?;
+        let mut gens = Vec::with_capacity(ngens);
+        for _ in 0..ngens {
+            gens.push(need(r.value(), "generators")?);
         }
+        let gens_at = need(r.u32(), "generators")? as usize;
+        if gens_at > gens.len() {
+            return Err(SnapError::Corrupt("generators"));
+        }
+        let gc_owed = need(r.bool(), "collector")?;
+        let gc_pending = need(r.bool(), "collector")?;
+        let tick_spare = need(r.u32(), "collector")?.cast_signed();
+        if !(0..=tick_period - ticks).contains(&tick_spare) {
+            return Err(SnapError::Corrupt("collector"));
+        }
+        let gc_wait = need(r.u64(), "collector")?;
+        let oom_wait = need(r.bool(), "collector")?;
+        let oom_defer_at = need(r.u64(), "collector")?;
+        let ndunders = need(r.count(8), "collector")?;
+        // The dunder-name cache: empty, or each name's interned `str`.
+        if ndunders != 0 && ndunders != crate::class::NDUNDERS {
+            return Err(SnapError::Corrupt("dunders"));
+        }
+        let mut dunders = Vec::with_capacity(ndunders);
+        for name in crate::class::DUNDER_NAMES.iter().take(ndunders) {
+            let v = need(r.value(), "dunders")?;
+            let ok = v == Value::UNDEFINED
+                || v.as_obj().is_some_and(|o| {
+                    heap.header(o).is_ok_and(|h| {
+                        h.type_id() == mm_core::types::STR
+                            && h.flags() & mm_core::flags::INTERNED != 0
+                    }) && heap.str_bytes(o).is_ok_and(|b| b == name.as_bytes())
+                });
+            if !ok {
+                return Err(SnapError::Corrupt("dunders"));
+            }
+            dunders.push(v);
+        }
+        let code_charge = need(r.u64(), "collector")?;
+        let code_kept = need(r.u64(), "collector")?;
+        let external = need(r.u64(), "collector")?;
+        let ncaps = 23 + 2 * tasks.iter().flatten().count() + 2 * shapes.len();
+        if r.remaining() != ncaps * 4 {
+            return Err(SnapError::Corrupt("capacities"));
+        }
+        let caps = (0..ncaps)
+            .map(|_| need(r.u32(), "capacities").map(|c| c as usize))
+            .collect::<Res<Vec<usize>>>()?;
 
         // Cross-checks: every state, frame, continuation and task index.
         let saved = match saved {
@@ -2302,7 +2417,7 @@ impl Vm {
         }
         let task_ok = |i: usize| i < tasks.len();
         if (!tasks.is_empty() && !task_ok(cur))
-            || !blocked.iter().all(|&i| task_ok(i))
+            || !blocked.iter().all(|&i| i == crate::vm::HOLE || task_ok(i))
             || !ready.iter().all(|e| match e {
                 Ready::Task(i) => task_ok(*i),
                 Ready::Gather(..) | Ready::Call(..) | Ready::Handle(_) => true,
@@ -2315,18 +2430,25 @@ impl Vm {
         {
             return Err(SnapError::Corrupt("host call"));
         }
-        // The generator registry, rebuilt in address order by the walk
-        // that checks the generators.
-        let mut gens = generators(&heap, Some((&mut codes[..], &mut bundled)), check, 0)?;
-        let room = crate::generator::gens_room(gens.len());
-        gens.try_reserve_exact(room - gens.len())
-            .map_err(|_| SnapError::TooLarge)?;
-        gens.shrink_to(room);
+        // The registry names every generator in the heap once, which the
+        // walk that checks them lists in address order.
+        let mut walked = generators(
+            &heap,
+            Some((&mut codes[..], &mut bundled)),
+            check,
+            gens.len(),
+        )?;
+        let mut listed = gens.clone();
+        listed.sort_unstable_by_key(|v| v.as_obj().map(mm_core::Ref::raw));
+        walked.sort_unstable_by_key(|v| v.as_obj().map(mm_core::Ref::raw));
+        if listed != walked {
+            return Err(SnapError::Corrupt("generators"));
+        }
+        drop((listed, walked));
         // `HostArgs` setters cap the depth; keep the cap.
         host_args.max_depth = host_args.max_depth.min(1000);
 
         let ics_len = n_ics as usize;
-        let parked_bytes = tasks.iter().flatten().map(Task::buffer_bytes).sum();
         let mut vm = Vm {
             heap,
             stack,
@@ -2341,7 +2463,7 @@ impl Vm {
             globals,
             builtins,
             gver,
-            dunders: Vec::new(),
+            dunders,
             bver: 0,
             types,
             handled,
@@ -2354,11 +2476,11 @@ impl Vm {
             fuel,
             ticks,
             tick_period,
-            tick_spare: 0,
+            tick_spare,
             sp_phase,
             fuel_overdraft: 0,
             saved,
-            gc_pending: false,
+            gc_pending,
             fuel_wanted,
             afford: false,
             long_work,
@@ -2370,19 +2492,19 @@ impl Vm {
             direct_call: false,
             tasks,
             task_hint: 0,
-            parked_bytes,
+            parked_bytes: 0,
             cur,
             ready,
             blocked,
-            blocked_holes: 0,
+            blocked_holes,
             gathers,
-            gathers_holes: 0,
+            gathers_holes,
             iter_left,
             iter_open,
             stop_wait,
             cb_slots,
             callback_queue: 0,
-            sched_turns: 0,
+            sched_turns,
             task_counter,
             task_names,
             context,
@@ -2391,7 +2513,7 @@ impl Vm {
             run_handled,
             unretrieved,
             loop_flags,
-            asyncgens_listed: true,
+            asyncgens_listed,
             futures,
             seq,
             vclock,
@@ -2428,14 +2550,14 @@ impl Vm {
             report_steps: 0,
             name_error_built: true,
             gc_stress: false,
-            gc_wait: 0,
-            gc_owed: false,
+            gc_wait,
+            gc_owed,
             gc_off: false,
             gc_yield: false,
-            oom_wait: false,
+            oom_wait,
             oom_rerun: u64::MAX,
             oom_rerun_at: u64::MAX,
-            oom_defer_at: 0,
+            oom_defer_at,
             consumed_at: u64::MAX,
             tick_epoch: 0,
             gc_inc_stress: false,
@@ -2456,7 +2578,7 @@ impl Vm {
             call_log,
             fresh,
             gens,
-            gens_at: 0,
+            gens_at,
             dead_cache: Vec::new(),
             known_modules: &[],
         };
@@ -2468,15 +2590,19 @@ impl Vm {
         vm.callback_queue = vm.count_callback_queue();
         vm.reserve_code(u64::from(n_ics) * size_of::<crate::vm::Ic>() as u64)
             .map_err(|_| SnapError::TooLarge)?;
-        vm.ics
-            .try_reserve_exact(ics_len)
-            .map_err(|_| SnapError::TooLarge)?;
-        vm.ics.resize(ics_len, crate::vm::Ic::Empty);
         // The queue's spare room too: a restored queue grows as the running
         // one would (`Vm::queue_spare`).
         vm.reserve_scheduler(ntasks, ngathers, spare)
             .map_err(|_| SnapError::TooLarge)?;
-        vm.place_gathers(true);
+        // The capacities and charges of the session that wrote the image,
+        // so the restored one is charged what that one is.
+        vm.reserve_capacities(&caps, ics_len, &mut budget)?;
+        vm.parked_bytes = vm.tasks.iter().flatten().map(Task::buffer_bytes).sum();
+        vm.code_charge = code_charge;
+        vm.code_kept = code_kept;
+        vm.heap
+            .set_external_bytes(external)
+            .map_err(|_| SnapError::TooLarge)?;
         if check {
             check_steps(&vm)?;
             check_gathers(&vm)?;

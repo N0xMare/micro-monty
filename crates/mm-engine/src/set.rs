@@ -30,17 +30,16 @@ pub(crate) const PY_CHUNK: usize = 64;
 /// (160 slots), so a chain of colliding keys or deleted slots pays and the
 /// step bound holds. Below it a probe's fuel does not depend on where keys
 /// landed. Identity hashes follow addresses, which a snapshot's collection
-/// moves, and objects made one after another hash to neighbouring slots:
-/// charged from the second run, 13 corpus and own cases spent other fuel
-/// with a snapshot at every park; from the 17th, none [M]. `id()` ints as
+/// moved before snapshots stopped collecting, and objects made one after
+/// another hash to neighbouring slots: charged from the second run, 13
+/// corpus and own cases spent other fuel with a snapshot at every park;
+/// from the 17th, none [M]. `id()` ints as
 /// keys follow addresses the same way. Rebuilds (`set_rehash`,
 /// `dict_move`, a clean insert) give each key the same allowance: with
 /// one probe free, a table grown or copied spent up to 4,332 units more
 /// under a snapshot at every park [M, GC design review]. A key that still
 /// walks past it (none is known: up to 100,000 objects made in sequence
-/// did not) is the snapshot-collection cause in
-/// `conformance/durability-results.txt`, which GC step 5 (a snapshot
-/// leaves the live session unchanged) removes.
+/// did not) now moves only with the GC mode.
 pub(crate) const FREE_RUNS: u32 = 16;
 /// The work a bulk step ([`Vm::bulk`]) counts for each item, uncharged, on
 /// top of its fuel: its probe's free runs at four units each, about what

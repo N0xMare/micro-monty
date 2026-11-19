@@ -44,9 +44,9 @@
 //! records. An entry
 //! is added only by hand, in the commit that makes the case differ, with
 //! its cause and closing step on the line and the reason in the commit
-//! message (the file's header). `--report-only` compares the
-//! reports alone, as the gate did before fuel and digests (`gc-stress`,
-//! whose collections at every safepoint move both).
+//! message (the file's header). `--no-digest` compares reports and fuel
+//! but not digests (`gc-stress`, whose collections at every safepoint
+//! leave other final images than the recorded default mode's).
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -149,7 +149,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut cross = false;
     let mut built = false;
     let mut record = false;
-    let mut report_only = false;
+    let mut no_digest = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -160,7 +160,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
                 built = true;
             }
             "--record" => record = true,
-            "--report-only" => report_only = true,
+            "--no-digest" => no_digest = true,
             "--every" => every = Some(it.next().ok_or("--every needs N or N:M")?.clone()),
             "--fine" => fine.clone_from(it.next().ok_or("--fine needs N:M")?),
             "--timeout" => {
@@ -172,10 +172,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             other => return Err(format!("durability: unknown option `{other}`")),
         }
     }
-    if record && (filter.is_some() || every.is_some() || fine != FINE || report_only) {
+    if record && (filter.is_some() || every.is_some() || fine != FINE || no_digest) {
         return Err(
             "--record rewrites the results of a whole run at the default policy: \
-             no --filter, --every, --fine or --report-only"
+             no --filter, --every, --fine or --no-digest"
                 .to_owned(),
         );
     }
@@ -386,7 +386,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         for (mode, columns) in &o.diffs {
             let allowed = recorded.get(&(o.file.clone(), mode.clone()));
             for column in columns {
-                if report_only && column != "report" && column != "refused" {
+                if no_digest && column == "digest" {
                     continue;
                 }
                 let entry = seen.entry((o.file.clone(), mode.clone())).or_default();
@@ -416,8 +416,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         outcomes.iter().filter(|o| o.status == "pass").count(),
         started.elapsed().as_secs_f64()
     );
-    let columns: &[&str] = if report_only {
-        &COLUMNS[..1]
+    let columns: &[&str] = if no_digest {
+        &COLUMNS[..2]
     } else {
         &COLUMNS[..3]
     };
@@ -464,7 +464,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             })
         })
         .collect();
-    if filter.is_none() && every.is_none() && !report_only {
+    if filter.is_none() && every.is_none() && !no_digest {
         for (file, mode, column) in &stale {
             println!(
                 "  note: {file} {mode} {column} is recorded in {RESULTS} but no run differed in it"
@@ -531,6 +531,16 @@ fn read_results(path: &Path) -> Result<BTreeMap<(String, String), Recorded>, Str
             || !columns.iter().all(|c| COLUMNS.contains(&c.as_str()))
         {
             return Err(bad());
+        }
+        // A snapshot never changes the session (docs/spec.md §9.3): within
+        // a target and GC mode, report and fuel do not depend on parks,
+        // snapshots or restores, so no entry may allow them to.
+        if NATIVE_MODES.contains(&mode) && columns.iter().any(|c| c == "report" || c == "fuel") {
+            return Err(format!(
+                "{}:{}: {file} {mode}: the native modes compare report and fuel strictly",
+                path.display(),
+                n + 1
+            ));
         }
         let key = (file.to_owned(), mode.to_owned());
         if recorded.contains_key(&key) {

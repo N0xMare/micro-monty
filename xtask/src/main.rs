@@ -162,7 +162,7 @@ tasks:
                              target (native <-> wasm32-wasip1 under wasmtime)
       --record               rewrite the results file without the entries no
                              run differed in (a whole run; never adds one)
-      --report-only          compare reports only (gc-stress)
+      --no-digest            compare reports and fuel, not digests (gc-stress)
   shipped-mm [--target <t>]  build `mm` as shipped, natively (the binary the
                              bench Ir rule measures) or for <t> (wasm-opt -Oz
                              on wasm), and print its path

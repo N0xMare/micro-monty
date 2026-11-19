@@ -17,8 +17,8 @@
 //! counts a tick at every call that crosses one, or a
 //! call outran [`RuntimeConfig::call_budget`] (off by default, an opt-in
 //! backstop), it interrupts the instance, which traps. A snapshot cannot
-//! park (it collects in full first, about 1.4 ms per MiB of image [M], past
-//! the grace for an image over about 210 MiB at the default limit), so a
+//! park (it writes the whole image in one call, at about 1 ms per MiB
+//! [E], past the grace for an image of a few hundred MiB), so a
 //! request pending during [`Session::snapshot`] waits for the next call
 //! instead; only `call_budget` bounds a snapshot. A restore runs before the
 //! session's [`ParkHandle`] exists.

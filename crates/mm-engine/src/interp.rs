@@ -325,10 +325,6 @@ fn collect(
             heap.collect_weak(roots, weak);
             true
         }
-        Gc::Swept => {
-            heap.collect_swept(roots, weak);
-            true
-        }
     }
 }
 
@@ -339,8 +335,6 @@ enum Gc {
     Step,
     /// A full collection (its sweep lazy over 32 MiB live).
     Full,
-    /// A full collection swept at once, as a restore sweeps (a snapshot's).
-    Swept,
 }
 
 impl Vm {
@@ -586,9 +580,9 @@ impl Vm {
                     // runs again once a collection has ended, a step per
                     // safepoint. Parked before then, it runs again once the
                     // collection has ended all the same (`Vm::resume` runs
-                    // the owed steps first, and a snapshot's collection is
-                    // that collection), so that run is the rerun too: its
-                    // mark goes on through the resume and into an image.
+                    // the owed steps first, and the wait is in the image),
+                    // so that run is the rerun too: its mark goes on
+                    // through the resume and into an image.
                     while self.gc_waiting() {
                         if let Some(r) = self.safepoint(&st) {
                             self.oom_rerun = self.op_stamp();
@@ -924,14 +918,7 @@ impl Vm {
         self.gc(st, Gc::Full);
     }
 
-    /// A snapshot's collection: in full, its sweep done
-    /// (`Heap::collect_swept`).
-    pub(crate) fn collect_swept(&mut self, st: &State) {
-        self.gc(st, Gc::Swept);
-    }
-
-    /// A full collection, one step of an incremental one, or a full one
-    /// swept at once.
+    /// A full collection or one step of an incremental one.
     fn gc(&mut self, st: &State, kind: Gc) {
         // A step that can take roots from an idle heap: a full collection,
         // or a step with one due or no sweep left (`Heap::collect_step`).
@@ -1142,16 +1129,12 @@ impl Vm {
         self.post = None;
         // A collection between cells (a compile that did not fit, code
         // reclamation) is not one a cell's operations ran: the retry after
-        // `MemoryError` still counts what came before it, as after a
-        // snapshot's (`Vm::prepare_snapshot`), so a cell's outcome does not
-        // depend on whether the host snapshotted between cells.
+        // `MemoryError` still counts allocations that came before it.
         let since = self.heap.allocated_since_own_gc();
         self.collect_garbage(&st);
         self.heap.keep_allocated_since_gc(since);
-        // A collection the ended cell asked for (the retry's after a
-        // `MemoryError`) is this one, as a snapshot's drops it
-        // (`Vm::prepare_snapshot`): else the next cell's first check
-        // collected in full again.
+        // This also satisfies a collection the ended cell requested, so
+        // the next cell's first check need not collect in full again.
         self.gc_requested_done();
         // An untaken completion text (a restored image's) is dropped by
         // the next start.

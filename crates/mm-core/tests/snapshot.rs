@@ -55,6 +55,31 @@ fn image(heap: &Heap) -> Vec<u8> {
     out
 }
 
+/// A block may still have a header after its last root goes away. Both
+/// spaces must distinguish these blocks from the survivors before sweeping.
+#[test]
+fn live_references_across_a_lazy_sweep() {
+    let mut heap = Heap::new(HeapConfig {
+        memory_limit: 96 << 20,
+        ..HeapConfig::default()
+    });
+    heap.set_incremental(1024, 0);
+    let mut keep = Vec::new();
+    let mut dropped = Vec::new();
+    for i in 0..5000 {
+        let words = Value::from_ref(heap.alloc(T, 0, 0, 512).unwrap(), 0);
+        let bytes = Value::from_byte_ref(heap.alloc_bytes_zeroed(4096).unwrap());
+        (if i % 2 == 0 { &mut keep } else { &mut dropped }).extend([words, bytes]);
+    }
+    heap.collect(&mut |t| t.values(&keep));
+    assert!(heap.sweeping());
+    let copy = Heap::read_snapshot(&mut Reader::new(&image(&heap)), u64::MAX).unwrap();
+    for h in [&heap, &copy] {
+        assert!(keep.iter().all(|&v| h.snapshot_ref_live(v)));
+        assert!(dropped.iter().all(|&v| !h.snapshot_ref_live(v)));
+    }
+}
+
 #[test]
 fn restore_is_the_collected_heap() {
     let (mut heap, keep) = sample();
@@ -143,16 +168,16 @@ fn truncated_and_corrupt_images_are_errors() {
     }
 }
 
-/// A word-space segment of an image: where its index, top, run count and
-/// capacity (a large segment's room) are, and its runs as (unit offset,
-/// units, where their data starts).
+/// A word-space segment of an image: where its index, top and capacity
+/// (a large segment's room) are, where its units start, and where its
+/// mark flag is (the bitmap follows when it is set).
 struct Segment {
     index: usize,
     large: bool,
     top: usize,
-    nruns: usize,
     cap: usize,
-    runs: Vec<(usize, usize, usize)>,
+    data: usize,
+    marked: usize,
 }
 
 /// The word space's present segments, read from `b` by the image layout.
@@ -166,24 +191,39 @@ fn segments(b: &[u8]) -> Vec<Segment> {
     let mut at = space + 16 + 4 * nvacant;
     let mut out = Vec::new();
     for _ in 0..present {
+        // Index, large, dirty, top, capacity, then the units up to top.
         let large = b[at + 4] != 0;
-        let mut seg = Segment {
+        let seg = Segment {
             index: at,
             large,
-            top: at + 5,
-            nruns: at + 9,
-            cap: at + 13,
-            runs: Vec::new(),
+            top: at + 6,
+            cap: at + 10,
+            data: at + 14,
+            marked: at + 14 + u32_at(at + 6) * 8,
         };
-        at += 17;
-        for _ in 0..u32_at(seg.nruns) {
-            let (off, units) = (u32_at(at), u32_at(at + 4));
-            seg.runs.push((off, units, at + 8));
-            at += 8 + units * 8;
+        at = seg.marked + 1;
+        if b[seg.marked] != 0 {
+            at += 8 * if large { 1 } else { u32_at(seg.cap) / 64 };
         }
         out.push(seg);
     }
     out
+}
+
+/// Where the word space's allocation run (segment, cursor, end) is in `b`;
+/// its 64 small free-list heads follow it.
+fn run_at(b: &[u8]) -> usize {
+    let last = segments(b).pop().unwrap();
+    let u32_at = |at: usize| u32::from_le_bytes(b[at..at + 4].try_into().unwrap()) as usize;
+    let mut at = last.marked + 1;
+    if b[last.marked] != 0 {
+        at += 8 * if last.large { 1 } else { u32_at(last.cap) / 64 };
+    }
+    at
+}
+
+fn u32_at_in(b: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes(b[at..at + 4].try_into().unwrap())
 }
 
 /// Where the word `i` words into the object `raw` refers to is in `b`.
@@ -193,9 +233,8 @@ fn word_at(b: &[u8], raw: u32) -> impl Fn(usize) -> usize {
     let data = segments(b)
         .into_iter()
         .filter(|s| u32_at(s.index) == seg)
-        .flat_map(|s| s.runs)
-        .find(|&(o, units, _)| (o..o + units).contains(&off))
-        .map(|(o, _, data)| data + (off - o) * 8)
+        .find(|s| off < u32_at(s.top))
+        .map(|s| s.data + off * 8)
         .unwrap();
     move |i| data + i * 8
 }
@@ -208,9 +247,9 @@ fn restore_refuses_each_inconsistent_field() {
     assert!(restores(&bytes));
     let seg = segments(&bytes)
         .into_iter()
-        .find(|s| !s.large && !s.runs.is_empty())
+        .find(|s| !s.large && u32_at_in(&bytes, s.top) > 0)
         .unwrap();
-    let (idx, top, nruns, cap, run) = (seg.index, seg.top, seg.nruns, seg.cap, seg.runs[0].2 - 8);
+    let (idx, top, cap, first) = (seg.index, seg.top, seg.cap, seg.data);
     let u32_at = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
     let with = |at: usize, v: u32| {
         let mut b = bytes.clone();
@@ -224,7 +263,6 @@ fn restore_refuses_each_inconsistent_field() {
         b
     };
     let other = keep[2].as_obj().unwrap().raw();
-    assert!(u32_at(run + 4) > 0 && u32_at(nruns) > 0);
     for (what, b) in [
         ("no segments", with(72, 0)),
         ("too many segments", with(72, u32::MAX)),
@@ -232,9 +270,20 @@ fn restore_refuses_each_inconsistent_field() {
         ("segment index 0", with(idx, 0)),
         ("capacity not a power of two", with(cap, u32_at(cap) - 1)),
         ("top past the capacity", with(top, u32_at(cap) + 1)),
-        ("an empty run", with(run + 4, 0)),
-        ("a run past top", with(run, u32_at(top))),
-        ("a block of no type", with(run + 8, 0)),
+        ("a block past top", with(first + 4, u32_at(top) * 8)),
+        ("a free block with flags", with(first, 1 << 8)),
+        ("a free list into a live block", {
+            let run = run_at(&bytes);
+            let list = (0..64)
+                .map(|k| run + 12 + 4 * k)
+                .find(|&at| u32_at(at) != 0)
+                .unwrap();
+            with(list, keep[0].as_obj().unwrap().raw())
+        }),
+        ("a run past its segment's top", {
+            let run = run_at(&bytes);
+            with(run + 8, u32::MAX)
+        }),
         (
             "invalid UTF-8",
             replaced("str-3-é".as_bytes(), b"str-3-\xff\xfe"),
@@ -631,13 +680,13 @@ fn a_large_blocks_room_is_restored_and_checked() {
     let committed = copy.committed_bytes();
     assert_eq!(copy.append_bytes(b, &chunk, room), Ok(b));
     assert_eq!(copy.committed_bytes(), committed);
-    // The room record follows the block's top and its one run.
+    // The room record follows the block's top.
     let (top, cap) = (1 + chunk.len().div_ceil(8), 1 + room.div_ceil(8));
-    let field: Vec<u8> = [top, 1, cap]
+    let field: Vec<u8> = [top, cap]
         .iter()
         .flat_map(|&v| (v as u32).to_le_bytes())
         .collect();
-    let at = bytes.windows(12).position(|w| w == field).unwrap() + 8;
+    let at = bytes.windows(8).position(|w| w == field).unwrap() + 4;
     let with = |v: usize| {
         let mut b = bytes.clone();
         b[at..at + 4].copy_from_slice(&(v as u32).to_le_bytes());

@@ -63,13 +63,13 @@ const OFF_MASK: u32 = (1 << SEG_BITS) - 1;
 /// Segment indices fit the 15 high bits of an address.
 pub(crate) const MAX_SEGS: usize = 1 << (32 - SEG_BITS);
 /// Largest block size with an exact-size free list.
-const SMALL_MAX: usize = 63;
+pub(crate) const SMALL_MAX: usize = 63;
 /// Blocks of at least this many units get a dedicated segment (128 KiB).
 pub(crate) const LARGE_UNITS: usize = SEG_UNITS / 8;
 /// Medium free-list classes: 64 per doubling from 64 units to
 /// `LARGE_UNITS`, the sizes `medium_room` rounds to, then one class for
 /// free blocks of `LARGE_UNITS` and more ([`med_class`]).
-const MED_CLASSES: usize = 8 * 64 + 1;
+pub(crate) const MED_CLASSES: usize = 8 * 64 + 1;
 /// How many blocks of its own class a medium placement tries before it
 /// takes a block of a higher class, where every block fits.
 const OWN_CLASS_WALK: usize = 4;
@@ -86,7 +86,7 @@ pub(crate) const fn normal_cost(cap: usize) -> u64 {
 }
 /// Bitmap bytes of a dedicated segment (one word each).
 const LARGE_OVERHEAD: u64 = 16;
-const NIL: u32 = 0;
+pub(crate) const NIL: u32 = 0;
 
 /// Segment storage: units of 8 bytes, read and written as `u64` headers and
 /// links. Storage holds at least the units below the segment's `top`;
@@ -113,6 +113,9 @@ pub(crate) trait Store {
     fn fill_to(&mut self, units: usize);
     /// Keeps room for `units` units only, and the contents below them.
     fn shrink(&mut self, units: usize);
+    /// Forgets the units from `units` on, keeping the room: the bump
+    /// allocator zero-fills them again as it reaches them.
+    fn cut_to(&mut self, units: usize);
     /// Units initialized.
     fn units(&self) -> usize;
     fn read(&self, unit: usize) -> Option<u64>;
@@ -154,6 +157,9 @@ impl Store for Vec<u64> {
         self.truncate(units);
         self.shrink_to(units);
     }
+    fn cut_to(&mut self, units: usize) {
+        self.truncate(units);
+    }
     #[inline]
     fn units(&self) -> usize {
         self.len()
@@ -170,7 +176,7 @@ impl Store for Vec<u64> {
     }
     #[inline]
     fn units_for(len: u32) -> usize {
-        len as usize + 1
+        (len as usize).checked_add(1).unwrap_or(0)
     }
     #[inline]
     fn free_len(units: usize) -> u32 {
@@ -227,6 +233,9 @@ impl Store for Vec<u8> {
     fn shrink(&mut self, units: usize) {
         self.truncate(units * 8);
         self.shrink_to(units * 8);
+    }
+    fn cut_to(&mut self, units: usize) {
+        self.truncate(units.saturating_mul(8));
     }
     #[inline]
     fn units(&self) -> usize {
@@ -408,13 +417,15 @@ pub(crate) struct Seg<S> {
     pub(crate) used: usize,
     pub(crate) present: bool,
     pub(crate) large: bool,
+    /// Membership bit for the lazy sweep's ordered `pending` list.
+    pub(crate) unswept: bool,
     /// The write barrier's record: [`DIRTY_REFS`] once a value slot was
     /// written since the collector last rescanned the segment.
     pub(crate) dirty: u8,
     /// Units reserved; `data` holds at least `top` of them. A `u32` (and
     /// the cost derived from it) keeps `Seg` at 64 bytes, so indexing the
     /// segment table is a shift on every heap access.
-    cap: u32,
+    pub(crate) cap: u32,
 }
 
 impl<S: Store> Seg<S> {
@@ -442,6 +453,7 @@ impl<S: Store> Seg<S> {
             used: 0,
             present: false,
             large: false,
+            unswept: false,
             dirty: 0,
             cap: 0,
         }
@@ -455,24 +467,24 @@ pub(crate) struct Sweep {
 }
 
 /// Free-list heads.
-struct Lists {
-    small: [u32; SMALL_MAX + 1],
+pub(crate) struct Lists {
+    pub(crate) small: [u32; SMALL_MAX + 1],
     /// Bit `n` set iff `small[n]` is non-empty.
-    mask: u64,
+    pub(crate) mask: u64,
     /// Heads of the medium classes. Allocated at the first sweep or medium
     /// block listed: 2 KiB inline made every move of the heap copy it, +1.4%
     /// startup Ir, and filled at `Lists::new` +0.7% [M].
-    medium: Vec<u32>,
+    pub(crate) medium: Vec<u32>,
     /// Bit `c` set iff medium class `c` is non-empty.
-    medium_mask: [u64; MED_CLASSES.div_ceil(64)],
+    pub(crate) medium_mask: [u64; MED_CLASSES.div_ceil(64)],
     /// Units on the lists (holes excluded).
-    free_units: u64,
+    pub(crate) free_units: u64,
 }
 
 /// The class of a medium free block of `units >= 64`: class `c` holds the
 /// sizes from one `medium_room` size up to the next, so a block of a
 /// higher class fits any request of class `c`.
-fn med_class(units: usize) -> usize {
+pub(crate) fn med_class(units: usize) -> usize {
     let shift = units.ilog2() as usize - 6;
     if shift >= 8 {
         return MED_CLASSES - 1;
@@ -668,7 +680,7 @@ impl Lists {
 }
 
 #[inline]
-fn link(w: u64) -> u32 {
+pub(crate) fn link(w: u64) -> u32 {
     u32::try_from(w).unwrap_or(NIL)
 }
 
@@ -684,8 +696,8 @@ pub(crate) struct Space<S> {
     /// A free run being allocated from front to back, `(segment, next
     /// unit, end)`; segment 0: none. Its unallocated part always carries a
     /// free-block header, so the segment stays walkable.
-    run: (usize, usize, usize),
-    lists: Lists,
+    pub(crate) run: (usize, usize, usize),
+    pub(crate) lists: Lists,
     /// Bytes of present segments, bitmaps included.
     pub(crate) committed: u64,
     /// Lazy sweep: partly live segments whose dead blocks the last
@@ -815,7 +827,7 @@ impl<S: Store> Space<S> {
     /// medium blocks are listed (sweeps, a retired bump tail, a medium
     /// block's rest), so small blocks fill freed space before the frontier
     /// and the hot path tests only the run. Its choice follows from the
-    /// lists alone, which a restore's sweep rebuilds.
+    /// lists alone; a restore preserves both the run and those lists.
     fn arm_run(&mut self) {
         if self.run.0 != 0 {
             return;
@@ -1112,6 +1124,7 @@ impl<S: Store> Space<S> {
                 used: 0,
                 present: true,
                 large,
+                unswept: false,
                 dirty: 0,
                 cap: u32::try_from(cap).unwrap_or(0),
             };
@@ -1219,6 +1232,7 @@ impl<S: Store> Space<S> {
             if !s.present {
                 continue;
             }
+            s.unswept = false;
             let any_live = s.starts.iter().zip(m.iter()).any(|(a, b)| a & b != 0);
             if any_live {
                 // A normal segment tiled by allocated blocks only (no free
@@ -1230,6 +1244,7 @@ impl<S: Store> Space<S> {
                     if lazy && idx != self.bump {
                         // Counted live until swept (`lazily_freed`).
                         out.live_units += s.used as u64;
+                        s.unswept = true;
                         self.pending.push(idx);
                         continue;
                     }
@@ -1241,7 +1256,10 @@ impl<S: Store> Space<S> {
             }
             out.freed_units += s.used as u64;
             if idx == self.bump {
+                // What lies past the top is zero, as in a restored segment,
+                // so the blocks allocated there next hold the same words.
                 s.top = 0;
+                s.data.cut_to(0);
                 s.used = 0;
                 s.starts.fill(0);
                 m.fill(0);
@@ -1351,6 +1369,7 @@ impl<S: Store> Space<S> {
             return;
         };
         let mut out = Sweep::default();
+        s.unswept = false;
         s.used = walk(&mut self.lists, s, m, idx, false, &mut out);
         m.fill(0);
         self.lazily_freed += out.freed_units;
@@ -1453,6 +1472,7 @@ fn walk<S: Store>(
                 s.data.write(free, u64::from(S::free_len(hole)) << 32);
             }
             s.top = free + hole;
+            s.data.cut_to(s.top);
         } else {
             file_after(lists, s, idx, free, top - free, last);
         }

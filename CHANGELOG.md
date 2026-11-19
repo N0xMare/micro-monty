@@ -161,6 +161,21 @@ GitHub release also attaches the two mm-wasm guests.
   fewer on wasm32-wasip1 under wasmtime (855,689 to 672,382) [M]. The
   builtins, the prelude's globals and a new session's image are the same,
   byte for byte, and the build id does not move.
+- A snapshot no longer changes the session it is taken from: it no
+  longer collects, and the image holds the heap exactly as it is,
+  garbage, free blocks, mark bitmaps, the incremental mark and lazy sweep
+  in progress, the collector's schedule, the generator registry and its
+  clearing cursor, and the capacities of the VM's tables. A restored
+  session goes on as the one that wrote it would, so outcome and fuel no
+  longer depend on whether or when the host snapshotted or restored.
+  Near-limit random programs at 2 to 8 MiB under three GC settings and
+  nine drive modes: 0 of 1,200 runs and 0 of 600 asyncio runs differ
+  between drive modes, against 842 and 401 before [M]. A restore checks
+  the free lists, marks, mark stack, pending sweep and registry it reads
+  against the blocks, and refuses an image where they disagree as
+  `Corrupt`. Images hold dead objects too, so they can be larger than
+  before until dead payloads are omitted. The durability gate compares
+  report and fuel within each GC mode. The build id moves.
 - The Huffman decoder tables of the bundled modules and the prelude are
   built once per `Engine` and kept in its module cache (about 90 KB),
   instead of once per prelude chunk part and per cell or restore. A

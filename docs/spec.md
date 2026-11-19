@@ -1624,8 +1624,8 @@ template restore replace the heap, and the table with it.
   every reader masks it (`mm-engine/tests/ypc_readers.rs`). What is
   cleared is a function of the generator's code and suspended pc, so it
   does not depend on when the pass runs, and neither a yield nor an object
-  the mark scans pays for it. Before a full collection (a snapshot's
-  included) the pass runs whole in that step; before an incremental mark
+  the mark scans pays for it. Before a full collection the pass runs
+  whole in that step; before an incremental mark
   it runs a slice per step (`CLEAR_SLICE` work units: a generator, plus
   twice the registers of a copy it clears), and the mark starts at the
   step that ends it. The guest waits for those slices as for a held mark
@@ -1894,7 +1894,9 @@ check charges only the safepoints that ran.
 The scheduler also checks when it starts a task or finishes a gather
 notification: every 256 of these turns, after more than 16,384 units of
 native work, or when the fuel runs out. These turns need not pass any
-bytecode check. The scheduler check adds no tick of its own.
+bytecode check. The scheduler check adds no tick of its own. The image
+carries the turns since the last periodic or native-work check. Neither
+a fuel-only park nor a restore restarts that interval.
 
 **Regular checks.** The checks every run of a cell makes at the same
 safepoints, however a host slices it (`Vm::regular_check`): where the
@@ -2147,15 +2149,14 @@ timer deadlines.
   (Allocating black was measured and made worst gaps longer: it scans the
   garbage made during a mark [M].) The sweep that follows is lazy
   (`Space::pending`): allocation sweeps a few segments before committing
-  memory, each check sweeps 8 segments per space, and everything that walks
-  the heap (`write_snapshot`, the code-liveness scan) finishes it first. A
-  snapshot's own collection sweeps at once, segment by segment in ascending
-  order, as a restore lists its free blocks, so the session that goes on and
-  the restored one allocate the same blocks (`Heap::collect_swept`,
-  `conformance/own/533`). Mark state lives outside the arena and is never
-  snapshotted: a snapshot, code reclamation and a native's collection
-  request abandon a mark for a full collection, and a restored heap starts
-  with none.
+  memory, each check sweeps 8 segments per space, and the code-liveness
+  scan finishes it first. A snapshot neither marks nor sweeps: the image
+  holds a mark in flight (marks, mark stack, partial scans, dirty flags)
+  and the segments a sweep has not reached as they are (§9.3), so the
+  restored session goes on with the same mark and sweep, and allocates the
+  same blocks, as the one that took it (`conformance/own/533`). Code
+  reclamation and a native's collection request abandon a mark for a full
+  collection.
 - **Headroom.** Nothing is freed until the remark, and natives cannot
   collect, so a native that allocates more than the room left during a
   mark raises `MemoryError` where a full collection at the mark's start
@@ -2219,19 +2220,18 @@ timer deadlines.
   passes or the remark, so a native that builds tens of MiB of objects
   that stay live pays for tracing them in the remark, a step of its own
   (`list(zip(xs, xs))` of 4M over 200k old lists: 34 ms [M]).
-- **Snapshots at parks.** Mark state is not snapshotted, so a snapshot
-  taken at any park first collects in full and then writes the image
-  (153–250 ms at 192 MiB [M]). That is the host's call, outside the step
-  bound.
+- **Snapshots at parks** collect nothing: a snapshot taken during a mark
+  writes the mark as it is. Writing the image is the host's call, outside
+  the step bound.
 - **Also unbounded:** every collection under 32 MiB live (30 ms native
-  at worst) runs in full, as do a snapshot's, code reclamation's, and one
+  at worst) runs in full, as do code reclamation's, and one
   a native or the engine requests (`Vm::request_gc`): after a
   `MemoryError` is raised and after a byte job fails for memory.
 - **At the wall between cells.** A cell that fills the heap and drops its
   data leaves garbage that no safepoint collects: none runs between
   cells, and the trigger counts allocation, which a drop does not make.
   So a cell starts (`Vm::prepare_cell`, which a host definition runs
-  first too) with a full collection, uncharged as a snapshot's,
+  first too) with a full collection, uncharged,
   when the heap is at its wall (`Heap::at_wall`): for the words or the
   bytes space, the memory left is under the cost of its next segment
   (1,081,344 B at full size) and its free blocks under 1/8 of the limit;
@@ -2261,8 +2261,8 @@ timer deadlines.
   definition's old module, a hint, a module dunder, the code
   reclamation drops) or anything was allocated (a host definition, a
   start refused part way, the rerun of one)
-  (`Heap::idle`, not in the image, false in a restored heap, which may
-  hold a stopped cell). At 256 MiB it
+  (`Heap::idle`, in the image, so a restored heap is idle where the
+  session was). At 256 MiB it
   takes 7–34 ms over garbage and 38–105 ms over live data, which it
   repeats at each start while the heap stays at the wall, also when every
   cell completes: 2.5M strings and 1 kB bytes objects live at 256 MiB, 200
@@ -2285,11 +2285,13 @@ timer deadlines.
 
 ### 9.3 Snapshots
 
-- **FULL only:** after a GC, the segments of both arena spaces plus VM
-  state. Free runs are omitted, so a fragmented heap doesn't inflate
-  snapshots. Write and restore are copies plus header checks.
-  `Session::snapshot()` runs a GC and writes; `Engine::restore` reads into a
-  new session (same or another process).
+- **FULL only, and exact:** the segments of both arena spaces as they are,
+  garbage, free blocks and the collector's state included, plus VM state.
+  `Session::snapshot()` writes without collecting and changes nothing in
+  the session it is taken from; `Engine::restore` reads into a new session
+  (same or another process) that goes on as that one does: within a GC
+  mode, its outputs, outcomes, fuel and next image are the same whether
+  or not, and wherever, the session was snapshotted or restored.
 - **Every mutation goes through mm-core setters (the write barrier),** which
   also keep the dirty-segment flags of the incremental mark (§9.2).
 - **No deltas in the engine.** Deltas are an efficiency feature, not a
@@ -2309,8 +2311,15 @@ header   magic "MMSNAP\0\x01", format u16 = 1 (SNAPSHOT_FORMAT), build_id [u8;32
 heap     memory limit, GC ratio and floor, GC statistics, intern table;
          per space: segment-table size, bump segment, vacant indices,
          each segment's capacity (a dedicated segment's room past its
-         object as a number) and live runs (free space omitted)
-vm       registers, fuel left, limits, seq / virtual clock, frames,
+         object as a number), its blocks up to its top (live, garbage
+         and free), dirty flag and mark bitmap; the allocation run, the
+         free lists' heads, the segments the lazy sweep has not reached;
+         object counts, the mark stack (capacity and entries), the
+         incremental mark's state and partial scans, char positions,
+         the idle flag
+vm       registers, fuel left, limits, seq / virtual clock, the
+         collector's schedule (owed and pending steps, waits), the
+         capacities of the VM's tables and its code charges, frames,
          continuations, scheduler, tasks and run queue, globals, modules,
          pending host calls and their ids, park reason,
          host modules (definition; for code the Engine shares, its 16-byte
@@ -2338,6 +2347,8 @@ trailer  xxh64 of everything above
 - **Trusted input.** The host integrity-protects snapshots and never loads
   one produced by the guest or the user. The checksum detects corruption,
   not tampering. The reader still bounds-checks everything and is fuzzed.
+  Restore work is bounded by the memory limit, not by image size: compact
+  descriptions of free space and reserved capacity can expand in memory.
 - **Persistence: FULL images, compressed by the host.** The engine writes
   FULL, uncompressed images. Hosts compress with zstd level 1, using the
   build's fresh-session image (`Session::new` then `snapshot`) as a raw
@@ -2461,15 +2472,27 @@ arena value slot, must name an object of its kind (`check_refs`,
 call and its id, a wait on host futures, a park) must match the state the VM
 holds (`Corrupt("stop")`), and a waiting image must hold an answer or a
 future status, a cancelled one included, for every pending call; the intern
-table's untagged string references are checked by mm-core. Free lists,
-bitmaps and size classes are rebuilt by a sweep. Every arena access is also
-bounds- and start-bitmap-checked and fails with an error.
+table's untagged string references are checked by mm-core. The collector
+state the image holds is checked as well, so a damaged image ends in
+`Corrupt` at restore, never in a heap that later hands out live memory:
+blocks tile each segment up to its top and a free block is a typed free
+header; start bits and used counts are derived from the blocks; marks sit
+on block starts only, and outside a mark only in segments the sweep has
+not reached, which are present, distinct and not the bump segment; every
+free-list and run entry is a free block of its list's size class, each
+taken once and outside those segments, and the free counts and masks are
+recomputed from them; mark-stack and partial-scan entries are marked
+objects; during a mark, a marked object that is in no dirty segment and on
+neither list references nothing unmarked (the intern table, which is weak,
+aside); the object counts match; char positions name strs of their length.
+Every arena access is also bounds- and start-bitmap-checked and fails with
+an error.
 
 Not saved: what `SessionSettings` gives a new or restored session (the
 output callback, the wall clock, entropy, the zone source, the text cut,
 `int_bits_text`, GC stress), the deadline and park flag, which the host sets
 per run, and `Session::set_gc_yield`, which a host sets again after a
-restore. Inline caches and char positions start empty.
+restore. Inline caches start empty.
 
 **Bundled code on restore.** An image names bundled-module and prelude
 code by reference, and a restore decodes each program it names without its
@@ -3126,8 +3149,8 @@ session can still checkpoint; `snapshot_with_limit(max_bytes)` overrides
 the cap for one call. Heap, code and VM encoders stream twice: once to
 measure the image, then into one buffer of exactly its size, the header and
 checksum included, allocated only if it fits the cap. Oversized output or a
-failed allocation returns `SnapshotError::TooLarge`; the session remains
-usable, although GC may have run.
+failed allocation returns `SnapshotError::TooLarge` and leaves the session
+unchanged.
 
 **Completion text.** The facade cuts a completion's `repr` and `str` at the
 session's text limit, 1 MiB by default or the memory limit if that is less;
@@ -3589,7 +3612,9 @@ opens a draft release.
 - **GC stress** (not in `check`): `cargo xtask gc-stress` reruns the own
   cases, the corpus and durability collecting at every safepoint
   (`--incremental`: an incremental mark in tiny slices at every safepoint,
-  each checked against a full mark); output must not change.
+  each checked against a full mark); output must not change, and within
+  each stress mode durability's reports and fuel must not depend on parks,
+  snapshots or restores (`--no-digest`).
 - **Size gate** (`cargo xtask size`, in `check`): the shipped builds against
   the base's and the release's (§6).
 - **Bench gate:** `cargo xtask bench --quick --engines cpython,micro-monty`

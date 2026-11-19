@@ -13,7 +13,8 @@
 //!   (mm timeout 600 s), so every case keeps its committed outcome;
 //! - durability on the own cases under stress (mm timeout 3,600 s): every
 //!   park snapshotted and continued in a new process, collecting at every
-//!   safepoint of each.
+//!   safepoint of each, with reports and fuel equal to the unparked run's
+//!   under the same stress (`--no-digest`).
 //!
 //! `--incremental` runs the same phases with `MM_GC_STRESS=inc`: an
 //! incremental mark in progress at every safepoint, a few objects per step,
@@ -64,7 +65,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         // runs and none is excluded.
         &[
             "durability",
-            "--report-only",
+            "--no-digest",
             "--filter",
             "conformance/own/",
             "--timeout",

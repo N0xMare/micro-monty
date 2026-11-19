@@ -158,7 +158,7 @@ fn folded_mul(a: u64, b: u64) -> u64 {
 
 /// Positions in non-ASCII strings remembered by [`Heap::str_offset`] and
 /// [`Heap::str_index`].
-const POS_WAYS: usize = 8;
+pub(crate) const POS_WAYS: usize = 8;
 
 /// The longest walk that moves the position it started from instead of
 /// adding one.
@@ -169,14 +169,14 @@ const STEP_BYTES: usize = 256;
 /// nearest of the string's ends and these: sequential and nearby indexing
 /// costs about one char per step instead of a walk from an end. Only for
 /// `Heap`'s own use: [`Heap::collect`] clears it before sweep can reuse an
-/// address, so an entry never outlives its string, and it is not part of
-/// a snapshot (a restored heap starts empty).
+/// address, so an entry never outlives its string. Snapshots preserve it
+/// so subsequent indexing does the same work after a restore.
 #[derive(Default)]
 pub(crate) struct StrPos {
     /// At most `POS_WAYS` positions: string, [char, byte].
-    at: Vec<(Ref, [usize; 2])>,
+    pub(crate) at: Vec<(Ref, [usize; 2])>,
     /// The slot a new position takes once all are used.
-    next: usize,
+    pub(crate) next: usize,
 }
 
 impl StrPos {
@@ -271,7 +271,7 @@ fn append(data: &mut Vec<u8>, b: &[u8]) {
 }
 
 /// Lead bytes in `b`: the chars that start in it.
-fn count_leads(b: &[u8]) -> usize {
+pub(crate) fn count_leads(b: &[u8]) -> usize {
     let (chunks, rest) = b.as_chunks::<8>();
     // The rest padded with continuation bytes, which count nothing.
     let mut last = [0x80; 8];

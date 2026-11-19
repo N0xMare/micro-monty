@@ -211,6 +211,51 @@ fn hopping(src: &str, name: &str, fuel: u64, every: usize) -> (String, String, u
     hopping_in(&engine(), src, name, fuel, every)
 }
 
+/// A fuel park must not restart the scheduler's periodic check. Both
+/// runs cross a collection between gathers that span several checks.
+#[test]
+fn scheduler_turns_continue_across_fuel_parks_and_restore() {
+    let e = engine();
+    let code = e
+        .compile(
+            "\
+import asyncio, gc
+async def child(i):
+    await asyncio.sleep(0)
+    return i
+async def main():
+    a = await asyncio.gather(*[child(i) for i in range(301)])
+    gc.collect()
+    b = await asyncio.gather(*[child(i) for i in range(317)])
+    return sum(a) + sum(b)
+asyncio.run(main())",
+            "turns.py",
+        )
+        .expect("compiles");
+    let run = |fuel| {
+        let mut s = Session::new(&e).expect("session");
+        s.set_fuel(fuel);
+        let mut p = s.start(&code);
+        let mut parks = 0;
+        while let Progress::Parked { .. } = p {
+            s = e
+                .restore(&s.snapshot().expect("park image"))
+                .expect("restore");
+            s.set_fuel(fuel);
+            p = s.resume(Resume::Continue).expect("continue");
+            parks += 1;
+        }
+        assert!(
+            matches!(&p, Progress::Complete(Some(v)) if v.repr == "95236"),
+            "{p:?}"
+        );
+        assert_eq!(parks > 0, fuel.is_some());
+        s.set_fuel(None);
+        s.snapshot().expect("end state")
+    };
+    assert!(run(None) == run(Some(101)));
+}
+
 /// [`hopping`] in engine `e`.
 fn hopping_in(
     e: &Engine,
@@ -670,11 +715,8 @@ except MemoryError:
     // the copy of `kw` fails, so the rerun allocates over 1 MiB before it
     // fails again: a rerun not marked as one retried again, after every
     // restore (the reviewer's guard check [M]), and at slices of 50,003
-    // after every park, with no snapshot [M]. A snapshot just before the
-    // call frees the cell's garbage first, so the first attempt gets
-    // further before it fails and charges 28,672 units more [M]: its fuel
-    // is compared only in the modes without a snapshot (spec §5.1,
-    // guarantee 4: a snapshot collects first).
+    // after every park, with no snapshot [M]. Capturing and restoring
+    // preserve the retry and must cost no additional guest fuel.
     let callex = "\
 import gc
 def f(*a, **k): return len(a) + len(k)
@@ -693,7 +735,7 @@ except MemoryError:
     st = 'ME'
 print(st)
 ";
-    for (src, op, want, same_fuel) in [
+    for (src, op, want) in [
         (
             format!(
                 "{head}pad = bytearray(6000000)\nx = list(range(900000))\ny = x\nrhs = T(src)\n{}",
@@ -701,7 +743,6 @@ print(st)
             ),
             "x += rhs",
             "ME list True 900000 {'i': 0, 'li': 0}\n",
-            true,
         ),
         (
             format!(
@@ -710,9 +751,8 @@ print(st)
             ),
             "x *= rhs",
             "ME L True 300000 {'i': 1, 'li': 0}\n",
-            true,
         ),
-        (callex.to_owned(), "f(*big, **kw)", "ME\n", false),
+        (callex.to_owned(), "f(*big, **kw)", "ME\n"),
     ] {
         let run = |slice: Option<u64>, restore: bool, keep: bool, gc_yield: bool| {
             let e = engine();
@@ -771,10 +811,7 @@ print(st)
             for (m, t) in runs {
                 let (got, charged) = t.join().expect("run");
                 assert_eq!(got, want, "{op} {m:?}");
-                assert!(
-                    !same_fuel && (m.1 || m.2) || charged == fuel,
-                    "{op} {m:?}: {charged} against {fuel}"
-                );
+                assert_eq!(charged, fuel, "{op} {m:?}");
             }
         });
     }
@@ -797,8 +834,8 @@ fn a_park_while_a_big_set_table_is_cleared_resumes() {
 
 /// Over 32 MiB live, a collection marks a slice per safepoint (spec §9.2),
 /// so a park, and a snapshot, can come in the middle of one: the snapshot
-/// abandons the mark for a full collection, and the restored session marks
-/// afresh. Tiny slices from any heap size make that happen in a small one,
+/// preserves the mark and the restored session continues it. Tiny slices
+/// from any heap size make that happen in a small one,
 /// with in-order and scattered writes into old objects (the second gives
 /// up on its marks and backs off) and appends.
 #[test]
@@ -877,6 +914,131 @@ fn a_restore_does_not_move_the_frames_of_cached_calls() {
     };
     assert_eq!(run(false), "ok\n");
     assert_eq!(run(true), "ok\n");
+}
+
+/// A cell near its memory limit whose outcome and fuel follow its garbage:
+/// a snapshot used to collect first, so a snapshot at every third park of
+/// 20,011 units moved its fuel (184,013 to 177,834 units in a 2 MiB
+/// session) where parks alone did not [M].
+const NEAR_LIMIT: &str = "\
+def load(k, sz):
+    return [bytearray(sz) for _ in range(k)]
+def gen(k, sz):
+    n = len(load(k, sz))
+    i = 0
+    while i < 300:
+        i += 1
+    yield n
+    yield len(load(1, sz))
+log = []
+H = {}
+try:
+    H['g1'] = gen(4, 419430)
+    print(next(H['g1']))
+except MemoryError:
+    log.append(1)
+try:
+    H['g2'] = gen(1, 1000000)
+    print(next(H['g2']))
+except MemoryError:
+    log.append(2)
+for k in list(H):
+    del H[k]
+try:
+    H['d4'] = {j: str(j) for j in range(4194)}
+    print(len(H['d4']))
+except MemoryError:
+    log.append(4)
+try:
+    H['st5'] = set(range(16666))
+    H['st5'] = H['st5'] | set(range(16666, 33333))
+except MemoryError:
+    log.append(5)
+try:
+    print(len(load(1, 100000)))
+except MemoryError:
+    log.append(6)
+print('cell', len(log), log[-3:])
+";
+
+/// Tasks parked beside the running one, whose buffers a restore charges.
+const PARKED_TASKS: &str = "\
+import asyncio
+async def worker(k):
+    acc = []
+    for i in range(400):
+        acc.append([i, str(i) * k])
+        if i % 7 == 0:
+            await asyncio.sleep(0)
+    return len(acc)
+async def main():
+    return await asyncio.gather(*[worker(k) for k in range(4)])
+print(asyncio.run(main()))
+";
+
+/// Runs `src` in a `mib` MiB session parked every `fuel` units, with a
+/// snapshot at every park if `snap` (each restored, and the restored
+/// session's image required to be the one it came from); the output,
+/// outcome, fuel spent and the image at the end.
+fn parked(
+    src: &str,
+    mib: u64,
+    incremental: bool,
+    fuel: u64,
+    snap: bool,
+) -> (String, String, u64, Vec<u8>) {
+    let e = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(mib << 20)));
+    let out = Arc::new(Mutex::new(String::new()));
+    let mut s = Session::new(&e).expect("session");
+    attach(&mut s, &out);
+    if incremental {
+        s.set_gc_incremental(64, 0);
+    }
+    s.set_fuel_total(Some(u64::MAX));
+    s.set_fuel(Some(fuel));
+    let mut p = s.start(&e.compile(src, "exact.py").expect("compiles"));
+    while let Progress::Parked { .. } = p {
+        if snap {
+            let bytes = s.snapshot().expect("snapshot");
+            let mut r = e.restore(&bytes).expect("restore");
+            assert!(
+                r.snapshot().expect("snapshot") == bytes,
+                "a restored session saves other bytes"
+            );
+        }
+        s.set_fuel(Some(fuel));
+        p = s.resume(Resume::Continue).expect("resumes");
+    }
+    let spent = u64::MAX - s.fuel_total().expect("fuel total");
+    s.set_fuel_total(None);
+    let text = out.lock().expect("output lock").clone();
+    (text, outcome(&p), spent, s.snapshot().expect("snapshot"))
+}
+
+/// A snapshot changes nothing in the session it is taken from (docs/spec.md
+/// §9.3): with one at every park, under default and incremental marks, the
+/// output, outcome, fuel and final image are those of the same parks
+/// without snapshots, and each image restores into a session that saves
+/// it back unchanged.
+#[test]
+fn a_snapshot_changes_nothing_in_the_session_it_is_taken_from() {
+    for (src, mib, fuel) in [
+        (NEAR_LIMIT, 2, 20_011),
+        (NEAR_LIMIT, 2, 997),
+        (PARKED_TASKS, 16, 97),
+    ] {
+        for incremental in [false, true] {
+            let want = parked(src, mib, incremental, fuel, false);
+            let got = parked(src, mib, incremental, fuel, true);
+            let what = format!("{mib} MiB, parks every {fuel}, incremental {incremental}");
+            assert_eq!(
+                (&got.0, &got.1, got.2),
+                (&want.0, &want.1, want.2),
+                "{what}"
+            );
+            assert!(got.3 == want.3, "{what}: the final images differ");
+        }
+    }
 }
 
 /// A fast-path call puts its callee's frame at the caller's argument

@@ -319,33 +319,32 @@ fn take_refs(dirty: &mut u8) -> bool {
 
 /// The state of an incremental mark (see the module docs). Mark bits and
 /// the stack persist between slices; nothing is freed until the remark.
-/// None of it is snapshotted: a snapshot abandons the mark for a full
-/// collection, and a restored heap starts with none.
+/// A snapshot carries this state so a restored mark continues at the same slice.
 #[derive(Default)]
 pub(crate) struct Inc {
     /// Whether a mark is in progress, and whether it is held.
-    mark: Mark,
+    pub(crate) mark: Mark,
     /// The next word segment the current rescan pass looks at.
-    cursor: usize,
+    pub(crate) cursor: usize,
     /// Rescan passes done.
-    passes: u32,
+    pub(crate) passes: u32,
     /// Dirty segments the current pass found, and the last pass.
-    found: u32,
-    prev: u32,
+    pub(crate) found: u32,
+    pub(crate) prev: u32,
     /// Work units of this mark before its first rescan, and of its rescans.
-    first: u64,
-    rescanned: u64,
+    pub(crate) first: u64,
+    pub(crate) rescanned: u64,
     /// `allocated_since_gc` when this mark began, and at its last step.
-    began: u64,
-    paced: u64,
+    pub(crate) began: u64,
+    pub(crate) paced: u64,
     /// A collection was asked for (`Heap::force_collection`): one is due
     /// until the next mark starts or a full collection runs.
-    forced: bool,
+    pub(crate) forced: bool,
     /// Due collections to hold from their start before letting the
     /// mutator run during marks again, and how many the next mark that
     /// does not converge sets.
-    backoff: u32,
-    penalty: u32,
+    pub(crate) backoff: u32,
+    pub(crate) penalty: u32,
     /// Work units per slice; 0 disables incremental marking.
     pub(crate) slice: u64,
     /// Live bytes below which a collection runs at once.
@@ -353,12 +352,12 @@ pub(crate) struct Inc {
     /// Check every remark against a full mark (stress testing).
     pub(crate) verify: bool,
     /// Objects being scanned in chunks, with the next slot of each.
-    partial: Vec<(u32, u32)>,
+    pub(crate) partial: Vec<(u32, u32)>,
 }
 
 /// The state of the incremental mark.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum Mark {
+pub(crate) enum Mark {
     /// No mark is in progress.
     #[default]
     Idle,
@@ -402,7 +401,7 @@ const GIVE_UP_PERCENT: u64 = 25;
 /// converge.
 const FIRST_BACKOFF: u32 = 4;
 /// Most due collections held after consecutive marks that did not converge.
-const MAX_BACKOFF: u32 = 16;
+pub(crate) const MAX_BACKOFF: u32 = 16;
 
 /// A rescan pass that found at most this many dirty segments ends the mark:
 /// the remark rescans what was dirtied since, in one step.
@@ -640,9 +639,9 @@ impl Heap {
                 chunk,
             );
             if self.inc.passes == 0 && self.inc.found == 0 {
-                self.inc.first += before - budget;
+                self.inc.first = self.inc.first.saturating_add(before - budget);
             } else {
-                self.inc.rescanned += before - budget;
+                self.inc.rescanned = self.inc.rescanned.saturating_add(before - budget);
             }
             if budget == 0 {
                 break Some(false);
@@ -651,7 +650,7 @@ impl Heap {
             if let Some(s) = self.words.segs.get_mut(idx) {
                 self.inc.cursor += 1;
                 if take_refs(&mut s.dirty) {
-                    self.inc.found += 1;
+                    self.inc.found = self.inc.found.saturating_add(1);
                     let work = rescan(
                         &mut self.words,
                         &mut self.bytes,
@@ -661,8 +660,9 @@ impl Heap {
                         chunk,
                     );
                     budget = budget.saturating_sub(work);
-                    self.inc.rescanned += work;
-                    if self.inc.rescanned * 100 > self.inc.first * GIVE_UP_PERCENT
+                    self.inc.rescanned = self.inc.rescanned.saturating_add(work);
+                    if self.inc.rescanned.saturating_mul(100)
+                        > self.inc.first.saturating_mul(GIVE_UP_PERCENT)
                         && !self.inc.verify
                         && !held
                     {
@@ -691,7 +691,7 @@ impl Heap {
             if ends {
                 break Some(true);
             }
-            self.inc.passes += 1;
+            self.inc.passes = self.inc.passes.saturating_add(1);
             self.inc.prev = self.inc.found;
             self.inc.found = 0;
             self.inc.cursor = 1;
@@ -751,7 +751,7 @@ impl Heap {
         if self.inc.verify {
             self.verify_mark(roots);
         }
-        Some(self.finish_collection(weak, true))
+        Some(self.finish_collection(weak))
     }
 
     /// Collects garbage. `roots` reports every root through the `Tracer`; the
@@ -770,28 +770,13 @@ impl Heap {
         roots: &mut dyn FnMut(&mut Tracer<'_>),
         weak: &mut dyn FnMut(&mut Tracer<'_>),
     ) -> GcStats {
-        self.collect_full(roots, weak, true)
-    }
-
-    /// [`Heap::collect_weak`] with its whole sweep done before it returns,
-    /// segment by segment in ascending order, as a restore's sweep lists
-    /// the free blocks (a snapshot's collection). A lazy sweep finished
-    /// later (`Heap::finish_sweep`) lists them in another order, so the
-    /// session that went on after the snapshot and the restored one would
-    /// allocate other blocks: other `id()`s and set orders.
-    pub fn collect_swept(
-        &mut self,
-        roots: &mut dyn FnMut(&mut Tracer<'_>),
-        weak: &mut dyn FnMut(&mut Tracer<'_>),
-    ) -> GcStats {
-        self.collect_full(roots, weak, false)
+        self.collect_full(roots, weak)
     }
 
     fn collect_full(
         &mut self,
         roots: &mut dyn FnMut(&mut Tracer<'_>),
         weak: &mut dyn FnMut(&mut Tracer<'_>),
-        lazy: bool,
     ) -> GcStats {
         self.abandon_mark();
         self.inc.forced = false;
@@ -801,7 +786,7 @@ impl Heap {
         let mut stack = core::mem::take(&mut self.mark_stack);
         drain(&mut self.words, &mut self.bytes, &mut stack);
         self.mark_stack = stack;
-        self.finish_collection(weak, lazy)
+        self.finish_collection(weak)
     }
 
     /// Marks the roots (and the intern table itself, if `table`) and pushes
@@ -824,7 +809,7 @@ impl Heap {
 
     /// The end of every collection, once everything strongly reachable is
     /// marked: the weak pass, then the sweep.
-    fn finish_collection(&mut self, weak: &mut dyn FnMut(&mut Tracer<'_>), lazy: bool) -> GcStats {
+    fn finish_collection(&mut self, weak: &mut dyn FnMut(&mut Tracer<'_>)) -> GcStats {
         // Sweep may reuse the address of a string with a position.
         self.str_pos.clear();
         let mut stack = core::mem::take(&mut self.mark_stack);
@@ -859,7 +844,7 @@ impl Heap {
 
         // Sweep lazily only where marks are incremental: a sweep must not
         // fill one step there, and smaller heaps sweep as before.
-        let lazy = lazy && self.inc.slice != 0 && self.live_now() >= self.inc.min_live;
+        let lazy = self.inc.slice != 0 && self.live_now() >= self.inc.min_live;
         let w = self.words.sweep(lazy);
         let b = self.bytes.sweep(lazy);
         self.words.lazily_freed = 0;

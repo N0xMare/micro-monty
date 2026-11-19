@@ -267,12 +267,11 @@ while True:
     });
 }
 
-/// A snapshot leaves the session that goes on with the registry a restore
-/// rebuilds (`Vm::gens`): the same generators in the same order and
-/// capacity, whatever order the session held them in, so both walk it
-/// alike.
+/// A snapshot leaves the registry (`Vm::gens`) as it is, and a restore
+/// gives the same generators in the same order and capacity, whatever
+/// order the session held them in, so both walk it alike.
 #[test]
-fn a_snapshot_gives_the_session_the_registry_a_restore_rebuilds() {
+fn a_restore_gives_the_registry_the_session_held() {
     let src = "\
 def g():
     yield 1
@@ -283,10 +282,12 @@ while True:
     let mut vm = session(src, |vm| vm.gens.len() == 25);
     vm.gens.reverse();
     let held = vm.gens.clone();
+    let cap = vm.gens.capacity();
     let restored = restore(&mut vm).expect("restores");
-    assert_ne!(held, vm.gens);
-    assert_eq!(vm.gens, restored.gens);
-    assert_eq!(vm.gens.capacity(), restored.gens.capacity());
+    assert_eq!(vm.gens, held);
+    assert_eq!(vm.gens.capacity(), cap);
+    assert_eq!(restored.gens, held);
+    assert_eq!(restored.gens.capacity(), cap);
 }
 
 #[test]
@@ -391,6 +392,41 @@ fn the_tick_registers_stay_in_range() {
             vm.ticks = 0;
         },
     );
+    for spare in [-1, 2] {
+        refuses(
+            "x = 1\n",
+            |_| false,
+            "collector",
+            |vm| {
+                vm.ticks = vm.tick_period - 1;
+                vm.tick_spare = spare;
+            },
+        );
+    }
+}
+
+/// A reset keeps the template's scheduler phase, not the previous cell's.
+#[test]
+fn reset_keeps_the_images_scheduler_phase() {
+    let mut old = session("x = 1\n", |_| false);
+    old.sched_turns = crate::aio::SCHED_TURNS - 1;
+    let mut image = Vec::new();
+    old.write_snapshot(&mut image).expect("idle image");
+    old.sched_turns = 7;
+    for check in [true, false] {
+        let mut restored = Vm::read_snapshot_as(
+            &mut Reader::new(&image),
+            old.stdlib,
+            None,
+            &mut |_, _, _, _| None,
+            1 << 40,
+            check,
+        )
+        .expect("reset image");
+        let counters = old.counters();
+        restored.adopt(&mut old, counters).expect("adopts");
+        assert_eq!(restored.sched_turns, crate::aio::SCHED_TURNS - 1);
+    }
 }
 
 /// The user's module code, made uniquely owned to be changed.
@@ -2077,26 +2113,26 @@ fn gathers_with_a_hole() -> Vm {
     vm
 }
 
-/// A tracked gather knows its place in the scheduler's list while its
-/// session runs, and no image holds a place: the image of a session is
-/// the one written with every place taken out by hand, the session that
-/// wrote it has its places again, and so has the restored one; both end
-/// with every gather's result.
+/// Taking the image leaves holes and tracked gathers in place. A restore
+/// keeps those places too, so the next compaction falls at the same time.
 #[cfg(feature = "asyncio")]
 #[test]
-fn an_image_holds_no_gather_place_and_both_sessions_keep_theirs() {
+fn an_image_keeps_gather_places_and_holes() {
     let mut vm = gathers_with_a_hole();
+    let entries = vm.gathers.clone();
+    let holes = vm.gathers_holes;
+    assert_ne!(holes, 0);
     let mut image = Vec::new();
     vm.write_snapshot(&mut image).expect("at a safepoint");
     let placed = |vm: &Vm| {
-        vm.gathers_holes == 0 && !vm.gathers.is_empty() && vm.gathers.iter().all(|&g| vm.tracked(g))
+        vm.gathers_holes == holes
+            && vm.gathers == entries
+            && vm
+                .gathers
+                .iter()
+                .all(|&g| g == Value::UNDEFINED || vm.tracked(g))
     };
     assert!(placed(&vm), "the session that goes on lost a place");
-    vm.place_gathers(false);
-    let mut bare = Vec::new();
-    vm.emit_snapshot(&mut mm_core::Sink::Buf(&mut bare));
-    vm.place_gathers(true);
-    assert!(image == bare, "the image holds a place");
     let mut restored = restore_image(&image);
     assert!(placed(&restored), "the restored session has no places");
     // Nor does a gather that settled keep the place it had: two have

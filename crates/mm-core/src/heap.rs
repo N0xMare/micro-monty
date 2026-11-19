@@ -281,8 +281,7 @@ pub struct Heap {
     pub(crate) objects: usize,
     /// `objects` after the last collection (live then): how far the count
     /// has come toward the mark stack's capacity since
-    /// ([`Heap::should_collect`]). A snapshot collects, so a restore sets
-    /// it to `objects`.
+    /// ([`Heap::should_collect`]). In the image.
     pub(crate) objects_at_gc: usize,
     external_bytes: u64,
     /// Scratch charges, shared with their reservations; the counter's
@@ -291,17 +290,15 @@ pub struct Heap {
     /// The bytes of the last request refused for room ([`Heap::take_refused`];
     /// not snapshotted).
     refused: AtomicU64,
-    /// Positions found in non-ASCII strings (not snapshotted).
+    /// Positions found in non-ASCII strings (in the image: walks are charged).
     pub(crate) str_pos: crate::string::StrPos,
-    /// The incremental mark in progress, if any (not snapshotted).
+    /// The incremental mark in progress, if any (in the image).
     pub(crate) inc: crate::gc::Inc,
     /// Set by the engine's full collection between cells when it left
     /// nothing for the next cell's start to drop; cleared when code runs
     /// or something held between cells is released (code reclamation's
     /// dropped code, a reset's globals, a redefined module, a hint, a
-    /// module dunder). False for a
-    /// new heap, a restored one included: its image may hold a stopped
-    /// cell or an error that the next start drops. Not snapshotted. Read
+    /// module dunder). False for a new heap. In the image. Read
     /// through [`Heap::idle`].
     pub idle_collected: bool,
 }
@@ -891,8 +888,16 @@ impl Heap {
     /// order (for checks over a restored heap).
     pub fn for_each_object(&self, f: &mut dyn FnMut(Ref, Header)) {
         for (idx, s) in self.words.segs.iter().enumerate() {
+            // A segment the lazy sweep has not reached holds the blocks the
+            // last collection found dead (unmarked), which may name freed
+            // ones: not objects.
+            let marks = self.words.marks.get(idx).map_or(&[][..], |m| &m[..]);
             for (w, &bits) in s.starts.iter().enumerate() {
-                let mut b = bits;
+                let mut b = if s.unswept {
+                    bits & marks.get(w).copied().unwrap_or(0)
+                } else {
+                    bits
+                };
                 while b != 0 {
                     let off = w * 64 + b.trailing_zeros() as usize;
                     b &= b - 1;
@@ -1159,6 +1164,12 @@ impl Heap {
         Ok(())
     }
 
+    /// The bytes reserved outside the arena ([`Heap::set_external_bytes`]).
+    #[must_use]
+    pub fn external_bytes(&self) -> u64 {
+        self.external_bytes
+    }
+
     /// Reserves native buffer capacity independently of retained engine tables.
     /// Shared heap access suffices, so reservations may be made and grow while
     /// borrowing the heap; owners may release them even after the heap dies.
@@ -1321,8 +1332,8 @@ impl Heap {
     }
 
     /// Sweeps what the last collection left to allocation, so that every
-    /// block with a start bit is live: before walking objects or writing a
-    /// snapshot.
+    /// block with a start bit is live: before walking objects. A snapshot
+    /// does not sweep; the image holds the pending segments as they are.
     pub fn finish_sweep(&mut self) {
         if !self.sweeping() {
             return;
@@ -1344,6 +1355,35 @@ fn check_engine(type_id: u16, flags: u8) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn word_block_size_includes_its_header_without_wrapping() {
+        assert_eq!(Vec::<u64>::units_for(u32::MAX - 1), u32::MAX as usize);
+        assert_eq!(
+            Vec::<u64>::units_for(u32::MAX),
+            usize::try_from(1_u64 << 32).unwrap_or(0)
+        );
+    }
+
+    #[test]
+    fn restored_collector_counts_stay_within_their_sources() {
+        let restores = |heap: &Heap| {
+            let mut image = Vec::new();
+            heap.write_snapshot(&mut image);
+            Heap::read_snapshot(&mut crate::Reader::new(&image), u64::MAX).is_ok()
+        };
+        let mut heap = Heap::default();
+        heap.inc.mark = crate::gc::Mark::Running;
+        heap.stats.allocated_since_gc = 8;
+        heap.inc.began = 3;
+        for (paced, valid) in [(2, false), (3, true), (8, true), (9, false)] {
+            heap.inc.paced = paced;
+            assert_eq!(restores(&heap), valid);
+        }
+        heap.inc.paced = 3;
+        heap.bytes.lazily_freed = 1;
+        assert!(!restores(&heap));
+    }
 
     /// A mark in flight has entries on the stack: growing it then must
     /// end at the capacity the growth was admitted and is charged for,

@@ -179,16 +179,19 @@ fn transient_cells_do_not_accumulate_source_and_code() {
             .expect("code");
         assert_eq!(c.session.start(&other), Progress::Complete(None));
     }
+    // An image holds the session as it is (docs/spec.md §9.3): the last
+    // cell's code and source until reclamation drops them, one padded
+    // source at most here, not 128.
     let snapshot = c.session.snapshot().expect("snapshot");
     assert!(
-        snapshot.len() < initial + 4096,
+        snapshot.len() < initial + 8192,
         "{} -> {}",
         initial,
         snapshot.len()
     );
     c.session = c.engine.restore(&snapshot).expect("restore");
     c.session.reset().expect("reset");
-    assert!(c.session.snapshot().expect("snapshot").len() < initial - padding.len());
+    assert!(c.session.snapshot().expect("snapshot").len() < initial - padding.len() / 2);
 }
 
 #[test]
@@ -1149,9 +1152,10 @@ fn a_cell_start_at_the_wall_collects_once_per_cell_that_ran() {
     assert!(session.compile(&"z = 1\n".repeat(400), "big.py").is_err());
     assert_eq!(session.gc_collections() - before, 1);
     assert_eq!(start(&mut session, "y = 1"), me(0));
+    // A snapshot no longer collects, so the restored session is the one
+    // that went on: its next start at the wall collects nothing either.
     let image = session.snapshot().expect("snapshot");
     let mut session = engine.restore(&image).expect("restore");
-    assert_eq!(start(&mut session, "y = 1"), me(1));
     assert_eq!(start(&mut session, "y = 1"), me(0));
     assert_eq!(start(&mut session, "xs = None"), ok(0));
     assert_eq!(start(&mut session, "y = 1"), ok(1));
@@ -1517,21 +1521,38 @@ fn discarded_generated_methods_are_reclaimed_between_cells_and_restores() {
         c.value("from collections import namedtuple\nfields = ['f' + str(i) for i in range(32)]\nKept = namedtuple('Kept', fields)\nkept = Kept(*range(32))\nkept.f31"),
         "31"
     );
-    assert_eq!(c.start("pass"), Progress::Complete(None));
+    assert_eq!(
+        c.start("import gc\n_ = gc.collect()"),
+        Progress::Complete(None)
+    );
     let initial = c.session.snapshot().expect("snapshot").len();
-    for _ in 0..3 {
+    // An image holds the session as it is (docs/spec.md §9.3), garbage
+    // included, so each size is taken after a collection. Dead cell code
+    // waits for the code debt to pass its threshold (`Vm::prepare_cell`),
+    // so sizes rise and fall with it. What is reclaimed must not
+    // accumulate: the image returns near its start.
+    let mut sizes = Vec::new();
+    for _ in 0..6 {
         for i in 0..32 {
             assert_eq!(
                 c.start(&format!("Transient = namedtuple('Transient', fields[{i}:] + fields[:{i}])\nassert Transient(*range(32))[31] == 31\ndel Transient")),
                 Progress::Complete(None)
             );
         }
-        assert_eq!(c.start("pass"), Progress::Complete(None));
+        assert_eq!(
+            c.start("import gc\n_ = gc.collect()"),
+            Progress::Complete(None)
+        );
         let image = c.session.snapshot().expect("snapshot");
-        assert!(image.len() < initial + 4096, "{initial} -> {}", image.len());
+        sizes.push(image.len());
         c.session = c.engine.restore(&image).expect("restore");
         assert_eq!(c.value("[Kept(*range(32)).f17, kept.f31]"), "[17, 31]");
     }
+    assert!(
+        sizes.iter().all(|&n| n < initial + (192 << 10))
+            && sizes.iter().any(|&n| n < initial + 4096),
+        "{initial} -> {sizes:?}"
+    );
     c.session.reset().expect("reset");
     assert_eq!(
         c.value("from collections import namedtuple\nPair = namedtuple('Pair', 'left right')\nPair(2, 9).right"),
@@ -1543,6 +1564,12 @@ fn discarded_generated_methods_are_reclaimed_between_cells_and_restores() {
 fn wide_instances_do_not_retain_quadratic_attribute_metadata() {
     let mut c = Cells::new();
     assert_eq!(c.start("class Wide: pass\nprimed = Wide()\nprimed.field0 = 0\nw = Wide()\nw.field0 = 'x' * (1 << 20)\nfor i in range(1, 2000):\n    setattr(w, 'field' + str(i), i)\nw.field0 = 0\nassert sum(getattr(w, 'field' + str(i)) for i in range(2000)) == 1999000"), Progress::Complete(None));
+    // An image holds the heap as it is, garbage included (docs/spec.md
+    // §9.3): collect first, so the size counts what the session keeps.
+    assert_eq!(
+        c.start("import gc\n_ = gc.collect()"),
+        Progress::Complete(None)
+    );
     let image = c.session.snapshot().expect("snapshot");
     assert!(image.len() < 1 << 20, "{} bytes", image.len());
     c.session = c.engine.restore(&image).expect("restore");
@@ -1555,13 +1582,16 @@ fn transient_instance_shapes_are_reclaimed_without_changing_live_attributes() {
     assert_eq!(c.start("class C: pass\nfields = ['field' + str(i) for i in range(64)]\njunk = C()\nfor i, name in enumerate(fields):\n    setattr(junk, name, i)\nkept = C()\nkept.field61 = 17\nkept.field7 = 93\ndel junk\ndef read(o):\n    return [o.field61, o.field7]"), Progress::Complete(None));
     assert_eq!(c.start("pass"), Progress::Complete(None));
     let initial = c.session.snapshot().expect("snapshot").len();
-    for _ in 0..2 {
+    // Dead shapes wait for the code debt to pass its threshold
+    // (`Vm::prepare_cell`), so an image holds up to a few KiB of them; four
+    // rounds let leaked shapes accumulate past that.
+    for _ in 0..4 {
         for i in 0..64 {
             assert_eq!(c.value(&format!("temporary = C()\nfor name in (fields[{i}:] + fields[:{i}])[:12]:\n    setattr(temporary, name, 1)\ndel temporary\nread(kept)")), "[17, 93]");
         }
         assert_eq!(c.start("pass"), Progress::Complete(None));
         let image = c.session.snapshot().expect("snapshot");
-        assert!(image.len() < initial + 4096, "{initial} -> {}", image.len());
+        assert!(image.len() < initial + 8192, "{initial} -> {}", image.len());
         c.session = c.engine.restore(&image).expect("restore");
         assert_eq!(c.value("kept.field7 += 1\nread(kept)"), "[17, 94]");
         assert_eq!(c.start("kept.field7 = 93"), Progress::Complete(None));

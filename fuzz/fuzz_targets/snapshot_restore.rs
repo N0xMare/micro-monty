@@ -15,7 +15,11 @@
 //! restores on both engines and requires the same verdict on the host code
 //! (the cached engine takes its code by key only for the definition it was
 //! built from). Picks 0xE0..=0xEF forge the header's stop to another phase
-//! than the VM is stopped at first, which a restore must refuse.
+//! than the VM is stopped at first, which a restore must refuse. Picks
+//! 0xF0..=0xF2 edit images that hold collector state in flight, which a
+//! restore validates: an incremental mark (marks, mark stack, partial
+//! scans), a lazy sweep's pending segments beside free lists, and a long
+//! str's char positions.
 //!
 //! ```bash
 //! cd fuzz && cargo +nightly fuzz run snapshot_restore

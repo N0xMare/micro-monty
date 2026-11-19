@@ -60,7 +60,7 @@ const CANCEL_STEP: u64 = 1 << 14;
 /// checks (`Vm::sched_due`): a task that starts, awaits and blocks with
 /// no call or loop passes no safepoint, so 200,000 of them were one step
 /// of 66.9 ms [M]; a check every 256 is a step of well under 1 ms.
-const SCHED_TURNS: u32 = 256;
+pub(crate) const SCHED_TURNS: u32 = 256;
 const SCHED_BURNED: u64 = 1 << 14;
 
 /// A cancel in progress ([`Vm::cancel_walk`]).
@@ -4131,8 +4131,9 @@ impl Vm {
     /// check charges only ticks already run.
     fn sched_due(&mut self) -> bool {
         self.sched_turns += 1;
-        if self.sched_turns < SCHED_TURNS && self.burned <= SCHED_BURNED && self.fuel != Some(0) {
-            return false;
+        if self.sched_turns < SCHED_TURNS && self.burned <= SCHED_BURNED {
+            // A fuel-only park must not restart the periodic check interval.
+            return self.fuel == Some(0);
         }
         self.sched_turns = 0;
         true

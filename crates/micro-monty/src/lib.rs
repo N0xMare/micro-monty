@@ -1875,6 +1875,13 @@ impl Session {
         self.vm.heap.marking()
     }
 
+    /// Testing: has the last collection left segments to sweep?
+    #[doc(hidden)]
+    #[must_use]
+    pub fn gc_sweeping(&self) -> bool {
+        self.vm.heap.sweeping()
+    }
+
     /// Testing: how many collections have ended in this session's heap.
     #[doc(hidden)]
     #[must_use]
@@ -2191,7 +2198,8 @@ impl Session {
     fn start_cell(&mut self, code: &Code, refuel: bool) -> Progress {
         self.guarded(|s| {
             // The stopped cell, if any, is cancelled here, also when the new
-            // one is then refused: its stop and charge go now.
+            // one is then refused: its stop and charge go now, and its stop
+            // must not stay in the next image.
             s.drop_stop();
             s.vm.prepare_cell();
             s.vm.clear_call_log();

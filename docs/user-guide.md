@@ -986,9 +986,11 @@ let progress = session.resume(Resume::Continue)?;  // or whatever the cell was s
 # }; Ok(()) }
 ```
 
-A snapshot is the session's full image: a garbage collection runs, then the
-heap's live objects, code, frames, tasks, pending host calls with their
-ids, globals, limits and settings are written. Restore validates every
+A snapshot is the session's exact image: the heap as it is (garbage and
+the collector's progress included), code, frames, tasks, pending host calls
+with their ids, globals, limits and settings. Taking one changes nothing in
+the session, and a restored session goes on as the original does: the same
+output, outcomes and fuel, near the memory limit too. Restore validates every
 structure before use (bounds, block headers, bytecode, frame states) and
 charges the result against the restoring engine's memory limit
 (`TooLarge`). A fresh session's snapshot is about 41 KB and a parked loop's
@@ -1254,9 +1256,9 @@ what a cell was charged from a fuel total (`set_fuel_total`; refuel with
 `Some(n)`, not `None`), not granted fuel less `fuel()`, which stops at 0
 and misses overdrafts; `hosts/js`'s driver does.
 
-**A snapshot or restore is not a step.** `Session::snapshot` collects in
-full first and cannot park: about 1.4 ms per MiB of image natively, under
-wasmtime and on V8 (about 250 ms at 170 MiB) \[M\]. A restore costs about as
+**A snapshot or restore is not a step.** `Session::snapshot` cannot park:
+about 1.4 ms per MiB of image natively, under wasmtime and on V8 (about
+250 ms at 170 MiB) \[M\]. A restore costs about as
 much: 1.2–1.5 ms per MiB of small objects natively, 0.6–0.9 of large
 blocks, up to 1.7 for a process's first restore \[M\] (wasm: spec §9.3).
 A park request or deadline stops neither; a host timeout must not cover
@@ -2028,18 +2030,12 @@ differs:
   bytes of `Limits::memory` up to 2^20, so a loop that catches `MemoryError`
   pays for each; every retry pays, also one made while another collection
   was already asked for. A suspended generator keeps no dead temporary its
-  yield saved past the next collection. A snapshot collects first, so it can
-  flip an unretried outcome either way, and it moves fuel totals (six `f(*big, **kw)`: 11%
-  less with a snapshot at every park \[M\]).
-- **Fuel after a snapshot, long non-ASCII strs.** A snapshot's collection
-  forgets the positions that make indexing a long non-ASCII str cheap, so
-  the next walk is charged again, restored or not: `W[k]` for every 997th
-  `k` below 1,600,000 costs 43,313 units unparked and 8,687,009 with a
-  snapshot and restore at every 20,011-unit park \[M\]: use larger slices.
+  yield saved past the next collection. Snapshots and restores do not move
+  these outcomes or fuel totals; the GC mode (stress, incremental) can.
 - **Address-derived values.** Which address a new object gets depends on
-  when collections run (slice boundaries, snapshots, GC stress, the
-  session's limits), so `id()`, default `repr`s and the order of sets of
-  identity-hashed objects can differ between runs sliced differently \[M\].
+  when collections run (GC stress and mode, the session's limits, the
+  target), so `id()`, default `repr`s and the order of sets of
+  identity-hashed objects can differ between such runs \[M\].
   `id` stays unique among live objects and fixed for an object's life across
   parks and restores; `is` and value-hashed containers are unaffected.
   An address is not given out again as soon as its object dies, as

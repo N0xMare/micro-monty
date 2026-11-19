@@ -395,14 +395,11 @@ impl Vm {
         // later cell drops (`del xs` after a fill) to no safepoint: none
         // runs before the next cell's first object, its load's included,
         // and every later cell was refused for room. Collected here in
-        // full and uncharged, as a snapshot's collection is, so fuel does
-        // not depend on whether the host snapshotted between cells. With
+        // full and uncharged, as every collection between cells is. With
         // live data at the wall each start pays it once
-        // (`Heap::idle`). That collection is reclamation's: the triggers
-        // above read counts a snapshot's collection resets, so a plain
-        // session dropped the dead code before the next load where one
-        // snapshotted between the cells did not, and a cell's outcome at
-        // the wall depended on the snapshot. It is the start's one
+        // (`Heap::idle`). That collection is reclamation's, so dead code
+        // goes before the next load whatever the triggers above say. It is
+        // the start's one
         // collection; the constants of the code it drops are collected by
         // `Vm::between_cells`' rerun if the start is refused.
         let debt = self.code_charge.saturating_sub(self.code_kept);

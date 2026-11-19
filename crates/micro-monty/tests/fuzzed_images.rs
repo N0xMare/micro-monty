@@ -42,8 +42,15 @@ fn fuzzed_images_restore_to_errors_not_panics() {
         .map(|p| (p.display().to_string(), std::fs::read(&p).expect("seed")))
         .collect();
     let n_seeds = seeds.len();
-    for pick in (0..6).chain([0xFE]) {
-        for pos in 8192 - 1536..8192u16 {
+    for pick in (0..6).chain([0xFE, 0xF0, 0xF1, 0xF2]) {
+        // The image left mid-sweep holds a 20 MB heap, so its tail is
+        // inverted over its last 128 bytes only.
+        let from = if pick == 0xF1 {
+            8192 - 128
+        } else {
+            8192 - 1536
+        };
+        for pos in from..8192u16 {
             let [lo, hi] = pos.to_le_bytes();
             let data = vec![0x04, pick, lo, hi, 0xFF, 0x00];
             seeds.push((format!("tail of program {pick}: {data:02x?}"), data));

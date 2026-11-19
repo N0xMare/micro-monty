@@ -889,9 +889,8 @@ fn the_call_budget_counts_from_the_call_not_the_session() {
     assert!(matches!(p, Progress::Complete(_)), "{p:?}");
 }
 
-/// A snapshot cannot park: it collects in full first, about 1.4 ms per MiB
-/// of image [M], past the default grace for an image over about 210 MiB. A
-/// park request pending during it (the cell had parked for fuel when a
+/// A snapshot cannot park partway through writing an image. A park
+/// request pending during it (the cell had parked for fuel when a
 /// supervisor asked it to stop) waits for the next call instead of costing
 /// the instance and its image. With no grace, this trapped every time.
 #[test]

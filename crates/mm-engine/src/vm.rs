@@ -922,7 +922,7 @@ pub struct Vm {
     pub(crate) builtins: Value,
     pub(crate) gver: u64,
     /// The interned [`crate::class::Dn`] names, filled on first use; a GC
-    /// root, not snapshotted (empty again after a restore).
+    /// root, in the image.
     pub(crate) dunders: Vec<Value>,
     /// Bumped when a globals dict gains a key; builtin global caches check
     /// `gver + bver`.
@@ -1040,8 +1040,8 @@ pub struct Vm {
     pub(crate) callback_queue: usize,
     /// The task turns and gather notifications `Vm::next_task` has run
     /// since it last made a check of its own: past `SCHED_TURNS` it makes
-    /// one, so a run of them is no single step. Snapshot preparation and
-    /// restore both reset it; it is not in the image.
+    /// one, so a run of them is no single step. Always below 256 at a
+    /// park; the image carries this byte so the next check does not move.
     pub(crate) sched_turns: u32,
     /// Tasks named so far (`Task-N`), across cells as CPython's counter.
     pub(crate) task_counter: u64,
@@ -1155,12 +1155,11 @@ pub struct Vm {
     /// Collect at every safepoint (see [`Vm::set_gc_stress`]).
     pub(crate) gc_stress: bool,
     /// The collection count that ends the collection `gc.collect` or a
-    /// retry after `MemoryError` waits for ([`Vm::oom_retry`]); 0: none. Not in the
-    /// image: a snapshot collects in full, so a restored wait is over.
+    /// retry after `MemoryError` waits for ([`Vm::oom_retry`]); 0: none. In
+    /// the image.
     pub(crate) gc_wait: u64,
     /// A safepoint parked ahead of a collection step, which runs when the
-    /// session resumes (`Vm::safepoint`). Not in the image: a snapshot
-    /// collects in full.
+    /// session resumes (`Vm::safepoint`). In the image.
     pub(crate) gc_owed: bool,
     /// No collection starts by itself (`SessionSettings::gc_off`,
     /// measuring). Not in the image.
@@ -1170,10 +1169,8 @@ pub struct Vm {
     /// Not in the image.
     pub gc_yield: bool,
     /// The faulting `CALL` runs again once that collection ends; also set
-    /// by a park inside that wait, which `Vm::resume` goes on with. Not in
-    /// the image: a snapshot's collection leaves `gc_wait` 0, so a resume
-    /// that goes back into the wait ends it at once and runs the `CALL`
-    /// again, as a restored session does.
+    /// by a park inside that wait, which `Vm::resume` goes on with. In the
+    /// image.
     pub(crate) oom_wait: bool,
     /// The instruction that may not run again after `MemoryError`
     /// ([`Vm::op_stamp`] when it was marked; `u64::MAX`: none): the rerun
@@ -1188,8 +1185,7 @@ pub struct Vm {
     /// spread, then `CALL_EX`), which retry as their own.
     pub(crate) oom_rerun_at: u64,
     /// The collection count a chunked step's deferred allocation waits for
-    /// ([`Vm::oom_defer`]); 0: none. Not in the image: a snapshot collects
-    /// in full, so after a restore that wait is over. Whether the step has
+    /// ([`Vm::oom_defer`]); 0: none. In the image. Whether the step has
     /// waited is in its own state (`set::WAITED`).
     pub(crate) oom_defer_at: u64,
     /// The [`Vm::op_stamp`] `consumed` belongs to: entries from an earlier
@@ -2558,8 +2554,7 @@ impl Vm {
     /// garbage the last cell left may be what is in the way, and with no
     /// cell running no safepoint collects it, so every later cell failed
     /// the same way. Not charged, as [`Vm::collect_now`] is not for
-    /// `Session::compile`: a snapshot between the cells collects instead,
-    /// and a cell's fuel must not depend on whether one was taken. As
+    /// `Session::compile`, as no collection between cells is. As
     /// `Vm::oom_retry_if`'s retries, one rerun at most, and a refusal it
     /// returns dies here: the error goes to the host, not through
     /// `Vm::unwind`, and a later cell's request past the limit must not

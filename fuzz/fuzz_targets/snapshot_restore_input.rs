@@ -38,6 +38,25 @@ const PROGRAMS: [&str; 7] = [
      \x20       return self.i\na, *b = It()\nprint(a, len(b))\n",
 ];
 
+/// Programs whose images hold collector state in flight: an incremental
+/// mark (marks, mark stack, partial scans, dirty segments), the lazy sweep
+/// after one (pending segments, free lists) and a long str's char
+/// positions. Picks 0xF0..=0xF2, which no stored seed uses.
+const GC_PROGRAMS: [&str; 3] = [
+    "keep = []\nfor i in range(3000):\n    t = (i, str(i))\n    if i % 3 == 0:\n        keep.append(t)\n",
+    "keep = []\nfor i in range(150000):\n    b = bytes(400)\n    if i % 3 == 0:\n        keep.append(b)\n",
+    "s = 'é' * 5000 + 'x' * 5000\nn = 0\nfor i in range(0, 10000, 3):\n    n += s[i] == 'x'\n",
+];
+
+/// Which collector state a [`GC_PROGRAMS`] image is taken in.
+fn gc_state_reached(k: usize, s: &Session, parks: u32) -> bool {
+    match k {
+        0 => s.gc_marking(),
+        1 => s.gc_sweeping(),
+        _ => parks >= 6,
+    }
+}
+
 fn config() -> EngineConfig {
     EngineConfig::new().with_limits(Limits::new().with_memory(64 << 20))
 }
@@ -155,6 +174,32 @@ fn images(e: &Engine) -> Vec<Vec<u8>> {
         if matches!(k, 0 | 5) {
             assert!(matches!(p, Progress::Complete(_)), "program {k}: {p:?}");
         }
+        out.push(s.snapshot().expect("snapshot"));
+    }
+    for (k, src) in GC_PROGRAMS.iter().enumerate() {
+        let mut s = session(e);
+        // A mark always in progress for the first; incremental marks from
+        // 64 KiB live, a few objects a step, for the sweep after one.
+        if k == 0 {
+            s.set_gc_inc_stress(true);
+        } else {
+            s.set_gc_incremental(16, 64 << 10);
+        }
+        let code = e.compile(src, "fuzz.py").expect("compiles");
+        s.set_fuel(Some(500));
+        let mut p = s.start(&code);
+        let mut parks = 0;
+        while matches!(p, Progress::Parked { .. }) && !gc_state_reached(k, &s, parks) {
+            parks += 1;
+            // Unit slices during a mark, so a park lands before the sweep
+            // after it is done.
+            s.set_fuel(Some(if s.gc_marking() { 1 } else { 500 }));
+            p = s.resume(Resume::Continue).expect("resume");
+        }
+        assert!(
+            matches!(p, Progress::Parked { .. }),
+            "GC program {k} ended before its state: {p:?}"
+        );
         out.push(s.snapshot().expect("snapshot"));
     }
     out
@@ -324,6 +369,8 @@ pub fn run(data: &[u8]) {
         let forged = (0xE0..=0xEF).contains(&pick).then_some(pick & 3);
         let k = if pick == 0xFE {
             PROGRAMS.len() - 1
+        } else if (0xF0..0xF0 + u8::try_from(GC_PROGRAMS.len()).unwrap_or(0)).contains(&pick) {
+            PROGRAMS.len() + usize::from(pick - 0xF0)
         } else if forged.is_some() {
             usize::from(pick >> 2 & 3)
         } else {
