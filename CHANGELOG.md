@@ -79,6 +79,10 @@ hashes are pre-release history, kept in the private archive
   session shares. It gets CPython's `AttributeError` for a builtin
   function or `TypeError` for an immutable type; instances, subclasses
   and module attributes stay writable.
+- The scratch counter's own 24 bytes are charged from a session's start,
+  not from its first scratch reservation, which a restored session had
+  not made: a parked session had 24 bytes less room than one restored
+  from its image.
 - The stop a session keeps for `Session::pending` is charged the same in
   the session that took a snapshot and in one restored from it, by its
   length: the first charged its reused buffer's capacity. The buffer's

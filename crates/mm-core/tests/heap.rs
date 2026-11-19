@@ -522,11 +522,13 @@ fn scratch_owners_share_the_budget_and_release_independently() {
     drop(heap);
     drop(last);
 
+    // The shared counter's 24 bytes are charged from the start.
     let tiny = Heap::new(HeapConfig {
-        memory_limit: 7,
+        memory_limit: 31,
         ..HeapConfig::default()
     });
-    assert!(matches!(tiny.reserve_scratch(7), Err(Error::OutOfMemory)));
+    assert_eq!(tiny.available_bytes(), 7);
+    assert!(matches!(tiny.reserve_scratch(8), Err(Error::OutOfMemory)));
     assert_eq!(tiny.available_bytes(), 7);
 }
 

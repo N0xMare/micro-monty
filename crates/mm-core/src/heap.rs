@@ -35,7 +35,7 @@
 use crate::space::{self, LARGE_UNITS, Space, Store, header_len};
 use crate::value::Value;
 use alloc::{sync::Arc, vec::Vec};
-use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Bytes in a full normal segment of either space. Each space's first
 /// segment starts at 32 KiB and grows to this; dedicated segments for large
@@ -285,10 +285,9 @@ pub struct Heap {
     /// it to `objects`.
     pub(crate) objects_at_gc: usize,
     external_bytes: u64,
-    /// Scratch charges, shared with their reservations.
+    /// Scratch charges, shared with their reservations; the counter's
+    /// own allocation counts against the limit too.
     scratch: Arc<AtomicUsize>,
-    /// A reservation was made: the counter's own size counts from then on.
-    scratch_live: AtomicBool,
     /// The bytes of the last request refused for room ([`Heap::take_refused`];
     /// not snapshotted).
     refused: AtomicU64,
@@ -376,7 +375,6 @@ impl Heap {
             objects_at_gc: 0,
             external_bytes: 0,
             scratch: Arc::new(AtomicUsize::new(0)),
-            scratch_live: AtomicBool::new(false),
             refused: AtomicU64::new(0),
             str_pos: crate::string::StrPos::default(),
             inc: crate::gc::Inc::new(),
@@ -1137,19 +1135,11 @@ impl Heap {
     }
 
     /// Reserves native buffer capacity independently of retained engine tables.
-    /// The shared counter counts too, from the first reservation on. Shared
-    /// heap access suffices, so reservations may be made and grow while
+    /// Shared heap access suffices, so reservations may be made and grow while
     /// borrowing the heap; owners may release them even after the heap dies.
     /// Scratch is not serialized; snapshot callers own any live reservations.
     #[inline(never)]
     pub fn reserve_scratch(&self, bytes: usize) -> Result<Scratch, Error> {
-        if !self.scratch_live.load(Ordering::Relaxed) {
-            let needed = (bytes as u64).saturating_add((3 * size_of::<usize>()) as u64);
-            if needed > self.available_bytes() {
-                return Err(self.refuse(needed));
-            }
-            self.scratch_live.store(true, Ordering::Relaxed);
-        }
         let counter = Arc::clone(&self.scratch);
         let mut reservation = Scratch { counter, bytes: 0 };
         reservation.resize(self, bytes)?;
@@ -1212,11 +1202,7 @@ impl Heap {
             .saturating_sub(self.mark_stack.capacity() as u64 * 4)
             .saturating_sub(self.words.metadata_bytes())
             .saturating_sub(self.bytes.metadata_bytes())
-            .saturating_sub(if self.scratch_live.load(Ordering::Relaxed) {
-                (3 * size_of::<usize>()) as u64
-            } else {
-                0
-            })
+            .saturating_sub((3 * size_of::<usize>()) as u64)
     }
 
     /// Reserve before admitting objects, not when GC needs to reclaim them.
