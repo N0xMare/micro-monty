@@ -8,3 +8,7 @@ v0.0.2 hello +34000 owner, 2026-11-19: 0.0.3's correctness fixes (dead registers
 v0.0.2 hello.wasm +34000 owner, 2026-11-19: as hello
 v0.0.2 mm_wasm_guest.wasm +34000 owner, 2026-11-19: as hello
 v0.0.2 mm_wasm_guest_bundle.wasm +34000 owner, 2026-11-19: as hello; the tightest artifact, 34,745 B under v0.0.1 at v0.0.2
+v0.0.2 hello +42000 owner, 2026-11-19: the queued fixes measure about +38 KB with their review fixes (dead registers +9.0 KB [M], the generator registry +5.5 [M], the asyncio queue fix +11.2 [M], exception fields +11.0 [M], U2 +1.4 [M], reset over a full heap +0.1 [M])
+v0.0.2 hello.wasm +42000 owner, 2026-11-19: as hello
+v0.0.2 mm_wasm_guest.wasm +42000 owner, 2026-11-19: as hello; reset over a full heap is +1.8 KB here [M]
+v0.0.2 mm_wasm_guest_bundle.wasm +42000 owner, 2026-11-19: as mm_wasm_guest.wasm; this passes v0.0.1's size, which the tag was 34,745 B under
