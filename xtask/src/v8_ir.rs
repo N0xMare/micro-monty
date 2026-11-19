@@ -302,7 +302,9 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         .map(|g| label(g))
         .filter(|g| {
             let prefix = format!("{g}/");
-            let geo = floors::geomean(&all[0], &at_floor, &|name| name.starts_with(&prefix));
+            let geo = floors::geomean(&all[0], &at_floor, &all[1], &|name| {
+                name.starts_with(&prefix)
+            });
             geo > GEOMEAN_LIMIT && raised(&format!("{g}/geomean"), geo)
         })
         .collect();
@@ -1049,15 +1051,20 @@ fn report(
     }
     let mut failures = Vec::new();
     let mut geo = String::from("  geomean");
-    for (against, other) in [Some(base), floor].into_iter().flatten() {
+    // Against the floors, the geomean takes each program's base count where
+    // it is lower ([`floors::lower`]).
+    let sides = [Some((base, None)), floor.map(|f| (f, Some(base.1)))];
+    for ((against, other), lower) in sides.into_iter().flatten() {
         let (mut product, mut n) = (1.0_f64, 0_i32);
         for &(name, _) in programs {
+            let key = format!("{guest}/{name}");
             // A count the other side lacks (no floor yet) is not compared.
-            if !other.contains_key(&format!("{guest}/{name}")) {
+            if !other.contains_key(&key) {
                 continue;
             }
             let r = ratio(at(head, name), at(other, name));
-            product *= r;
+            let o = floors::lower(at(other, name), lower.and_then(|b| b.get(&key).copied()));
+            product *= ratio(at(head, name), o);
             n += 1;
             if r > PROGRAM_LIMIT {
                 failures.push(Failure {
@@ -1096,7 +1103,50 @@ fn millions(n: u64) -> f64 {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests fail on a broken fixture")]
-    use super::{generated, mappings};
+    use super::{Counts, GUESTS, generated, mappings, report};
+
+    /// The review's G1 on one guest: a program's floor left 2% above its
+    /// count by an unrecorded drop; the other 9 programs +0.25% over the
+    /// base and +0.45% over their floors (each under +0.5%). Against the
+    /// floors alone the geomean is 1.0020 and passes.
+    #[test]
+    fn a_floor_left_above_a_drop_is_no_headroom_for_the_geomean() {
+        let guest = GUESTS[0];
+        let names: Vec<String> = (0..10).map(|i| format!("p{i}")).collect();
+        let programs: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "")).collect();
+        let side = |first: u64, other: u64| -> Counts {
+            names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| (format!("{guest}/{n}"), if i == 0 { first } else { other }))
+                .collect()
+        };
+        let (head, base, floor) = (
+            side(1_000_000, 1_004_500),
+            side(1_000_000, 1_002_000),
+            side(1_020_000, 1_000_000),
+        );
+        let failures = report(
+            guest,
+            &programs,
+            &head,
+            ("base", &base),
+            Some(("floor", &floor)),
+        );
+        let geomean: Vec<_> = failures.iter().filter(|f| f.name == "geomean").collect();
+        assert_eq!(
+            geomean.len(),
+            1,
+            "{:?}",
+            failures.iter().map(|f| &f.text).collect::<Vec<_>>()
+        );
+        assert!(
+            geomean[0].text.contains("against floor"),
+            "{}",
+            geomean[0].text
+        );
+        assert!(failures.iter().all(|f| f.name == "geomean"));
+    }
 
     #[test]
     fn counts_self_cost_in_generated_code() {

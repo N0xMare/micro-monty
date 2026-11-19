@@ -157,7 +157,10 @@ to `target/check/logs/<stage>.log`.
   only (owner): a count below its floor passes with no file change, so a
   drop then a rise back to the old floor passes until the floors are next
   lowered, by `cargo xtask <gate> --write-floors` when someone runs it or
-  by the tag's seed. A new count needs a line once, at or below its count.
+  by the tag's seed. A geomean against the floors takes each program's
+  base count where it is below its floor, so a floor left above a drop
+  is no headroom for the other programs' rises. A new count needs a line
+  once, at or below its count.
   A written line names the build of the push's tip. A floor
   rises only to the head's count, with an accept line that covers the rise
   and is past a limit. A stale floor (another key) is recounted on its

@@ -2916,8 +2916,10 @@ source). The gates compare the head with the base and the floor and build
 no history (owner, 2026-11-14). Floors bind upward only (owner,
 2026-11-19): a count below its floor passes and leaves the file as it is,
 so a drop then a rise back to the old floor passes until the floors are
-next lowered (`--write-floors` when someone runs it, or a tag's seed); a
-floor rises
+next lowered (`--write-floors` when someone runs it, or a tag's seed);
+a geomean against the floors takes each program's base count where it
+is below its floor, so a floor left above one program's drop is no
+headroom for the others' rises (G1); a floor rises
 only to the head's count and only with an accept line whose ceiling
 covers the rise, for a name past a limit; a new count is seeded at or
 below the head's. `--write-floors` writes the file; a moved line names the
@@ -2945,7 +2947,8 @@ raise, else the lower count; the gate on the combined tree then sets it.
 What is lost against counting every commit is which commit moved a
 count.
 
-Known limits (review of the floors, D2 to D9; Low, left as they are):
+Known limits (reviews of the floors, D2 to D9 and N1 to N3; Low, left as
+they are):
 floors are trusted per host class. A push that moves or adds a floor line
 writes it under its host's key, so it passes only on that host; another
 host judges it with `--base <tag>` (D2). At a tag base a line under
@@ -2957,7 +2960,13 @@ recounts its build (D5). A new count's line may name any build until the
 next pre-tag check (D6). A mark is its attribute and its function's name,
 so one moved between two functions of one name in a file is not an added
 mark (D7). The pre-tag check forces the seed only when the first push
-after a tag is judged against the tag (D9).
+after a tag is judged against the tag (D9). A floor lowered by
+`--write-floors` before a push's tip, or on another host, fails until
+`--write-floors` is run again at the tip on the judging host (N1). At a
+tag base a floor on an intermediate commit's build is bounded only by
+an accept ceiling since the tag, not by the head's count (N2). A seed
+over a stale or missing file does not sweep an accepted geomean-only
+rise; the pre-tag check then asks for `--write-floors` once more (N3).
 
 **Recorded sessions.** The bench programs reach a small part of the
 engine (one size change marked 261 functions; they ran 20 of them [M]),

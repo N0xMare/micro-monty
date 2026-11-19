@@ -261,7 +261,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         },
         false,
     )?;
-    let geo = floors::geomean(&totals[0], &floor, &|name| name != "startup");
+    let geo = floors::geomean(&totals[0], &floor, &totals[1], &|name| name != "startup");
     let swept = geo > GEOMEAN_LIMIT && raised("geomean", geo);
     let (against, errors) = floors::judge(
         &root,
@@ -709,10 +709,10 @@ fn report(
         }
         println!("{line}");
     }
-    let (geo_base, mut failures) = judge(programs, head, base, floor.map(|a| a.1));
+    let (geo_base, mut failures) = judge(programs, head, base, floor.map(|a| a.1), None);
     let mut geo = format!("  geomean (without startup) head/base {geo_base:.4}");
     if let Some(a) = floor {
-        let (geo_floor, more) = judge(programs, head, a, None);
+        let (geo_floor, more) = judge(programs, head, a, None, Some(base.1));
         let _ = write!(geo, ", head/floor {geo_floor:.4}");
         failures.extend(more);
     }
@@ -725,12 +725,15 @@ fn report(
 
 /// The geomean of `head`'s ratios to `other` without `startup`, and the
 /// limits it exceeds. A rise against the base that only returns to the
-/// floor's level (`back`) still fails, and says so.
+/// floor's level (`back`) still fails, and says so. Against the floors,
+/// the geomean takes each program's base count where it is lower (`base`,
+/// [`floors::lower`]).
 fn judge(
     programs: &[(&str, &str)],
     head: &Counts,
     (against, other): (&str, &Counts),
     back: Option<&Counts>,
+    base: Option<&Counts>,
 ) -> (f64, Vec<Failure>) {
     let total = |c: &Counts, name: &str| c.get(name).map_or(0, |c| c.total());
     let mut failures = Vec::new();
@@ -754,7 +757,10 @@ fn judge(
             continue;
         }
         let r = ratio(h, o);
-        product *= r;
+        product *= ratio(
+            h,
+            floors::lower(o, base.and_then(|b| b.get(name)).map(|c| c.total())),
+        );
         n += 1;
         if r > PROGRAM_LIMIT {
             let note = back
@@ -968,6 +974,44 @@ mod tests {
             assert!(k.contains(part), "{part} not in {k}");
         }
         assert!(k.contains("rustc 1"), "{k}");
+    }
+
+    /// The review's G1 (`m14/X3`): dict's floor left 9% above its count by
+    /// an unrecorded drop; the other 14 programs +0.47% over the base and
+    /// +0.95% over their floors. Against the floors alone the geomean is
+    /// 1.0030 and passes; dict's drop must not pay for the others' rises.
+    #[test]
+    fn a_floor_left_above_a_drop_is_no_headroom_for_the_geomean() {
+        let names: Vec<String> = (0..15).map(|i| format!("p{i}")).collect();
+        let programs: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "")).collect();
+        let side = |dict: u64, other: u64| -> Counts {
+            names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    let guest = if i == 0 { dict } else { other };
+                    (n.clone(), Count { guest, bulk: 0 })
+                })
+                .collect()
+        };
+        let (head, base, floor) = (
+            side(1_000_000, 1_009_500),
+            side(1_000_000, 1_004_700),
+            side(1_092_000, 1_000_000),
+        );
+        let geomean_failures = |base: Option<&Counts>| {
+            let (geo, failures) = judge(&programs, &head, ("floor", &floor), None, base);
+            let failed = failures.iter().any(|f| f.name == "geomean");
+            (geo, failed)
+        };
+        let (geo, failed) = geomean_failures(None);
+        assert!(!failed && geo < 1.0031, "the floors alone: {geo}");
+        let (geo, failed) = geomean_failures(Some(&base));
+        assert!(failed && geo > 1.0088, "the lower of floor and base: {geo}");
+        // Against the base alone it is under its limit too: only the
+        // floors see the two landings' rises together.
+        let (geo, failures) = judge(&programs, &head, ("base", &base), None, None);
+        assert!(geo < 1.005 && failures.is_empty(), "{geo}");
     }
 
     #[test]

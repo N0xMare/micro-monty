@@ -26,7 +26,9 @@
 //! - any other floor stays as the base has it.
 //!
 //! So a drop followed by a rise back to the old floor passes until the
-//! floors are next lowered. `--write-floors` writes that file. Against a
+//! floors are next lowered; a geomean against the floors takes the base's
+//! count where it is lower ([`lower`]), so the drop is no headroom for
+//! other counts. `--write-floors` writes that file. Against a
 //! `v*` tag as the base (`just pretag`), the head's floors are checked
 //! against the tag's counts instead: none above the tag's count without a
 //! line since the tag. There `--write-floors` seeds the file
@@ -351,17 +353,31 @@ pub(crate) struct Rules<'a> {
 }
 
 /// The geomean of `head`'s ratios to `floors` over the names `of` takes
-/// that both hold, for [`Rules::swept`].
+/// that both hold, for [`Rules::swept`]: each against the lower of its
+/// floor and `base`'s count ([`lower`]).
 #[allow(clippy::cast_precision_loss, reason = "a ratio of counts")]
-pub(crate) fn geomean(head: &Counts, floors: &Counts, of: &dyn Fn(&str) -> bool) -> f64 {
+pub(crate) fn geomean(
+    head: &Counts,
+    floors: &Counts,
+    base: &Counts,
+    of: &dyn Fn(&str) -> bool,
+) -> f64 {
     let (mut product, mut n) = (1.0_f64, 0_i32);
     for (name, &h) in head.iter().filter(|(name, _)| of(name)) {
         if let Some(&f) = floors.get(name) {
-            product *= ratio(h, f);
+            product *= ratio(h, lower(f, base.get(name).copied()));
             n += 1;
         }
     }
     product.powf(1.0 / f64::from(n.max(1)))
+}
+
+/// What a geomean (or a median) against the floors takes for a count with
+/// floor `f`: the base's count where it is lower. A floor left above a
+/// count that dropped binds that count upward only; it is no headroom for
+/// the other counts' rises.
+pub(crate) fn lower(f: u64, base: Option<u64>) -> u64 {
+    base.map_or(f, |b| f.min(b))
 }
 
 impl Rules<'_> {
@@ -874,7 +890,7 @@ mod tests {
         let never = |_: &str, _: f64| false;
         let program = |name: &str| name != "startup";
         let floors_now: Counts = base.iter().map(|(n, f)| (n.clone(), f.count)).collect();
-        assert!(geomean(&head, &floors_now, &program) > 1.002);
+        assert!(geomean(&head, &floors_now, &none, &program) > 1.002);
         let swept = Rules {
             accepted: &never,
             past: &past,
