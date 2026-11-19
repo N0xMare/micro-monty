@@ -1137,6 +1137,27 @@ Register mimalloc or jemalloc as the host binary's `#[global_allocator]`,
 or run sessions on a fixed pool of threads (a session stopped on one thread
 resumes on another), so the number of arenas follows the pool.
 
+**On musl, register an allocator even for one session.** musl's `malloc`
+maps every allocation of 128 KiB or more with its own `mmap` and unmaps it
+when it is freed. The engine makes such allocations at every snapshot,
+restore and large object, so each one costs page faults. The 158 typical
+recorded agent sessions ran one at a time on one core of an x86_64 Xeon,
+through `mm-cell-worker`'s protocol loop, on static
+`x86_64-unknown-linux-musl` and glibc builds of the same commit \[M\]:
+
+| Engine time | glibc | musl | musl + mimalloc |
+|---|---:|---:|---:|
+| in memory | 2.5 s | 3.9 s | 2.9 s |
+| durable (snapshot and restore on a fresh `Engine` at every host call) | 19.5 s | 35.6 s | 27.5 s |
+| restore, p50 per host call | 1.11 ms | 1.91 ms | 1.31 ms |
+| snapshot, p50 per host call | 0.32 ms | 0.96 ms | 0.89 ms |
+
+The durable run made 644 K `mmap` calls on musl against 2.5 K on glibc
+\[M\]. What mimalloc leaves is mostly musl's `memcpy`, which the snapshot
+writer calls for each small field. mimalloc builds for musl with a musl C
+compiler (`musl-gcc`, Debian's `musl-tools`) and `CFLAGS=-mpopcnt`;
+without `-mpopcnt`, the link lacks `__popcountdi2` \[M\].
+
 `mm-wasm-host` gives every session and restore a new instance, and with many
 sessions in one process its page faults make a snapshot and restore cost
 far more than natively: 4.9 ms per swap at 8 sessions and about 144 ms at
