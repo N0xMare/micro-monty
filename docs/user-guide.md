@@ -995,7 +995,7 @@ them either: cutting one loses the image, and in wasm the instance.
 
 | | Native (the facade) | wasmtime (`mm-wasm-host`) | Node (`hosts/js`) | Cloudflare Workers (`hosts/js`) |
 |---|---|---|---|---|
-| Longest step between two safepoints | 50 ms at the default limits on every `Bounded` row of `tests/steps.rs` \[M\] | about 1.5–3× native \[E\]; a park request not honoured within 100 ms + 0.75 ms per MiB of the memory limit (292 ms at 256 MiB) traps the instance | no time bound: one step at most 102 ms at a 16 MiB limit, 1.7 s at 256 MiB \[M\] | as Node: 132 ms / 2.1 s \[M\] |
+| Longest step between two safepoints | 50 ms at the default limits on every `Bounded` row of `tests/steps.rs` \[M\] | about 1.5–3× native \[E\]; a park request not honoured within 100 ms + 0.75 ms per MiB of the memory limit (292 ms at 256 MiB), in wall time and in epoch ticks the guest runs through, traps the instance | no time bound: one step at most 102 ms at a 16 MiB limit, 1.7 s at 256 MiB \[M\] | as Node: 132 ms / 2.1 s \[M\] |
 | Fuel overdraft per slice | at most 2^21 + 2^17 units | the same: fuel counts are identical across targets | the same | the same |
 | Deadline | noticed at the next check, never inside one step | the same, plus the grace trap above | on `performance.now()`; only the platform stops one long step | never fires while a cell runs: the clock stands still during synchronous wasm, so fuel is the only CPU bound |
 | Memory, `Limits::memory` = L | Rust heap at most 2.5 × L + 16 MiB | linear memory about 3 × L + 16 MiB; it never shrinks | as wasmtime | as wasmtime |
@@ -1157,8 +1157,17 @@ let again = rt.restore(&image, &options)?;   // picks the loaded build by the im
 the default 256 MiB session limit), the park grace interrupt, an optional
 per-call budget, a precompiled `.cwasm` cache beside the module (on by
 default) and the pooling allocator. A park request
-(`Session::park_handle()`) parks at the next safepoint check; the grace
-interrupt traps only when one native operation or collection outlasts it.
+(`Session::park_handle()`) parks at the next park check (every 256
+safepoints). The grace interrupt traps when the park has not happened
+after the grace in wall time and in epoch ticks the guest ran through
+(the grace over `epoch_tick`, rounded up): one native operation or
+collection that outlasts it traps; one stretch the guest does not run
+(its thread preempted, or one slow call to a host import such as the
+output sink) counts as one tick however long. A sink called many times
+before the next park check counts a tick at every call that crosses one,
+so a sink slower than about 2.3 ms a call can still trap a cell that
+prints in a loop (64 MiB limit, 65 `print` calls to the next park check
+\[M\]).
 After `Error::Trap`, restore the last image into a new session.
 `SessionOptions`' default host-argument depth is 1000, where the native
 `HostArgs` default is 100.

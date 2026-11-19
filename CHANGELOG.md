@@ -34,6 +34,13 @@ hashes are pre-release history, kept in the private archive
   globals: the shared `MemoryError` raised in its place kept the error's
   hint data, the globals included, so the reset returned `Ok` and every
   later cell was refused (6 MiB, a kept fill, then `append`) [M].
+- `mm-wasm-host`: a requested park no longer ends as `Error::Trap("wasm
+  trap: interrupt")` when the session's thread is held past the grace
+  once (preempted, or in one slow call to the output sink) before the
+  guest reaches its next park check: the grace now needs as many epoch
+  ticks the guest ran through as it spans, as well as the wall time, and
+  one stretch the guest does not run counts as one tick. The new test
+  failed 20 of 20 runs before [M].
 
 ### Known issues
 
@@ -47,6 +54,11 @@ hashes are pre-release history, kept in the private archive
   refused it without one), and a start that completes takes 9 to 17 ms
   more for reclamation's reference scan: 67 ms mean on a 256 MiB live
   heap of 4M strings, against 50 ms [M].
+- `mm-wasm-host`: an output sink slower than about 2.3 ms a call can
+  still run a requested park's grace out for a cell that prints in a
+  loop, as in 0.0.2: every sink call that crosses an epoch tick counts
+  one, and the next park check can be 65 `print` calls away (64 MiB
+  limit; a 3 ms sink traps after about 49 calls) [M].
 
 ## 0.0.2 (2026-11-18)
 

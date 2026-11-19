@@ -535,8 +535,8 @@ messages; copy wording where behaviour matches.
   `crates/micro-monty/tests/steps.rs` lists as `Bounded`, no native step
   runs longer than about 50 ms between two safepoints at the default
   limits, so a deadline, a park request or mm-wasm's epoch grace (100 ms
-  plus 0.75 ms per MiB of the memory limit) waits at most that long on
-  one. It is not an invariant: full collections (§5.1 clause 2) and sites
+  plus 0.75 ms per MiB of the memory limit, in wall time and in epoch
+  ticks the guest runs through) waits at most that long on one. It is not an invariant: full collections (§5.1 clause 2) and sites
   no row covers can run longer.
 
   A native whose work grows with its data runs its first step itself,
@@ -729,8 +729,10 @@ are the rules above. Where the code falls short, the clause says so under
    (256 MiB memory, no object over 64 MiB, `mm_core::MAX_OBJECT_BYTES`):
    at most `nstep::STEP_WORK` (2^17) units for a chunked step, or one
    operation over one object at the cap. On wasm the bound is the host's
-   epoch grace, 100 ms plus 0.75 ms per MiB of the memory limit, about
-   1.5–3 times the native time [E]. On V8 (Node, workerd) the clock does
+   epoch grace, 100 ms plus 0.75 ms per MiB of the memory limit in wall
+   time and in epoch ticks the guest runs through (time its thread is
+   held counts one tick a stretch), about 1.5–3 times the native time
+   [E]. On V8 (Node, workerd) the clock does
    not move while wasm runs, so fuel is the only bound, and a step's time
    is its units times the native's time per unit: 0.03–0.05 µs a unit for
    bytecode, up to 0.48 µs for the natives charged most cheaply [M]. The

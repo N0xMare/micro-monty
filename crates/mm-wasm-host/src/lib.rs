@@ -11,7 +11,11 @@
 //! park flag does. The epoch deadline callback is the last resort: when a
 //! requested park has not happened within the grace period (by default
 //! 100 ms plus 0.75 ms per MiB of the session's memory limit: the cell is
-//! inside one long native operation or collection), or a
+//! inside one long native operation or collection), measured in wall time
+//! and in epoch ticks the guest runs through: one stretch it does not run
+//! (its thread preempted, or one host import such as an output sink)
+//! counts as one tick however long, while an import called in a loop
+//! counts a tick at every call that crosses one, or a
 //! call outran [`RuntimeConfig::call_budget`] (off by default, an opt-in
 //! backstop), it interrupts the instance, which traps. A snapshot cannot
 //! park (it collects in full first, about 1.4 ms per MiB of image [M], past
@@ -137,11 +141,21 @@ pub struct RuntimeConfig {
     /// guest past it aborts instead of raising `MemoryError`). The default,
     /// 784 MiB, fits the default 256 MiB session limit.
     pub memory_limit: u64,
-    /// The epoch ticker's period.
+    /// The epoch ticker's period. A requested park's grace needs as many
+    /// ticks the guest runs through as the grace spans (rounded up), so it
+    /// bounds a guest that does not park at the ticker's rate: a tick its
+    /// thread does not run through is not counted, and a sleep that
+    /// overshoots makes ticks come later. Near the scheduler's resolution
+    /// (tens of µs) the overshoot dominates the period and the grace in
+    /// guest time grows with it; zero spins the ticker and needs the
+    /// grace's nanoseconds as ticks (about 3 × 10^8 at 256 MiB). Use
+    /// milliseconds.
     pub epoch_tick: Duration,
     /// How long a requested park may take before the instance is
     /// interrupted (trap), plus [`RuntimeConfig::park_grace_per_mib`] for
-    /// each MiB of the session's `Limits::memory`. Default 100 ms. Not
+    /// each MiB of the session's `Limits::memory`: this much wall time
+    /// since the request, and as many epoch ticks the guest ran through
+    /// (see [`RuntimeConfig::epoch_tick`]). Default 100 ms. Not
     /// applied during [`Session::snapshot`], which cannot park.
     pub park_grace: Duration,
     /// Grace added per MiB of the session's memory limit, because a
@@ -238,6 +252,65 @@ impl ParkHandle {
     }
 }
 
+/// A requested park's grace: `wall` nanoseconds of wall time since the
+/// request (or the call's start, if later) and `ticks` epoch ticks the
+/// guest ran through with the request pending, both reached before the
+/// instance is interrupted.
+#[derive(Clone, Copy, Debug)]
+struct Grace {
+    wall: u64,
+    ticks: u64,
+}
+
+impl Grace {
+    /// The grace `wall` in nanoseconds on a ticker of period `tick`: the
+    /// ticks are `wall / tick` rounded up, at least one. A zero `tick`
+    /// counts as 1 ns, so its ticks are the grace's nanoseconds.
+    fn new(wall: u128, tick: u128) -> Self {
+        let ticks = wall.div_ceil(tick.max(1)).max(1);
+        Self {
+            wall: u64::try_from(wall).unwrap_or(u64::MAX),
+            ticks: u64::try_from(ticks).unwrap_or(u64::MAX),
+        }
+    }
+}
+
+/// One export call's clock for the park grace. The epoch callback runs at
+/// the guest's first epoch check after the ticker moves, never inside a
+/// host import, so a stretch the guest does not run (its thread preempted,
+/// or one host import) counts as one tick however long it is; stretches
+/// shorter than a tick (an output sink called in a loop) count one each
+/// whenever they cross a tick. Wall time alone trapped a guest that was
+/// about to park when its thread was held past the grace (`tests/parity.rs`).
+#[derive(Clone, Copy, Debug, Default)]
+struct ParkClock {
+    /// When the current export call started, in `ParkState::base`
+    /// nanoseconds.
+    started: u64,
+    /// Epoch callbacks in this call with a park request pending.
+    ticks: u64,
+}
+
+impl ParkClock {
+    /// A new export call at `now`: no ticks counted.
+    fn start(&mut self, now: u64) {
+        self.started = now;
+        self.ticks = 0;
+    }
+
+    /// One epoch callback at `now`, with `asked` the time of the pending
+    /// park request (`None` with none pending, or in a call that cannot
+    /// park, which restarts the count). True when the grace has run out.
+    fn tick(&mut self, now: u64, asked: Option<u64>, grace: Grace) -> bool {
+        let Some(asked) = asked else {
+            self.ticks = 0;
+            return false;
+        };
+        self.ticks = self.ticks.saturating_add(1);
+        self.ticks >= grace.ticks && now.saturating_sub(asked.max(self.started)) >= grace.wall
+    }
+}
+
 /// Output in production order.
 pub type Output = Box<dyn FnMut(Stream, &str) + Send>;
 
@@ -246,8 +319,9 @@ pub struct Ctx {
     wasi: WasiP1Ctx,
     limits: StoreLimits,
     park: Arc<ParkState>,
-    /// When the current export call started, in `park.base` nanoseconds.
-    call_started: u64,
+    /// The current export call's start and its count of ticks toward a
+    /// requested park's grace.
+    clock: ParkClock,
     /// False during a call that cannot park (a snapshot): a park request
     /// does not interrupt it.
     parkable: bool,
@@ -757,7 +831,7 @@ impl Runtime {
                 .instances(1)
                 .build(),
             park: Arc::clone(&park),
-            call_started: 0,
+            clock: ParkClock::default(),
             parkable: true,
             output: None,
             zones: None,
@@ -774,19 +848,21 @@ impl Runtime {
             .park_grace
             .as_nanos()
             .saturating_add(per_mib.saturating_mul(u128::from(memory >> 20)));
-        let grace = u64::try_from(grace).unwrap_or(u64::MAX);
+        let grace = Grace::new(grace, self.config.epoch_tick.as_nanos());
         let budget = self
             .config
             .call_budget
             .map(|b| u64::try_from(b.as_nanos()).unwrap_or(u64::MAX));
-        // Checked every tick: trap only for a park that did not happen
-        // within the grace period, or a call past its budget.
-        store.epoch_deadline_callback(move |state| {
-            let c = state.data();
+        // Checked at the guest's first epoch check after each tick: trap
+        // only for a park that did not happen within the grace period
+        // (`ParkClock::tick`), or a call past its budget (wall time).
+        store.epoch_deadline_callback(move |mut state| {
+            let c = state.data_mut();
             let now = c.park.now();
             let asked = c.park.requested.load(Ordering::SeqCst);
-            if (c.parkable && asked != 0 && now.saturating_sub(asked.max(c.call_started)) >= grace)
-                || budget.is_some_and(|b| now.saturating_sub(c.call_started) >= b)
+            let pending = (c.parkable && asked != 0).then_some(asked);
+            if c.clock.tick(now, pending, grace)
+                || budget.is_some_and(|b| now.saturating_sub(c.clock.started) >= b)
             {
                 Ok(UpdateDeadline::Interrupt)
             } else {
@@ -929,7 +1005,7 @@ impl Session {
             return Err(Error::Trap(d.clone()));
         }
         let now = self.store.data().park.now();
-        self.store.data_mut().call_started = now;
+        self.store.data_mut().clock.start(now);
         f(self).map_err(|e| {
             let message = match e.downcast_ref::<wasmtime::Trap>() {
                 Some(trap) => trap.to_string(),
@@ -1290,5 +1366,104 @@ impl Session {
         };
         self.call(|s| f.call(&mut s.store, op))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Grace, ParkClock};
+
+    const MS: u64 = 1_000_000;
+
+    /// 150 ms on a 10 ms ticker: 15 ticks.
+    fn grace() -> Grace {
+        Grace::new(150 * u128::from(MS), 10 * u128::from(MS))
+    }
+
+    /// Callbacks at `times` (ms) with the park asked at `asked` (ms):
+    /// which ones interrupt.
+    fn run(clock: &mut ParkClock, asked: Option<u64>, times: &[u64]) -> Vec<bool> {
+        times
+            .iter()
+            .map(|t| clock.tick(t * MS, asked.map(|a| a * MS), grace()))
+            .collect()
+    }
+
+    #[test]
+    fn the_grace_is_ticks_rounded_up_and_at_least_one() {
+        let ms = u128::from(MS);
+        assert_eq!(Grace::new(148 * ms, 10 * ms).ticks, 15);
+        assert_eq!(Grace::new(150 * ms, 10 * ms).ticks, 15);
+        assert_eq!(Grace::new(ms, 10 * ms).ticks, 1);
+        assert_eq!(Grace::new(0, 10 * ms).ticks, 1);
+        // A zero tick counts the grace's nanoseconds.
+        assert_eq!(Grace::new(150 * ms, 0).ticks, 150 * MS);
+        assert_eq!(Grace::new(150 * ms, 0).wall, 150 * MS);
+    }
+
+    #[test]
+    fn a_held_thread_counts_one_tick_however_long() {
+        // The guest runs through one tick, then its thread is held for
+        // 400 ms: 2 ticks counted, the wall time far past the grace.
+        let mut c = ParkClock::default();
+        c.start(MS);
+        assert_eq!(run(&mut c, Some(2), &[10, 410]), [false, false]);
+        // It runs on: the 15th tick interrupts, not the 14th.
+        let ticks: Vec<u64> = (1..=12).map(|i| 410 + 10 * i).collect();
+        assert!(run(&mut c, Some(2), &ticks).iter().all(|i| !i));
+        assert_eq!(run(&mut c, Some(2), &[540]), [true]);
+    }
+
+    #[test]
+    fn ticks_alone_do_not_interrupt_before_the_wall_time() {
+        // A burst of 20 callbacks within 20 ms (a ticker that ran ahead).
+        let mut c = ParkClock::default();
+        c.start(0);
+        let ticks: Vec<u64> = (1..=20).collect();
+        assert!(run(&mut c, Some(1), &ticks).iter().all(|i| !i));
+        assert_eq!(run(&mut c, Some(1), &[150]), [false]);
+        assert_eq!(run(&mut c, Some(1), &[151]), [true]);
+    }
+
+    #[test]
+    fn a_request_made_before_the_call_counts_wall_time_from_its_start() {
+        let mut c = ParkClock::default();
+        c.start(500 * MS);
+        let ticks: Vec<u64> = (1..=15).map(|i| 500 + 10 * i).collect();
+        let interrupts = run(&mut c, Some(1), &ticks);
+        assert_eq!(interrupts.last(), Some(&true));
+        assert!(interrupts[..14].iter().all(|i| !i));
+        let mut c = ParkClock::default();
+        c.start(500 * MS);
+        let ticks: Vec<u64> = (1..=15).map(|i| 500 + 9 * i).collect();
+        assert!(run(&mut c, Some(1), &ticks).iter().all(|i| !i));
+    }
+
+    #[test]
+    fn no_request_pending_restarts_the_count() {
+        let mut c = ParkClock::default();
+        c.start(0);
+        let ticks: Vec<u64> = (1..=14).map(|i| 10 * i).collect();
+        assert!(run(&mut c, Some(1), &ticks).iter().all(|i| !i));
+        // The park was taken (or the call cannot park): the count restarts.
+        assert_eq!(run(&mut c, None, &[150]), [false]);
+        // A new request, then the thread held past the grace: 2 ticks.
+        assert_eq!(run(&mut c, Some(155), &[160, 400]), [false, false]);
+        let ticks: Vec<u64> = (41..=52).map(|i| 10 * i).collect();
+        assert!(run(&mut c, Some(155), &ticks).iter().all(|i| !i));
+        assert_eq!(run(&mut c, Some(155), &[530]), [true]);
+    }
+
+    #[test]
+    fn a_new_call_restarts_the_count() {
+        let mut c = ParkClock::default();
+        c.start(0);
+        let ticks: Vec<u64> = (1..=14).map(|i| 10 * i).collect();
+        assert!(run(&mut c, Some(1), &ticks).iter().all(|i| !i));
+        // The next export call, the request still pending: 15 more ticks.
+        c.start(145 * MS);
+        let ticks: Vec<u64> = (1..=14).map(|i| 300 + 10 * i).collect();
+        assert!(run(&mut c, Some(1), &ticks).iter().all(|i| !i));
+        assert_eq!(run(&mut c, Some(1), &[450]), [true]);
     }
 }

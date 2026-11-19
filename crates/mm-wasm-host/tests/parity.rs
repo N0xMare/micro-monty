@@ -558,6 +558,38 @@ asyncio.run(main())
     assert_eq!(stops, 5);
 }
 
+/// A requested park is the guest's to take at its next safepoint: one
+/// stretch it does not run, here the host's output sink holding the thread
+/// past the grace (as a preempted thread would), counts as one tick of it.
+/// The grace is 10 ticks, so a loaded machine that also preempts the guest
+/// once or twice on its way to the park check does not trap it either (with
+/// 2 ticks, one run in a loaded `cargo xtask check` did [M]).
+#[test]
+fn time_the_guest_does_not_run_does_not_trap_a_requested_park() {
+    let config = RuntimeConfig {
+        park_grace: std::time::Duration::from_millis(100),
+        park_grace_per_mib: std::time::Duration::ZERO,
+        ..RuntimeConfig::default()
+    };
+    let rt = Runtime::new(&guest(), config).unwrap();
+    let options = SessionOptions::new().with_limits(LIMITS);
+    let mut w = rt.session(&options).unwrap();
+    let park = w.park_handle();
+    w.set_output(Box::new(move |_, _| {
+        park.request();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }));
+    let p = w
+        .start("print(1)\nfor i in range(10**5): pass\n7", "<p>")
+        .unwrap();
+    assert_eq!(
+        p,
+        Progress::Parked {
+            reason: ParkReason::Requested
+        }
+    );
+}
+
 /// A park the host requests is `Requested` wherever the stop is read: the
 /// progress, `pending`, and its image restored on either side. Reporting
 /// it takes the request, so the cell then runs to the end.
@@ -657,6 +689,59 @@ fn a_park_request_during_a_long_collection_does_not_trap() {
     asker.join().unwrap();
     assert!(matches!(p, Ok(Progress::Complete(_))), "{p:?}");
     assert!(parks > 0);
+}
+
+/// The grace still bounds a guest that runs without parking, in time it
+/// runs: with a 1 ms grace (one tick), the first tick that finds a request
+/// pending for 1 ms interrupts the loop over a nearly full heap. With 50
+/// or 100 ms it parks within 5 to 12 ms of each request and never traps
+/// [M, reviewer], so this shows the one-tick case only; the unit tests of
+/// `ParkClock` hold the rule for a grace of many ticks.
+#[test]
+fn a_guest_running_past_the_grace_is_still_interrupted() {
+    let config = RuntimeConfig {
+        park_grace: std::time::Duration::from_millis(1),
+        park_grace_per_mib: std::time::Duration::ZERO,
+        ..RuntimeConfig::default()
+    };
+    let rt = Runtime::new(&guest(), config).expect("guest");
+    let mut s = rt.session(&SessionOptions::default()).expect("session");
+    let fill = "big = [[i, str(i)] for i in range(2_000_000)]";
+    assert!(matches!(s.start(fill, "<f>"), Ok(Progress::Complete(_))));
+    let handle = s.park_handle();
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let asking = Arc::clone(&stop);
+    let asker = std::thread::spawn(move || {
+        while !asking.load(std::sync::atomic::Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_millis(3));
+            handle.request();
+        }
+    });
+    let mut p = s.start("for i in range(1_500_000):\n    y = [i]", "<l>");
+    while let Ok(Progress::Parked { .. }) = p {
+        p = s.resume(&Resume::Continue);
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    asker.join().unwrap();
+    assert!(matches!(p, Err(Error::Trap(_))), "{p:?}");
+}
+
+/// `call_budget` is measured from each export call's start, not from the
+/// session's creation: a session idle past its budget still runs a short
+/// cell (each call restarts the park clock, `Session::call`).
+#[test]
+fn the_call_budget_counts_from_the_call_not_the_session() {
+    let config = RuntimeConfig {
+        call_budget: Some(std::time::Duration::from_millis(500)),
+        ..RuntimeConfig::default()
+    };
+    let rt = Runtime::new(&guest(), config).unwrap();
+    let mut s = rt
+        .session(&SessionOptions::new().with_limits(LIMITS))
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1_000));
+    let p = s.start("for i in range(1000): pass\n7", "<b>").unwrap();
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
 }
 
 /// A snapshot cannot park: it collects in full first, about 1.4 ms per MiB
