@@ -66,14 +66,14 @@ impl Out {
                 self.charge = Some(charge);
             }),
         };
-        vm.hx_hot(res)?;
+        vm.hx(res)?;
         let res = self.buf.try_reserve_exact(capacity - self.buf.len());
         if res.is_err()
             && let Some(charge) = &mut self.charge
         {
             let _ = charge.resize(&vm.heap, old);
         }
-        vm.hx_hot(res)
+        vm.hx(res)
     }
 
     fn push(&mut self, vm: &mut Vm, s: &str) -> Result<(), Raised> {
@@ -143,7 +143,7 @@ impl Out {
         // Escapes can make the literal six times the text: the staging
         // copy is admitted too, at its exact size.
         let res = vm.heap.reserve_scratch(len);
-        let _staged = vm.hx_hot(res)?;
+        let _staged = vm.hx(res)?;
         let mut t = String::new();
         if t.try_reserve_exact(len).is_err() {
             return Err(vm.err(T::MemoryError, ""));
@@ -161,13 +161,13 @@ impl Out {
     fn finish(self, vm: &mut Vm) -> Result<Value, Raised> {
         let n = self.buf.len();
         if n <= 1 {
-            return vm.intern_hot(core::str::from_utf8(self.buf.as_bytes()).unwrap_or(""));
+            return vm.intern(core::str::from_utf8(self.buf.as_bytes()).unwrap_or(""));
         }
         if n >= 64 {
             vm.burn_result(n, true);
         }
         let res = vm.heap.new_str_from(&self.buf);
-        Ok(Value::from_ref(vm.hx_hot(res)?, ty::STR as u8))
+        Ok(Value::from_ref(vm.hx(res)?, ty::STR as u8))
     }
 }
 
@@ -394,9 +394,9 @@ pub(crate) fn pl_json_encode(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> 
 impl Enc {
     fn read(vm: &Vm, indent: Value, ks: Value, is: Value, flags: u64) -> Enc {
         Enc {
-            indent: Vm::is_str(indent).then(|| String::from(vm.str_ref_hot(indent))),
-            key_sep: String::from(vm.str_ref_hot(ks)),
-            item_sep: String::from(vm.str_ref_hot(is)),
+            indent: Vm::is_str(indent).then(|| String::from(vm.str_ref(indent))),
+            key_sep: String::from(vm.str_ref(ks)),
+            item_sep: String::from(vm.str_ref(is)),
             flags,
         }
     }
@@ -1088,9 +1088,9 @@ enum KeyText {
 #[cold]
 #[inline(never)]
 fn key_text(vm: &mut Vm, enc: &Enc, k: Value) -> Result<KeyText, Raised> {
-    let k = vm.unbx_hot(k);
+    let k = vm.unbx(k);
     Ok(KeyText::Text(if Vm::is_str(k) {
-        String::from(vm.str_ref_hot(k))
+        String::from(vm.str_ref(k))
     } else if let Some(f) = k.as_float() {
         if !f.is_finite() && !enc.has(ALLOW_NAN) {
             return Ok(KeyText::Python);
@@ -1272,7 +1272,7 @@ fn subclass_value(
     } else if b.is_obj_kind(ty::LIST as u8) || b.is_obj_kind(ty::TUPLE as u8) {
         return seq_value(vm, v, b, out);
     } else if b.is_obj_kind(ty::DICT as u8) && !enc.has(SORT_KEYS) {
-        let key = vm.intern_hot("items")?;
+        let key = vm.intern("items")?;
         if vm
             .class_lookup(vm.class_of(v), key)
             .is_some_and(|m| m.as_native().is_none())
@@ -1557,7 +1557,7 @@ impl Dec {
 
     /// Reads the innermost of `ctxs`.
     fn load_top(&mut self, vm: &Vm) {
-        let n = vm.list_len_hot(self.ctxs);
+        let n = vm.list_len(self.ctxs);
         let mut top = [Value::NONE; 3];
         if let (Some(buf), Some(at)) = (vm.list_buf(self.ctxs), n.checked_sub(3)) {
             let words = vm.heap.slot_words(buf).unwrap_or(&[]);
@@ -1589,7 +1589,7 @@ fn big_table(vm: &Vm, c: Value) -> Option<(usize, usize)> {
 /// object cap.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn grow_target(vm: &mut Vm, ctxs: Value, up: bool) -> Result<Option<(Value, usize)>, Raised> {
-    let at = vm.list_len_hot(ctxs).checked_sub(if up { 6 } else { 3 });
+    let at = vm.list_len(ctxs).checked_sub(if up { 6 } else { 3 });
     let (Some(buf), Some(at)) = (vm.list_buf(ctxs), at) else {
         return Ok(None);
     };
@@ -1859,7 +1859,7 @@ fn scan_go(
         // Whitespace is read in the arena: a run of it may fill windows.
         let i = wd[w::I] as usize;
         let (j, len) = {
-            let b = vm.str_bytes(sv);
+            let b = vm.str_bytes_hot(sv);
             let lim = b.len().min(i.saturating_add(room));
             (i + skip_ws(&b[i.min(lim)..lim], 0), b.len())
         };
@@ -1878,18 +1878,22 @@ fn scan_go(
         }
         // The window, ending at a char boundary.
         let mut end = len.min(j + WINDOW);
-        while vm.str_bytes(sv).get(end).is_some_and(|&c| c & 0xC0 == 0x80) {
+        while vm
+            .str_bytes_hot(sv)
+            .get(end)
+            .is_some_and(|&c| c & 0xC0 == 0x80)
+        {
             end -= 1;
         }
         let res = vm.heap.reserve_scratch(end - j);
-        let _charge = vm.hx(res)?;
+        let _charge = vm.hx_hot(res)?;
         let mut s = String::new();
         let res = s
             .try_reserve_exact(end - j)
             .map_err(|_| mm_core::Error::OutOfMemory);
-        vm.hx(res)?;
+        vm.hx_hot(res)?;
         // Only the window is validated: `str_ref` would check the whole input.
-        s.push_str(core::str::from_utf8(&vm.str_bytes(sv)[j..end]).unwrap_or(""));
+        s.push_str(core::str::from_utf8(&vm.str_bytes_hot(sv)[j..end]).unwrap_or(""));
         vm.burn(s.len() as u64 / 16);
         match run(vm, d, &s, j, end == len, wd, w0)? {
             Ran::Cut if wd[w::I] as usize == j => {
@@ -2133,7 +2137,7 @@ fn run(
 }
 
 fn depth(vm: &Vm, d: &Dec) -> usize {
-    d.stack.len() + vm.list_len(d.ctxs) / 3
+    d.stack.len() + vm.list_len_hot(d.ctxs) / 3
 }
 
 fn top_is_obj(d: &Dec) -> bool {
@@ -2168,10 +2172,10 @@ fn attach(vm: &mut Vm, d: &mut Dec, v: Value) -> Result<bool, Raised> {
     };
     if let Some(k) = key {
         let res = d.vals.push(&mut vm.heap, k);
-        vm.hx(res)?;
+        vm.hx_hot(res)?;
     }
     let res = d.vals.push(&mut vm.heap, v);
-    vm.hx(res)?;
+    vm.hx_hot(res)?;
     Ok(false)
 }
 
@@ -2423,7 +2427,7 @@ fn alloc_block(vm: &mut Vm, n: u64) -> Result<mm_core::ByteRef, Raised> {
     let n = usize::try_from(n).unwrap_or(usize::MAX);
     vm.burn_result(n, true);
     let res = vm.heap.alloc_bytes_zeroed(n);
-    vm.hx_hot(res)
+    vm.hx(res)
 }
 
 /// Reads string body `b[*r..]` up to about `lim` (an escape is read whole)
@@ -2747,7 +2751,7 @@ fn string(
 /// `(text,)`: a literal left for a `json.loads` hook.
 fn raw_text(vm: &mut Vm, text: &str) -> Result<Value, Raised> {
     let t = vm.new_str(text)?;
-    vm.alloc_tuple_hot(&[t])
+    vm.alloc_tuple(&[t])
 }
 
 /// The end of the number at `i` (CPython's `_match_number_unicode`) and

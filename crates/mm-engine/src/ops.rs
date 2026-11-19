@@ -278,11 +278,11 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn view_src(&mut self, v: Value) -> Result<(Value, u64), Raised> {
         match self.type_of(v) {
-            T::dict_keys => Ok((self.vslot_hot(v, 0), crate::set::act::VIEW)),
-            T::dict_items => Ok((self.vslot_hot(v, 0), crate::set::act::ITEMS)),
+            T::dict_keys => Ok((self.vslot(v, 0), crate::set::act::VIEW)),
+            T::dict_items => Ok((self.vslot(v, 0), crate::set::act::ITEMS)),
             // A set subclass's instance is read as its set
             // (`PyAnySet_Check`), whatever its `__iter__`.
-            _ if self.backing_hot(v).is_some_and(Vm::is_set) => Ok((self.unbx_hot(v), 0)),
+            _ if self.backing(v).is_some_and(Vm::is_set) => Ok((self.unbx(v), 0)),
             _ => Ok((self.bulk_src(v)?, 0)),
         }
     }
@@ -669,9 +669,9 @@ impl Vm {
             // the view reads the view (`set.intersection`); of two views
             // the longer is probed; otherwise the other operand is read.
             let (v, o) = if view(ta) { (a, b) } else { (b, a) };
-            let lv = self.dict_len(self.vslot_hot(v, 0));
+            let lv = self.dict_len(self.vslot(v, 0));
             let (src, mut probe) = if (exact && self.type_of(o) == T::set && lv <= self.set_len(o))
-                || (view(self.type_of(o)) && self.dict_len(self.vslot_hot(o, 0)) > lv)
+                || (view(self.type_of(o)) && self.dict_len(self.vslot(o, 0)) > lv)
             {
                 (v, o)
             } else {
@@ -693,7 +693,7 @@ impl Vm {
                 return Ok(out);
             }
             if self.type_of(probe) == T::dict_keys {
-                probe = self.vslot_hot(probe, 0);
+                probe = self.vslot(probe, 0);
             }
             let (src, fs) = self.view_src(src)?;
             return self.bulk(&[out, src, probe], phase(act::AND | fs, 0, 1, 2), 0, top);
@@ -752,7 +752,7 @@ impl Vm {
         b: Value,
         inplace: bool,
     ) -> Result<Value, Raised> {
-        let (x, y) = (self.unbx_hot(a), self.unbx_hot(b));
+        let (x, y) = (self.unbx(a), self.unbx(b));
         // `Sub(3) *= [1, 2]`, `N() *= T((1,))`: CPython's in-place repeat
         // reads the left operand's sequence slots, which a class defined in
         // Python has (empty), so the right one repeats only through its
@@ -1753,11 +1753,11 @@ impl Vm {
         let (out, dst) = if tuple {
             let n = u32::try_from(total).map_err(|_| self.err(T::MemoryError, ""))?;
             let res = self.heap.alloc_unfilled(ty::TUPLE, 0, n);
-            let t = Value::from_ref(self.hx_hot(res)?, ty::TUPLE as u8);
+            let t = Value::from_ref(self.hx(res)?, ty::TUPLE as u8);
             (t, t)
         } else {
             let l = self.list_of_len(total)?;
-            let buf = self.vslot_hot(l, 0);
+            let buf = self.vslot(l, 0);
             (l, buf)
         };
         self.seq_build(Value::NONE, out, dst, srcs, segs, total, 0, 1)
@@ -1878,9 +1878,9 @@ impl Vm {
             // the buffer grows once to hold them first, so running out of
             // memory leaves the list as it was, as in CPython.
             if let (Some(r), true) = (src.as_obj(), src.is_obj_kind(ty::ITER as u8)) {
-                let (seq, kind, at) = (self.vslot_hot(src, 0), self.raw(r, 1), self.raw(r, 2));
+                let (seq, kind, at) = (self.vslot(src, 0), self.raw(r, 1), self.raw(r, 2));
                 let n = match kind {
-                    it::LIST => self.list_len_hot(seq),
+                    it::LIST => self.list_len(seq),
                     it::TUPLE => self.tuple_len(seq),
                     _ => 0,
                 };
@@ -1915,12 +1915,12 @@ impl Vm {
     #[inline(never)]
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn list_to_tuple(&mut self, l: Value) -> Result<Value, Raised> {
-        let n = self.list_len_hot(l);
+        let n = self.list_len(l);
         if n >= SEQ_LONG {
             return self.seq_new(true, &[l], &[Seg::of(3, 0, 1, n as u64)], n);
         }
         let items = self.list_items(l);
-        self.alloc_tuple_hot(&items)
+        self.alloc_tuple(&items)
     }
 
     /// List `l` gets a new buffer of the items of `segs`, `total` long, in
@@ -2606,7 +2606,7 @@ impl Vm {
         }
         match self.type_of(obj) {
             T::list => {
-                let n = self.list_len_hot(obj);
+                let n = self.list_len(obj);
                 if n >= SEQ_LONG
                     && let Some(r) = self.list_del_long(obj, key, n)?
                 {
@@ -2656,9 +2656,9 @@ impl Vm {
             },
             T::bytearray => self.bytearray_delitem(obj, key),
             _ => {
-                if let Some(b) = self.backing_hot(obj) {
+                if let Some(b) = self.backing(obj) {
                     let key = if b.is_obj_kind(ty::LIST as u8) {
-                        self.unbx_hot(key)
+                        self.unbx(key)
                     } else {
                         key
                     };
@@ -2730,7 +2730,7 @@ impl Vm {
         let n = i128::from(self.range_len(r));
         let mut part = [None; 3];
         for (i, p) in (0u32..).zip(part.iter_mut()) {
-            let v = self.vslot_hot(s, i);
+            let v = self.vslot(s, i);
             if v == Value::NONE {
                 continue;
             }
@@ -2796,9 +2796,9 @@ impl Vm {
             return (0, 0, 1);
         };
         (
-            self.raw_hot(o, 0).cast_signed(),
-            self.raw_hot(o, 1).cast_signed(),
-            self.raw_hot(o, 2).cast_signed(),
+            self.raw(o, 0).cast_signed(),
+            self.raw(o, 1).cast_signed(),
+            self.raw(o, 2).cast_signed(),
         )
     }
 
@@ -2832,7 +2832,7 @@ impl Vm {
     fn new_iter(&mut self, seq: Value, kind: u64, a: u64, b: u64, c: u64) -> Result<Value, Raised> {
         let r = {
             let res = self.heap.alloc_init(ty::ITER, 0, &[seq], &[kind, a, b, c]);
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::ITER as u8))
     }
@@ -2909,7 +2909,7 @@ impl Vm {
     /// An exhausted builtin iterator `r` drops its sequence, as CPython's
     /// do: it holds no memory, and one that grows later is not read again.
     fn iter_drop(&mut self, r: Ref) {
-        self.set_slot(r, 0, Value::NONE);
+        self.set_slot_hot(r, 0, Value::NONE);
     }
 
     /// `next(it)`: `None` when exhausted.
@@ -3148,13 +3148,13 @@ impl Vm {
     #[inline(never)]
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn enum_big(&mut self, r: Ref) -> Result<Value, Raised> {
-        let n = match self.slot_hot(r, 1) {
+        let n = match self.slot(r, 1) {
             Value::NONE => self.new_int(i64::MAX)?,
             n => n,
         };
         let b = self.big_of(n).unwrap_or_else(Big::zero);
         let next = self.new_big(&b.add(&Big::from_i64(1)))?;
-        self.set_slot_hot(r, 1, next);
+        self.set_slot(r, 1, next);
         Ok(n)
     }
 
@@ -3337,10 +3337,10 @@ impl Vm {
     /// Items left in range iterator `itv` (`None` for other iterators).
     fn range_left(&self, itv: Value) -> Option<u64> {
         let o = itv.as_obj().filter(|_| itv.is_obj_kind(ty::ITER as u8))?;
-        if self.raw_hot(o, 1) != it::RANGE {
+        if self.raw(o, 1) != it::RANGE {
             return None;
         }
-        Some(self.raw_hot(o, 3))
+        Some(self.raw(o, 3))
     }
 
     /// The sum of the items left in range iterator `itv`, in closed form
@@ -3412,9 +3412,9 @@ impl Vm {
             self.new_list(&items)?
         };
         *slot = xs;
-        let t = self.alloc_tuple_hot(&args)?;
+        let t = self.alloc_tuple(&args)?;
         let kw = if kw == Value::NONE {
-            self.new_dict_hot()?
+            self.new_dict()?
         } else {
             kw
         };
@@ -3696,7 +3696,7 @@ impl Vm {
         if obj.is_obj_kind(ty::EXC as u8) && self.inst_del(obj, name)? {
             return Ok(());
         }
-        if self.type_of_typeobj_hot(obj).is_some() {
+        if self.type_of_typeobj(obj).is_some() {
             // The same TypeError as setting it.
             return self.setattr(obj, name, Value::NONE);
         }
@@ -3911,7 +3911,7 @@ pub(crate) fn cmp_int_float(i: i64, f: f64) -> Option<Ordering> {
 #[cold]
 #[inline(never)]
 fn backed_slice_index(vm: &mut Vm, v: Value) -> Result<i64, Raised> {
-    match vm.backing_hot(v).and_then(|b| vm.int_of(b)) {
+    match vm.backing(v).and_then(|b| vm.int_of(b)) {
         Some(x) => Ok(x),
         None => Err(vm.err(
             T::TypeError,

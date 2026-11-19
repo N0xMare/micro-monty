@@ -160,7 +160,7 @@ impl Vm {
 
     fn gen_set_raw(&mut self, gn: Value, i: u32, w: u64) {
         if let Some(r) = gn.as_obj() {
-            self.set_raw(r, i, w);
+            self.set_raw_hot(r, i, w);
         }
     }
 
@@ -229,7 +229,7 @@ impl Vm {
         // The generator's handled exception goes on top of the caller's.
         let outer = self.handled;
         if let Some(r) = gn.as_obj() {
-            self.set_slot(r, g::OUTER, outer);
+            self.set_slot_hot(r, g::OUTER, outer);
             if handled != Value::NONE {
                 self.handled = handled;
             }
@@ -623,7 +623,7 @@ impl Vm {
     pub(crate) fn gen_yield(&mut self, st: &State, pc: usize) {
         let gn = st.coro;
         let nregs = self.codes[st.ci as usize].code.nregs as usize;
-        let regs = self.vslot_hot(gn, g::REGS);
+        let regs = self.vslot(gn, g::REGS);
         if let Some(b) = regs.as_obj()
             && let Some(frame) = self.stack.get(st.base..st.base + nregs)
         {
@@ -645,7 +645,7 @@ impl Vm {
     /// running.
     fn gen_leave(&mut self, gn: Value) {
         if let Some(r) = gn.as_obj() {
-            let outer = self.slot(r, g::OUTER);
+            let outer = self.slot_hot(r, g::OUTER);
             let mine = if self.handled == outer {
                 Value::NONE
             } else {
@@ -668,9 +668,9 @@ impl Vm {
     /// not the caller's handled exception.
     pub(crate) fn gen_over(&mut self, gn: Value) {
         if let Some(r) = gn.as_obj() {
-            self.set_slot(r, g::HANDLED, Value::NONE);
-            self.set_slot(r, g::REGS, Value::NONE);
-            self.set_raw(r, g::STATE, g::DONE);
+            self.set_slot_hot(r, g::HANDLED, Value::NONE);
+            self.set_slot_hot(r, g::REGS, Value::NONE);
+            self.set_raw_hot(r, g::STATE, g::DONE);
         }
     }
 
@@ -701,10 +701,10 @@ impl Vm {
             let _ = self.err(T::RuntimeError, msg);
             let new = self.exc;
             if let Some(r) = new.as_obj() {
-                self.set_slot_hot(r, exc_slot::CAUSE, e);
-                self.set_slot_hot(r, exc_slot::CONTEXT, e);
-                let fl = self.raw_hot(r, exc_slot::FLAGS) | 1;
-                self.set_raw_hot(r, exc_slot::FLAGS, fl);
+                self.set_slot(r, exc_slot::CAUSE, e);
+                self.set_slot(r, exc_slot::CONTEXT, e);
+                let fl = self.raw(r, exc_slot::FLAGS) | 1;
+                self.set_raw(r, exc_slot::FLAGS, fl);
             }
         }
     }

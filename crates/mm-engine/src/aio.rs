@@ -220,7 +220,7 @@ impl Vm {
     /// list would grow.
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn note_fresh(&mut self, c: Value) -> Result<(), Raised> {
-        let f = self.vslot(c, coro::FUNC);
+        let f = self.vslot_hot(c, coro::FUNC);
         // Only the cell's own: the prelude's (`anext()`) and the bundled
         // modules' (probes for the coroutine type) are the engine's.
         let ci = self.vslot_raw_of(f, fn_slot::CODE);
@@ -231,7 +231,7 @@ impl Vm {
         {
             return Ok(());
         }
-        let q = self.vslot(f, fn_slot::QUALNAME);
+        let q = self.vslot_hot(f, fn_slot::QUALNAME);
         if !Vm::is_str(q) {
             return Ok(());
         }
@@ -251,7 +251,7 @@ impl Vm {
 
     /// Has coroutine `c` neither started nor been wrapped in a task?
     fn unawaited(&self, c: Value) -> bool {
-        self.raw_of(c, coro::STATE) & (3 | coro::SCHEDULED) == coro::CREATED
+        self.raw_of_hot(c, coro::STATE) & (3 | coro::SCHEDULED) == coro::CREATED
     }
 
     /// Drops the coroutines of `fresh` that started or were scheduled, with
@@ -367,7 +367,8 @@ impl Vm {
         let base = self.fresh.len() as u64;
         let mut hosts: Vec<(u64, String)> = Vec::new();
         for &(id, f) in &self.futures {
-            if self.raw_of(f, aw::STATE) != aw::PENDING || self.raw_of(f, aw::AWAITED) != 0 {
+            if self.raw_of_hot(f, aw::STATE) != aw::PENDING || self.raw_of_hot(f, aw::AWAITED) != 0
+            {
                 continue;
             }
             let name = self
@@ -386,8 +387,10 @@ impl Vm {
             (a.1.to_bits(), a.0) < (b.1.to_bits(), b.0)
         });
         found.dedup_by_key(|e| e.1.to_bits());
-        let mut named: Vec<(u64, &str)> =
-            found.iter().map(|&(k, q)| (k, self.str_ref(q))).collect();
+        let mut named: Vec<(u64, &str)> = found
+            .iter()
+            .map(|&(k, q)| (k, self.str_ref_hot(q)))
+            .collect();
         named.extend(hosts.iter().map(|(k, n)| (*k, n.as_str())));
         crate::ops::heap_sort_by(&mut named, |a, b| (a.1, a.0) < (b.1, b.0));
         named.dedup_by_key(|e| e.1);
@@ -419,7 +422,7 @@ impl Vm {
                 &[result, extra, Value::NONE],
                 &[state, 0, aux, 0, 0],
             );
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, kind as u8))
     }
@@ -474,11 +477,11 @@ impl Vm {
     fn settle_as(&mut self, v: Value, state: u64, result: Value) {
         self.seq += 1;
         let ok = state == aw::DONE;
-        let was_pending = self.raw_of(v, aw::STATE) == aw::PENDING;
+        let was_pending = self.raw_of_hot(v, aw::STATE) == aw::PENDING;
         if let Some(r) = v.as_obj() {
-            self.set_slot(r, aw::RESULT, result);
-            self.set_raw(r, aw::STATE, state);
-            self.set_raw(r, aw::SEQ, self.seq);
+            self.set_slot_hot(r, aw::RESULT, result);
+            self.set_raw_hot(r, aw::STATE, state);
+            self.set_raw_hot(r, aw::SEQ, self.seq);
         }
         // Tasks, futures and gathers list their waiters in order; tasks
         // blocked on anything else are found in `blocked`.
@@ -499,9 +502,9 @@ impl Vm {
         }
         // Gathers keep their own pending count and failure flag, so their
         // callbacks need not rescan every child.
-        let waiters = self.vslot(v, aw::WAITERS);
+        let waiters = self.vslot_hot(v, aw::WAITERS);
         if let Some(r) = v.as_obj() {
-            self.set_slot(r, aw::WAITERS, Value::NONE);
+            self.set_slot_hot(r, aw::WAITERS, Value::NONE);
         }
         // Whether the callbacks' room is in `cb_slots`: not a loop future's
         // (reserved by its settle), nor an earlier cell's task or host
@@ -521,7 +524,7 @@ impl Vm {
             let g = if single {
                 waiters
             } else {
-                self.vslot(waiters, u32::try_from(k).unwrap_or(0))
+                self.vslot_hot(waiters, u32::try_from(k).unwrap_or(0))
             };
             if let Some(t) = g.as_int().and_then(|t| usize::try_from(t).ok()) {
                 // A task's wakeup.
@@ -547,15 +550,15 @@ impl Vm {
                 continue;
             }
             if was_pending {
-                let left = self.raw_of(g, aw::LEFT);
-                self.set_raw_of(g, aw::LEFT, left.saturating_sub(1));
+                let left = self.raw_of_hot(g, aw::LEFT);
+                self.set_raw_of_hot(g, aw::LEFT, left.saturating_sub(1));
                 // The notification it waited for is now in the queue.
                 if left != 0 {
                     self.callback_queue -= 1;
                 }
                 if !ok {
-                    let f = self.raw_of(g, aw::FAILS);
-                    self.set_raw_of(g, aw::FAILS, f | aw::FAILED_CHILD);
+                    let f = self.raw_of_hot(g, aw::FAILS);
+                    self.set_raw_of_hot(g, aw::FAILS, f | aw::FAILED_CHILD);
                 }
             }
             self.ready.push_back(Ready::Gather(g));
@@ -651,10 +654,10 @@ impl Vm {
         let Some(r) = c.as_obj().filter(|_| c.is_obj_kind(ty::CORO as u8)) else {
             return (Value::NONE, coro::SEND);
         };
-        let v = self.slot_hot(r, coro::SENT);
-        let mode = self.raw_hot(r, coro::MODE);
-        self.set_slot_hot(r, coro::SENT, Value::NONE);
-        self.set_raw_hot(r, coro::MODE, coro::SEND);
+        let v = self.slot(r, coro::SENT);
+        let mode = self.raw(r, coro::MODE);
+        self.set_slot(r, coro::SENT, Value::NONE);
+        self.set_raw(r, coro::MODE, coro::SEND);
         (v, mode)
     }
 
@@ -858,9 +861,9 @@ impl Vm {
     /// Copies bound arguments to `base`; keep the original until frame
     /// admission succeeds, so an allocation failure does not consume them.
     fn load_coro_args(&mut self, c: Value, base: usize, nregs: usize) {
-        let buf = self.vslot(c, coro::ARGS);
+        let buf = self.vslot_hot(c, coro::ARGS);
         for i in 0..nregs {
-            self.stack[base + i] = self.vslot(buf, u32::try_from(i).unwrap_or(0));
+            self.stack[base + i] = self.vslot_hot(buf, u32::try_from(i).unwrap_or(0));
         }
     }
 
@@ -967,12 +970,12 @@ impl Vm {
     /// Was generator `gn` made by a function `types.coroutine` marked?
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn iterable_coroutine(&mut self, gn: Value) -> bool {
-        let f = self.vslot_hot(gn, crate::generator::g::FUNC);
-        let d = self.vslot_hot(f, fn_slot::DICT);
+        let f = self.vslot(gn, crate::generator::g::FUNC);
+        let d = self.vslot(f, fn_slot::DICT);
         if !d.is_obj_kind(ty::DICT as u8) {
             return false;
         }
-        let Ok(k) = self.intern_hot(ITERABLE_COROUTINE) else {
+        let Ok(k) = self.intern(ITERABLE_COROUTINE) else {
             return false;
         };
         matches!(self.dict_get(d, k), Ok(Some(v)) if v == Value::TRUE)
@@ -1374,8 +1377,8 @@ impl Vm {
     /// `a`'s exception was retrieved.
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn retrieved(&mut self, a: Value) {
-        if self.raw_of_hot(a, aw::STATE) == aw::FAILED {
-            self.set_raw_of_hot(a, aw::MUST_CANCEL, 0);
+        if self.raw_of(a, aw::STATE) == aw::FAILED {
+            self.set_raw_of(a, aw::MUST_CANCEL, 0);
         }
     }
 
@@ -1396,9 +1399,9 @@ impl Vm {
     /// [`Vm::finish_task`]).
     pub(crate) fn end_task(&mut self, h: Value, ok: bool, result: Value) {
         let must = self.must_cancel(h);
-        self.set_raw_of(h, aw::MUST_CANCEL, 0);
+        self.set_raw_of_hot(h, aw::MUST_CANCEL, 0);
         if ok && must {
-            let msg = self.vslot(h, aw::RESULT);
+            let msg = self.vslot_hot(h, aw::RESULT);
             self.settle_cancelled(h, msg, Value::NONE);
         } else if !ok && self.instance_of(result, self.type_obj(T::CancelledError)) {
             self.settle_cancelled(h, Value::NONE, result);
@@ -1424,15 +1427,15 @@ impl Vm {
     /// with the message.
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn cancelled_error(&mut self, a: Value) -> Result<Value, Raised> {
-        if self.raw_of_hot(a, aw::MUST_CANCEL) == aw::HELD {
-            let e = self.vslot_hot(a, aw::RESULT);
-            self.set_raw_of_hot(a, aw::MUST_CANCEL, 0);
+        if self.raw_of(a, aw::MUST_CANCEL) == aw::HELD {
+            let e = self.vslot(a, aw::RESULT);
+            self.set_raw_of(a, aw::MUST_CANCEL, 0);
             if let Some(r) = a.as_obj() {
-                self.set_slot_hot(r, aw::RESULT, Value::NONE);
+                self.set_slot(r, aw::RESULT, Value::NONE);
             }
             return Ok(e);
         }
-        let msg = self.vslot_hot(a, aw::RESULT);
+        let msg = self.vslot(a, aw::RESULT);
         self.new_cancelled(msg)
     }
 
@@ -1463,7 +1466,7 @@ impl Vm {
                 &[Value::NONE, c, Value::NONE],
                 &[aw::PENDING, 0, i as u64, word, 0],
             );
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         let h = Value::from_ref(r, ty::TASK as u8);
         if Vm::is_str(name) {
@@ -1490,8 +1493,8 @@ impl Vm {
         // A task's `AUX` is its index, for `cancel()`.
         let h = self.new_task_handle(c, i, name)?;
         if c.is_obj_kind(ty::CORO as u8) {
-            let s = self.raw_of(c, coro::STATE);
-            self.set_raw_of(c, coro::STATE, s | coro::SCHEDULED);
+            let s = self.raw_of_hot(c, coro::STATE);
+            self.set_raw_of_hot(c, coro::STATE, s | coro::SCHEDULED);
         }
         // A task runs in a copy of its creator's context.
         let context = self.context_copy()?;
@@ -1554,12 +1557,12 @@ impl Vm {
         if let Some(st) = saved {
             return Ok(Some(st));
         }
-        let c = self.vslot(handle, aw::EXTRA);
+        let c = self.vslot_hot(handle, aw::EXTRA);
         if c.is_obj_kind(ty::SLEEP as u8) {
             // A sleep's task steps as the `asyncio.sleep()` coroutine does:
             // the first arms it and yields (to the loop for a delay of 0),
             // the next one ends the task.
-            let s = self.raw_of(c, aw::STATE);
+            let s = self.raw_of_hot(c, aw::STATE);
             if s == aw::PENDING {
                 self.arm_sleep(c);
                 if let Some(Some(t)) = self.tasks.get_mut(i) {
@@ -1573,23 +1576,23 @@ impl Vm {
                 return Ok(None);
             }
             if s == aw::ARMED && self.sleep_due(c) {
-                self.set_raw_of(c, aw::STATE, aw::SPENT);
-                let r = self.vslot(c, aw::RESULT);
+                self.set_raw_of_hot(c, aw::STATE, aw::SPENT);
+                let r = self.vslot_hot(c, aw::RESULT);
                 self.finish_task(true, r);
                 return Ok(None);
             }
             if s == aw::CANCELLED {
                 let e = self.cancelled_error(c)?;
-                self.set_raw_of(c, aw::STATE, aw::SPENT);
+                self.set_raw_of_hot(c, aw::STATE, aw::SPENT);
                 self.finish_task(false, e);
                 return Ok(None);
             }
             return Err(self.err(T::RuntimeError, REUSED));
         }
-        if self.raw_of(c, coro::STATE) & 3 != coro::CREATED {
+        if self.raw_of_hot(c, coro::STATE) & 3 != coro::CREATED {
             return Err(self.err(T::RuntimeError, REUSED));
         }
-        let func = self.vslot(c, coro::FUNC);
+        let func = self.vslot_hot(c, coro::FUNC);
         let cidx = u32::try_from(self.vslot_raw_of(func, fn_slot::CODE)).unwrap_or(0);
         let Some(code) = self.codes.get(cidx as usize).cloned() else {
             return Err(self.err(T::SystemError, "bad code index"));
@@ -1598,14 +1601,14 @@ impl Vm {
         self.ensure_stack(nregs + 64)?;
         self.load_coro_args(c, 0, nregs);
         if !code.code.freevars.is_empty() {
-            let closure = self.vslot(func, fn_slot::CLOSURE);
+            let closure = self.vslot_hot(func, fn_slot::CLOSURE);
             for (k, &r) in code.code.freevars.iter().enumerate() {
-                self.stack[r as usize] = self.vslot(closure, u32::try_from(k).unwrap_or(0));
+                self.stack[r as usize] = self.vslot_hot(closure, u32::try_from(k).unwrap_or(0));
             }
         }
-        self.set_raw_of(c, coro::STATE, coro::RUNNING);
+        self.set_raw_of_hot(c, coro::STATE, coro::RUNNING);
         if let Some(r) = c.as_obj() {
-            self.set_slot(r, coro::ARGS, Value::NONE);
+            self.set_slot_hot(r, coro::ARGS, Value::NONE);
         }
         Ok(Some(State {
             pc: 0,
@@ -1619,29 +1622,29 @@ impl Vm {
 
     /// A gather's done callback: settles it if its children allow.
     fn check_gather(&mut self, g: Value) {
-        if self.raw_of(g, aw::STATE) != aw::PENDING {
+        if self.raw_of_hot(g, aw::STATE) != aw::PENDING {
             return;
         }
-        if self.raw_of(g, aw::AUX) == FIRST {
+        if self.raw_of_hot(g, aw::AUX) == FIRST {
             if let Some(c) = self.first_done(g) {
                 self.untrack_gather(g);
                 self.settle(g, true, c);
             }
             return;
         }
-        let keep_errors = self.raw_of(g, aw::AUX) != 0;
-        let flags = self.raw_of(g, aw::FAILS);
+        let keep_errors = self.raw_of_hot(g, aw::AUX) != 0;
+        let flags = self.raw_of_hot(g, aw::FAILS);
         let fails = !keep_errors && flags & aw::FAILED_CHILD != 0;
-        if !fails && self.raw_of(g, aw::LEFT) != 0 {
+        if !fails && self.raw_of_hot(g, aw::LEFT) != 0 {
             return;
         }
         // The gather settles now: one pass over its children.
-        let children = self.tuple_items(self.vslot(g, aw::EXTRA));
+        let children = self.tuple_items(self.vslot_hot(g, aw::EXTRA));
         if fails {
             let mut first: Option<(u64, Value)> = None;
             for &c in &children {
-                if matches!(self.raw_of(c, aw::STATE), aw::FAILED | aw::CANCELLED) {
-                    let s = self.raw_of(c, aw::SEQ);
+                if matches!(self.raw_of_hot(c, aw::STATE), aw::FAILED | aw::CANCELLED) {
+                    let s = self.raw_of_hot(c, aw::SEQ);
                     if first.is_none_or(|(f, _)| s < f) {
                         first = Some((s, c));
                     }
@@ -1659,7 +1662,7 @@ impl Vm {
             // `gather(..., return_exceptions=True)` cancelled still raises:
             // CPython's `_make_cancelled_error()` of the last child.
             let last = children.last().copied().unwrap_or(Value::NONE);
-            let e = if self.raw_of(last, aw::STATE) == aw::CANCELLED {
+            let e = if self.raw_of_hot(last, aw::STATE) == aw::CANCELLED {
                 self.child_error(last)
             } else {
                 self.new_cancelled(Value::NONE).unwrap_or(self.exc)
@@ -1669,7 +1672,7 @@ impl Vm {
         }
         let mut results: Vec<Value> = Vec::with_capacity(children.len());
         for &c in &children {
-            let v = if self.raw_of(c, aw::STATE) == aw::CANCELLED {
+            let v = if self.raw_of_hot(c, aw::STATE) == aw::CANCELLED {
                 // CPython reports `CancelledError('')` without a message.
                 let msg = match self.cancel_msg(c) {
                     Value::NONE => self.new_str(""),
@@ -1682,7 +1685,7 @@ impl Vm {
                 };
                 e
             } else {
-                self.vslot(c, aw::RESULT)
+                self.vslot_hot(c, aw::RESULT)
             };
             results.push(v);
         }
@@ -2069,8 +2072,8 @@ impl Vm {
                 self.burn(i as u64);
                 for &c in &items[..i] {
                     if c.is_obj_kind(ty::CORO as u8) {
-                        let s = self.raw_of(c, coro::STATE);
-                        self.set_raw_of(c, coro::STATE, s | coro::SCHEDULED);
+                        let s = self.raw_of_hot(c, coro::STATE);
+                        self.set_raw_of_hot(c, coro::STATE, s | coro::SCHEDULED);
                     }
                 }
                 return Err(self.err(
@@ -2082,7 +2085,7 @@ impl Vm {
         for &a in items {
             if a.is_obj_kind(ty::FUTURE as u8) {
                 // Gathered: not reported as never awaited.
-                self.set_raw_of(a, aw::AWAITED, 1);
+                self.set_raw_of_hot(a, aw::AWAITED, 1);
             }
         }
         // `first[i]`: the first position holding the same object as `i`.
@@ -2111,7 +2114,7 @@ impl Vm {
             distinct.push(c);
             children.push(c);
         }
-        let t = self.alloc_tuple(&children)?;
+        let t = self.alloc_tuple_hot(&children)?;
         let g = self.new_awaitable(
             ty::GATHER,
             Value::NONE,
@@ -2122,15 +2125,15 @@ impl Vm {
         let mut left = 0;
         let mut fails = 0;
         for &c in &distinct {
-            match self.raw_of(c, aw::STATE) {
+            match self.raw_of_hot(c, aw::STATE) {
                 aw::PENDING => left += 1,
                 aw::FAILED => fails = 1,
                 _ => {}
             }
             self.add_waiter(c, g)?;
         }
-        self.set_raw_of(g, aw::LEFT, left);
-        self.set_raw_of(g, aw::FAILS, fails);
+        self.set_raw_of_hot(g, aw::LEFT, left);
+        self.set_raw_of_hot(g, aw::FAILS, fails);
         if children.is_empty() {
             let l = self.new_list(&[])?;
             self.settle(g, true, l);
@@ -2145,7 +2148,7 @@ impl Vm {
             self.callback_queue += usize::try_from(left).unwrap_or(usize::MAX);
             // Done callbacks added to settled children run soon.
             for &c in &children {
-                if self.raw_of(c, aw::STATE) != aw::PENDING {
+                if self.raw_of_hot(c, aw::STATE) != aw::PENDING {
                     self.ready.push_back(Ready::Gather(g));
                     self.callback_queue += 1;
                 }
@@ -2558,8 +2561,8 @@ impl Vm {
     #[cfg(feature = "asyncio")]
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn mark_run_root(&mut self, c: Value) -> Result<(), Raised> {
-        let s = self.raw_of(c, coro::STATE);
-        self.set_raw_of(c, coro::STATE, s | coro::RUN_ROOT);
+        let s = self.raw_of_hot(c, coro::STATE);
+        self.set_raw_of_hot(c, coro::STATE, s | coro::RUN_ROOT);
         self.iter_left = 0;
         self.iter_open = true;
         self.stop_wait = 0;
@@ -2780,7 +2783,7 @@ impl Vm {
             if depth > limit {
                 return Err(self.err(T::RecursionError, "maximum recursion depth exceeded"));
             }
-            if self.raw_of_hot(v, aw::STATE) != aw::PENDING {
+            if self.raw_of(v, aw::STATE) != aw::PENDING {
                 continue;
             }
             match v.obj_kind().map(u16::from) {
@@ -2805,9 +2808,9 @@ impl Vm {
                         nodes[k].3 = true;
                     }
                 }
-                Some(ty::GATHER) if self.raw_of_hot(v, aw::AUX) == FIRST => {}
+                Some(ty::GATHER) if self.raw_of(v, aw::AUX) == FIRST => {}
                 Some(ty::GATHER) => {
-                    let children = self.vslot_hot(v, aw::EXTRA);
+                    let children = self.vslot(v, aw::EXTRA);
                     let n = self.tuple_len(children);
                     if !grow(&mut nodes, &mut work, &mut order, n) {
                         return Err(self.err(T::MemoryError, "cancel allocation failed"));
@@ -2815,12 +2818,12 @@ impl Vm {
                     // Pushed last first, so they act in order.
                     let base = nodes.len();
                     for i in 0..n {
-                        let c = self.vslot_hot(children, u32::try_from(i).unwrap_or(0));
+                        let c = self.vslot(children, u32::try_from(i).unwrap_or(0));
                         nodes.push((c, k, depth + 1, false));
                     }
                     work.extend((base..nodes.len()).rev());
                 }
-                Some(ty::FUTURE) if self.raw_of_hot(v, aw::AUX) != STOP_FUTURE => {
+                Some(ty::FUTURE) if self.raw_of(v, aw::AUX) != STOP_FUTURE => {
                     // A future reached twice counts twice: room to spare.
                     if self.pays_at_settle(v) || !self.live(v) {
                         callbacks = callbacks.saturating_add(self.done_callbacks(v));
@@ -2834,12 +2837,12 @@ impl Vm {
         }
         for &k in &order {
             let (v, _, _, passes_on) = nodes[k];
-            let pending = self.raw_of_hot(v, aw::STATE) == aw::PENDING;
+            let pending = self.raw_of(v, aw::STATE) == aw::PENDING;
             let took = match v.obj_kind().map(u16::from) {
                 Some(ty::TASK) if pending => {
-                    let n = self.raw_of_hot(v, aw::CANCELS);
+                    let n = self.raw_of(v, aw::CANCELS);
                     if n & aw::COUNT != aw::COUNT {
-                        self.set_raw_of_hot(v, aw::CANCELS, n + 1);
+                        self.set_raw_of(v, aw::CANCELS, n + 1);
                     }
                     // A task whose waiter is not in the tree raises at its
                     // next step.
@@ -2848,14 +2851,14 @@ impl Vm {
                     }
                     true
                 }
-                Some(ty::GATHER) if pending && self.raw_of_hot(v, aw::AUX) == FIRST => {
+                Some(ty::GATHER) if pending && self.raw_of(v, aw::AUX) == FIRST => {
                     // `as_completed`'s and `wait_for`'s waiter future.
                     self.untrack_gather(v);
                     self.settle_cancelled(v, msg, Value::NONE);
                     true
                 }
-                Some(ty::FUTURE) if pending && self.raw_of_hot(v, aw::AUX) != STOP_FUTURE => {
-                    let id = self.raw_of_hot(v, aw::AUX);
+                Some(ty::FUTURE) if pending && self.raw_of(v, aw::AUX) != STOP_FUTURE => {
+                    let id = self.raw_of(v, aw::AUX);
                     self.settle_cancelled(v, msg, Value::NONE);
                     if id < STOP_FUTURE {
                         // The host call it stands for is abandoned.
@@ -2863,9 +2866,7 @@ impl Vm {
                     }
                     true
                 }
-                Some(ty::SLEEP)
-                    if self.raw_of_hot(v, aw::STATE) == aw::ARMED && !self.sleep_due(v) =>
-                {
+                Some(ty::SLEEP) if self.raw_of(v, aw::STATE) == aw::ARMED && !self.sleep_due(v) => {
                     self.settle_cancelled(v, msg, Value::NONE);
                     true
                 }
@@ -2886,9 +2887,9 @@ impl Vm {
             }
         }
         for &(v, _, _, took) in &nodes {
-            if took && v.is_obj_kind(ty::GATHER as u8) && self.raw_of_hot(v, aw::AUX) != FIRST {
-                let f = self.raw_of_hot(v, aw::FAILS);
-                self.set_raw_of_hot(v, aw::FAILS, f | aw::CANCEL_REQUESTED);
+            if took && v.is_obj_kind(ty::GATHER as u8) && self.raw_of(v, aw::AUX) != FIRST {
+                let f = self.raw_of(v, aw::FAILS);
+                self.set_raw_of(v, aw::FAILS, f | aw::CANCEL_REQUESTED);
             }
         }
         Ok(nodes[0].3)
@@ -3285,7 +3286,7 @@ impl Vm {
         if !h.is_obj_kind(ty::TASK as u8) {
             return None;
         }
-        let i = usize::try_from(self.raw_of(h, aw::AUX)).ok()?;
+        let i = usize::try_from(self.raw_of_hot(h, aw::AUX)).ok()?;
         matches!(self.tasks.get(i), Some(Some(t)) if t.handle == h).then_some(i)
     }
 

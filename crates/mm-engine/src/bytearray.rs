@@ -77,14 +77,14 @@ impl Vm {
 
     /// The capacity block of bytearray `v`.
     fn ba_block(&self, v: Value) -> Option<ByteRef> {
-        self.vslot(v, 0).as_byte_ref()
+        self.vslot_hot(v, 0).as_byte_ref()
     }
 
     /// The live bytes of bytearray `v`. A length past the block (only in a
     /// corrupt snapshot) reads as the whole block.
     pub(crate) fn bytearray_data(&self, v: Value) -> &[u8] {
         let Some(r) = v.as_obj() else { return &[] };
-        let n = usize::try_from(self.raw(r, 1)).unwrap_or(usize::MAX);
+        let n = usize::try_from(self.raw_hot(r, 1)).unwrap_or(usize::MAX);
         let data = self
             .slot_hot(r, 0)
             .as_byte_ref()
@@ -116,9 +116,9 @@ impl Vm {
             }
             if at < old {
                 let res = self.heap.copy_bytes(b, at, b, at + gap, old - at);
-                self.hx(res)?;
+                self.hx_hot(res)?;
             }
-            self.set_raw(r, 1, n as u64);
+            self.set_raw_hot(r, 1, n as u64);
             return Ok(());
         }
         let alloc = if shrink { n } else { grown_block(cap, n) };
@@ -129,19 +129,19 @@ impl Vm {
             Ok(nb) => nb,
             // A failed shrink keeps the larger block.
             Err(_) if shrink => {
-                self.set_raw(r, 1, n as u64);
+                self.set_raw_hot(r, 1, n as u64);
                 return Ok(());
             }
-            Err(e) => return self.hx(Err(e)),
+            Err(e) => return self.hx_hot(Err(e)),
         };
         let res = self.heap.copy_bytes(b, 0, nb, 0, at.min(n));
-        self.hx(res)?;
+        self.hx_hot(res)?;
         if at < old.min(n) {
             let res = self.heap.copy_bytes(b, at, nb, at + gap, old - at);
-            self.hx(res)?;
+            self.hx_hot(res)?;
         }
-        self.set_slot(r, 0, Value::from_byte_ref(nb));
-        self.set_raw(r, 1, n as u64);
+        self.set_slot_hot(r, 0, Value::from_byte_ref(nb));
+        self.set_raw_hot(r, 1, n as u64);
         Ok(())
     }
 
@@ -247,17 +247,17 @@ impl Vm {
         } else if n < gone {
             if let Some(b) = self.ba_block(v) {
                 let res = self.heap.copy_bytes(b, hi, b, lo + n, old - hi);
-                self.hx(res)?;
+                self.hx_hot(res)?;
             }
             self.ba_resize(v, old - (gone - n), usize::MAX)?;
         }
         if let (Some(s), Some(b)) = (
-            src.and_then(|s| self.vslot(s, 0).as_byte_ref()),
+            src.and_then(|s| self.vslot_hot(s, 0).as_byte_ref()),
             self.ba_block(v),
         ) && n > 0
         {
             let res = self.heap.copy_bytes(s, 0, b, lo, n);
-            self.hx(res)?;
+            self.hx_hot(res)?;
         }
         Ok(())
     }

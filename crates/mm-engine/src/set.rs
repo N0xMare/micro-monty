@@ -230,7 +230,7 @@ impl Vm {
         let (k, h) = self.set_table(8)?;
         let r = {
             let res = self.heap.alloc_init(ty::SET, 0, &[k, h], &[0, 0, 0, 0]);
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::SET as u8))
     }
@@ -255,7 +255,7 @@ impl Vm {
         }
         let n = u32::try_from(size).map_err(|_| self.err(T::MemoryError, ""))?;
         let res = self.heap.alloc(ty::RAW, 0, 0, n);
-        Ok(Value::from_ref(self.hx(res)?, ty::RAW as u8))
+        Ok(Value::from_ref(self.hx_hot(res)?, ty::RAW as u8))
     }
 
     pub(crate) fn set_parts(&self, s: Value) -> Option<(Ref, Ref, Ref, usize)> {
@@ -267,13 +267,13 @@ impl Vm {
         let r = s.as_obj()?;
         let k = self.slot(r, 0).as_obj()?;
         let h = self.slot(r, 1).as_obj()?;
-        Some((r, k, h, self.obj_len_hot(k) as usize))
+        Some((r, k, h, self.obj_len(k) as usize))
     }
 
     /// Number of elements.
     pub(crate) fn set_len(&self, s: Value) -> usize {
         s.as_obj()
-            .map_or(0, |r| usize::try_from(self.raw(r, USED)).unwrap_or(0))
+            .map_or(0, |r| usize::try_from(self.raw_hot(r, USED)).unwrap_or(0))
     }
 
     /// [`Vm::set_items`] for a caller that works on every element, charged
@@ -486,7 +486,7 @@ impl Vm {
     fn set_key_hash(&mut self, key: Value) -> Result<u64, Raised> {
         // A subclass instance without its own `__hash__` is as unhashable
         // as the set it extends.
-        let b = self.unbx_hot(key);
+        let b = self.unbx(key);
         if b.is_obj_kind(ty::SET as u8)
             && !self.set_frozen(b)
             && (b == key || self.uflags(key) & crate::class::f::HASH == 0)
@@ -1661,8 +1661,8 @@ impl Vm {
             if one_shot && (matches!(r, Ok(Item::Wait | Item::Yield)) || r.is_err() && self.slow) {
                 for &(o, i, w) in pos.iter().flatten() {
                     match (i, Value::from_bits(w)) {
-                        (u32::MAX, Some(v)) => self.set_slot(o, 1, v),
-                        _ => self.set_raw(o, i, w),
+                        (u32::MAX, Some(v)) => self.set_slot_hot(o, 1, v),
+                        _ => self.set_raw_hot(o, i, w),
                     }
                 }
             }
@@ -2092,7 +2092,7 @@ impl Vm {
         let Some(k) = k.as_obj() else { return 1 };
         let to = j
             .saturating_add(left.max(1).saturating_mul(8))
-            .min(u64::from(self.obj_len_hot(k)));
+            .min(u64::from(self.obj_len(k)));
         let _ = self.heap.clear_values(k, *j as u32, to as u32);
         let done = (to - *j).div_ceil(8);
         *j = to;
@@ -2181,7 +2181,7 @@ impl Vm {
             while at < used {
                 if let Some((k, v)) = self.dict_entry(src, at) {
                     if items {
-                        let t = self.alloc_tuple_hot(&[k, v])?;
+                        let t = self.alloc_tuple(&[k, v])?;
                         return Ok(Some((at, t, v, None)));
                     }
                     return Ok(Some((at, k, v, self.dict_hash_at(src, at))));
@@ -2346,8 +2346,8 @@ impl Vm {
                     // rehash ([`Vm::set_rehash`]).
                     self.burn(probes.saturating_sub(u64::from(FREE_RUNS)));
                     for i in [FILL, USED] {
-                        let n = self.raw(r, i) + 1;
-                        self.set_raw(r, i, n);
+                        let n = self.raw_hot(r, i) + 1;
+                        self.set_raw_hot(r, i, n);
                     }
                 }
             }

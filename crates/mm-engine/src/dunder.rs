@@ -90,7 +90,7 @@ impl Vm {
         args: &[Value],
         cont: Cont,
     ) -> Result<Option<Value>, Raised> {
-        if self.user_class(v).is_none() && self.meta_of_hot(v).is_none() {
+        if self.user_class(v).is_none() && self.meta_of(v).is_none() {
             return Ok(None);
         }
         self.dunder_request(v, name, args, cont)
@@ -224,7 +224,7 @@ impl Vm {
             .get((opb & 0x7f) as usize)
             .copied()
             .unwrap_or(BinOp::Add);
-        let (ua, ub) = (self.unbx_hot(a), self.unbx_hot(b));
+        let (ua, ub) = (self.unbx(a), self.unbx(b));
         if ua != a || ub != b {
             // An in-place dunder that declined (`NotImplemented`): as in
             // CPython's `binary_iop1`, the plain operator runs, which
@@ -472,7 +472,7 @@ impl Vm {
                 },
             );
         }
-        let (ua, ub) = (self.unbx_hot(a), self.unbx_hot(b));
+        let (ua, ub) = (self.unbx(a), self.unbx(b));
         if ua != a || ub != b {
             // Builtin-type subclasses compare as the values they extend
             // (errors name the subclasses).

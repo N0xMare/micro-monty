@@ -1580,7 +1580,7 @@ impl Vm {
             return None;
         }
         let base = self.class_base_t(c);
-        if self.raw(cr, cls::FLAGS) & f::NEW != 0
+        if self.raw_hot(cr, cls::FLAGS) & f::NEW != 0
             || base == T::type_
             || base.is_exception()
             || Vm::is_bx_type(base)
@@ -1602,7 +1602,7 @@ impl Vm {
             return None;
         }
         Some(Ic::New {
-            version: self.raw(cr, cls::VERSION),
+            version: self.raw_hot(cr, cls::VERSION),
             init,
             code,
         })
@@ -1963,8 +1963,8 @@ impl Vm {
         let r = st.base + ((w >> 8) & 0xff) as usize;
         let n = (w >> 16) as usize;
         let parts = self.stack[r..r + n].to_vec();
-        let res = self.alloc_tuple_hot(&parts).and_then(|t| {
-            let sep = self.intern_hot("")?;
+        let res = self.alloc_tuple(&parts).and_then(|t| {
+            let sep = self.intern("")?;
             crate::strmeth::join_big(self, sep, t)
         });
         let landed = match res {
@@ -2462,7 +2462,7 @@ impl Vm {
             if self.stack[base + i] == Value::UNDEFINED {
                 if i >= first_default {
                     let k = skip + i - first_default;
-                    self.stack[base + i] = self.vslot(defaults, k as u32);
+                    self.stack[base + i] = self.vslot_hot(defaults, k as u32);
                 } else {
                     missing.push(names[i].clone());
                 }
@@ -2701,7 +2701,7 @@ impl Vm {
                 .copied()
                 .unwrap_or(Value::UNDEFINED);
             let bound = if v.is_obj_kind(ty::CELL as u8) {
-                self.vslot(v, 0) != Value::UNDEFINED
+                self.vslot_hot(v, 0) != Value::UNDEFINED
             } else {
                 v != Value::UNDEFINED
             };
@@ -2783,7 +2783,7 @@ impl Vm {
             };
             let mut hit = false;
             for t in items {
-                let ok = user(self, t) || self.type_of_typeobj(t).is_some_and(T::is_exception);
+                let ok = user(self, t) || self.type_of_typeobj_hot(t).is_some_and(T::is_exception);
                 if !ok {
                     return Err(self.err(
                         T::TypeError,
@@ -2795,7 +2795,7 @@ impl Vm {
             return Ok(hit);
         }
         let et = self.exc_type(exc);
-        if let Some(t) = self.type_of_typeobj(typ) {
+        if let Some(t) = self.type_of_typeobj_hot(typ) {
             if !t.is_exception() {
                 return Err(self.err(
                     T::TypeError,
@@ -2809,7 +2809,7 @@ impl Vm {
             // descended into (CPython's `check_except_type_valid`).
             let mut hit = false;
             for t in self.tuple_items(typ) {
-                match self.type_of_typeobj(t) {
+                match self.type_of_typeobj_hot(t) {
                     Some(t) if t.is_exception() => hit |= et.is_subclass(t),
                     _ => {
                         return Err(self.err(
@@ -2918,14 +2918,14 @@ impl Vm {
     /// module is `builtins`.
     fn callee_name(&self, f: Value) -> String {
         if f.is_obj_kind(ty::FUNC as u8) {
-            let g = self.vslot_hot(f, fn_slot::GLOBALS);
+            let g = self.vslot(f, fn_slot::GLOBALS);
             let m = self
                 .find_interned("__name__")
                 .filter(|_| g.is_obj_kind(ty::DICT as u8))
                 .and_then(|k| self.dict_get_str(g, k))
-                .filter(|m| Vm::is_str(*m) && self.str_ref_hot(*m) != "builtins");
+                .filter(|m| Vm::is_str(*m) && self.str_ref(*m) != "builtins");
             return match m {
-                Some(m) => format!("{}.{}()", self.str_ref_hot(m), self.func_qualname(f)),
+                Some(m) => format!("{}.{}()", self.str_ref(m), self.func_qualname(f)),
                 None => format!("{}()", self.func_qualname(f)),
             };
         }
@@ -2935,7 +2935,7 @@ impl Vm {
                 None => format!("{}()", n.name()),
             };
         }
-        if let Some(t) = self.type_of_typeobj_hot(f) {
+        if let Some(t) = self.type_of_typeobj(f) {
             return format!("{}()", t.name());
         }
         String::from("function")
@@ -5286,7 +5286,7 @@ impl Vm {
         let kwnames = if names.is_empty() {
             Value::NONE
         } else {
-            self.alloc_tuple_hot(&names)
+            self.alloc_tuple(&names)
                 .map_err(|_| self.oom_retry_expansion(st, call_pc))?
         };
         // Arguments go above this frame; the callee's frame starts after
@@ -5335,7 +5335,7 @@ impl Vm {
         self.ensure_stack(free + npos + nkw + 64)?;
         let native = if let Some(i) = callee.as_native() {
             Some((i, false))
-        } else if let Some(t) = self.type_of_typeobj_hot(callee)
+        } else if let Some(t) = self.type_of_typeobj(callee)
             && !t.is_exception()
         {
             self.ctor_of(t).map(|c| (c, false))
@@ -5356,7 +5356,7 @@ impl Vm {
                 Ok(Some(v))
             }
             Some((idx, true)) => {
-                let recv = self.vslot_hot(callee, 0);
+                let recv = self.vslot(callee, 0);
                 let total = npos + nkw;
                 for i in (0..total).rev() {
                     self.stack[free + 1 + i] = self.stack[args + i];

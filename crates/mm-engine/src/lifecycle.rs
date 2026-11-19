@@ -144,7 +144,7 @@ impl Vm {
                 .saturating_add(self.execution_bytes())
                 .saturating_add(additional),
         );
-        self.hx(res)
+        self.hx_hot(res)
     }
 
     /// Reserve before loading; reconcile unused clone/table capacity afterward.
@@ -163,7 +163,7 @@ impl Vm {
         let res = self
             .heap
             .set_external_bytes(bytes.saturating_add(self.execution_bytes()));
-        self.hx(res)?;
+        self.hx_hot(res)?;
         self.code_charge = bytes;
         Ok(())
     }

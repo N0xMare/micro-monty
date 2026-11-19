@@ -605,7 +605,7 @@ impl Vm {
     #[inline(never)]
     pub(crate) fn dict_used(&self, d: Value) -> usize {
         d.as_obj()
-            .and_then(|r| self.dv_hot(r))
+            .and_then(|r| self.dv(r))
             .map_or(0, |v| v.used as usize)
     }
 
@@ -663,7 +663,7 @@ impl Vm {
 
     /// Live `(key, value)` pairs in order.
     pub(crate) fn dict_items_vec(&self, d: Value) -> Vec<(Value, Value)> {
-        let Some(dv) = d.as_obj().and_then(|r| self.dv_hot(r)) else {
+        let Some(dv) = d.as_obj().and_then(|r| self.dv(r)) else {
             return Vec::new();
         };
         let kvs = self.values_of(dv.entries, 2 * dv.used as usize);
@@ -737,7 +737,7 @@ impl Vm {
             let r = v.as_obj();
             if r.is_some_and(|r| !self.heap.str_hashed(r)) {
                 // A first hash reads the whole text: byte work.
-                self.burn_bytes(self.str_bytes_hot(v).len());
+                self.burn_bytes(self.str_bytes(v).len());
             }
             let h = r
                 .and_then(|r| self.heap.str_hash_mut(r).ok())
@@ -801,11 +801,7 @@ impl Vm {
                 };
                 [n, start, step]
             } else {
-                [
-                    self.vslot_hot(v, 0),
-                    self.vslot_hot(v, 1),
-                    self.vslot_hot(v, 2),
-                ]
+                [self.vslot(v, 0), self.vslot(v, 1), self.vslot(v, 2)]
             };
             let mut acc = XX_SEED;
             for p in parts {
@@ -838,7 +834,7 @@ impl Vm {
                     // Big ints spent the budget.
                     return Err(self.need_py());
                 }
-                let x = self.vslot_hot(v, u32::try_from(i).unwrap_or(0));
+                let x = self.vslot(v, u32::try_from(i).unwrap_or(0));
                 acc = xx_lane(acc, self.hash_depth(x, depth + 1, left)?);
             }
             return Ok(xx_finish(acc, Some(n as u64)));
@@ -853,7 +849,7 @@ impl Vm {
             }
             return Err(self.need_py());
         }
-        if let Some(b) = self.backing_hot(v) {
+        if let Some(b) = self.backing(v) {
             return self.hash_depth(b, depth + 1, left);
         }
         if matches!(
@@ -881,8 +877,8 @@ impl Vm {
             if depth > MAX_DEPTH {
                 return Err(deep(self));
             }
-            let f = self.hash_depth(self.vslot_hot(v, 1), depth + 1, left)?;
-            let h = id_hash(self.vslot_hot(v, 0)) ^ f;
+            let f = self.hash_depth(self.vslot(v, 1), depth + 1, left)?;
+            let h = id_hash(self.vslot(v, 0)) ^ f;
             return Ok(if h == -1 { -2 } else { h });
         }
         Ok(id_hash(v))
@@ -2060,7 +2056,7 @@ impl Vm {
         h: u64,
         at: &mut Option<(u64, u64)>,
     ) -> Result<Option<bool>, Raised> {
-        let Some(dv) = d.as_obj().and_then(|r| self.dv_hot(r)) else {
+        let Some(dv) = d.as_obj().and_then(|r| self.dv(r)) else {
             return Ok(Some(false));
         };
         #[allow(clippy::cast_possible_truncation, reason = "the low half")]

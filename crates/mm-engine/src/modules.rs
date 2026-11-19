@@ -194,8 +194,8 @@ impl Vm {
 
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn module_set(&mut self, m: Value, name: &str, v: Value) -> Result<(), Raised> {
-        let k = self.intern_hot(name)?;
-        let d = self.vslot_hot(m, module_slot::DICT);
+        let k = self.intern(name)?;
+        let d = self.vslot(m, module_slot::DICT);
         self.dict_set(d, k, v)
     }
 
@@ -274,7 +274,7 @@ impl Vm {
     /// `module.name = v`.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn module_setattr(&mut self, m: Value, name: Value, v: Value) -> Result<(), Raised> {
-        let d = self.vslot(m, module_slot::DICT);
+        let d = self.vslot_hot(m, module_slot::DICT);
         self.dict_set(d, name, v)
     }
 
@@ -290,7 +290,7 @@ impl Vm {
         top: bool,
         from_: bool,
     ) -> Result<Option<Value>, Raised> {
-        let k = self.intern_hot(dotted)?;
+        let k = self.intern(dotted)?;
         if let Some(m) = self.dict_get(self.modules, k)? {
             return Ok(Some(m));
         }
@@ -317,7 +317,7 @@ impl Vm {
             };
             let m = self.new_module(dotted)?;
             for attr in names {
-                let a = self.intern_hot(attr)?;
+                let a = self.intern(attr)?;
                 let v = match self.module_attr(parent, a)? {
                     Some(v) => Some(v),
                     None => self.prelude_get(a)?,
@@ -516,7 +516,7 @@ impl Vm {
         top: bool,
         user: bool,
     ) -> Result<Value, Raised> {
-        if user && self.str_ref_hot(dotted).split('.').next() == Some("_mm") {
+        if user && self.str_ref(dotted).split('.').next() == Some("_mm") {
             let e = self.err(T::ModuleNotFoundError, "No module named '_mm'");
             self.set_import_names("_mm", Value::UNDEFINED);
             return Err(e);
@@ -527,7 +527,7 @@ impl Vm {
     /// `import dotted`: the leaf module, or the top-level one if `top`.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn import(&mut self, dotted: Value, top: bool) -> Result<Value, Raised> {
-        let name = String::from(self.str_ref_hot(dotted));
+        let name = String::from(self.str_ref(dotted));
         if name.starts_with('.') {
             return Err(self.err(
                 T::ImportError,
@@ -764,12 +764,12 @@ impl Vm {
     /// (`contextlib.redirect_stdout`).
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn replaced_stream(&mut self, name: &str) -> Result<Option<Value>, Raised> {
-        let k = self.intern("sys")?;
+        let k = self.intern_hot("sys")?;
         let Some(sys) = self.dict_get_str(self.modules, k) else {
             return Ok(None);
         };
-        let k = self.intern(name)?;
-        let d = self.vslot(sys, module_slot::DICT);
+        let k = self.intern_hot(name)?;
+        let d = self.vslot_hot(sys, module_slot::DICT);
         Ok(self
             .dict_get_str(d, k)
             .filter(|v| !v.is_obj_kind(ty::STREAM as u8)))

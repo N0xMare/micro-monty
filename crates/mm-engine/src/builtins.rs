@@ -2338,7 +2338,7 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn ssize_arg(&mut self, v: Value) -> Result<i64, Raised> {
         let v = if self.uflags(v) & crate::class::f::INDEX == 0 {
-            self.unbx_hot(v)
+            self.unbx(v)
         } else {
             v
         };
@@ -2355,9 +2355,9 @@ impl Vm {
         match self.int_of_o(v) {
             Some(i) => Ok(i),
             None if self.uflags(v) & crate::class::f::INDEX == 0
-                && self.backing_hot(v).is_some_and(Vm::is_intlike) =>
+                && self.backing(v).is_some_and(Vm::is_intlike) =>
             {
-                let b = self.unbx_hot(v);
+                let b = self.unbx(v);
                 self.int_arg(b, "")
             }
             None if Vm::is_heap_int(v) => Err(self.err(
@@ -2616,7 +2616,7 @@ impl Vm {
             *p = self.unconsume(*p)?;
         }
         self.consumed.clear();
-        let t = self.alloc_tuple_hot(&pos)?;
+        let t = self.alloc_tuple(&pos)?;
         let mut args = alloc::vec![t];
         for j in 0..u32::try_from(n.kwonly().len()).unwrap_or(0) {
             let v = self.kwarg(&a, j);
@@ -2626,7 +2626,7 @@ impl Vm {
                 v
             });
         }
-        let k = self.intern_hot(&name)?;
+        let k = self.intern(&name)?;
         // A native of a bundled Python module continues in that module's
         // `_<name>_py`, a method of a module's type in its `_<Type>_<name>`.
         let module_twin = match (n.owner, n.module()) {
@@ -4296,7 +4296,7 @@ pub(crate) fn sort_values(
     let mut left = if capped { SORT_CAP } else { u32::MAX };
     {
         let res = NativeValues::copy(&mut vm.heap, items);
-        let mut buf = vm.hx(res)?;
+        let mut buf = vm.hx_hot(res)?;
         let vmr: &Vm = vm;
         let kind = sort_kind(&items.iter().copied());
         let mut lt = |x: &Value, y: &Value| -> bool {
@@ -4351,7 +4351,7 @@ impl Vm {
         keys: Value,
         reverse: bool,
     ) -> Result<Sorted, Raised> {
-        let n = self.list_len(xs);
+        let n = self.list_len_hot(xs);
         let kind = sort_kind(
             &self
                 .seq_words(keys)
@@ -4485,7 +4485,7 @@ impl Vm {
                     ];
                     if let Some(buf) = self.list_buf(st) {
                         let res = self.heap.set_values(buf, 2, &state);
-                        self.hx(res)?;
+                        self.hx_hot(res)?;
                     }
                     return Ok(Sorted::More(st));
                 }
@@ -4535,7 +4535,7 @@ impl Vm {
                 }
                 if let Some(buf) = self.list_buf(a) {
                     let res = self.heap.set_values(buf, i as u32, &items);
-                    self.hx(res)?;
+                    self.hx_hot(res)?;
                 }
                 i = hi;
             }
@@ -4556,7 +4556,7 @@ impl Vm {
                 let state = [int(pass), int(at[0]), int(at[1]), int(at[2]), int(at[3])];
                 if let Some(buf) = self.list_buf(st) {
                     let res = self.heap.set_values(buf, 2, &state);
-                    self.hx(res)?;
+                    self.hx_hot(res)?;
                 }
                 return Ok(Sorted::More(st));
             }
@@ -4570,9 +4570,9 @@ impl Vm {
             };
             if let Some(buf) = self.list_buf(st) {
                 let res = self.heap.set_values(buf, 1, &[b]);
-                self.hx(res)?;
+                self.hx_hot(res)?;
                 let res = self.heap.set_values(buf, 9, &[Value::FALSE]);
-                self.hx(res)?;
+                self.hx_hot(res)?;
             }
             waited = false;
         }
@@ -4583,7 +4583,7 @@ impl Vm {
             // Room for what a slice writes in the common case, at once.
             let mut out = NativeValues::default();
             let res = out.reserve(&mut self.heap, (n - k0.min(n)).min(SORT_SLICE as usize));
-            if let Err(e) = self.hx(res) {
+            if let Err(e) = self.hx_hot(res) {
                 return self.sort_wait(st, waited, e, pass, at, visits);
             }
             let stop = {
@@ -4640,18 +4640,18 @@ impl Vm {
             if let Merge::Oom = stop {
                 // The slice again from where it started, after the wait.
                 let res: Result<(), _> = Err(mm_core::Error::OutOfMemory);
-                if let Err(e) = self.hx(res) {
+                if let Err(e) = self.hx_hot(res) {
                     return self.sort_wait(st, waited, e, pass, start, visits);
                 }
             }
             if let Some(dst) = self.list_buf(dst) {
                 let res = self.heap.set_values(dst, k0 as u32, &out);
-                self.hx(res)?;
+                self.hx_hot(res)?;
             }
             // The wait, if any, is over: this slice wrote its output.
             if waited && let Some(buf) = self.list_buf(st) {
                 let res = self.heap.set_values(buf, 9, &[Value::FALSE]);
-                self.hx(res)?;
+                self.hx_hot(res)?;
                 waited = false;
             }
             match stop {
@@ -4666,7 +4666,7 @@ impl Vm {
                     let state = [int(pass), int(at[0]), int(at[1]), int(at[2]), int(at[3])];
                     if let Some(buf) = self.list_buf(st) {
                         let res = self.heap.set_values(buf, 2, &state);
-                        self.hx(res)?;
+                        self.hx_hot(res)?;
                     }
                     return Ok(Sorted::More(st));
                 }
@@ -4696,7 +4696,7 @@ impl Vm {
                 let int = |x: usize| Value::int(x as i64).unwrap_or(Value::NONE);
                 if let Some(buf) = self.list_buf(st) {
                     let res = self.heap.set_values(buf, 2, &[int(pass), int(p)]);
-                    self.hx(res)?;
+                    self.hx_hot(res)?;
                 }
                 return Ok(Sorted::More(st));
             }
@@ -4729,10 +4729,10 @@ impl Vm {
             if let Some(buf) = self.list_buf(done) {
                 if rev {
                     let res = self.heap.set_values(buf, (n - p - m) as u32, &back[..m]);
-                    self.hx(res)?;
+                    self.hx_hot(res)?;
                 }
                 let res = self.heap.set_values(buf, p as u32, &front[..m]);
-                self.hx(res)?;
+                self.hx_hot(res)?;
             }
             visits += (m / 16) as u64;
             p += m;
@@ -6605,7 +6605,7 @@ fn exc_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let rest: Vec<Value> = (1..a.n).map(|i| vm.arg_o(&a, i)).collect();
     let t = vm.alloc_tuple_hot(&rest)?;
     if let Some(r) = e.as_obj().filter(|_| e.is_obj_kind(ty::EXC as u8)) {
-        vm.set_slot(r, crate::vm::exc_slot::ARGS, t);
+        vm.set_slot_hot(r, crate::vm::exc_slot::ARGS, t);
         // `NameError`, `AttributeError` and `ImportError` take keywords
         // (`super().__init__(msg, name=...)`); the others refuse them,
         // naming the instance's class as CPython does.
@@ -7874,7 +7874,7 @@ fn bi_tuple(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn dict_fill_phase(vm: &mut Vm, src: Value, reg: u64) -> Result<(Value, u64), Raised> {
     use crate::set::{act, phase};
-    let src = match vm.backing_hot(src) {
+    let src = match vm.backing(src) {
         Some(b) if b.is_obj_kind(ty::DICT as u8) && vm.uflags(src) & crate::class::f::ITER == 0 => {
             b
         }
@@ -7887,7 +7887,7 @@ pub(crate) fn dict_fill_phase(vm: &mut Vm, src: Value, reg: u64) -> Result<(Valu
     if src.is_obj_kind(ty::DICT as u8) {
         return Ok((src, phase(act::DICT, 0, reg, 0)));
     }
-    if vm.user_class(src).is_some() && vm.backing_hot(src).is_none() {
+    if vm.user_class(src).is_some() && vm.backing(src).is_none() {
         return Err(vm.need_py());
     }
     Ok((vm.bulk_src(src)?, phase(act::PAIRS, 0, reg, 0)))
@@ -8111,7 +8111,7 @@ fn list_append(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 fn list_grow_steps(vm: &mut Vm, l: Value, len: usize, k: usize, x: Value) -> Result<Value, Raised> {
     use crate::ops::Seg;
-    let one = vm.alloc_tuple_hot(&[x])?;
+    let one = vm.alloc_tuple(&[x])?;
     let segs = [
         Seg::of(3, 0, 1, k as u64),
         Seg::of(4, 0, 1, 1),

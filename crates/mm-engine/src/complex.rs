@@ -471,8 +471,8 @@ impl Vm {
         }
         let r = v.as_obj()?;
         Some((
-            f64::from_bits(self.raw(r, 0)),
-            f64::from_bits(self.raw(r, 1)),
+            f64::from_bits(self.raw_hot(r, 0)),
+            f64::from_bits(self.raw_hot(r, 1)),
         ))
     }
 
@@ -1109,7 +1109,7 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn number_text(&self, v: Value) -> (&[u8], bool) {
         if Vm::is_str(v) {
-            (self.str_bytes_hot(v), true)
+            (self.str_bytes(v), true)
         } else {
             (self.bytes_data(v), false)
         }

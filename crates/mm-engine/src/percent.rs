@@ -387,12 +387,12 @@ impl Vm {
             let base = r.i;
             let most = (n - base).min(win.saturating_add(3));
             let res = self.heap.reserve_scratch(most);
-            let _input_charge = self.hx(res)?;
+            let _input_charge = self.hx_hot(res)?;
             f.clear();
             let res = f
                 .try_reserve_exact(most)
                 .map_err(|_| mm_core::Error::OutOfMemory);
-            self.hx(res)?;
+            self.hx_hot(res)?;
             let data = self.pct_data(fmt);
             let mut end = base.saturating_add(win).min(n);
             while data.get(end).is_some_and(|&b| b & 0xC0 == 0x80) {
@@ -414,7 +414,7 @@ impl Vm {
                         pct_piece(parts, fmt, base + i - 1, base + end);
                     } else {
                         let res = out.extend_from_slice(&mut self.heap, &f[i - 1..end]);
-                        self.hx(res)?;
+                        self.hx_hot(res)?;
                     }
                     i = end;
                     continue;
@@ -432,12 +432,12 @@ impl Vm {
                     let k = (i - start) / 2;
                     if k >= piece {
                         self.pct_flush(out, parts, bytes)?;
-                        let pc = self.intern("%")?;
+                        let pc = self.intern_hot("%")?;
                         pct_piece(parts, pc, 0, k);
                     } else {
                         let len = out.len().saturating_add(k);
                         let res = out.resize(&mut self.heap, len, b'%');
-                        self.hx(res)?;
+                        self.hx_hot(res)?;
                     }
                     continue;
                 }
@@ -477,7 +477,7 @@ impl Vm {
                     };
                     let args = r.given;
                     r.args = if self.user_class(args).is_some() {
-                        let pair = self.alloc_tuple(&[args, key])?;
+                        let pair = self.alloc_tuple_hot(&[args, key])?;
                         match r.converted(self, pair, 'k') {
                             Ok(v) => v,
                             Err(need) => return Ok(Err(need)),
@@ -589,8 +589,12 @@ impl Vm {
                 };
                 if dl >= PIECE || fill >= PIECE || zeros > 0 {
                     // Long: the text and the fill as pieces, uncopied.
-                    let zero = self.intern("0")?;
-                    let pad = if pad == b'0' { zero } else { self.intern(" ")? };
+                    let zero = self.intern_hot("0")?;
+                    let pad = if pad == b'0' {
+                        zero
+                    } else {
+                        self.intern_hot(" ")?
+                    };
                     // A bytearray is a piece too: no Python code runs
                     // between here and the fill.
                     let whole = match text {
@@ -628,7 +632,7 @@ impl Vm {
                 let start = out.len();
                 let needed = start.saturating_add(dl).saturating_add(fill);
                 let res = out.resize(&mut self.heap, needed, pad);
-                self.hx(res)?;
+                self.hx_hot(res)?;
                 let text = text.bytes(self);
                 out[start..start + split].copy_from_slice(&text[..split]);
                 out[start + split + fill..].copy_from_slice(&text[split..]);
@@ -800,7 +804,7 @@ impl Vm {
                 return Ok(r.args);
             }
             let k = u32::try_from(r.argidx - 1).unwrap_or(0);
-            return Ok(self.vslot(r.args, k));
+            return Ok(self.vslot_hot(r.args, k));
         }
         Err(self.err(T::TypeError, "not enough arguments for format string"))
     }
@@ -996,7 +1000,7 @@ impl Vm {
         } else {
             (0x11_0000, "an int or a unicode character")
         };
-        let v = self.unbx_hot(v);
+        let v = self.unbx(v);
         if Vm::is_intlike(v) {
             let Some(c) = self.int_of_o(v).filter(|&i| (0..limit).contains(&i)) else {
                 let msg = format!(
@@ -1178,7 +1182,7 @@ impl Vm {
         bytes: bool,
         original: Value,
     ) -> Result<Piece, Raised> {
-        let v = self.unbx_hot(v);
+        let v = self.unbx(v);
         let x = match v.as_float() {
             Some(x) => Some(x),
             None if Vm::is_intlike(v) => self.big_of(v).and_then(|b| b.to_f64()),

@@ -1305,7 +1305,7 @@ impl Vm {
         let set = self.between_cells(|vm| {
             let g = vm.globals;
             for (key, v) in [("__name__", name), ("__file__", file)] {
-                let k = vm.intern(key)?;
+                let k = vm.intern_hot(key)?;
                 match v {
                     Some(s) => {
                         let v = vm.new_str(s)?;
@@ -2198,7 +2198,7 @@ impl Vm {
                         Konst::Ellipsis => Value::ELLIPSIS,
                         Konst::Int(i) => self.new_int(*i)?,
                         Konst::Float(f) => Value::float(*f),
-                        Konst::Str(s) => self.intern(s)?,
+                        Konst::Str(s) => self.intern_hot(s)?,
                         Konst::BigInt(s) => {
                             match crate::intops::parse_int_text(s, 0, crate::intops::MAX_STR_DIGITS)
                             {
@@ -2213,9 +2213,9 @@ impl Vm {
                         Konst::Names(ns) => {
                             let mut items = Vec::with_capacity(ns.len());
                             for n in ns {
-                                items.push(self.intern(n)?);
+                                items.push(self.intern_hot(n)?);
                             }
-                            self.alloc_tuple(&items)?
+                            self.alloc_tuple_hot(&items)?
                         }
                     };
                     consts.push(v);
@@ -2281,7 +2281,7 @@ impl Vm {
 
     /// The prelude function `name`.
     pub(crate) fn prelude_fn(&mut self, name: &str) -> Result<Value, Raised> {
-        let k = self.intern_hot(name)?;
+        let k = self.intern(name)?;
         match self.prelude_get(k)? {
             Some(f) => Ok(f),
             None => Err(self.err(
@@ -2621,7 +2621,7 @@ impl Vm {
                 _ => i = (i + 1) & seen.mask,
             }
         }
-        let v = self.intern(s)?;
+        let v = self.intern_hot(s)?;
         seen.slots[i] = (key, v);
         Ok(v)
     }
@@ -3080,7 +3080,7 @@ impl Vm {
     #[inline]
     pub(crate) fn list_get(&self, l: Value, i: usize) -> Value {
         match self.list_buf(l) {
-            Some(b) => self.slot_hot(b, u32::try_from(i).unwrap_or(u32::MAX)),
+            Some(b) => self.slot(b, u32::try_from(i).unwrap_or(u32::MAX)),
             None => Value::UNDEFINED,
         }
     }
@@ -3257,9 +3257,9 @@ impl Vm {
         let Some(r) = l.as_obj() else { return Ok(l) };
         if cap.max(len) > 4 {
             let buf = self.alloc_items(cap.max(len))?;
-            self.set_slot_hot(r, 0, Value::from_ref(buf, ty::BUF as u8));
+            self.set_slot(r, 0, Value::from_ref(buf, ty::BUF as u8));
         }
-        self.set_raw_hot(r, 1, len as u64);
+        self.set_raw(r, 1, len as u64);
         Ok(l)
     }
 
@@ -3308,17 +3308,17 @@ impl Vm {
         let (Some(t), Some(f)) = (to.as_obj(), from.as_obj()) else {
             return Ok(());
         };
-        let (buf, len) = (self.slot_hot(f, 0), self.raw_hot(f, 1));
-        self.set_slot_hot(t, 0, buf);
-        self.set_raw_hot(t, 1, len);
-        self.set_slot_hot(f, 0, Value::from_ref(fresh, ty::BUF as u8));
-        self.set_raw_hot(f, 1, 0);
+        let (buf, len) = (self.slot(f, 0), self.raw(f, 1));
+        self.set_slot(t, 0, buf);
+        self.set_raw(t, 1, len);
+        self.set_slot(f, 0, Value::from_ref(fresh, ty::BUF as u8));
+        self.set_raw(f, 1, 0);
         Ok(())
     }
 
     /// Items of a list, copied.
     pub(crate) fn list_items(&self, l: Value) -> Vec<Value> {
-        match self.list_parts_hot(l) {
+        match self.list_parts(l) {
             Some((b, n)) => self.values_of(b, usize::try_from(n).unwrap_or(0)),
             None => Vec::new(),
         }

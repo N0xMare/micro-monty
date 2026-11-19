@@ -512,7 +512,7 @@ impl Vm {
             return self.new_str(core::str::from_utf8(digits).unwrap_or(""));
         }
         let res = self.heap.new_str_ascii(digits);
-        let r = self.hx(res)?;
+        let r = self.hx_hot(res)?;
         Ok(Value::from_ref(r, ty::STR as u8))
     }
 
@@ -660,7 +660,7 @@ impl Vm {
     /// The `str` a `str` subclass instance without its own `__str__`
     /// extends (`str(x)` is that value, whatever its `__repr__`).
     pub(crate) fn str_backing(&self, v: Value) -> Option<Value> {
-        self.backing_hot(v)
+        self.backing(v)
             .filter(|&b| Vm::is_str(b) && self.uflags(v) & crate::class::f::STR == 0)
     }
 
@@ -829,7 +829,7 @@ impl Vm {
                 let parts = match t {
                     T::list | T::tuple | T::set | T::frozenset | T::dict => self.text_items(v, t),
                     T::method => v.as_obj().map(|r| (r, 1)),
-                    _ => self.text_items(self.vslot(v, exc_slot::ARGS), T::tuple),
+                    _ => self.text_items(self.vslot_hot(v, exc_slot::ARGS), T::tuple),
                 };
                 if let Some((r, n)) = parts {
                     let slots = self.heap.slot_words(r).unwrap_or(&[]);
@@ -956,7 +956,7 @@ impl Vm {
         budget: Option<u64>,
     ) -> Result<Option<bool>, Raised> {
         let res = out.parts(&mut self.heap);
-        let (out, charge) = self.hx(res)?;
+        let (out, charge) = self.hx_hot(res)?;
         let start = out.len();
         let mut failed = None;
         // Borrow the heap only during a write, not across traversal mutations.
@@ -989,7 +989,7 @@ impl Vm {
                 }
             }
             if let Some(error) = failed {
-                return self.hx(Err(error));
+                return self.hx_hot(Err(error));
             }
             if out.len() > limit {
                 return Ok(Some(false));
@@ -1009,7 +1009,7 @@ impl Vm {
                     let stride = if pair { 2 } else { 1 };
                     let mut k = Value::UNDEFINED;
                     while at < end {
-                        k = self.slot(buf, at);
+                        k = self.slot_hot(buf, at);
                         if k != Value::UNDEFINED || matches!(t, T::list | T::tuple) {
                             break;
                         }
@@ -1019,46 +1019,46 @@ impl Vm {
                         continue;
                     }
                     let x = if pair {
-                        self.slot(buf, at + 1)
+                        self.slot_hot(buf, at + 1)
                     } else {
                         Value::NONE
                     };
                     let res =
                         work.push(&mut self.heap, Work::Items(buf, at + stride, end, depth, t));
-                    self.hx(res)?;
+                    self.hx_hot(res)?;
                     match t {
                         T::dict => {
                             let res = work.push(&mut self.heap, Work::Val(x, depth));
-                            self.hx(res)?;
+                            self.hx_hot(res)?;
                             let res = work.push(&mut self.heap, Work::Lit(": "));
-                            self.hx(res)?;
+                            self.hx_hot(res)?;
                             let res = work.push(&mut self.heap, Work::Val(k, depth));
-                            self.hx(res)?;
+                            self.hx_hot(res)?;
                         }
                         T::dict_values => {
                             let res = work.push(&mut self.heap, Work::Val(x, depth));
-                            self.hx(res)?;
+                            self.hx_hot(res)?;
                         }
                         T::dict_items => {
                             let res = work.push(&mut self.heap, Work::Lit(")"));
-                            self.hx(res)?;
+                            self.hx_hot(res)?;
                             let res = work.push(&mut self.heap, Work::Val(x, depth));
-                            self.hx(res)?;
+                            self.hx_hot(res)?;
                             let res = work.push(&mut self.heap, Work::Lit(", "));
-                            self.hx(res)?;
+                            self.hx_hot(res)?;
                             let res = work.push(&mut self.heap, Work::Val(k, depth));
-                            self.hx(res)?;
+                            self.hx_hot(res)?;
                             let res = work.push(&mut self.heap, Work::Lit("("));
-                            self.hx(res)?;
+                            self.hx_hot(res)?;
                         }
                         _ => {
                             let res = work.push(&mut self.heap, Work::Val(k, depth));
-                            self.hx(res)?;
+                            self.hx_hot(res)?;
                         }
                     }
                     if !first {
                         let res = work.push(&mut self.heap, Work::Lit(", "));
-                        self.hx(res)?;
+                        self.hx_hot(res)?;
                     }
                     continue;
                 }
@@ -1083,7 +1083,7 @@ impl Vm {
                 return Ok(None);
             }
             if Vm::is_str(v) {
-                quoted_repr(self.str_ref(v).as_bytes(), false, &mut writer!());
+                quoted_repr(self.str_ref_hot(v).as_bytes(), false, &mut writer!());
                 continue;
             }
             if Vm::is_bytes(v) {
@@ -1115,20 +1115,20 @@ impl Vm {
             if self.uflags(v) & crate::class::f::REPR != 0 {
                 return Err(self.need_py());
             }
-            if let Some(b) = self.backing(v) {
+            if let Some(b) = self.backing_hot(v) {
                 // A set subclass shows its class, as CPython's `set_repr`:
                 // `S()`, `S({1})`.
                 if matches!(self.type_of(b), T::set | T::frozenset) {
                     let name = String::from(self.class_name(self.class_of(v)));
                     let _ = write!(writer!(), "{name}(");
                     let res = work.push(&mut self.heap, Work::Lit(")"));
-                    self.hx(res)?;
+                    self.hx_hot(res)?;
                     if self.set_len(b) == 0 {
                         continue;
                     }
                 }
                 let res = work.push(&mut self.heap, Work::Val(b, depth));
-                self.hx(res)?;
+                self.hx_hot(res)?;
                 continue;
             }
             if let Some(kind) = v.obj_kind().map(u16::from)
@@ -1149,13 +1149,13 @@ impl Vm {
             {
                 match kind {
                     ty::INST => {
-                        let c = self.vslot(v, crate::class::inst::CLASS);
+                        let c = self.vslot_hot(v, crate::class::inst::CLASS);
                         let name = self.class_repr_name(c);
                         let _ = write!(writer!(), "<{name} object at 0x{:x}>", Vm::addr(v));
                     }
                     ty::CLASS => writer!().push_str(&self.class_repr(v)),
                     ty::METHOD => {
-                        let f = self.vslot(v, 1);
+                        let f = self.vslot_hot(v, 1);
                         // A callable instance (an lru_cache wrapper) shows
                         // its own `__qualname__`, as CPython's getattr finds.
                         let own = if f.is_obj_kind(ty::INST as u8) {
@@ -1166,18 +1166,18 @@ impl Vm {
                             None
                         };
                         let q = if f.is_obj_kind(ty::FUNC as u8) {
-                            self.str_ref(self.vslot(f, fn_slot::QUALNAME))
+                            self.str_ref_hot(self.vslot_hot(f, fn_slot::QUALNAME))
                         } else if let Some(q) = own {
-                            self.str_ref(q)
+                            self.str_ref_hot(q)
                         } else {
                             "?"
                         };
                         let _ = write!(writer!(), "<bound method {q} of ");
                         let res = work.push(&mut self.heap, Work::Lit(">"));
-                        self.hx(res)?;
-                        let receiver = self.vslot(v, 0);
+                        self.hx_hot(res)?;
+                        let receiver = self.vslot_hot(v, 0);
                         let res = work.push(&mut self.heap, Work::Val(receiver, depth + 1));
-                        self.hx(res)?;
+                        self.hx_hot(res)?;
                     }
                     ty::GEN | ty::AGEN => writer!().push_str(&self.gen_repr(v)),
                     ty::AGENOP => {
@@ -1192,19 +1192,19 @@ impl Vm {
                         };
                         let _ = write!(writer!(), "<{k}(");
                         let res = work.push(&mut self.heap, Work::Lit(")>"));
-                        self.hx(res)?;
-                        let wrapped = self.vslot(v, 0);
+                        self.hx_hot(res)?;
+                        let wrapped = self.vslot_hot(v, 0);
                         let res = work.push(&mut self.heap, Work::Val(wrapped, depth + 1));
-                        self.hx(res)?;
+                        self.hx_hot(res)?;
                     }
                     ty::SUPER => {
                         // CPython names both types by `tp_name`: a class's
                         // bare `__name__`, a builtin type's name. Bound to
                         // a class (`super(A, B)`), the object type is the
                         // class itself.
-                        let (c, o) = (self.vslot(v, 0), self.vslot(v, 1));
-                        let is_type = |x| Vm::is_class(x) || self.type_of_typeobj(x).is_some();
-                        let own = if is_type(o) && self.type_of_typeobj(c) != Some(T::type_) {
+                        let (c, o) = (self.vslot_hot(v, 0), self.vslot_hot(v, 1));
+                        let is_type = |x| Vm::is_class(x) || self.type_of_typeobj_hot(x).is_some();
+                        let own = if is_type(o) && self.type_of_typeobj_hot(c) != Some(T::type_) {
                             self.class_name(o)
                         } else {
                             self.type_name(o)
@@ -1251,7 +1251,7 @@ impl Vm {
                 }
                 let seen = self.repr_outer_has(outer, v)? || {
                     let res = active.insert(&mut self.heap, v);
-                    !self.hx(res)?
+                    !self.hx_hot(res)?
                 };
                 if seen {
                     writer!().push_str(match t {
@@ -1290,36 +1290,36 @@ impl Vm {
                     };
                     writer!().push_str(open);
                     let res = work.push(&mut self.heap, Work::Leave(v));
-                    self.hx(res)?;
+                    self.hx_hot(res)?;
                     let res = work.push(&mut self.heap, Work::Lit(close));
-                    self.hx(res)?;
+                    self.hx_hot(res)?;
                     if let Some((buf, end)) = self.text_items(v, t) {
                         let res = work.push(&mut self.heap, Work::Items(buf, 0, end, depth + 1, t));
-                        self.hx(res)?;
+                        self.hx_hot(res)?;
                     }
                 }
                 T::type_ => {
-                    let t = self.type_of_typeobj(v).unwrap_or(T::object);
+                    let t = self.type_of_typeobj_hot(v).unwrap_or(T::object);
                     match t.module() {
                         "builtins" => _ = write!(writer!(), "<class '{}'>", t.name()),
                         m => _ = write!(writer!(), "<class '{m}.{}'>", t.name()),
                     }
                 }
                 T::function if v.is_obj_kind(ty::HOSTFN as u8) => {
-                    let q = self.vslot(v, fn_slot::QUALNAME);
+                    let q = self.vslot_hot(v, fn_slot::QUALNAME);
                     let _ = write!(
                         writer!(),
                         "<function {} at 0x{:x}>",
-                        self.str_ref(q),
+                        self.str_ref_hot(q),
                         Vm::addr(v)
                     );
                 }
                 T::function => {
-                    let q = self.vslot(v, fn_slot::QUALNAME);
+                    let q = self.vslot_hot(v, fn_slot::QUALNAME);
                     let _ = write!(
                         writer!(),
                         "<function {} at 0x{:x}>",
-                        self.str_ref(q),
+                        self.str_ref_hot(q),
                         Vm::addr(v)
                     );
                 }
@@ -1354,8 +1354,8 @@ impl Vm {
                             }
                         }
                     } else {
-                        let recv = self.vslot(v, 0);
-                        let f = self.vslot(v, 1);
+                        let recv = self.vslot_hot(v, 0);
+                        let f = self.vslot_hot(v, 1);
                         let name = f
                             .as_native()
                             .and_then(crate::builtins::native)
@@ -1370,7 +1370,7 @@ impl Vm {
                 }
                 T::range => {
                     let r = v.as_obj();
-                    let get = |i| r.map_or(0, |r| self.raw(r, i).cast_signed());
+                    let get = |i| r.map_or(0, |r| self.raw_hot(r, i).cast_signed());
                     let (a, b, c) = (get(0), get(1), get(2));
                     if c == 1 {
                         let _ = write!(writer!(), "range({a}, {b})");
@@ -1381,32 +1381,32 @@ impl Vm {
                 T::slice => {
                     writer!().push_str("slice(");
                     let res = work.push(&mut self.heap, Work::Lit(")"));
-                    self.hx(res)?;
+                    self.hx_hot(res)?;
                     for i in (0..3).rev() {
-                        let part = self.vslot(v, i);
+                        let part = self.vslot_hot(v, i);
                         let res = work.push(&mut self.heap, Work::Val(part, depth + 1));
-                        self.hx(res)?;
+                        self.hx_hot(res)?;
                         if i > 0 {
                             let res = work.push(&mut self.heap, Work::Lit(", "));
-                            self.hx(res)?;
+                            self.hx_hot(res)?;
                         }
                     }
                 }
                 _ if v.is_obj_kind(ty::EXC as u8) => {
-                    let args = self.vslot(v, exc_slot::ARGS);
+                    let args = self.vslot_hot(v, exc_slot::ARGS);
                     writer!().push_str(self.type_name(v));
                     let res = work.push(&mut self.heap, Work::Leave(v));
-                    self.hx(res)?;
+                    self.hx_hot(res)?;
                     if self.tuple_len(args) == 1 {
                         writer!().push_str("(");
                         let res = work.push(&mut self.heap, Work::Lit(")"));
-                        self.hx(res)?;
-                        let arg = self.vslot(args, 0);
+                        self.hx_hot(res)?;
+                        let arg = self.vslot_hot(args, 0);
                         let res = work.push(&mut self.heap, Work::Val(arg, depth + 1));
-                        self.hx(res)?;
+                        self.hx_hot(res)?;
                     } else {
                         let res = work.push(&mut self.heap, Work::Val(args, depth + 1));
-                        self.hx(res)?;
+                        self.hx_hot(res)?;
                     }
                 }
                 #[cfg(feature = "re")]
@@ -1418,7 +1418,7 @@ impl Vm {
                         // counts bytes, 4 at most per character).
                         let mut r = String::new();
                         let (data, bytes) = if Vm::is_str(g) {
-                            (self.str_bytes(g), false)
+                            (self.str_bytes_hot(g), false)
                         } else {
                             (self.bytes_data(g), true)
                         };
@@ -1427,20 +1427,20 @@ impl Vm {
                         let _ = write!(writer!(), "{}>", &r[..cut]);
                     } else {
                         let res = work.push(&mut self.heap, Work::Lit(">"));
-                        self.hx(res)?;
+                        self.hx_hot(res)?;
                         let res = work.push(&mut self.heap, Work::Val(g, depth + 1));
-                        self.hx(res)?;
+                        self.hx_hot(res)?;
                     }
                 }
                 T::module => {
                     let _ = write!(writer!(), "<module '{}' (built-in)>", self.module_name(v));
                 }
                 T::coroutine => {
-                    let f = self.vslot(v, 0);
+                    let f = self.vslot_hot(v, 0);
                     let q = if v.is_obj_kind(ty::SLEEP as u8) {
                         "sleep"
                     } else {
-                        self.str_ref(self.vslot(f, fn_slot::QUALNAME))
+                        self.str_ref_hot(self.vslot_hot(f, fn_slot::QUALNAME))
                     };
                     let _ = write!(writer!(), "<coroutine object {q} at 0x{:x}>", Vm::addr(v));
                 }
@@ -1459,7 +1459,7 @@ impl Vm {
                     );
                 }
                 T::cell => {
-                    let inner = self.vslot(v, 0);
+                    let inner = self.vslot_hot(v, 0);
                     if inner == Value::UNDEFINED {
                         let _ = write!(writer!(), "<cell at 0x{:x}: empty>", Vm::addr(v));
                     } else {
@@ -1482,7 +1482,7 @@ impl Vm {
         // limit (a single long string is one traversal step).
         self.burn(units + (out.len().saturating_sub(start) / 64) as u64);
         if let Some(error) = failed {
-            return self.hx(Err(error));
+            return self.hx_hot(Err(error));
         }
         Ok(Some(out.len() <= limit))
     }
@@ -1571,7 +1571,7 @@ impl Vm {
             return None;
         }
         let spec = String::from(match spec {
-            FormatSpec::Value(x) => self.str_ref_hot(x),
+            FormatSpec::Value(x) => self.str_ref(x),
             FormatSpec::Text(t) => t,
         });
         if spec.contains(",_") || spec.contains("_,") {

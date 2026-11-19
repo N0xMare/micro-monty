@@ -491,7 +491,7 @@ impl Vm {
     pub(crate) fn set_import_names(&mut self, name: &str, from: Value) {
         let e = self.exc;
         let set = |vm: &mut Vm, k: &str, v: Value| -> Result<(), Raised> {
-            let k = vm.intern_hot(k)?;
+            let k = vm.intern(k)?;
             vm.inst_set(e, k, v).map(drop)
         };
         if let Ok(n) = self.new_str(name) {
@@ -851,7 +851,7 @@ impl Vm {
     /// Records the hint of a `NameError` for `name` (pending until
     /// rendered); `locals` are the bound local names of the frame.
     pub(crate) fn set_name_hint(&mut self, name: Value, locals: &[String]) {
-        let n = self.str_ref(name);
+        let n = self.str_ref_hot(name);
         // Outside the subset (docs/spec.md §4): say so where a model reads
         // it, with or without a traceback.
         let note = if matches!(n, "eval" | "exec" | "compile") {

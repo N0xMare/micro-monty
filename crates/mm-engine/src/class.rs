@@ -437,9 +437,9 @@ impl Vm {
     /// A class's `__name__`.
     pub(crate) fn class_name(&self, c: Value) -> &str {
         if Vm::is_class(c) {
-            self.str_ref_hot(self.vslot_hot(c, cls::NAME))
+            self.str_ref(self.vslot(c, cls::NAME))
         } else {
-            self.type_of_typeobj_hot(c).map_or("object", T::name)
+            self.type_of_typeobj(c).map_or("object", T::name)
         }
     }
 
@@ -460,10 +460,10 @@ impl Vm {
     /// The MRO of a class or builtin type, as a vector of classes.
     pub(crate) fn mro_of(&self, c: Value) -> Vec<Value> {
         if Vm::is_class(c) {
-            return self.tuple_items(self.vslot(c, cls::MRO));
+            return self.tuple_items(self.vslot_hot(c, cls::MRO));
         }
         let mut out = Vec::new();
-        if let Some(mut t) = self.type_of_typeobj(c) {
+        if let Some(mut t) = self.type_of_typeobj_hot(c) {
             loop {
                 out.push(self.type_obj(t));
                 if t == T::object {
@@ -483,13 +483,10 @@ impl Vm {
         if Vm::is_class(c) {
             // Read in place: `except` with a tuple calls this per item, and
             // a copy of a deep MRO each time was most of a long step.
-            let mro = self.vslot_hot(c, cls::MRO);
+            let mro = self.vslot(c, cls::MRO);
             return (0..self.tuple_len(mro)).any(|k| self.vslot(mro, k as u32) == target);
         }
-        match (
-            self.type_of_typeobj_hot(c),
-            self.type_of_typeobj_hot(target),
-        ) {
+        match (self.type_of_typeobj(c), self.type_of_typeobj(target)) {
             (Some(a), Some(b)) => a.is_subclass(b),
             _ => false,
         }
@@ -499,7 +496,7 @@ impl Vm {
     /// user class's MRO; 1 for a builtin type, whose chain is a few.
     pub(crate) fn mro_depth(&self, c: Value) -> usize {
         if Vm::is_class(c) {
-            self.tuple_len(self.vslot(c, cls::MRO))
+            self.tuple_len(self.vslot_hot(c, cls::MRO))
         } else {
             1
         }
@@ -507,7 +504,7 @@ impl Vm {
 
     /// `isinstance(v, cls)` for one class.
     pub(crate) fn instance_of(&self, v: Value, c: Value) -> bool {
-        if let Some(t) = self.type_of_typeobj_hot(c)
+        if let Some(t) = self.type_of_typeobj(c)
             && self.user_class(v).is_none()
         {
             return self.type_of(v).is_subclass(t);
@@ -560,7 +557,7 @@ impl Vm {
     /// `name` in class `k` itself (no bases).
     pub(crate) fn own_lookup(&self, k: Value, name: Value) -> Option<Value> {
         if Vm::is_class(k) {
-            let d = self.vslot(k, cls::DICT);
+            let d = self.vslot_hot(k, cls::DICT);
             return self.dict_get_str(d, name);
         }
         let t = self.type_of_typeobj_hot(k)?;
@@ -602,15 +599,15 @@ impl Vm {
     /// type such as `object`) defines it.
     pub(crate) fn user_lookup(&self, c: Value, name: Value) -> Option<Value> {
         // One validation of the MRO for every entry, as `class_lookup`.
-        let mro = self.vslot(c, cls::MRO).as_obj()?;
+        let mro = self.vslot_hot(c, cls::MRO).as_obj()?;
         for &w in self.heap.slot_words(mro).unwrap_or(&[]) {
             let k = Value::from_bits(w).unwrap_or(Value::NONE);
             if Vm::is_class(k) {
-                if let Some(v) = self.dict_get_str(self.vslot(k, cls::DICT), name) {
+                if let Some(v) = self.dict_get_str(self.vslot_hot(k, cls::DICT), name) {
                     return Some(v);
                 }
-            } else if let Some(t) = self.type_of_typeobj(k)
-                && crate::builtins::method_index(t, self.str_bytes(name)).is_some()
+            } else if let Some(t) = self.type_of_typeobj_hot(k)
+                && crate::builtins::method_index(t, self.str_bytes_hot(name)).is_some()
             {
                 return None;
             }
@@ -1292,7 +1289,7 @@ impl Vm {
     /// `__int__`, `__float__` and `__trunc__`, so they read its value and
     /// never call its own `__index__` (CPython's `nb_int`, `nb_float`).
     pub(crate) fn num_backed(&self, v: Value) -> bool {
-        self.backing_hot(v)
+        self.backing(v)
             .is_some_and(|b| Vm::is_intlike(b) || b.as_float().is_some())
     }
 
@@ -1300,7 +1297,7 @@ impl Vm {
     /// `PyLong_Check` paths read its value and never call its own
     /// `__index__` or `__int__`.
     pub(crate) fn int_unbx(&self, v: Value) -> Value {
-        match self.backing(v) {
+        match self.backing_hot(v) {
             Some(b) if Vm::is_intlike(b) => b,
             _ => v,
         }
@@ -1320,10 +1317,10 @@ impl Vm {
 
     /// A new instance of builtin-type subclass `c` extending `value`.
     pub(crate) fn new_bx(&mut self, c: Value, value: Value) -> Result<Value, Raised> {
-        let hint = c.as_obj().map_or(2, |r| self.raw_hot(r, cls::HINT));
+        let hint = c.as_obj().map_or(2, |r| self.raw(r, cls::HINT));
         let o = self.new_instance(c, u32::try_from(hint).unwrap_or(2))?;
         if let Some(r) = o.as_obj() {
-            self.set_slot_hot(r, inst::BACK, self.unbx_hot(value));
+            self.set_slot(r, inst::BACK, self.unbx(value));
         }
         Ok(o)
     }
@@ -1506,15 +1503,15 @@ impl Vm {
         let name = self.intern_value(name)?;
         let Some(r) = o.as_obj() else { return Ok(None) };
         if o.is_obj_kind(ty::EXC as u8) {
-            let mut d = self.slot(r, exc_slot::DICT);
+            let mut d = self.slot_hot(r, exc_slot::DICT);
             if d == Value::NONE {
                 d = self.new_dict_hot()?;
-                self.set_slot(r, exc_slot::DICT, d);
+                self.set_slot_hot(r, exc_slot::DICT, d);
             }
             self.dict_set(d, name, v)?;
             return Ok(None);
         }
-        let sh = self.slot(r, inst::SHAPE);
+        let sh = self.slot_hot(r, inst::SHAPE);
         let Some(s) = sh.as_int().and_then(|s| u32::try_from(s).ok()) else {
             self.dict_set(sh, name, v)?;
             return Ok(None);
@@ -1537,37 +1534,37 @@ impl Vm {
         };
         let (inline, k) = self.attr_slot(o, i);
         if inline {
-            self.set_slot(r, k, v);
+            self.set_slot_hot(r, k, v);
         } else {
-            let mut over = self.slot(r, inst::OVER);
+            let mut over = self.slot_hot(r, inst::OVER);
             let cap = over.as_obj().map_or(0, |b| self.obj_len_hot(b));
             if k >= cap {
                 let nb = self.alloc_buf(((cap * 2).max(4).max(k + 1)) as usize)?;
                 for j in 0..cap {
-                    let x = self.vslot(over, j);
-                    self.set_slot(nb, j, x);
+                    let x = self.vslot_hot(over, j);
+                    self.set_slot_hot(nb, j, x);
                 }
                 over = Value::from_ref(nb, ty::BUF as u8);
-                self.set_slot(r, inst::OVER, over);
+                self.set_slot_hot(r, inst::OVER, over);
             }
             if let Some(b) = over.as_obj() {
-                self.set_slot(b, k, v);
+                self.set_slot_hot(b, k, v);
             }
         }
         if s2 != s {
-            self.set_slot(
+            self.set_slot_hot(
                 r,
                 inst::SHAPE,
                 Value::int(i64::from(s2)).unwrap_or(Value::NONE),
             );
             // Let later instances of the class hold this many inline.
-            let c = self.slot(r, inst::CLASS);
+            let c = self.slot_hot(r, inst::CLASS);
             if let Some(cr) = c.as_obj()
                 && Vm::is_class(c)
             {
                 let want = (i as u64 + 1).min(MAX_INLINE);
-                if self.raw(cr, cls::HINT) < want {
-                    self.set_raw(cr, cls::HINT, want);
+                if self.raw_hot(cr, cls::HINT) < want {
+                    self.set_raw_hot(cr, cls::HINT, want);
                 }
             }
         }
@@ -1656,7 +1653,7 @@ impl Vm {
             return Ok(s);
         }
         let res = self.heap.intern_str(r);
-        let r = self.hx(res)?;
+        let r = self.hx_hot(res)?;
         Ok(Value::from_ref(r, ty::STR as u8))
     }
 
@@ -1675,7 +1672,7 @@ impl Vm {
     pub(crate) fn new_bound(&mut self, f: Value, obj: Value) -> Result<Value, Raised> {
         let r = {
             let res = self.heap.alloc_init(ty::BOUND, 0, &[obj, f], &[]);
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::BOUND as u8))
     }
@@ -1687,12 +1684,12 @@ impl Vm {
         match d.obj_kind().map(u16::from) {
             Some(ty::FUNC | ty::HOSTFN) => self.new_method(d, obj),
             Some(ty::CLASSMETHOD) => {
-                let f = self.vslot_hot(d, 0);
+                let f = self.vslot(d, 0);
                 self.new_method(f, c)
             }
-            Some(ty::STATICMETHOD) => Ok(self.vslot_hot(d, 0)),
+            Some(ty::STATICMETHOD) => Ok(self.vslot(d, 0)),
             Some(ty::PROPERTY) => {
-                let g = self.vslot_hot(d, 0);
+                let g = self.vslot(d, 0);
                 if g == Value::NONE {
                     return Err(self.no_accessor(d, obj, "getter"));
                 }
@@ -1791,7 +1788,7 @@ impl Vm {
         if let Some(d) = d {
             return Ok(Got::Value(self.bind_attr(d, obj, c)?));
         }
-        let s = self.str_ref(name);
+        let s = self.str_ref_hot(name);
         match s {
             "__class__" => return Ok(Got::Value(c)),
             "__dict__" if obj.is_obj_kind(ty::INST as u8) && Vm::is_class(c) => {
@@ -1807,9 +1804,9 @@ impl Vm {
         // The numeric data attributes of an int, float or complex subclass
         // instance are its value's (`I(5).real` is the int 5).
         if matches!(
-            self.str_ref(name),
+            self.str_ref_hot(name),
             "real" | "imag" | "numerator" | "denominator"
-        ) && let Some(b) = self.backing(obj)
+        ) && let Some(b) = self.backing_hot(obj)
             && matches!(self.type_of(b), T::int | T::bool | T::float | T::complex)
         {
             return Ok(Got::Value(self.getattr(b, name)?));
@@ -1835,7 +1832,7 @@ impl Vm {
         let Some(kind) = obj.obj_kind().map(u16::from) else {
             return Ok(None);
         };
-        let n = String::from(self.str_ref(name));
+        let n = String::from(self.str_ref_hot(name));
         let v = match kind {
             ty::INST => match self.inst_getattr(obj, name)? {
                 Got::Value(v) => v,
@@ -1888,15 +1885,15 @@ impl Vm {
                 }
             }
             ty::METHOD => match n.as_str() {
-                "__self__" => self.vslot(obj, 0),
-                "__func__" => self.vslot(obj, 1),
+                "__self__" => self.vslot_hot(obj, 0),
+                "__func__" => self.vslot_hot(obj, 1),
                 "__class__" => self.type_obj(T::method),
                 _ => {
                     // A method of methods passes the name on to the
                     // innermost function: a loop, not Rust recursion.
-                    let mut f = self.vslot(obj, 1);
+                    let mut f = self.vslot_hot(obj, 1);
                     while f.is_obj_kind(ty::METHOD as u8) {
-                        f = self.vslot(f, 1);
+                        f = self.vslot_hot(f, 1);
                     }
                     return self.getattr(f, name).map(Some);
                 }
@@ -1909,15 +1906,15 @@ impl Vm {
                 }
             },
             ty::GEN | ty::AGEN => {
-                let f = self.vslot(obj, crate::generator::g::FUNC);
+                let f = self.vslot_hot(obj, crate::generator::g::FUNC);
                 let running = if kind == ty::GEN {
                     "gi_running"
                 } else {
                     "ag_running"
                 };
                 match n.as_str() {
-                    "__name__" => self.vslot(f, fn_slot::NAME),
-                    "__qualname__" => self.vslot(f, fn_slot::QUALNAME),
+                    "__name__" => self.vslot_hot(f, fn_slot::NAME),
+                    "__qualname__" => self.vslot_hot(f, fn_slot::QUALNAME),
                     m if m == running => {
                         Value::from_bool(self.gen_state(obj) == crate::generator::g::RUNNING)
                     }
@@ -1925,15 +1922,15 @@ impl Vm {
                 }
             }
             ty::PROPERTY => match n.as_str() {
-                "fget" => self.vslot(obj, 0),
-                "fset" => self.vslot(obj, 1),
-                "fdel" => self.vslot(obj, 2),
-                "__doc__" => self.vslot(obj, 3),
+                "fget" => self.vslot_hot(obj, 0),
+                "fset" => self.vslot_hot(obj, 1),
+                "fdel" => self.vslot_hot(obj, 2),
+                "__doc__" => self.vslot_hot(obj, 3),
                 "__isabstractmethod__" => self.any_abstract(obj, 3),
                 _ => return Ok(None),
             },
             ty::STATICMETHOD | ty::CLASSMETHOD => match n.as_str() {
-                "__func__" | "__wrapped__" => self.vslot(obj, 0),
+                "__func__" | "__wrapped__" => self.vslot_hot(obj, 0),
                 "__isabstractmethod__" => self.any_abstract(obj, 1),
                 _ => return Ok(None),
             },
@@ -1960,7 +1957,7 @@ impl Vm {
     pub(crate) fn class_getattr(&mut self, c: Value, name: Value) -> Result<Got, Raised> {
         // `type`'s data descriptors come before the class namespace.
         let special = matches!(
-            self.str_ref(name),
+            self.str_ref_hot(name),
             "__name__"
                 | "__qualname__"
                 | "__mro__"
@@ -1979,24 +1976,24 @@ impl Vm {
             }
             return Ok(Got::Value(self.bind_class_attr(d, c)?));
         }
-        let v = match self.str_ref(name) {
-            "__name__" => self.vslot(c, cls::NAME),
-            "__qualname__" => self.vslot(c, cls::QUALNAME),
-            "__mro__" => self.vslot(c, cls::MRO),
-            "__bases__" => self.vslot(c, cls::BASES),
+        let v = match self.str_ref_hot(name) {
+            "__name__" => self.vslot_hot(c, cls::NAME),
+            "__qualname__" => self.vslot_hot(c, cls::QUALNAME),
+            "__mro__" => self.vslot_hot(c, cls::MRO),
+            "__bases__" => self.vslot_hot(c, cls::BASES),
             "__base__" => {
-                let b = self.vslot(c, cls::BASES);
-                self.vslot(b, 0)
+                let b = self.vslot_hot(c, cls::BASES);
+                self.vslot_hot(b, 0)
             }
             "__class__" => self.class_of(c),
             "__dict__" => {
-                let d = self.vslot(c, cls::DICT);
+                let d = self.vslot_hot(c, cls::DICT);
                 self.dict_copy(d)?
             }
             // The class's own (stringized) annotations, never a base's; an
             // empty dict, kept, when the body had none (as in 3.14).
             "__annotations__" => {
-                let d = self.vslot(c, cls::DICT);
+                let d = self.vslot_hot(c, cls::DICT);
                 if let Some(v) = self.dict_get_str(d, name) {
                     v
                 } else {
@@ -2145,7 +2142,7 @@ impl Vm {
         if let Some(d) = d
             && d.is_obj_kind(ty::PROPERTY as u8)
         {
-            let s = self.vslot(d, 1);
+            let s = self.vslot_hot(d, 1);
             if s == Value::NONE {
                 return Err(self.no_accessor(d, obj, "setter"));
             }
@@ -2161,7 +2158,7 @@ impl Vm {
             return Ok(None);
         }
         if !Vm::is_class(c) {
-            let n = String::from(self.str_ref(name));
+            let n = String::from(self.str_ref_hot(name));
             let msg = format!(
                 "'{}' object has no attribute '{n}' and no __dict__ for setting new attributes",
                 self.type_name(obj)
@@ -2319,9 +2316,9 @@ impl Vm {
 
     /// `super(...).name`.
     pub(crate) fn super_getattr(&mut self, s: Value, name: Value) -> Result<Got, Raised> {
-        let c = self.vslot(s, 0);
-        let obj = self.vslot(s, 1);
-        let start = self.vslot(s, 2);
+        let c = self.vslot_hot(s, 0);
+        let obj = self.vslot_hot(s, 1);
+        let start = self.vslot_hot(s, 2);
         let mro = self.mro_of(start);
         let pos = mro
             .iter()
@@ -2333,7 +2330,7 @@ impl Vm {
             };
             let is_cls = obj == start;
             if d.as_native().is_some() {
-                return Ok(Got::Value(match self.str_ref(name) {
+                return Ok(Got::Value(match self.str_ref_hot(name) {
                     "__new__" => d,
                     "__init_subclass__" => self.new_bound(d, start)?,
                     _ if is_cls => d,
@@ -2348,7 +2345,7 @@ impl Vm {
             }
             return Ok(Got::Value(self.bind_attr(d, obj, start)?));
         }
-        if self.str_ref(name) == "__class__" {
+        if self.str_ref_hot(name) == "__class__" {
             return Ok(Got::Value(self.type_obj(T::super_)));
         }
         Ok(Got::Missing)

@@ -1,12 +1,23 @@
 //! The heap accessors' and the small `Vm` helpers' plain names
 //! (`Vm::slot`, `raw`, `hx`, `backing`, `alloc_tuple`, ...; [`ACCESSORS`])
 //! are out of line; their `_hot` forms are inline, and inlined copies of
-//! them cost about 150 KB of `hello.wasm` when used everywhere [M]. Only the functions in
-//! `hot_accessors.txt`, the ones the dispatch loop inlines or calls and the
-//! natives with a measurable share of some bench program's instructions,
-//! may call a `_hot` form. A new hot function is added to the list with a
-//! bench Ir table showing it needs the inline form; a function that no
-//! longer calls one leaves the list.
+//! them cost about 150 KB of `hello.wasm` when used everywhere [M]. Only
+//! the functions in `hot_accessors.txt` may call a `_hot` form: those the
+//! dispatch loop inlines or calls, and those that run at least
+//! `THRESHOLD` (in `bench/hot_set.py`) of some bench program's instructions
+//! or of `bench/hot_set_ints.py`'s, and those `startup` runs.
+//!
+//! The list is derived, never edited by hand:
+//!
+//! ```text
+//! uv run --with pyelftools python3 bench/hot_set.py
+//! ```
+//!
+//! rewrites every helper call in `src/` to its plain or `_hot` form and
+//! regenerates the list (`bench/hot_set.py` says how). When this test fails:
+//! - new or changed code that is not on a hot path: call the plain name;
+//! - a function added to, renamed on or moved off a hot path: regenerate,
+//!   then run `cargo xtask native-ir`, `wasm-ir` and `v8-ir`.
 #![allow(clippy::expect_used, reason = "tests")]
 
 use std::collections::BTreeSet;
@@ -101,15 +112,17 @@ fn only_listed_functions_call_the_inline_accessors() {
     let unlisted: Vec<_> = found.difference(&listed).collect();
     assert!(
         unlisted.is_empty(),
-        "these functions call a `_hot` accessor without being listed in \
-         tests/hot_accessors.txt; use the plain (out-of-line) name, or list \
-         the function with a bench Ir table that shows it needs the inline \
-         form: {unlisted:?}"
+        "these functions call a `_hot` form without being listed in \
+         tests/hot_accessors.txt: {unlisted:?}. Off a hot path, call the \
+         plain (out-of-line) name; for a hot function that is new or \
+         renamed, regenerate with `uv run --with pyelftools python3 \
+         bench/hot_set.py`"
     );
     let stale: Vec<_> = listed.difference(&found).collect();
     assert!(
         stale.is_empty(),
-        "listed in tests/hot_accessors.txt but calling no `_hot` accessor; \
-         remove them: {stale:?}"
+        "listed in tests/hot_accessors.txt but calling no `_hot` form: \
+         {stale:?}. Regenerate with `uv run --with pyelftools python3 \
+         bench/hot_set.py`"
     );
 }

@@ -320,11 +320,11 @@ impl Vm {
 
     /// The `value` of a `StopIteration`.
     pub(crate) fn stop_value(&self, e: Value) -> Value {
-        let args = self.vslot_hot(e, exc_slot::ARGS);
+        let args = self.vslot(e, exc_slot::ARGS);
         if self.tuple_len(args) == 0 {
             Value::NONE
         } else {
-            self.vslot_hot(args, 0)
+            self.vslot(args, 0)
         }
     }
 

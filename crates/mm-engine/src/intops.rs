@@ -351,13 +351,13 @@ impl Vm {
         self.collect_for_result(bytes.len());
         let data = {
             let res = self.heap.alloc_bytes(bytes);
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         let r = {
             let res =
                 self.heap
                     .alloc_init(ty::INT, 0, &[Value::from_byte_ref(data)], &[u64::from(neg)]);
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::INT as u8))
     }
@@ -1655,7 +1655,7 @@ impl Vm {
         self.big_room(bits)?;
         let block = {
             let res = self.heap.alloc_bytes_zeroed(bits.div_ceil(32) as usize * 4);
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         sc.phase = CONVERT;
         let at = usize::try_from(sc.start).unwrap_or(usize::MAX);

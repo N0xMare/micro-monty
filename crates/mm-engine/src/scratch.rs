@@ -213,7 +213,7 @@ impl NativeText {
                 self.charge = Some(charge);
             }),
         };
-        vm.hx(res)?;
+        vm.hx_hot(res)?;
         let res = self
             .text
             .try_reserve_exact(capacity - self.text.len())
@@ -223,7 +223,7 @@ impl NativeText {
         {
             let _ = charge.resize(&vm.heap, old);
         }
-        vm.hx(res)
+        vm.hx_hot(res)
     }
 
     pub(crate) fn push(&mut self, vm: &mut Vm, s: &str) -> Result<(), Raised> {

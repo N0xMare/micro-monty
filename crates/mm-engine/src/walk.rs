@@ -614,7 +614,7 @@ impl Vm {
                     })
                 }
                 (T::dict_keys, T::dict_keys) | (T::dict_items, T::dict_items) => {
-                    let (da, db) = (self.vslot(a, 0), self.vslot(b, 0));
+                    let (da, db) = (self.vslot_hot(a, 0), self.vslot_hot(b, 0));
                     if self.dict_len(da) != self.dict_len(db) {
                         return leaf(false);
                     }
@@ -634,7 +634,7 @@ impl Vm {
                     // Set-like, as CPython's `all_contained_in` decides:
                     // a keys view's keys found as pairs in the items view,
                     // or the other way round. Rare; the prelude does it.
-                    if self.dict_len(self.vslot(a, 0)) != self.dict_len(self.vslot(b, 0)) {
+                    if self.dict_len(self.vslot_hot(a, 0)) != self.dict_len(self.vslot_hot(b, 0)) {
                         return leaf(false);
                     }
                     Leaf(Err(OrdErr::Py))
@@ -643,7 +643,7 @@ impl Vm {
                 | (T::set | T::frozenset, T::dict_keys | T::dict_items) => {
                     let (kv, st) = if Vm::is_set(a) { (b, a) } else { (a, b) };
                     let items = self.type_of(kv) == T::dict_items;
-                    let d = self.vslot(kv, 0);
+                    let d = self.vslot_hot(kv, 0);
                     if self.dict_len(d) != self.set_len(st) {
                         return leaf(false);
                     }
@@ -659,15 +659,16 @@ impl Vm {
                     })
                 }
                 (T::method, T::method) => leaf(
-                    self.vslot(a, 0) == self.vslot(b, 0) && self.vslot(a, 1) == self.vslot(b, 1),
+                    self.vslot_hot(a, 0) == self.vslot_hot(b, 0)
+                        && self.vslot_hot(a, 1) == self.vslot_hot(b, 1),
                 ),
                 // Builtin methods (`xs.append`): the same receiver and method.
                 (T::builtin, T::builtin)
                     if a.is_obj_kind(ty::BOUND as u8) && b.is_obj_kind(ty::BOUND as u8) =>
                 {
                     leaf(
-                        self.vslot(a, 0) == self.vslot(b, 0)
-                            && self.vslot(a, 1) == self.vslot(b, 1),
+                        self.vslot_hot(a, 0) == self.vslot_hot(b, 0)
+                            && self.vslot_hot(a, 1) == self.vslot_hot(b, 1),
                     )
                 }
                 _ => leaf(false),
@@ -745,7 +746,7 @@ impl Vm {
         if depth > MAX_NEST {
             return Leaf(Err(OrdErr::Deep));
         }
-        let (x, y) = (self.unbx(a), self.unbx(b));
+        let (x, y) = (self.unbx_hot(a), self.unbx_hot(b));
         if x != a || y != b {
             // Builtin-type subclasses order as their values; errors name
             // the instances' types.
@@ -761,7 +762,7 @@ impl Vm {
         }
         match (self.type_of(a), self.type_of(b)) {
             (T::str, T::str) => {
-                let (p, q) = (self.str_bytes(a), self.str_bytes(b));
+                let (p, q) = (self.str_bytes_hot(a), self.str_bytes_hot(b));
                 self.spend_text(left, p.len().min(q.len()));
                 ord(Some(p.cmp(q)))
             }
