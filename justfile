@@ -73,6 +73,7 @@ seed-floors tag=prev_tag:
     cargo xtask native-ir --base {{tag}} --write-floors
     cargo xtask wasm-ir --base {{tag}} --write-floors
     cargo xtask v8-ir --base {{tag}} --write-floors
+    cargo xtask replay-ir --base {{tag}} --write-floors
 
 # release.yml as a dry run on GitHub (a manual dispatch builds every artifact
 # and uploads the bundle as a workflow artifact, with no release), on `ref`

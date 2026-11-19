@@ -63,8 +63,21 @@
 //! sessions <ceiling> <reason>` line covers it, and so does a session
 //! whose allocator calls rise past +0.5% ([`CALLS_LIMIT`]) unless a line
 //! naming `sessions-calls` ([`CALLS_NAME`]) does.
-//! There are no floors and no anchor: the sessions are measured on the
-//! base and the head only.
+//!
+//! Each session has two floors ([`crate::floors`], in
+//! `xtask/ir-floors/replay-ir.txt`): `sessions/<id>`, its count without
+//! the allocator, and `sessions-calls/<id>`, its allocator calls, judged
+//! against the head by the same limits as the base, so rises that land on
+//! the landing tier, where this gate does not run, cannot add up between
+//! two release-gate runs. The total is not floored: it follows the heap's
+//! layout. A drop passes and leaves the file alone; a count read on one
+//! worker moves by the race above, so `--write-floors` lowers a floor only
+//! for a drop past [`band`]. An accepted median past its
+//! limit against the floors raises the floor of every session that rose,
+//! as an accepted geomean does in wasm-ir. Every session shares one key
+//! (the counting, valgrind, the host, the workload and the fixed
+//! `getrandom`): a change to any of them stales all of them, and the gate
+//! then replays the floors' build too.
 
 use std::{
     collections::BTreeMap,
@@ -77,12 +90,15 @@ use std::{
 
 use crate::{
     accept::{self, Accept, Failure},
+    floors,
     native_ir::ACCEPTED,
     wasm_ir::{source_hash, version},
     wasm_wall::{checkout, git},
     workspace_root,
 };
 
+/// The gate's floor file, `xtask/ir-floors/replay-ir.txt`.
+const GATE: &str = "replay-ir";
 /// The workload's name in the verdict and in accept lines.
 const NAME: &str = "sessions";
 /// The most one session's count may rise, head over base.
@@ -160,9 +176,11 @@ type Counts = BTreeMap<String, Count>;
 )]
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut base_rev = "origin/main".to_owned();
+    let mut write = false;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--write-floors" => write = true,
             "--base" => base_rev = args.next().cloned().ok_or("--base needs a revision")?,
             other => return Err(format!("replay-ir: unknown option `{other}`")),
         }
@@ -185,12 +203,44 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let method = format!(
         "{COUNTING}; {}; {}; workload {}; getrandom {}",
         version(&valgrind),
-        crate::floors::host(&valgrind),
+        floors::host(&valgrind),
         source_hash(&workload),
         source_hash(FIXED_RANDOM.as_bytes())
     );
     let base = git(&root, &["merge-base", &base_rev, "HEAD"])?;
-    println!("replay-ir: base = {base_rev} ({})", short(&base));
+    let tag = git(
+        &root,
+        &[
+            "describe",
+            "--exact-match",
+            "--tags",
+            "--match",
+            "v*",
+            &base,
+        ],
+    )
+    .is_ok();
+    println!(
+        "replay-ir: base = {base_rev} ({}){}",
+        short(&base),
+        if tag {
+            ", a tag: the floors are checked against it"
+        } else {
+            ""
+        }
+    );
+    // Every session's floors share one key: the workload is one archive
+    // and one driver. The names are the floor file's until the head has
+    // counted (a stale floor is one the file holds).
+    let key = floors::key(&method, "all sessions");
+    let in_file = if tag {
+        floors::here(&root, GATE)?
+    } else {
+        floors::at(&root, &base, GATE)?
+    };
+    let mut keys: BTreeMap<String, String> =
+        in_file.keys().map(|n| (n.clone(), key.clone())).collect();
+    let stale = floors::stale(&root, GATE, &base, tag, write, &keys)?;
     let base_tree = refs.join("base-src");
     checkout(&root, &base_tree, &base)?;
     // This run's own: another gate in the checkout uses another. A run
@@ -210,13 +260,29 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let scratch = scratches.join(std::process::id().to_string());
     let _ = fs::remove_dir_all(&scratch);
     let preload = fixed_random(&scratch)?;
+    // (label, tree, target): the head, the base, then the build of each
+    // stale floor, checked out beside the base.
+    let mut trees = vec![
+        (
+            "head".to_owned(),
+            root.clone(),
+            root.join("target/replay-ir/build"),
+        ),
+        ("base".to_owned(), base_tree, refs.join("base")),
+    ];
+    for (i, (sha, _)) in stale.iter().enumerate() {
+        let tree = refs.join(format!("floor-{i}-src"));
+        checkout(&root, &tree, sha)?;
+        trees.push((
+            format!("floor {}", short(sha)),
+            tree,
+            refs.join(format!("floor-{i}")),
+        ));
+    }
     let mut workers = Vec::new();
-    for (label, tree, target) in [
-        ("head", &root, root.join("target/replay-ir/build")),
-        ("base", &base_tree, refs.join("base")),
-    ] {
+    for (label, tree, target) in &trees {
         println!("replay-ir: building the {label}'s worker");
-        let worker = build(tree, &target, &host)?;
+        let worker = build(tree, target, &host)?;
         let bytes = fs::read(&worker).map_err(|e| format!("{}: {e}", worker.display()))?;
         workers.push((source_hash(&bytes), worker));
     }
@@ -275,13 +341,134 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         save(&cache(hash), &method, &c)?;
         counts.insert(hash.clone(), c);
     }
-    let (Some(head), Some(base_counts)) = (counts.get(&workers[0].0), counts.get(&workers[1].0))
-    else {
-        return Err("replay-ir: a side has no counts".to_owned());
-    };
-    let (failures, uncounted) = report(head, (&format!("base {}", short(&base)), base_counts));
+    let sides = workers
+        .iter()
+        .map(|(hash, _)| counts.get(hash).map(named))
+        .collect::<Option<Vec<floors::Counts>>>()
+        .ok_or("replay-ir: a side has no counts")?;
+    let (head, base_counts) = (&counts[&workers[0].0], &counts[&workers[1].0]);
+    for name in sides[0].keys() {
+        keys.insert(name.clone(), key.clone());
+    }
     let accepts = accept::for_change(&root, ACCEPTED, &base, "MM_IR_ACCEPT")?;
-    judge(failures, &uncounted, &accepts)
+    // A line naming `sessions` or `sessions-calls` covers each session's
+    // floor of that number.
+    let accepted = |name: &str, r: f64| {
+        let number = name.split_once('/').map_or(name, |(n, _)| n);
+        accepts
+            .iter()
+            .any(|a| a.names(None, number) && r <= a.ceiling())
+    };
+    let floor_sides = floors::Sides {
+        base: &base,
+        tag,
+        head: &sides[0],
+        base_counts: &sides[1],
+        keys: &keys,
+        head_build: &floors::build_id(&root, None)?,
+        recounted: &floors::recounted(&stale, &sides[2..]),
+    };
+    let past = |name: &str, h: u64, f: u64| {
+        if name.starts_with(CALLS_NAME) {
+            calls_rose(h, f)
+        } else {
+            ratio(h, f) > SESSION_LIMIT
+        }
+    };
+    // An accepted median past its limit against the floors raises every
+    // session that rose, as wasm-ir's geomean does, so the next landing
+    // does not fail on it again.
+    let (at_floor, _) = floors::judge(
+        &root,
+        GATE,
+        &floor_sides,
+        &floors::Rules {
+            accepted: &accepted,
+            past: &past,
+            swept: &|_| false,
+            band,
+        },
+        false,
+    )?;
+    let prefix = format!("{NAME}/");
+    let m = median(
+        sides[0]
+            .iter()
+            .filter(|(name, _)| name.starts_with(&prefix))
+            .filter_map(|(name, &h)| Some(ratio(h, *at_floor.get(name)?)))
+            .collect(),
+    );
+    let swept = m > MEDIAN_LIMIT && accepted(NAME, m);
+    let (against, errors) = floors::judge(
+        &root,
+        GATE,
+        &floor_sides,
+        &floors::Rules {
+            accepted: &accepted,
+            past: &past,
+            swept: &|name| swept && name.starts_with(&prefix),
+            band,
+        },
+        write,
+    )?;
+    let (mut failures, mut uncounted) =
+        report(head, (&format!("base {}", short(&base)), base_counts), true);
+    let (more, gone) = report(head, ("floor", &unnamed(&against)), false);
+    failures.extend(more);
+    for name in gone {
+        if !uncounted.contains(&name) {
+            uncounted.push(name);
+        }
+    }
+    floors::verdict(judge(failures, &uncounted, &accepts), &errors)
+}
+
+/// A session's floors by name ([`crate::floors`]): `sessions/<id>`, the
+/// count without the allocator, and `sessions-calls/<id>`, the allocator's
+/// calls, of each session that ran to its end. The total is not floored:
+/// it follows the heap's layout.
+fn named(counts: &Counts) -> floors::Counts {
+    let mut out = floors::Counts::new();
+    for (id, c) in counts.iter().filter(|(_, c)| c.total > 0) {
+        out.insert(format!("{NAME}/{id}"), c.ir);
+        out.insert(format!("{CALLS_NAME}/{id}"), c.calls);
+    }
+    out
+}
+
+/// The floors as [`Counts`], for [`report`]: a session with both of its
+/// floors, its total standing in for the count it is not floored on.
+fn unnamed(floors: &floors::Counts) -> Counts {
+    let mut out = Counts::new();
+    for (name, &ir) in floors {
+        let Some(id) = name.strip_prefix(&format!("{NAME}/")) else {
+            continue;
+        };
+        if let Some(&calls) = floors.get(&format!("{CALLS_NAME}/{id}")) {
+            out.insert(
+                id.to_owned(),
+                Count {
+                    ir,
+                    total: ir.max(1),
+                    calls,
+                },
+            );
+        }
+    }
+    out
+}
+
+/// How far a session's count of one worker reads below a floor `f` of it
+/// and is still that count ([`floors::Rules::band`]): a race inside the
+/// worker moves one binary's count without allocator by up to 0.106% of a
+/// session between runs [M], so 0.15% for it; 0.05% for the allocator's
+/// calls [E].
+fn band(name: &str, f: u64) -> u64 {
+    if name.starts_with(CALLS_NAME) {
+        f / 2_000
+    } else {
+        f * 3 / 2_000
+    }
 }
 
 /// The verdict on `failures` under `accepts`, one number at a time, so the
@@ -641,12 +828,24 @@ struct Row<'a> {
 /// Prints the sessions against `other` (named `against`): per session the
 /// total, the judged count and the allocator calls, the median ratio of
 /// the judged count and the sessions that moved most; returns the sessions
-/// and the median past their limits.
+/// and the median past their limits. Without `totals` (`other` the
+/// floors, which hold no total) the total's ratios are not printed.
 #[allow(
     clippy::too_many_lines,
     reason = "the table, the sessions that moved and the verdict on two numbers"
 )]
-fn report(head: &Counts, (against, other): (&str, &Counts)) -> (Vec<Failure>, Vec<String>) {
+fn report(
+    head: &Counts,
+    (against, other): (&str, &Counts),
+    totals: bool,
+) -> (Vec<Failure>, Vec<String>) {
+    let total = |h: u64, o: u64| {
+        if totals {
+            format!("{:.4}", ratio(h, o))
+        } else {
+            "-".to_owned()
+        }
+    };
     // Sessions counted on both sides; one that diverged on a side counts
     // nothing there.
     let mut rows: Vec<Row<'_>> = head
@@ -672,11 +871,7 @@ fn report(head: &Counts, (against, other): (&str, &Counts)) -> (Vec<Failure>, Ve
         .filter(|(_, h, b)| !(*h && *b))
         .collect();
     rows.sort_by(|x, y| x.ratio.total_cmp(&y.ratio));
-    let median = match rows.len() {
-        0 => 1.0,
-        n if n % 2 == 1 => rows[n / 2].ratio,
-        n => f64::midpoint(rows[n / 2 - 1].ratio, rows[n / 2].ratio),
-    };
+    let median = median(rows.iter().map(|r| r.ratio).collect());
     let sum = |f: fn(&Row<'_>) -> u64| rows.iter().map(f).sum::<u64>();
     let (hi, bi) = (sum(|r| r.head.ir), sum(|r| r.base.ir));
     let (ht, bt) = (sum(|r| r.head.total), sum(|r| r.base.total));
@@ -687,12 +882,12 @@ fn report(head: &Counts, (against, other): (&str, &Counts)) -> (Vec<Failure>, Ve
     );
     println!("|---|---:|---:|---:|---:|---:|");
     println!(
-        "| total of {} | {:.3} | {:.3} | {:.4} | {:.4} | {:.4} |",
+        "| total of {} | {:.3} | {:.3} | {:.4} | {} | {:.4} |",
         rows.len(),
         millions(bi),
         millions(hi),
         ratio(hi, bi),
-        ratio(ht, bt),
+        total(ht, bt),
         ratio(hc, bc)
     );
     println!(
@@ -708,12 +903,12 @@ fn report(head: &Counts, (against, other): (&str, &Counts)) -> (Vec<Failure>, Ve
     for r in rows.iter().rev().take(5) {
         let _ = write!(
             text,
-            "\n  {}: {:.3} -> {:.3} M Ir ({:.4}); total {:.4}; calls {} -> {}",
+            "\n  {}: {:.3} -> {:.3} M Ir ({:.4}); total {}; calls {} -> {}",
             r.name,
             millions(r.base.ir),
             millions(r.head.ir),
             r.ratio,
-            ratio(r.head.total, r.base.total),
+            total(r.head.total, r.base.total),
             r.base.calls,
             r.head.calls
         );
@@ -802,6 +997,16 @@ fn report(head: &Counts, (against, other): (&str, &Counts)) -> (Vec<Failure>, Ve
     (failures, uncounted)
 }
 
+/// The median of `ratios`, 1 of none.
+fn median(mut ratios: Vec<f64>) -> f64 {
+    ratios.sort_by(f64::total_cmp);
+    match ratios.len() {
+        0 => 1.0,
+        n if n % 2 == 1 => ratios[n / 2],
+        n => f64::midpoint(ratios[n / 2 - 1], ratios[n / 2]),
+    }
+}
+
 /// Whether `head` allocator calls are past [`CALLS_LIMIT`] over `base`'s.
 /// A compared session ran on both sides and so called the allocator; a
 /// `base` of 0 would make any call on the head a failure, never a pass.
@@ -858,7 +1063,9 @@ fn save(path: &Path, key: &str, counts: &Counts) -> Result<(), String> {
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests fail on a broken fixture")]
 
-    use super::{CALLS_NAME, Count, Counts, NAME, calls_rose, dump, judge, report};
+    use super::{
+        CALLS_NAME, Count, Counts, NAME, band, calls_rose, dump, judge, named, report, unnamed,
+    };
     use crate::{
         accept::{self, Failure},
         native_ir::ACCEPTED,
@@ -956,17 +1163,39 @@ totals: 1117
             .collect()
     }
 
+    /// Each finished session has two floors, which come back as one count
+    /// to judge; a session that diverged has none. The band takes a
+    /// session's measured race (0.106% [M]) and not a rise of 0.2%.
+    #[test]
+    fn a_session_s_floors_are_its_two_numbers() {
+        let c = |ir, total, calls| Count { ir, total, calls };
+        let head = Counts::from([
+            ("a.x".to_owned(), c(1_000_000, 1_200_000, 900)),
+            ("b.y".to_owned(), c(0, 0, 0)),
+        ]);
+        let floors = named(&head);
+        assert_eq!(floors.len(), 2, "{floors:?}");
+        assert_eq!(floors[&format!("{NAME}/a.x")], 1_000_000);
+        assert_eq!(floors[&format!("{CALLS_NAME}/a.x")], 900);
+        assert_eq!(unnamed(&floors)["a.x"].calls, 900);
+        assert_eq!(unnamed(&floors)["a.x"].ir, 1_000_000);
+        let f = 1_000_000;
+        let ir = band(&format!("{NAME}/a.x"), f);
+        assert!((1_060..2_000).contains(&ir), "{ir}");
+        assert!(band(&format!("{CALLS_NAME}/a.x"), f) < ir);
+    }
+
     #[test]
     fn a_session_the_head_did_not_finish_is_named_and_not_a_ratio() {
         let base = counts(&[("a", 1000, 100), ("b", 1000, 100)]);
         // gate.py found b diverged on the head: it counts nothing there.
         let mut head = counts(&[("a", 1000, 100)]);
         head.insert("b".to_owned(), Count::default());
-        let (failures, uncounted) = report(&head, ("base", &base));
+        let (failures, uncounted) = report(&head, ("base", &base), true);
         assert!(failures.is_empty());
         assert_eq!(uncounted, ["b"]);
         // The other way round, the base's divergence is only reported.
-        let (failures, uncounted) = report(&base, ("base", &head));
+        let (failures, uncounted) = report(&base, ("base", &head), true);
         assert!(failures.is_empty() && uncounted.is_empty());
     }
 
@@ -974,7 +1203,7 @@ totals: 1117
     fn instructions_and_calls_fail_under_their_own_names() {
         let base = counts(&[("a", 1000, 1000), ("b", 1000, 1000), ("c", 1000, 1000)]);
         let head = counts(&[("a", 1010, 1000), ("b", 1000, 1010), ("c", 1000, 1000)]);
-        let (failures, _) = report(&head, ("base", &base));
+        let (failures, _) = report(&head, ("base", &base), true);
         let names: Vec<(&str, bool)> = failures
             .iter()
             .map(|f| (f.name.as_str(), f.text.contains("session a")))

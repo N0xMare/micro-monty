@@ -195,12 +195,16 @@ tasks:
       --plain                advisory: shipped against a plain release build
   replay-ir [options]        the 160 recorded real sessions' callgrind Ir on
                              the replay worker (shipped, --cfg mm_size_wasm)
-                             against the base's, session by session (in the
-                             release gate): fails on a session past +0.5% or
-                             the median ratio past +0.3%, unless a
+                             against the base's and each session's floor in
+                             xtask/ir-floors/replay-ir.txt (in the release
+                             gate): fails on a session past +0.5% or the
+                             median ratio past +0.3%, unless a
                              `Native-IR-Accepted: sessions <ceiling> <reason>`
-                             line covers it
+                             line covers it; allocator calls apart
+                             (`sessions-calls`)
       --base <rev>           the revision to compare with (default origin/main)
+      --write-floors         write the floor file the head must have (at a
+                             v* tag: seeded from the tag's counts)
   v8-ir [options]            V8's instructions (node --no-liftoff
                              --single-threaded, generated code, the second
                              of two runs) on bench/*.py in
@@ -737,12 +741,14 @@ const RELEASE_GATE_PATHS: &[&str] = &[
     "xtask/src/wasm.rs",
     "xtask/src/shipped.rs",
     // The code of the gates that run in the release gate only, and what
-    // they judge with; and v8-ir's floors, which only it checks.
+    // they judge with; and v8-ir's and replay-ir's floors, which only they
+    // check.
     "xtask/src/v8_ir.rs",
     "xtask/src/replay_ir.rs",
     "xtask/src/accept.rs",
     "xtask/src/floors.rs",
     "xtask/ir-floors/v8-ir.txt",
+    "xtask/ir-floors/replay-ir.txt",
     // What only they read: replay-ir's workload and lockstep driver, and
     // v8-ir's host JS, which every v8-ir key hashes.
     "conformance/codemode/real/gate.py",

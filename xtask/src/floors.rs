@@ -276,6 +276,11 @@ pub(crate) fn stale(
         return Ok(Vec::new());
     }
     let (line, since) = builds(root, base, if tag { "HEAD" } else { base })?;
+    // replay-ir has two floors per session: name a few and count the rest.
+    let some = |names: &[String]| match names {
+        [a, b, c, _, ..] => format!("{a}, {b}, {c} and {} more", names.len() - 3),
+        _ => names.join(", "),
+    };
     let mut out = Vec::new();
     for (build, names) in wanted {
         let Some((_, sha)) = line.iter().find(|(b, _)| b == build) else {
@@ -285,12 +290,12 @@ pub(crate) fn stale(
                  cannot be recounted. A tag starts new floors: seed them from it with `just \
                  seed-floors {since}` as the first commit after it, and judge that commit with \
                  `cargo xtask check --base {since}`",
-                names.join(", ")
+                some(&names)
             ));
         };
         println!(
             "{gate}: the floors of {} are stale: recounting their build, {}",
-            names.join(", "),
+            some(&names),
             &sha[..sha.len().min(10)]
         );
         out.push((sha.clone(), names));

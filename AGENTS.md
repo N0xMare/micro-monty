@@ -55,7 +55,7 @@ commands: `wasm-ir`, `v8-ir` (V8's instructions on both
 wasm32-unknown-unknown guests vs base and floors; release gate, Linux),
 `native-ir` (the gated bench Ir on the shipped native `mm` vs base and
 floors; in `check`, Linux), `replay-ir` (the recorded real sessions' Ir on
-the replay worker vs base; release gate, Linux), `wasm-host`, `wasm-wall`, `gc-stress`,
+the replay worker vs base and floors; release gate, Linux), `wasm-host`, `wasm-wall`, `gc-stress`,
 `parse-diff`, `docs`, `difffuzz`, `handoffs` (writes
 `xtask/handoff-sites.txt`, the `need_py()` hand-off sites; `--check` is in
 `check`) and `shipped-mm` (`mm` built natively as shipped, the binary bench
@@ -185,14 +185,15 @@ to `target/check/logs/<stage>.log`.
   - `cargo xtask v8-ir` (release gate): V8's generated code on both
     `wasm32-unknown-unknown` guests. Fails on a program past +0.5% or a
     guest's geomean past +0.3%.
-  - `cargo xtask replay-ir` (release gate): the 160 recorded real
-    sessions (`conformance/codemode/real`) on the replay worker built as
-    shipped plus `--cfg mm_size_wasm` (the wasm-only `optimize(size)` marks
-    on), head against base only, no floors. Fails on a session past +0.5%
-    or the sessions' median ratio past +0.3% (`sessions`, instructions
-    outside glibc's allocator), on a session whose allocator calls rise
-    past +0.5% (`sessions-calls`), and on a session that diverged on the
-    head only.
+  - `cargo xtask replay-ir` (release gate): the 160 recorded real sessions
+    (`conformance/codemode/real`) on the replay worker built as shipped
+    plus `--cfg mm_size_wasm` (the wasm-only `optimize(size)` marks on),
+    against the base and each session's floors. Fails on a session past
+    +0.5% or the sessions' median ratio past +0.3% (`sessions`,
+    instructions outside glibc's allocator), on a session whose allocator
+    calls rise past +0.5% (`sessions-calls`), and on a session that
+    diverged on the head only. A session's count races, so its floors
+    move only past a band (0.15% of its Ir, 0.05% of its calls).
 
   An intended rise says why in its commit, with the table. Each gate takes
   a line `<Prefix> <names> <ceiling> <reason>`: `Native-IR-Accepted:`
@@ -201,8 +202,8 @@ to `target/check/logs/<stage>.log`.
   only the names it lists (programs, `sessions`, `sessions-calls` or
   `geomean`; v8-ir may put `plain/` or `bundle/` before one) up to the
   ceiling ratio, and raises only the floors of those past a limit; an
-  accepted geomean past its limit raises the floor of every program in
-  it that rose.
+  accepted geomean (replay-ir: `sessions`' median) past its limit raises
+  the floor of every program (session) in it that rose.
   `MM_IR_ACCEPT`, `MM_WASM_IR_ACCEPT` and `MM_V8_IR_ACCEPT` with the same
   text stand for the line in an uncommitted tree only. A tag starts new
   floors: the first commit after it is `just seed-floors`, which runs each

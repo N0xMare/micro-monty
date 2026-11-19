@@ -3027,14 +3027,28 @@ session that diverged on the head and not on the base fails, and no
 accept line covers it.
 Counts are kept per worker binary: a head whose worker is the base's
 byte for byte is counted once. One session holds 63.1% of the counted
-instructions [M], so it judges head against base only, per session
-(+0.5%) and by the median of the sessions' ratios (+0.3%) of the judged
-count, and fails a session whose allocator calls rise past +0.5% (fewer
-always pass). An accept line covers the number it names, up to its
-ceiling (under 2.0): `sessions` a session's ratio of judged Ir and the
-median's, `sessions-calls` a session's ratio of allocator calls, head
-over base, so a line written for one leaves the other judged. It keeps
-no floors.
+instructions [M], so it judges per session (+0.5%) and by the median of
+the sessions' ratios (+0.3%) of the judged count, and fails a session
+whose allocator calls rise past +0.5% (fewer always pass), each against
+the base and against the session's floors. An accept line covers the
+number it names, up to its ceiling (under 2.0): `sessions` a session's
+ratio of judged Ir and the median's, `sessions-calls` a session's ratio
+of allocator calls, so a line written for one leaves the other judged.
+
+Each session has two floors (**Floors** above), in
+`xtask/ir-floors/replay-ir.txt`: `sessions/<id>`, the judged count, and
+`sessions-calls/<id>`, the allocator's calls; the total is not floored.
+The gate runs in the release gate only, so a rise that lands on the
+landing tier is judged at the next release-gate run against the floor,
+and rises under the limit cannot add up between two runs. The judged
+count is not exact: one worker's reads of a session differ by up to
+0.106% [M] (the race above). A floor moves only on a count past a band
+below it, 0.15% of the judged count and 0.05% of the calls [E]; a head
+within the band is the floor's count, so the file does not follow the
+race. Every session's floors share one key (the counting, valgrind, the
+host, the workload and the fixed `getrandom`), so a change to any of them
+makes all of them stale and the gate replays the floors' build as a third
+worker beside the head's and the base's.
 
 ## 13. Tests and conformance
 
