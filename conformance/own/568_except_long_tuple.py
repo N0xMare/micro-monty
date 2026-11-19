@@ -348,3 +348,12 @@ class ML(type):
         return cls.__name__ == 'L2'
 L1, L2, L3 = ML('L1', (), {}), ML('L2', (), {}), ML('L3', (), {})
 show('resume order', lambda: (isinstance(D(), (KeyError,) * 60 + (L1, (KeyError,) * 3, L2, L3)), log))
+# Wrapped once, the tuple reaches the native walk, which hands the
+# prelude the items it has left in order.
+log.clear()
+show('resume order nested', lambda: (isinstance(D(), ((KeyError,) * 60 + (L1, (KeyError,) * 3, L2, L3),)), log))
+# Checks that all miss: each runs once, top level and nested.
+log.clear()
+show('misses', lambda: (isinstance(D(), (KeyError,) * 60 + (L1, L3)), log))
+log.clear()
+show('misses nested', lambda: (isinstance(D(), ((KeyError,) * 60 + (L1, (KeyError,) * 3, L3),)), log))

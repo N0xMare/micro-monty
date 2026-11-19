@@ -2723,6 +2723,17 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "l = traceback.format_exception(e)",
         1,
     ),
+    // The longest walk of shallow items, one visit each: 16,383 classes
+    // whose metaclass MRO is 15 entries, with `int`'s 1 the most an item
+    // may scan for one visit (`SHALLOW`, 16); `meta_check` and then
+    // `any_class` each scan every item's metaclass MRO. 18.0 to 18.2 ms
+    // on shipped codegen [M].
+    (
+        Row::Bounded,
+        "M = type\nfor _ in range(13):\n    M = type('M', (M,), {})\nKs = tuple(M('K%d' % i, (), {}) for i in range(64))\nt = Ks * 255 + Ks[:63]",
+        "b = isinstance(1, t)",
+        1,
+    ),
 ];
 
 /// How many more times a bounded row over the limit runs. This host has
