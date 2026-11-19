@@ -56,9 +56,15 @@ step "toolchain from rust-toolchain.toml"
 time rustup toolchain install --no-self-update
 rustup component add rust-src --toolchain 1.100.0
 
-step "musl target (cargo xtask check's musl stage)"
+step "musl target and musl-gcc (cargo xtask check's musl stage)"
 if [ "$(uname -s)" = Linux ]; then
   rustup target add --toolchain 1.100.0 "$(uname -m)-unknown-linux-musl"
+  # musl-gcc compiles mimalloc, mm's and mm-cell-worker's allocator on musl
+  # (.cargo/config.toml).
+  if ! command -v musl-gcc >/dev/null 2>&1; then
+    sudo apt-get update -qq
+    time sudo apt-get install -y musl-tools
+  fi
 fi
 
 step "cargo fetch"

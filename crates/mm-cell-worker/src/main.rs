@@ -77,6 +77,13 @@ impl Hooks for Process {
     }
 }
 
+/// musl's malloc maps and unmaps every block of 128 KiB or more, which
+/// costs the engine's parse, compile, snapshot and restore about half
+/// again its time (docs/user-guide.md, "musl").
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// Native stack for the worker thread; the engine's own recursion is
 /// depth-counted, so this is headroom, reserved rather than committed.
 const WORKER_STACK_SIZE: usize = 16 * 1024 * 1024;

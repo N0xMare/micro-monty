@@ -672,10 +672,11 @@ fn check(args: &[String]) -> Result<(), String> {
             ir
         }));
         let musl_mm = root.join(format!("target/{musl}/release/mm"));
-        // musl, the main embedder's Linux target (README "Platforms"):
-        // `malloc` and the string functions are musl's, the binaries link
-        // static-pie, and the worker's seccomp filter meets musl's system
-        // calls. `mm` built there as shipped runs the own cases and the
+        // musl, the main embedder's Linux target (README "Platforms"): the
+        // string functions are musl's, `mm` and the worker allocate through
+        // mimalloc (C, built with musl-gcc: .cargo/config.toml), the
+        // binaries link static-pie, and the worker's seccomp filter meets
+        // musl's and mimalloc's system calls. `mm` built there as shipped runs the own cases and the
         // corpus, and the worker's tests run there. The engine brings its
         // own libm, so durability and the other engine tests would repeat
         // the glibc stages. The step-time oracle runs there in the release

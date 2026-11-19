@@ -24,7 +24,8 @@ Load further docs only when changing the normative behavior they describe.
 ## Dev
 
 `.agents/setup` installs everything: Rust 1.100.0 (pinned in
-`rust-toolchain.toml`, with both wasm targets and rust-src), CPython 3.14.7
+`rust-toolchain.toml`, with both wasm targets and rust-src; on Linux also
+the musl target and `musl-gcc`), CPython 3.14.7
 through uv (the oracle; `PYTHON` overrides `python3.14`), wasmtime 50.0.0,
 binaryen 133 (`wasm-opt`), valgrind, cargo-fuzz 0.13.2 with nightly-2026-11-01,
 cargo-deny 0.20.2 and just 1.59.0. Work and push on `main` unless told

@@ -10,7 +10,9 @@
 # `ruff-oracle` (the ruff front end, never in a shipped build). The published
 # crates themselves depend on nothing outside this repository; every
 # third-party crate below comes from the CLI, the cell worker, the wasm
-# targets, the tests, the fuzz harness or the wasmtime reference host.
+# targets, the tests, the fuzz harness or the wasmtime reference host. The
+# CLI and the cell worker on musl bring mimalloc (MIT), C source compiled
+# into those two binaries (THIRD_PARTY.md).
 
 [graph]
 all-features = true

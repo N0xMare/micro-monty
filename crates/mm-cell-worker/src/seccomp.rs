@@ -363,9 +363,31 @@ mod tests {
         std::process::abort();
     }
 
+    /// The child half of [`an_allocation_past_the_address_space_limit_aborts`]:
+    /// asks for more memory than its limit allows, under the filter.
+    #[test]
+    fn child_exhausts_memory_under_filter() {
+        if std::env::var("MM_SECCOMP_TEST_CHILD").as_deref() != Ok("1") {
+            return;
+        }
+        let report = super::Report::prepare();
+        super::install(&report, &[]).expect("installed");
+        let mut blocks = Vec::new();
+        loop {
+            blocks.push(vec![0u8; 64 << 20]);
+        }
+    }
+
     /// Runs the child test `name` in a new process and returns its output.
     fn child(name: &str) -> std::process::Output {
-        Command::new(std::env::current_exe().expect("test binary"))
+        child_with(
+            name,
+            Command::new(std::env::current_exe().expect("test binary")),
+        )
+    }
+
+    fn child_with(name: &str, mut command: Command) -> std::process::Output {
+        command
             .args(["--exact", name, "--nocapture"])
             .args(["--test-threads", "1"])
             .env("MM_SECCOMP_TEST_CHILD", "1")
@@ -380,6 +402,23 @@ mod tests {
     fn an_abort_raises_sigabrt() {
         use std::os::unix::process::ExitStatusExt;
         let output = child("seccomp::tests::child_aborts_under_filter");
+        assert_eq!(output.status.signal(), Some(libc::SIGABRT), "{output:?}");
+    }
+
+    /// Out of memory, the allocator's failed `mmap` ends in an abort
+    /// (`SIGABRT`), not in a system call the filter kills: glibc's malloc,
+    /// musl's and mimalloc (the binary's allocator on musl) alike.
+    #[test]
+    fn an_allocation_past_the_address_space_limit_aborts() {
+        use std::os::unix::process::ExitStatusExt;
+        let mut limited = Command::new("sh");
+        limited
+            .args(["-c", "ulimit -v 1048576 && exec \"$0\" \"$@\""])
+            .arg(std::env::current_exe().expect("test binary"));
+        let output = child_with(
+            "seccomp::tests::child_exhausts_memory_under_filter",
+            limited,
+        );
         assert_eq!(output.status.signal(), Some(libc::SIGABRT), "{output:?}");
     }
 

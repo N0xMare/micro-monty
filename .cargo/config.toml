@@ -7,3 +7,12 @@ xtask = "run --quiet --package xtask --"
 # artifacts (`hello` was 22 KB larger linked through clang [M]).
 [target.x86_64-unknown-linux-gnu]
 linker = "cc"
+
+# mimalloc, mm and mm-cell-worker's allocator on musl, is C: compile it with
+# musl's compiler driver (musl-tools). Without `-mpopcnt` its bit scans call
+# libgcc's `__popcountdi2`, which a Rust musl link does not provide; every
+# x86-64 CPU since 2009 has the instruction.
+[env]
+CC_x86_64_unknown_linux_musl = "musl-gcc"
+CFLAGS_x86_64_unknown_linux_musl = "-mpopcnt"
+CC_aarch64_unknown_linux_musl = "musl-gcc"

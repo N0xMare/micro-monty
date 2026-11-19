@@ -177,6 +177,13 @@ impl Flags {
     }
 }
 
+/// musl's malloc maps and unmaps every block of 128 KiB or more, which
+/// costs the engine's parse, compile, snapshot and restore about half
+/// again its time (docs/user-guide.md, "musl").
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut refs: Vec<&str> = args.iter().map(String::as_str).collect();

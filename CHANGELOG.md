@@ -29,6 +29,14 @@ hashes are pre-release history, kept in the private archive
   The workspace tests, durability and the recorded sessions (in memory
   and durable, and on the seccomp-filtered worker binary) also pass on it
   [M].
+- `mm` and `mm-cell-worker` built for musl register mimalloc (MIT, C
+  compiled with `musl-gcc`, which `.agents/setup` installs) as their
+  global allocator; the engine crates and the facade take no new
+  dependency. The worker's seccomp filter allows what mimalloc calls,
+  out of memory included. Over the 158 typical recorded sessions in
+  memory, the release-recipe worker binaries take 3.33 to 3.37 s of cell
+  time on glibc, 4.79 to 4.89 s on musl with musl's `malloc` and 3.72 to
+  3.81 s with mimalloc; the worker grows by 146 KiB [M].
 
 ### Changed
 
@@ -289,7 +297,8 @@ hashes are pre-release history, kept in the private archive
   machine: musl's `malloc` maps and unmaps every allocation of 128 KiB or
   more (644 K `mmap` calls against 2.5 K), and its `memcpy` and `memcmp`
   are slow on the small copies the snapshot codecs make. mimalloc as the
-  global allocator leaves +14% and +42% [M].
+  global allocator, which this repository's `mm` and `mm-cell-worker`
+  now register there, leaves +14% and +42% [M].
 - A start at the wall reclaims dead code, and with it the names only
   that code held; a later cell that uses such a name again (the fill's
   `append`, a loop's `pop`) can be refused at the wall where 0.0.2,

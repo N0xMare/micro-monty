@@ -1156,7 +1156,13 @@ The durable run made 644 K `mmap` calls on musl against 2.5 K on glibc
 \[M\]. What mimalloc leaves is mostly musl's `memcpy`, which the snapshot
 writer calls for each small field. mimalloc builds for musl with a musl C
 compiler (`musl-gcc`, Debian's `musl-tools`) and `CFLAGS=-mpopcnt`;
-without `-mpopcnt`, the link lacks `__popcountdi2` \[M\].
+without `-mpopcnt`, the link lacks `__popcountdi2` \[M\]. This
+repository's `mm` and `mm-cell-worker` do so on musl
+(`#[cfg(target_env = "musl")]`; `.cargo/config.toml` names the compiler
+and the flag). Over the 158 typical sessions, the worker binaries as the
+release builds them took 3.3 s of cell time on glibc, 4.8 s on musl with
+musl's `malloc` and 3.8 s with mimalloc, protocol included; mimalloc adds
+146 KiB to the static binary \[M\].
 
 `mm-wasm-host` gives every session and restore a new instance, and with many
 sessions in one process its page faults make a snapshot and restore cost

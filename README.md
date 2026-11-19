@@ -33,11 +33,13 @@ runs every case and recorded session as glibc does, but slower: its `malloc`,
 `memcpy` and `memcmp` add 54% to recorded agent sessions' engine time in
 memory and 82% with a snapshot and restore at every host call [M, 0.0.3];
 a global allocator such as mimalloc in the host binary recovers half to
-three quarters of it [M]. The step bound (docs/spec.md §5) holds there:
-the step-time oracle passes on musl [M], and the release gate runs it
-there. The wasm targets `wasm32-wasip1` and `wasm32-unknown-unknown` are
-supported builds, gated with the native ones (the facade, the mm-wasm guest
-under wasmtime, and snapshots restored across targets).
+three quarters of it [M]. This repository's `mm` and `mm-cell-worker`
+register mimalloc on musl; building them there needs `musl-gcc` (Debian's
+`musl-tools`). The step bound (docs/spec.md §5) holds there: the step-time
+oracle passes on musl [M], and the release gate runs it there. The wasm
+targets `wasm32-wasip1` and `wasm32-unknown-unknown` are supported builds,
+gated with the native ones (the facade, the mm-wasm guest under wasmtime,
+and snapshots restored across targets).
 
 ## Using it
 
