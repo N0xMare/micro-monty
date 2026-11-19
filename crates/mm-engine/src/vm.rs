@@ -1241,6 +1241,9 @@ impl Vm {
     ) -> Result<(), Raised> {
         // Retried after a collection when refused, as a start is, so the
         // outcome does not depend on whether the host snapshotted first.
+        // Not idle: the step releases (`__name__` deleted) before it
+        // allocates, so a collection can help its rerun.
+        self.heap.idle_collected = false;
         let set = self.between_cells(|vm| {
             let g = vm.globals;
             for (key, v) in [("__name__", name), ("__file__", file)] {
@@ -1274,6 +1277,9 @@ impl Vm {
         self.context = Value::NONE;
         self.exc = Value::NONE;
         self.post = None;
+        // Not idle: the step releases the old globals before it is done
+        // allocating, so a collection can help its rerun.
+        self.heap.idle_collected = false;
         let fresh = self.between_cells(Vm::fresh_globals);
         // The old globals and modules are released.
         self.heap.idle_collected = false;

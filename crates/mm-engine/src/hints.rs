@@ -236,7 +236,9 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     pub fn set_hint(&mut self, group: HintGroup, text: Option<&str>) -> Result<(), Raised> {
         // Retried after a collection when refused, as a start is
-        // (`Vm::between_cells`).
+        // (`Vm::between_cells`); not idle before the step, which can release
+        // the old text before it allocates.
+        self.heap.idle_collected = false;
         let set = self.between_cells(|vm| {
             let d = vm.hint_dict()?;
             let k = vm.intern(group.key())?;

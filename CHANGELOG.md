@@ -28,8 +28,10 @@ hashes are pre-release history, kept in the private archive
   before each start, runs [M].
 - `Session::set_hint` and `Session::set_module_dunders` refused for room
   with no cell stopped run once more after a full collection, as a cell
-  start does, and one refused part way leaves what it released to the
-  next start's collection.
+  start does, also when the heap was idle, as they release before they
+  allocate; one refused part way leaves what it released to the next
+  start's collection, and so does a host redefinition, typed or not,
+  refused after it deleted its stale definitions.
 - A `reset` after a cell whose `NameError` found no room frees the old
   globals: the shared `MemoryError` raised in its place kept the error's
   hint data, the globals included, so the reset returned `Ok` and every

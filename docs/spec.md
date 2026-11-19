@@ -1795,7 +1795,9 @@ timer deadlines.
   resets, so whether dead code is dropped before the next load does not
   depend on whether the host snapshotted. A start, a `reset`'s new
   globals, a hint or a module dunder refused for room anyway runs once
-  more after one, unless the heap was idle (below) before it: the
+  more after one, unless the heap was idle (below) before it (`reset`, a
+  hint and a module dunder release before they allocate, so they end
+  the idle state first, as does a typed host definition): the
   constants of the code reclamation drops after its collection are
   freed this way, so a start whose reclamation dropped code and that is
   then refused collects twice. That reclamation also drops the names

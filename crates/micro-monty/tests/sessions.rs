@@ -4,8 +4,8 @@
 #![allow(clippy::expect_used, clippy::panic, reason = "tests")]
 
 use micro_monty::{
-    Engine, EngineConfig, HintGroup, HostError, HostErrorKind, HostModule, HostValue, Limits,
-    ParkReason, Progress, Resume, Session, Stream, TextCut,
+    Engine, EngineConfig, HintGroup, HostError, HostErrorKind, HostModule, HostParam,
+    HostSignature, HostValue, Limits, ParkReason, Progress, Resume, Session, Stream, TextCut,
 };
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -609,10 +609,11 @@ fn a_start_refused_off_the_wall_reruns_over_the_last_refusal_garbage() {
     }
 }
 
-/// `set_module_dunders` refused part way, after it deleted `__name__`,
-/// leaves the next start to collect what it released.
+/// `set_module_dunders` at the wall releases `__name__` before it
+/// allocates: refused, it runs once more after collecting what it
+/// released, and what it leaves the next start collects.
 #[test]
-fn module_dunders_refused_part_way_leave_the_next_start_to_collect() {
+fn module_dunders_that_release_at_the_wall_leave_no_cell_stuck() {
     let engine = wall_engine(4);
     let mut session = Session::new(&engine).expect("session");
     session
@@ -635,7 +636,9 @@ fn module_dunders_refused_part_way_leave_the_next_start_to_collect() {
     session.set_fuel(Some(20_000));
     session.start(&code);
     session.set_fuel(None);
-    assert!(session.set_module_dunders(None, None).is_err());
+    // It deletes `__name__` before it interns `__file__`, which is refused
+    // at first; the rerun collects what it released and fits.
+    session.set_module_dunders(None, None).expect("set");
     assert_eq!(
         wall_cell(&engine, &mut session, "y8 = 'new constant 8'"),
         "MemoryError"
@@ -674,6 +677,110 @@ fn an_untyped_redefinition_after_a_collection_leaves_the_next_start_to_collect()
         wall_cell(&engine, &mut session, "z = 'new constant two'"),
         "ok"
     );
+}
+
+/// A session as the random sessions drive it: the builtins module
+/// defined, then `cells` run in turn; `#!dunders NAME` (or bare) sets the
+/// module dunders instead. Returns each outcome.
+fn wall_session(engine: &Engine, session: &mut Session, cells: &[&str]) -> Vec<String> {
+    cells
+        .iter()
+        .map(|src| match src.strip_prefix("#!dunders") {
+            Some(name) => {
+                let name = Some(name.trim()).filter(|n| !n.is_empty());
+                match session.set_module_dunders(name, None) {
+                    Ok(()) => "ok".to_owned(),
+                    Err(e) => e.type_name,
+                }
+            }
+            None => wall_cell(engine, session, src),
+        })
+        .collect()
+}
+
+/// `reset` and `set_module_dunders` release before they allocate: refused
+/// at a heap idle at its wall, they run once more after the collection
+/// that frees what they released, whether or not the host snapshotted
+/// first (random sessions 336 at 6 MiB and 314 at 4 MiB).
+#[test]
+fn reset_and_dunders_refused_at_an_idle_wall_rerun_after_collecting() {
+    let fill = fill_with("str(len(xs))");
+    let engine = wall_engine(6);
+    let mut session = Session::new(&engine).expect("session");
+    session
+        .define(&HostModule::untyped("", &["h", "hf"]))
+        .expect("defined");
+    let refill =
+        "try:\n    while True:\n        xs.append(str(len(xs)))\nexcept MemoryError:\n    pass";
+    let cells = [
+        fill.as_str(),
+        "y1 = 'new constant 1'",
+        "#!dunders mod2",
+        "n = 1",
+        refill,
+    ];
+    wall_session(&engine, &mut session, &cells);
+    session.reset().expect("reset");
+    let engine = wall_engine(4);
+    let mut session = Session::new(&engine).expect("session");
+    session
+        .define(&HostModule::untyped("", &["h", "hf"]))
+        .expect("defined");
+    let fill = "d = {}\nxs = []\ntry:\n    while True:\n        d[len(d)] = str(len(d))\nexcept MemoryError:\n    pass";
+    let b4 = format!("b4 = b\"{}\"", "b".repeat(1000));
+    let gc = "import gc\ngc.collect()";
+    let cells = [
+        fill,
+        "xs = None",
+        "n = 1",
+        "pass",
+        &b4,
+        gc,
+        "n += 1",
+        gc,
+        "#!dunders",
+    ];
+    let out = wall_session(&engine, &mut session, &cells);
+    assert_eq!(out[8], "ok");
+}
+
+/// A typed redefinition collects at the wall, deletes its stale
+/// definitions without allocating and can be refused before the module is
+/// built: the next start collects what it deleted.
+#[test]
+fn a_typed_redefinition_refused_at_the_wall_leaves_the_next_start_to_collect() {
+    let engine = wall_engine(8);
+    let mut session = Session::new(&engine).expect("session");
+    session
+        .define(&HostModule::untyped("", &["h", "hf"]))
+        .expect("defined");
+    let typed = HostModule {
+        name: "typed".to_owned(),
+        functions: (0..8)
+            .map(|i| HostSignature {
+                name: format!("fn{i}"),
+                params: vec![HostParam {
+                    name: "key".to_owned(),
+                    annotation: "str".to_owned(),
+                    ..HostParam::default()
+                }],
+                returns: "int".to_owned(),
+                doc: format!("doc of fn{i}"),
+                ..HostSignature::default()
+            })
+            .collect(),
+        ..HostModule::default()
+    };
+    session.define(&typed).expect("defined");
+    assert_eq!(
+        wall_cell(&engine, &mut session, &fill_with("str(len(xs))")),
+        "ok"
+    );
+    for i in 0..30 {
+        wall_cell(&engine, &mut session, &format!("q{i} = 1"));
+    }
+    assert!(session.define(&typed).is_err());
+    assert_eq!(wall_cell(&engine, &mut session, "r0 = 1"), "ok");
 }
 
 /// Each way between cells that allocates or releases leaves the heap

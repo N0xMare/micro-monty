@@ -1403,6 +1403,10 @@ impl Vm {
         // `Vm::define_host_module`, which the facade runs next) is left to
         // the next start: the bindings below allocate (`Heap::idle`).
         self.prepare_cell();
+        // The stale definitions deleted below are released without
+        // allocating, and a refusal after them returns before
+        // `Vm::define_host_module` (`Heap::idle`).
+        self.heap.idle_collected = false;
         let pg = self.prelude_globals;
         let dk = self.intern("_host_defs")?;
         let defs = if let Some(d) = self.dict_get_str(pg, dk) {
