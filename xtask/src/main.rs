@@ -677,9 +677,8 @@ fn check(args: &[String]) -> Result<(), String> {
         // calls. `mm` built there as shipped runs the own cases and the
         // corpus, and the worker's tests run there. The engine brings its
         // own libm, so durability and the other engine tests would repeat
-        // the glibc stages. The step-time oracle is not run: musl's
-        // `memcpy`, `memcmp` and `malloc` put 15 of its rows over the bound
-        // (README "Platforms").
+        // the glibc stages. The step-time oracle, which passes there, is
+        // not run: timed alone, it would add about 6 minutes.
         stages.push(
             Stage::new("musl")
                 .after(&["shipped-mm", "test"])

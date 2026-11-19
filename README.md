@@ -33,16 +33,12 @@ runs every case and recorded session as glibc does, but slower: its `malloc`,
 `memcpy` and `memcmp` add 54% to recorded agent sessions' engine time in
 memory and 82% with a snapshot and restore at every host call [M, 0.0.3];
 a global allocator such as mimalloc in the host binary recovers half to
-three quarters of it [M]. The step bound (docs/spec.md §5) is a known
-limit on musl for now: 15 bounded rows of the step-time oracle take 51 to
-200 ms between safepoints against the 44 ms it allowed on the measuring
-machine. They are bigint `*`, `/`, `%`, `//`, `divmod`, `pow` and the
-`math.gcd`/`lcm` steps on 64 to 67 M-bit operands, `==` on 60 MB strings
-and `json.loads` of a 45 MB string. Outcomes and fuel are the same as on
-glibc; `cargo xtask check` does not run the timed oracle there
-[M]. The wasm targets `wasm32-wasip1` and `wasm32-unknown-unknown` are
-supported builds, gated with the native ones (the facade, the mm-wasm guest
-under wasmtime, and snapshots restored across targets).
+three quarters of it [M]. The step bound (docs/spec.md §5) holds there:
+the step-time oracle passes on musl [M], which `cargo xtask check` does not
+run for want of time. The wasm targets `wasm32-wasip1` and
+`wasm32-unknown-unknown` are supported builds, gated with the native ones
+(the facade, the mm-wasm guest under wasmtime, and snapshots restored across
+targets).
 
 ## Using it
 

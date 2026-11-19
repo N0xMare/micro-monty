@@ -25,8 +25,9 @@ hashes are pre-release history, kept in the private archive
 - `x86_64-unknown-linux-musl` is a tested platform: `cargo xtask check`'s
   `musl` stage builds `mm` there as shipped (static-pie), runs the own
   cases and Monty's corpus on it, and runs the worker's tests there. The
-  workspace tests, durability and the recorded sessions (in memory and
-  durable, and on the seccomp-filtered worker binary) also pass on it [M].
+  workspace tests, durability, the step-time oracle and the recorded
+  sessions (in memory and durable, and on the seccomp-filtered worker
+  binary) also pass on it [M].
 
 ### Changed
 
@@ -230,6 +231,24 @@ hashes are pre-release history, kept in the private archive
   collection beside garbage.
   `xml.etree.ElementTree` reports ill-formed bytes as `ParseError` (it
   reads `e.start`, and raised `AttributeError`). The build id moves.
+- The step bound (docs/spec.md §5) holds on musl. 15 bounded rows of the
+  step-time oracle took 51 to 200 ms between safepoints against a 44 ms
+  limit, `t = s[::2]` over two-byte chars 39 to 40 ms against 38.6 to
+  44 ms, and the queue test's 50,000 `list.insert(0, i)` 2.7 s against a
+  0.91 s budget, all in libc calls musl makes slow: a `memcpy` of
+  run-time length per bigint limb (`/`, `%`, `//`, `divmod`, `pow`,
+  `math.gcd`/`lcm` on 64 to 67 M-bit ints), per `json.loads` string
+  piece and per char of a stepped slice, `memcmp` (a byte loop in musl)
+  for `==` on long `str`, `bytes` and ints, and a backward `memmove` for
+  `insert(0, x)`. Limbs are now read as fixed-size words and short json
+  pieces pushed byte by byte, on every target, which is faster on glibc
+  too: a script of 67 M-bit `divmod` and `/` went from 0.36 s to 0.30 s
+  and five `json.loads` of 45 MB from 1.26 s to 1.02 s [M]. On musl
+  only, equality compares 32 bytes at a time, a slice's chars are copied
+  at fixed sizes and short moves up go through a stack buffer; elsewhere
+  those stay on the libc path, which is faster there. Values, fuel and
+  outcomes are unchanged. On musl the slowest of those rows now takes
+  36 ms against a limit of 38.6 to 40.6 ms, and the inserts 0.25 s [M].
 - `mm-cell-worker` on musl: a panic, which aborts in a shipped build,
   killed the worker with the seccomp filter's `SIGSYS` instead of
   `SIGABRT`, as musl's `abort` signals with `tkill` where glibc's uses
@@ -270,15 +289,6 @@ hashes are pre-release history, kept in the private archive
   more (644 K `mmap` calls against 2.5 K), and its `memcpy` and `memcmp`
   are slow on the small copies the snapshot codecs make. mimalloc as the
   global allocator leaves +14% and +42% [M].
-- The step bound is not met on musl: 15 bounded rows of the step-time
-  oracle take 51 to 200 ms between safepoints against the 44 ms limit it
-  set on the measuring machine (0 rows over on glibc there). They are
-  bigint `*`, `/`, `%`, `//`, `divmod`, `pow`, `math.gcd` and `math.lcm` on
-  64 to 67 M-bit operands (`a / c` 200 ms), `==` on two 60 MB strings
-  (131 ms) and `json.loads` of a 45 MB string (51 ms), and their time is
-  in musl's `memcpy`, `memmove` and `memcmp` and in page faults on freshly
-  mapped memory. Outcomes and fuel are those of glibc; `cargo xtask check`
-  does not run the timed oracle on musl [M].
 - A start at the wall reclaims dead code, and with it the names only
   that code held; a later cell that uses such a name again (the fill's
   `append`, a loop's `pop`) can be refused at the wall where 0.0.2,
