@@ -72,7 +72,10 @@
 //! two release-gate runs. The total is not floored: it follows the heap's
 //! layout. A drop passes and leaves the file alone; a count read on one
 //! worker moves by the race above, so `--write-floors` lowers a floor only
-//! for a drop past [`band`]. An accepted median past its
+//! for a drop past [`band`], and a line within the band of a read on the
+//! head's build stands for that read ([`floors::judge`]). The median
+//! against the floors takes a session's base count where it is lower
+//! ([`floors::lower`]). An accepted median past its
 //! limit against the floors raises the floor of every session that rose,
 //! as an accepted geomean does in wasm-ir. Every session shares one key
 //! (the counting, valgrind, the host, the workload and the fixed
@@ -395,7 +398,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         sides[0]
             .iter()
             .filter(|(name, _)| name.starts_with(&prefix))
-            .filter_map(|(name, &h)| Some(ratio(h, *at_floor.get(name)?)))
+            .filter_map(|(name, &h)| {
+                let f = *at_floor.get(name)?;
+                Some(ratio(h, floors::lower(f, sides[1].get(name).copied())))
+            })
             .collect(),
     );
     let swept = m > MEDIAN_LIMIT && accepted(NAME, m);
@@ -412,8 +418,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         write,
     )?;
     let (mut failures, mut uncounted) =
-        report(head, (&format!("base {}", short(&base)), base_counts), true);
-    let (more, gone) = report(head, ("floor", &unnamed(&against)), false);
+        report(head, (&format!("base {}", short(&base)), base_counts), None);
+    let (more, gone) = report(head, ("floor", &unnamed(&against)), Some(base_counts));
     failures.extend(more);
     for name in gone {
         if !uncounted.contains(&name) {
@@ -828,8 +834,10 @@ struct Row<'a> {
 /// Prints the sessions against `other` (named `against`): per session the
 /// total, the judged count and the allocator calls, the median ratio of
 /// the judged count and the sessions that moved most; returns the sessions
-/// and the median past their limits. Without `totals` (`other` the
-/// floors, which hold no total) the total's ratios are not printed.
+/// and the median past their limits. With `base` (`other` the floors,
+/// which hold no total) the total's ratios are not printed, and the
+/// median takes each session's base count where it is below its floor
+/// ([`floors::lower`]).
 #[allow(
     clippy::too_many_lines,
     reason = "the table, the sessions that moved and the verdict on two numbers"
@@ -837,10 +845,10 @@ struct Row<'a> {
 fn report(
     head: &Counts,
     (against, other): (&str, &Counts),
-    totals: bool,
+    base: Option<&Counts>,
 ) -> (Vec<Failure>, Vec<String>) {
     let total = |h: u64, o: u64| {
-        if totals {
+        if base.is_none() {
             format!("{:.4}", ratio(h, o))
         } else {
             "-".to_owned()
@@ -871,7 +879,14 @@ fn report(
         .filter(|(_, h, b)| !(*h && *b))
         .collect();
     rows.sort_by(|x, y| x.ratio.total_cmp(&y.ratio));
-    let median = median(rows.iter().map(|r| r.ratio).collect());
+    let median = median(
+        rows.iter()
+            .map(|r| {
+                let b = base.and_then(|b| b.get(r.name)).map(|b| b.ir);
+                ratio(r.head.ir, floors::lower(r.base.ir, b))
+            })
+            .collect(),
+    );
     let sum = |f: fn(&Row<'_>) -> u64| rows.iter().map(f).sum::<u64>();
     let (hi, bi) = (sum(|r| r.head.ir), sum(|r| r.base.ir));
     let (ht, bt) = (sum(|r| r.head.total), sum(|r| r.base.total));
@@ -1191,11 +1206,11 @@ totals: 1117
         // gate.py found b diverged on the head: it counts nothing there.
         let mut head = counts(&[("a", 1000, 100)]);
         head.insert("b".to_owned(), Count::default());
-        let (failures, uncounted) = report(&head, ("base", &base), true);
+        let (failures, uncounted) = report(&head, ("base", &base), None);
         assert!(failures.is_empty());
         assert_eq!(uncounted, ["b"]);
         // The other way round, the base's divergence is only reported.
-        let (failures, uncounted) = report(&base, ("base", &head), true);
+        let (failures, uncounted) = report(&base, ("base", &head), None);
         assert!(failures.is_empty() && uncounted.is_empty());
     }
 
@@ -1203,12 +1218,50 @@ totals: 1117
     fn instructions_and_calls_fail_under_their_own_names() {
         let base = counts(&[("a", 1000, 1000), ("b", 1000, 1000), ("c", 1000, 1000)]);
         let head = counts(&[("a", 1010, 1000), ("b", 1000, 1010), ("c", 1000, 1000)]);
-        let (failures, _) = report(&head, ("base", &base), true);
+        let (failures, _) = report(&head, ("base", &base), None);
         let names: Vec<(&str, bool)> = failures
             .iter()
             .map(|f| (f.name.as_str(), f.text.contains("session a")))
             .collect();
         assert_eq!(names, [(NAME, true), (CALLS_NAME, false)]);
+    }
+
+    /// The review's G1 for the median: a and b dropped and left their
+    /// floors 2% high; c and d rose earlier, so their floors are below the
+    /// base. The median against the floors alone (1.0000) and against the
+    /// base (1.0025) pass; a's and b's drops are no headroom for c's and
+    /// d's rises, so against the lower of floor and base it fails (1.0035).
+    #[test]
+    fn a_floor_left_above_a_drop_is_no_headroom_for_the_median() {
+        let row = |a: u64, c: u64| {
+            counts(&[
+                ("a", a, 1000),
+                ("b", a, 1000),
+                ("c", c, 1000),
+                ("d", c, 1000),
+                ("e", 1_000_000, 1000),
+            ])
+        };
+        let head = row(1_003_500, 1_004_500);
+        let base = row(1_000_000, 1_002_000);
+        let floor = row(1_020_000, 1_000_000);
+        let texts = |failures: &[Failure]| -> Vec<String> {
+            failures.iter().map(|f| f.text.clone()).collect()
+        };
+        let (failures, _) = report(&head, ("base", &base), None);
+        assert!(failures.is_empty(), "{:?}", texts(&failures));
+        let (failures, _) = report(&head, ("floor", &floor), None);
+        assert!(
+            failures.is_empty(),
+            "the floors alone: {:?}",
+            texts(&failures)
+        );
+        let (failures, _) = report(&head, ("floor", &floor), Some(&base));
+        let texts = texts(&failures);
+        assert!(
+            texts.len() == 1 && texts[0].contains("median ratio"),
+            "{texts:?}"
+        );
     }
 
     #[test]

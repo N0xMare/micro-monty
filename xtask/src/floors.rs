@@ -437,6 +437,10 @@ fn this_run(source: &Floors, sides: &Sides<'_>) -> Floors {
 /// The floors the head is measured against, and what is wrong with the
 /// head's floor file (empty when nothing). With `write`, writes the file
 /// the head must have first; at a tag, the file [`seed`] makes.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one match over what a floor line may be, with its reasons"
+)]
 pub(crate) fn judge(
     root: &Path,
     gate: &str,
@@ -490,30 +494,40 @@ pub(crate) fn judge(
             build: sides.head_build.to_owned(),
             key: key.clone(),
         };
-        let held = have.get(name) == Some(&at_head);
+        // The head's line as the file holds it: on the head's build and
+        // key, within the band of this read (a racing count's line is one
+        // read of the same build, written by `--write-floors`).
+        let held = have
+            .get(name)
+            .filter(|f| f.build == at_head.build && f.key == *key && rules.same(name, f.count, h))
+            .cloned();
         let (line, why) = match floors.get(name) {
             // A count the base has no floor for: the head's file may seed
             // it at or below the head's count, never above it by more than
-            // the band (a racing count's seed is the lowest of its reads).
+            // the band; `--write-floors` writes any line above the read at
+            // the read, so the band is a margin for the next read.
             None => {
                 let seed = have
                     .get(name)
-                    .filter(|f| !rules.lowers(name, h, f.count) && f.key == *key)
+                    .filter(|f| {
+                        !rules.lowers(name, h, f.count) && f.key == *key && !(write && f.count > h)
+                    })
                     .cloned();
                 let line = seed.unwrap_or(at_head);
                 against.insert(name.clone(), line.count);
                 (line, "a new count".to_owned())
             }
             // A drop leaves the floor as it is; `--write-floors` lowers it.
-            Some(f) if rules.lowers(name, h, f.count) && (write || held) => {
-                (at_head, String::new())
+            Some(f) if rules.lowers(name, h, f.count) && (write || held.is_some()) => {
+                let line = held.filter(|l| l.count < f.count).unwrap_or(at_head);
+                (line, String::new())
             }
             Some(f) if rules.raises(name, h, f.count) => {
                 let why = format!(
                     "an accept line raises it from {} to the head's {h}",
                     f.count
                 );
-                (at_head, why)
+                (held.unwrap_or(at_head), why)
             }
             Some(_) => {
                 let why = if sides.recounted.contains_key(name) {
@@ -1011,6 +1025,69 @@ mod tests {
             assert_eq!(!errors.is_empty(), moves, "{h}: {errors:?}");
         }
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A racing count's line written by `--write-floors` is one read; a
+    /// second read of the same build within the band passes it (the
+    /// review's R1 and R2: a new count's line above the read is written at
+    /// the read, and a lowered or accepted line holds on the next read).
+    #[test]
+    fn a_line_written_from_one_read_passes_the_next() {
+        let keys = keys(&["s"], "k");
+        let none = Counts::new();
+        let line = |_: &str, r: f64| r <= 1.02;
+        let rules = Rules {
+            accepted: &line,
+            past: &past,
+            swept: &|_| false,
+            band: |_, f| f / 1_000,
+        };
+        let judged = |dir: &Path, sha: &str, h: u64, write: bool| {
+            let head = counts(&[("s", h)]);
+            let sides = Sides {
+                base: sha,
+                tag: false,
+                head: &head,
+                base_counts: &none,
+                keys: &keys,
+                head_build: "b-2",
+                recounted: &none,
+            };
+            judge(dir, "native-ir", &sides, &rules, write).unwrap().1
+        };
+        // A new count: a line 5 above the read passes, and is written at
+        // the read; the next reads, either side of it, pass.
+        let (dir, sha) = repo("race-new", &Floors::new());
+        write(
+            &dir,
+            "native-ir",
+            &Floors::from([("s".to_owned(), floor(10_005, "b-0"))]),
+        )
+        .unwrap();
+        let errors = judged(&dir, &sha, 10_000, false);
+        assert!(errors.is_empty(), "{errors:?}");
+        judged(&dir, &sha, 10_000, true);
+        assert_eq!(here(&dir, "native-ir").unwrap()["s"], floor(10_000, "b-2"));
+        for h in [9_995, 10_008] {
+            let errors = judged(&dir, &sha, h, false);
+            assert!(errors.is_empty(), "{h}: {errors:?}");
+        }
+        fs::remove_dir_all(&dir).unwrap();
+        // A drop and an accepted rise, each written from one read and
+        // judged on another within the band.
+        let base = Floors::from([("s".to_owned(), floor(10_000, "b-1"))]);
+        for (read, again) in [(9_900, [9_895, 9_905]), (10_100, [10_095, 10_104])] {
+            let (dir, sha) = repo("race", &base);
+            judged(&dir, &sha, read, true);
+            assert_eq!(here(&dir, "native-ir").unwrap()["s"], floor(read, "b-2"));
+            for h in again {
+                let errors = judged(&dir, &sha, h, false);
+                assert!(errors.is_empty(), "{read} read again as {h}: {errors:?}");
+                judged(&dir, &sha, h, true);
+                assert_eq!(here(&dir, "native-ir").unwrap()["s"].count, read, "kept");
+            }
+            fs::remove_dir_all(&dir).unwrap();
+        }
     }
 
     /// Another host (another key) recounts the base's floors and judges

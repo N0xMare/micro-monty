@@ -193,7 +193,12 @@ to `target/check/logs/<stage>.log`.
     instructions outside glibc's allocator), on a session whose allocator
     calls rise past +0.5% (`sessions-calls`), and on a session that
     diverged on the head only. A session's count races, so its floors
-    move only past a band (0.15% of its Ir, 0.05% of its calls).
+    move only past a band (0.15% of its Ir, 0.05% of its calls), a line
+    the file holds on the head's build within the band of a read is that
+    read's line, and a gate's first `--write-floors` writes every line
+    above the read at the read. Its counts are cached by the worker's
+    hash (`target/replay-ir/cache`): prove written floors on a recount
+    with the cache removed.
 
   An intended rise says why in its commit, with the table. Each gate takes
   a line `<Prefix> <names> <ceiling> <reason>`: `Native-IR-Accepted:`

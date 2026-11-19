@@ -3045,7 +3045,13 @@ count is not exact: one worker's reads of a session differ by up to
 0.106% [M] (the race above). A floor moves only on a count past a band
 below it, 0.15% of the judged count and 0.05% of the calls [E]; a head
 within the band is the floor's count, so the file does not follow the
-race. Every session's floors share one key (the counting, valgrind, the
+race. A line the head's file holds on the head's build within the band
+of a read is that read's line, so a lowered, raised or swept line
+written from one read passes the next; and `--write-floors` writes a
+new count's line at the read wherever the file holds it above, so at a
+gate's first landing the band is a margin over the race, not a limit
+some sessions sit on. The median against the floors takes each
+session's base count where it is below its floor, as the geomeans do. Every session's floors share one key (the counting, valgrind, the
 host, the workload and the fixed `getrandom`), so a change to any of them
 makes all of them stale and the gate replays the floors' build as a third
 worker beside the head's and the base's.
