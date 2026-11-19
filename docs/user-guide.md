@@ -796,12 +796,21 @@ setup before every cell (a presentation whose cells start fresh) calls
 the session it already holds, so its output callback, clock, entropy,
 deadline, park handle, limits, fuel total, host arguments and hint
 overrides stay as a reset leaves them, and call ids and `Task-N` names
-continue. Capture the template from a new session (or one just reset) after
-the setup. The next cell sees a new session after the setup: unlike
+continue; the setup's recursion limit and call log are restored with
+the session's call ids. Capture the template from a new session (or one
+just reset) after the setup. The next cell sees a new session after the
+setup: unlike
 `reset`, which keeps the bundled code and prelude parts earlier cells
 loaded (charged to the session, so a re-import costs less fuel), it keeps
 nothing earlier cells loaded. When those cells loaded nothing beyond the
-setup, it is exactly `reset` and the setup, fuel and memory included.
+setup, it is `reset` and the setup in output, host calls, fuel total and
+memory charge; only where the first fuel period's safepoint checks fall
+can differ. A setup that reads the clock or entropy (`import random`,
+`time.time()`) would give every cell the captured values:
+`Session::outside_reads` tells a host when its setup did. The session must
+have the limits, host definitions and local time zone the template was
+captured with; otherwise `reset_to` returns `SnapshotError::Mismatch`.
+Every error leaves the session as it was.
 
 **When it pays.** With a warm module cache, instantiating a template that
 imported json, asyncio, re, collections and datetime takes about 1.1 ms,

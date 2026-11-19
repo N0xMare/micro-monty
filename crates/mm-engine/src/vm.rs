@@ -1013,6 +1013,8 @@ pub struct Vm {
     /// The local time zone `time` and `datetime` read, as TZif data
     /// (RFC 8536); `None` is UTC.
     pub(crate) local_zone: Option<Vec<u8>>,
+    /// Reads of the wall clock and entropy by guest code ([`Vm::outside_reads`]).
+    pub(crate) outside_reads: u64,
     /// Where `zoneinfo` gets a zone's TZif data (not session state).
     pub(crate) zone_source: Option<ZoneSource>,
     pub(crate) host_args: crate::host::HostArgs,
@@ -1333,6 +1335,7 @@ impl Vm {
             wall_clock: None,
             entropy: None,
             local_zone: None,
+            outside_reads: 0,
             zone_source: None,
             host_args: crate::host::HostArgs::default(),
             slow: false,
@@ -2253,6 +2256,13 @@ impl Vm {
     /// loaded are.
     pub fn set_zone_source(&mut self, source: Option<ZoneSource>) {
         self.zone_source = source;
+    }
+
+    /// How many times guest code read the wall clock or entropy since the
+    /// VM was made or read from an image.
+    #[must_use]
+    pub fn outside_reads(&self) -> u64 {
+        self.outside_reads
     }
 
     /// Sets the entropy source of `os.urandom`, unseeded `random` and

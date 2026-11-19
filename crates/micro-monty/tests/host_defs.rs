@@ -1059,6 +1059,13 @@ fn images_store_host_code_on_request_and_never_bind_to_other_code() {
                 1
             )
         );
+        // After `reset_to` a template on `engine`, the session still stores
+        // the code as its own engine does.
+        let mut theirs = checked_tools(&engine, &out);
+        let template = SessionTemplate::capture(&engine, &mut theirs).expect("captures");
+        let mut s = checked_tools(&storing, &out);
+        s.reset_to(&template).expect("resets to the template");
+        assert!(s.snapshot().expect("snapshot").len() > keyed.len());
     }
 
     // A definition that differs only where the generated code does not (a

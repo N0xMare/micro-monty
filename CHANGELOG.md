@@ -222,7 +222,12 @@ hashes are pre-release history, kept in the private archive
   phase continue. It keeps nothing earlier cells loaded, so the next
   cell's output, fuel and memory are those of a new session after the
   setup (`reset`, documented now, keeps loaded bundled code and prelude
-  parts). `mm-cell-worker` uses it for py-sdk cells: a `Reset` waits for
+  parts). It refuses a template captured under other limits, host
+  definitions, function ids or local time zone with the new
+  `SnapshotError::Mismatch`, and leaves the session unchanged on every
+  error. `Session::outside_reads` counts the session's reads of the wall
+  clock and entropy. `mm-cell-worker`
+  uses it for py-sdk cells: a `Reset` waits for
   the next `StartCell`, and a bootstrap equal to the one whose state the
   worker kept is not compiled or run again.
 

@@ -698,6 +698,9 @@ pub enum SnapshotError {
         /// The panic's message.
         message: String,
     },
+    /// [`Session::reset_to`]: the template was captured under other
+    /// limits or host definitions than the session has.
+    Mismatch,
 }
 
 /// The first eight bytes of a build id in hex, for messages.
@@ -728,6 +731,9 @@ impl fmt::Display for SnapshotError {
                 f.write_str("the session is poisoned by an internal engine error")
             }
             SnapshotError::Internal { message } => f.write_str(message),
+            SnapshotError::Mismatch => {
+                f.write_str("the template has other limits or host definitions than the session")
+            }
         }
     }
 }
@@ -756,6 +762,9 @@ pub struct SessionTemplate {
     /// The captured session's counters at its last reset and at the
     /// capture: how far its setup moved them ([`Session::reset_to`]).
     setup: (mm_engine::Counters, mm_engine::Counters),
+    /// The captured session's limits ([`Session::reset_to`] refuses
+    /// another's); unknown for [`SessionTemplate::from_image`].
+    limits: Option<Limits>,
 }
 
 impl SessionTemplate {
@@ -779,13 +788,15 @@ impl SessionTemplate {
             image: session.snapshot()?,
             checked: std::sync::OnceLock::new(),
             setup: (session.reset_mark, session.vm.counters()),
+            limits: Some(session.limits()),
         })
     }
 
     /// A template from an image [`SessionTemplate::image`] returned (by
     /// this build), checked by restoring it once. [`Session::reset_to`]
     /// does not know how far its setup moved the session's call ids, task
-    /// numbers and safepoint phase, and counts it as not at all.
+    /// numbers and safepoint phase, and counts it as not at all; so does a
+    /// template captured from a session restored after its setup.
     ///
     /// # Errors
     ///
@@ -797,6 +808,7 @@ impl SessionTemplate {
             image,
             checked: std::sync::OnceLock::from(()),
             setup: Default::default(),
+            limits: None,
         })
     }
 
@@ -2347,42 +2359,52 @@ impl Session {
 
     /// [`Session::reset`], then the setup `template` was captured after,
     /// without running it: the session takes the template's globals,
-    /// modules, host definitions and heap from its image, read as
-    /// [`SessionTemplate::instantiate`] reads it, and keeps everything a
-    /// reset keeps that the image does not settle. Kept: the host-side
-    /// settings, deadline and park handle, the limits (memory, fuel,
-    /// recursion as `sys.setrecursionlimit` left it), the fuel total and
-    /// a fuel set for the next cell, the last-expression flag, text limit
-    /// and cut, host arguments, local time zone and hint overrides. The
-    /// call ids, task numbers and safepoint phase continue from this
-    /// session's, moved on as the setup moved them between the captured
-    /// session's last reset and the capture.
+    /// modules, host definitions, recursion limit and heap from its image,
+    /// read as [`SessionTemplate::instantiate`] reads it, and keeps
+    /// everything a reset keeps that the image does not settle: the
+    /// host-side settings, deadline and park handle, the limits (memory,
+    /// fuel, recursion ceiling), the fuel total and a fuel set for the
+    /// next cell, the last-expression flag, text limit and cut, host
+    /// arguments and hint overrides. The call ids, task numbers and
+    /// safepoint phase continue from this session's, moved on as the
+    /// setup moved them between the captured session's last reset (or its
+    /// restore) and the capture; the call log is the setup's, with these
+    /// ids.
     ///
     /// Nothing earlier cells loaded stays (unlike [`Session::reset`]):
     /// when the template was captured from a new session after its setup,
-    /// the next cell's output, fuel and memory are those of a new session
-    /// after that setup, as after any restore; they are those of `reset`
-    /// and a re-run of the setup when the cells since the last reset
-    /// loaded nothing the setup did not. This holds for a setup that reads
-    /// no clock or entropy, and for a session whose host definitions are
-    /// the captured session's (the template's replace them). The setup's
-    /// fuel is not charged to the fuel total again.
+    /// the next cell's output, host calls, fuel total and memory charge
+    /// are those of a new session after that setup, as after any restore;
+    /// they are those of `reset` and a re-run of the setup when the cells
+    /// since the last reset loaded nothing the setup did not. This holds
+    /// for a setup that reads no clock or entropy. Where the first fuel
+    /// period's safepoint checks fall (the fuel left at a deadline or
+    /// park) can differ: the native work counted toward the next check is
+    /// the template's. The setup's fuel is not charged to the fuel total
+    /// again.
     ///
     /// # Errors
     ///
     /// The errors of [`Engine::restore`] (the session is unchanged then),
-    /// [`SnapshotError::Poisoned`] for a poisoned session, and
-    /// [`SnapshotError::TooLarge`] if a hint override does not fit (the
-    /// session is reset to the template without it).
+    /// [`SnapshotError::Poisoned`] for a poisoned session,
+    /// [`SnapshotError::Busy`] for a template of a stopped session (one
+    /// [`SessionTemplate::from_image`] made),
+    /// [`SnapshotError::Mismatch`] when the session's limits, host
+    /// definitions (modules, or function ids that would change) or local
+    /// time zone are not those the template was captured with (its limits
+    /// are not checked for a template `from_image` made), and
+    /// [`SnapshotError::TooLarge`] when the session's host function names
+    /// or hint overrides do not fit beside the template's state. The
+    /// session is unchanged after every error.
     pub fn reset_to(&mut self, template: &SessionTemplate) -> Result<(), SnapshotError> {
         if self.poisoned.is_some() {
             return Err(SnapshotError::Poisoned);
         }
-        let engine = template.engine.with_limits(Limits {
-            memory: self.vm.heap.memory_limit(),
-            recursion_depth: self.vm.recursion_ceiling(),
-            fuel: self.cell_fuel,
-        });
+        let limits = self.limits();
+        if template.limits.is_some_and(|l| l != limits) {
+            return Err(SnapshotError::Mismatch);
+        }
+        let engine = template.engine.with_limits(limits);
         let trusted = template.checked.get().is_some();
         let image = contain(|| image::read(&engine, &template.image, trusted)).unwrap_or_else(
             |payload| {
@@ -2395,16 +2417,38 @@ impl Session {
             return Err(SnapshotError::Busy);
         }
         let _ = template.checked.set(());
+        if !image.vm.adoptable(&self.vm) {
+            return Err(SnapshotError::Mismatch);
+        }
         let (from, to) = template.setup;
         let now = self.vm.counters();
-        let counters = now.advanced(from, to);
         let mut vm = image.vm;
-        let adopted = vm.adopt(&mut self.vm, counters);
+        vm.adopt(&mut self.vm, now.advanced(from, to))
+            .map_err(|_| SnapshotError::TooLarge)?;
         self.vm = vm;
         self.stop = Vec::new();
         self.stop_charge = None;
         self.reset_mark = now;
-        adopted.map_err(|_| SnapshotError::TooLarge)
+        Ok(())
+    }
+
+    /// The limits the session was made or restored with.
+    fn limits(&self) -> Limits {
+        Limits {
+            memory: self.vm.heap.memory_limit(),
+            recursion_depth: self.vm.recursion_ceiling(),
+            fuel: self.cell_fuel,
+        }
+    }
+
+    /// How many times the session's code read the wall clock or entropy
+    /// (`time.time`, `os.urandom`, unseeded `random`, ...) since it was
+    /// made, restored or reset to a template: a host that keeps a state to reset to
+    /// ([`Session::reset_to`]) can tell a setup that read them, whose
+    /// re-runs would differ.
+    #[must_use]
+    pub fn outside_reads(&self) -> u64 {
+        self.vm.outside_reads()
     }
 
     /// Whether an engine panic poisoned this session (see the crate docs).

@@ -64,9 +64,9 @@ pub trait CellSession {
     /// # Errors
     /// The reset failed; the worker is lost.
     fn reset(&mut self) -> Result<(), String>;
-    /// Keeps the session's state now (between cells, just after a reset or
-    /// at its start and a bootstrap) for [`CellSession::reset_to_kept`].
-    /// The default keeps nothing.
+    /// Keeps the session's state now (between cells, after a reset and a
+    /// bootstrap) for [`CellSession::reset_to_kept`], unless the bootstrap
+    /// read the wall clock or entropy. The default keeps nothing.
     fn keep(&mut self) {}
     /// A reset followed by the bootstrap [`CellSession::keep`] followed,
     /// without running it again; `false` (and nothing done) if nothing
@@ -153,6 +153,7 @@ impl CellEngine for NativeEngine {
             session,
             engine,
             kept: None,
+            reads: 0,
         }))
     }
 }
@@ -162,6 +163,8 @@ struct Native {
     engine: Engine,
     /// The state [`CellSession::keep`] kept.
     kept: Option<SessionTemplate>,
+    /// [`Session::outside_reads`] at the last reset.
+    reads: u64,
 }
 
 impl CellSession for Native {
@@ -192,11 +195,16 @@ impl CellSession for Native {
     }
 
     fn reset(&mut self) -> Result<(), String> {
+        self.reads = self.session.outside_reads();
         self.session.reset().map_err(|error| error.message)
     }
 
     fn keep(&mut self) {
-        self.kept = SessionTemplate::capture(&self.engine, &mut self.session).ok();
+        // A bootstrap that read the clock or entropy runs again each time,
+        // so each cell sees its own values.
+        self.kept = (self.session.outside_reads() == self.reads)
+            .then(|| SessionTemplate::capture(&self.engine, &mut self.session).ok())
+            .flatten();
     }
 
     fn reset_to_kept(&mut self) -> bool {

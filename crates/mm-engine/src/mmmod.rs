@@ -321,6 +321,7 @@ pub(crate) fn mm_code_kind(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// `_mm.clock()`: the host's wall clock, seconds since the epoch.
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn mm_clock(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
+    vm.outside_reads = vm.outside_reads.wrapping_add(1);
     match &vm.wall_clock {
         Some(f) => {
             let t = f();
@@ -381,6 +382,7 @@ pub(crate) fn mm_urandom(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         return Err(vm.err(T::MemoryError, ""));
     }
     let mut buf = alloc::vec![0u8; n];
+    vm.outside_reads = vm.outside_reads.wrapping_add(1);
     match &mut vm.entropy {
         Some(f) => f(&mut buf),
         None => {

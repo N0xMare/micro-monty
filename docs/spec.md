@@ -2369,12 +2369,17 @@ checks raise `TypeError` at the call; there is no static checker (§1).
 taken after setup that instantiates by restore. `Session::reset_to`
 restores it into an existing session in place of `reset` and a re-run of
 the setup: the session keeps its host-side settings, park handle, limits,
-fuel state, host arguments, local zone and hint overrides, and its call
-ids, task numbers and safepoint phase continue, moved on as the setup
-moved them. Unlike `reset`, which keeps the bundled code and prelude parts
-earlier cells loaded (charged to the session), it keeps nothing they
-loaded: the next cell's output, fuel and memory are a new session's after
-the setup.
+fuel state, host arguments and hint overrides, takes the setup's recursion
+limit and call log, and its call ids, task numbers and safepoint phase
+continue, moved on as the setup moved them. Unlike `reset`, which keeps the
+bundled code and prelude parts earlier cells loaded (charged to the
+session), it keeps nothing they loaded: the next cell's output, host calls,
+fuel total and memory charge are a new session's after the setup (where
+the first period's safepoint checks fall can differ). It refuses
+(`SnapshotError::Mismatch`) a template captured under other limits, host
+definitions, function ids or local time zone than the session's, and
+`Busy` for an image of a stopped session; every error leaves the session
+unchanged.
 
 ### 10.2 An embedding example: the cell-protocol worker (`mm-cell-worker`)
 
@@ -2405,10 +2410,12 @@ cancelled by the host", generation_lost: false}` and keeps the worker. For
 the SDK presentation it accepts `sdk_stubs` and runs the cells (the harness
 sends `Reset` and the SDK bootstrap as a Monty prelude) without a pre-run
 type check, which is the harness's. The harness resends the SDK bootstrap
-with every cell after a `Reset`: the worker keeps the state the bootstrap
-leaves on a new or just-reset session (a `SessionTemplate`, once per
-worker and bootstrap) and resets to it while the bootstrap stays the same,
-instead of resetting, compiling and running it again. Against a local checkout of plak it
+with every cell after a `Reset`: the worker keeps the state a bootstrap
+leaves when it runs right after a `Reset` (a `SessionTemplate`; one at a
+time, replaced when another bootstrap is kept) and resets to it while the
+bootstrap stays the same, instead of resetting, compiling and running it
+again. A bootstrap that read the wall clock or entropy is not kept: it runs
+after every `Reset`, so each cell sees its own values. Against a local checkout of plak it
 passes 46 of 48 of plak's worker-driven protocol tests [M]; the two failures
 are Monty-only behaviour (the allocator ceiling) and the SDK test's
 type-error cell, which expects a checker.

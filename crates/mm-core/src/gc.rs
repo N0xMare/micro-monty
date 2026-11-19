@@ -439,6 +439,11 @@ impl Heap {
         self.inc.min_live = min_live;
     }
 
+    /// [`Heap::set_incremental`] as `other` has it.
+    pub fn copy_incremental(&mut self, other: &Heap) {
+        self.set_incremental(other.inc.slice, other.inc.min_live);
+    }
+
     /// Does a collection due now run incrementally (or is one in
     /// progress)?
     #[must_use]

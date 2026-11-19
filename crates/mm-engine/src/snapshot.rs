@@ -2352,6 +2352,7 @@ impl Vm {
             wall_clock: None,
             entropy: None,
             local_zone,
+            outside_reads: 0,
             zone_source: None,
             host_args,
             slow,

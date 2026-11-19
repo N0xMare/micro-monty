@@ -2759,7 +2759,6 @@ next(_ticks)
 /// nothing the setup did not.
 const BEFORE: [&str; 2] = [
     "\
-sys.setrecursionlimit(321)
 def held():
     n = len(bytearray(200_000))
     yield n
@@ -2940,7 +2939,6 @@ fn reset_to_a_template_is_a_fresh_session_and_its_setup() {
         for shown in [
             "call 9 tool",
             "'Task-17', 'Task-18'",
-            "321",
             "1 2 False",
             "use a tool",
         ] {
@@ -2968,4 +2966,353 @@ fn reset_to_a_template_is_a_fresh_session_and_its_setup() {
         setup(&mut s, &out);
         assert_ne!(fill(&mut s, &out), expected, "{run:?}");
     }
+    // Refused, the session unchanged, under other limits or host definitions.
+    let out = Arc::new(Mutex::new(String::new()));
+    let other =
+        Engine::new(EngineConfig::default().with_limits(Limits::new().with_memory(4 << 20)));
+    let mut s = Session::new_with(&other, counting_settings(&out)).expect("session");
+    s.define(&tools).expect("defines");
+    assert_eq!(s.reset_to(&template), Err(SnapshotError::Mismatch));
+    let mut s = session(&out);
+    s.define(&HostModule::untyped("", &["tool", "other"]))
+        .expect("defines");
+    run_cell(&mut s, &engine, &out, "x = 1", Run::Plain);
+    assert_eq!(s.reset_to(&template), Err(SnapshotError::Mismatch));
+    let log = run_cell(
+        &mut s,
+        &engine,
+        &out,
+        "print(x, callable(other))",
+        Run::Plain,
+    );
+    assert!(log.starts_with("1 True\n"), "{log}");
+}
+
+/// `reset_to` keeps what the session's host set (output, wall clock,
+/// entropy, hints, fuel, deadline, park handle, limits), with the template
+/// captured under other ones, and takes the setup's recursion limit and
+/// call log in the session's ids: as `reset` and the setup. It refuses,
+/// the session unchanged, a template that would change function ids or
+/// the local zone, or one of a stopped session.
+#[test]
+#[allow(clippy::too_many_lines, reason = "one scenario, step by step")]
+fn reset_to_keeps_the_sessions_host_side_and_refuses_what_would_change_it() {
+    use micro_monty::{HintGroup, HostArgs, ParkReason, SessionTemplate};
+    const SETUP: &str = "import sys, os, time\nsys.setrecursionlimit(50)\nx = tool(7)\n";
+    const CELL: &str = "\
+import sys, os, time
+from datetime import datetime
+from zoneinfo import ZoneInfo
+print(datetime(2026, 7, 1, tzinfo=ZoneInfo('Europe/Paris')).utcoffset())
+def f(n):
+    return 0 if n == 0 else 1 + f(n - 1)
+try:
+    f(100)
+except RecursionError:
+    print('deep')
+print(sys.getrecursionlimit(), time.time(), os.urandom(3).hex(), tool(3))
+tool(iter(()))
+";
+    let engine =
+        Engine::new(EngineConfig::default().with_limits(Limits::new().with_memory(3 << 20)));
+    let tools = HostModule::untyped("", &["tool"]);
+    // The template's host side differs from the sessions'.
+    let theirs = Arc::new(Mutex::new(String::new()));
+    let mut settings = SessionSettings::default();
+    let sink = Arc::clone(&theirs);
+    settings.output = Some(Box::new(move |_, t: &str| {
+        sink.lock().expect("output").push_str(t);
+    }));
+    settings.wall_clock = Some(Box::new(|| 5.0));
+    settings.entropy = Some(Box::new(|b: &mut [u8]| b.fill(0)));
+    let mut capture = Session::new_with(&engine, settings).expect("session");
+    capture
+        .set_hint(HintGroup::DataLibraries, Some("the template's hint"))
+        .expect("hint");
+    capture.define(&tools).expect("defines");
+    run_cell(&mut capture, &engine, &theirs, SETUP, Run::Plain);
+    let template = SessionTemplate::capture(&engine, &mut capture).expect("captures");
+    let session = |out: &Arc<Mutex<String>>| {
+        let mut s = Session::new_with(&engine, counting_settings(out)).expect("session");
+        s.set_hint(HintGroup::DataLibraries, Some("the session's hint"))
+            .expect("hint");
+        s.set_zone_source(Some(Box::new(|key: &str| {
+            std::fs::read(format!("/usr/share/zoneinfo/{key}")).ok()
+        })));
+        s.set_host_args(HostArgs {
+            lenient: true,
+            ..HostArgs::default()
+        });
+        s.define(&tools).expect("defines");
+        run_cell(&mut s, &engine, out, SETUP, Run::Plain);
+        run_cell(
+            &mut s,
+            &engine,
+            out,
+            "sys.setrecursionlimit(900)\ntool(1), tool(2)",
+            Run::Plain,
+        );
+        s
+    };
+    let mut transcripts = Vec::new();
+    for reset_to in [false, true] {
+        let out = Arc::new(Mutex::new(String::new()));
+        let mut s = session(&out);
+        s.set_fuel(Some(5_000));
+        // Twice, the second time to a template captured right after the
+        // first: its setup is what moved the counters since that reset.
+        if reset_to {
+            s.reset_to(&template).expect("resets to the template");
+            let again = SessionTemplate::capture(&engine, &mut s).expect("captures");
+            s.reset_to(&again).expect("resets to the template");
+        } else {
+            for _ in 0..2 {
+                s.reset().expect("resets");
+                run_cell(&mut s, &engine, &out, SETUP, Run::Plain);
+            }
+            s.set_fuel(Some(5_000));
+        }
+        let mut log = format!("fuel {:?}\n", s.fuel());
+        for r in s.call_log() {
+            let _ = writeln!(log, "logged {} {}", r.call, r.name);
+        }
+        log += &run_cell(&mut s, &engine, &out, CELL, Run::Plain);
+        log += &run_cell(&mut s, &engine, &out, "import numpy", Run::Plain);
+        // A bundled module this build leaves out is named as such.
+        log += &run_cell(&mut s, &engine, &out, "import ast", Run::Plain);
+        // Object addresses differ with the heap's layout.
+        let mut parts = log.split(" at 0x");
+        let mut log = parts.next().unwrap_or_default().to_owned();
+        for part in parts {
+            log += " at 0x";
+            log += part.trim_start_matches(|c: char| c.is_ascii_hexdigit());
+        }
+        transcripts.push(log);
+    }
+    assert_eq!(transcripts[1], transcripts[0]);
+    for shown in [
+        "fuel Some(5000)",
+        "deep\n50 1700000000.0",
+        "the session's hint",
+        "2:00:00",
+        "Unconverted",
+    ] {
+        assert!(
+            transcripts[0].contains(shown),
+            "{shown}: {}",
+            transcripts[0]
+        );
+    }
+    // The setup's call, logged under the id it has after `reset` and the
+    // setup: one past the last call before the reset.
+    let last = |t: &str, p: &str| -> u64 {
+        t.lines()
+            .filter_map(|l| l.strip_prefix(p)?.split(' ').next()?.parse().ok())
+            .next_back()
+            .expect("a call")
+    };
+    assert_eq!(last(&transcripts[1], "logged "), 5, "{}", transcripts[1]);
+    assert!(theirs.lock().expect("output").is_empty());
+
+    // A deadline and a park request made before the reset still apply.
+    let out = Arc::new(Mutex::new(String::new()));
+    let mut s = session(&out);
+    let park = s.park_handle();
+    s.set_deadline(Some(std::time::Instant::now()));
+    park.request();
+    s.reset_to(&template).expect("resets to the template");
+    let spin = engine
+        .compile("while True: pass", "spin.py")
+        .expect("compiles");
+    let mut parks = Vec::new();
+    for _ in 0..2 {
+        s.set_fuel(Some(100_000));
+        parks.push(s.start(&spin));
+        s.cancel();
+    }
+    for reason in [ParkReason::Deadline, ParkReason::Requested] {
+        assert!(parks.contains(&Progress::Parked { reason }), "{parks:?}");
+    }
+
+    // Refused, the session unchanged: function ids that would change (the
+    // same module, its names numbered in another order), another zone, a
+    // stopped session's image.
+    let mut other = Session::new(&engine).expect("session");
+    other
+        .define(&HostModule::untyped("", &["other", "tool"]))
+        .expect("defines");
+    let numbered = SessionTemplate::capture(&engine, &mut other).expect("captures");
+    let mut renumbered = Session::new_with(&engine, counting_settings(&out)).expect("session");
+    renumbered.define(&tools).expect("defines");
+    renumbered
+        .define(&HostModule::untyped("", &["other", "tool"]))
+        .expect("defines");
+    let mut zoned = session(&out);
+    zoned.set_local_timezone(Some(
+        std::fs::read("/usr/share/zoneinfo/America/New_York").expect("zone"),
+    ));
+    let mut stopped = session(&out);
+    stopped.set_fuel(Some(1 << 40));
+    assert!(matches!(
+        stopped.start(&engine.compile("tool(9)", "c.py").expect("compiles")),
+        Progress::HostCall { .. }
+    ));
+    let busy = SessionTemplate::from_image(&engine, stopped.snapshot().expect("snapshot"))
+        .expect("a template");
+    stopped.cancel();
+    for (s, template, error) in [
+        (&mut renumbered, &numbered, SnapshotError::Mismatch),
+        (&mut zoned, &template, SnapshotError::Mismatch),
+        (&mut stopped, &busy, SnapshotError::Busy),
+    ] {
+        run_cell(s, &engine, &out, "kept = 1", Run::Plain);
+        assert_eq!(s.reset_to(template), Err(error));
+        let log = run_cell(s, &engine, &out, "print(kept)", Run::Plain);
+        assert!(log.starts_with("1\n"), "{log}");
+    }
+
+    // A template read under the session's limits, not its engine's.
+    let deep = Engine::new(
+        EngineConfig::default().with_limits(
+            Limits::new()
+                .with_memory(64 << 20)
+                .with_recursion_depth(5_000),
+        ),
+    );
+    let mut wide = Session::new(&deep).expect("session");
+    wide.define(&tools).expect("defines");
+    let wide =
+        SessionTemplate::from_image(&deep, wide.snapshot().expect("snapshot")).expect("a template");
+    let mut s = Session::new_with(&engine, counting_settings(&out)).expect("session");
+    s.define(&tools).expect("defines");
+    s.reset_to(&wide).expect("resets to the template");
+    let log = run_cell(
+        &mut s,
+        &engine,
+        &out,
+        "import sys\ndef f(n):\n    return 0 if n == 0 else 1 + f(n - 1)\ntry:\n    f(2_000)\nexcept RecursionError:\n    print('deep', sys.getrecursionlimit())",
+        Run::Plain,
+    );
+    assert!(log.starts_with("deep 1000\n"), "{log}");
+    let log = run_cell(
+        &mut s,
+        &engine,
+        &out,
+        "sys.setrecursionlimit(4_000)\ntry:\n    f(2_000)\nexcept RecursionError:\n    print('capped')",
+        Run::Plain,
+    );
+    assert!(log.starts_with("capped\n"), "{log}");
+    let log = run_cell(
+        &mut s,
+        &engine,
+        &out,
+        "try:\n    b = bytearray(8_000_000)\n    print('room')\nexcept MemoryError:\n    print('MemoryError')",
+        Run::Plain,
+    );
+    assert!(log.starts_with("MemoryError\n"), "{log}");
+
+    // A stopped cell is dropped.
+    let mut stopped = session(&out);
+    stopped.set_fuel(Some(1 << 40));
+    assert!(matches!(
+        stopped.start(&engine.compile("tool(9)", "c.py").expect("compiles")),
+        Progress::HostCall { .. }
+    ));
+    stopped.reset_to(&template).expect("resets to the template");
+    assert_eq!(stopped.phase(), micro_monty::Phase::Idle);
+    let log = run_cell(&mut stopped, &engine, &out, "print('idle')", Run::Plain);
+    assert!(log.starts_with("idle\n"), "{log}");
+
+    // Ids of functions the session defined before, which the template's
+    // session never did, keep their numbers.
+    let final_m = HostModule::untyped("m", &["f"]);
+    let mut early = Session::new(&engine).expect("session");
+    early.define(&final_m).expect("defines");
+    let early = SessionTemplate::capture(&engine, &mut early).expect("captures");
+    let mut s = Session::new(&engine).expect("session");
+    s.define(&HostModule::untyped("m", &["f", "x"]))
+        .expect("defines");
+    s.define(&final_m).expect("defines");
+    s.reset_to(&early).expect("resets to the template");
+    assert_eq!(s.host_function_id("m.x"), Some(1));
+}
+
+/// Sets one GC setting on a session.
+type Setting = fn(&mut Session);
+
+/// The session's GC settings (testing modes) stay across `reset_to`: the
+/// parks, marks and collections of a run are those of the template's
+/// session instantiated with them (incremental marks pace by the heap,
+/// which a restore lays out anew).
+#[test]
+fn reset_to_keeps_the_sessions_gc_settings() {
+    let cell = |n: u32| {
+        format!(
+            "xs = []\nfor i in range({n}):\n    xs.append([i])\n    if len(xs) > 2000:\n        xs = []\n"
+        )
+    };
+    let engine = Engine::new(EngineConfig::default());
+    let run = |s: &mut Session, n: u32| {
+        let before = s.gc_collections();
+        s.set_fuel(Some(50));
+        let mut p = s.start(&engine.compile(&cell(n), "c.py").expect("compiles"));
+        let (mut parks, mut marking) = (0, 0);
+        while let Progress::Parked { .. } = p {
+            parks += 1;
+            marking += usize::from(s.gc_marking());
+            s.set_fuel(Some(50));
+            p = s.resume(Resume::Continue).expect("resumes");
+        }
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        (parks, marking, s.gc_collections() - before)
+    };
+    let template = SessionTemplate::capture(
+        &engine,
+        &mut Session::new(&engine).expect("session"),
+    )
+    .expect("captures");
+    let plain = |n| run(&mut Session::new(&engine).expect("session"), n);
+    // The stress modes collect at every safepoint: a shorter run.
+    let settings: [(Setting, u32); 5] = [
+        (
+            |s| {
+                s.set_gc_incremental(16, 0);
+                s.set_gc_yield(true);
+            },
+            40_000,
+        ),
+        (|s| s.set_gc_incremental(16, 0), 40_000),
+        (|s| s.set_gc_stress(true), 2_000),
+        (|s| s.set_gc_inc_stress(true), 2_000),
+        (
+            |s| {
+                let mut off = SessionSettings::default();
+                off.gc_off = true;
+                *s =
+                    Session::new_with(&Engine::new(EngineConfig::default()), off).expect("session");
+            },
+            40_000,
+        ),
+    ];
+    let mut all = Vec::new();
+    for (i, (set, n)) in settings.into_iter().enumerate() {
+        let mut seen = Vec::new();
+        for reset_to in [false, true] {
+            let mut s = if reset_to {
+                Session::new(&engine).expect("session")
+            } else {
+                template.instantiate().expect("instantiates")
+            };
+            set(&mut s);
+            if reset_to {
+                s.reset_to(&template).expect("resets to the template");
+            }
+            seen.push(run(&mut s, n));
+        }
+        assert_eq!(seen[1], seen[0], "setting {i}");
+        assert_ne!(seen[0], plain(n), "setting {i} changes nothing");
+        all.push(seen[0]);
+    }
+    // Yielding changes what incremental collection alone does.
+    assert_ne!(all[0], all[1]);
 }

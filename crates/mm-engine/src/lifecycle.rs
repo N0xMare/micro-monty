@@ -75,16 +75,59 @@ impl Vm {
     /// cells: it keeps what a reset of `old` would have kept and an image
     /// does not hold or holds as of its capture. Moved over: the host
     /// side (output, clocks, deadline, entropy, zone source, park flag,
-    /// module cache, GC testing modes), the limits (memory, recursion, as
-    /// lowered by `sys.setrecursionlimit`), the settings (host arguments,
-    /// local zone, hint overrides) and `old`'s host call names when this
-    /// image's are a prefix of them; `counters` replace this image's.
+    /// module cache, GC testing modes and incremental settings), the fuel
+    /// set for the next cell,
+    /// the settings (host arguments, hint overrides) and `old`'s host call
+    /// names when this image's are a prefix of them. `counters` replace
+    /// this image's, and the call log's ids move with them. The recursion
+    /// limit is the image's (what a reset and the setup leave), within
+    /// `old`'s ceiling.
+    ///
+    /// Fallible steps come first: on an error `old` is untouched.
     ///
     /// # Errors
     ///
-    /// A `MemoryError` if a hint override does not fit.
+    /// A `MemoryError` if `old`'s host call names or a hint override do not
+    /// fit.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub fn adopt(&mut self, old: &mut Vm, counters: Counters) -> Result<(), Raised> {
+        if old.host_ids.len() > self.host_ids.len() {
+            self.host_ids.clone_from(&old.host_ids);
+            self.reserve_code(0)?;
+        }
+        for group in crate::HintGroup::ALL {
+            let text = old.hint_override(group);
+            if text != self.hint_override(group) {
+                self.set_hint(group, text.as_deref())?;
+            }
+        }
+        let shift = counters.calls.wrapping_sub(self.next_call);
+        for e in &mut self.call_log {
+            e.0 = e.0.wrapping_add(shift);
+        }
+        self.next_call = counters.calls;
+        self.task_counter = counters.tasks;
+        // The image holds its own ceiling; a template's engine may have
+        // allowed more than the session's.
+        self.recursion_ceiling = old.recursion_ceiling;
+        self.recursion_limit = self.recursion_limit.min(old.recursion_ceiling);
+        self.fuel = old.fuel;
+        self.fuel_overdraft = old.fuel_overdraft;
+        self.gc_off = old.gc_off;
+        self.gc_yield = old.gc_yield;
+        self.heap.copy_incremental(&old.heap);
+        if old.gc_stress {
+            self.set_gc_stress(true);
+        }
+        if old.gc_inc_stress {
+            self.set_gc_inc_stress(true);
+        }
+        // Phase `counters.phase` with no safepoint run since, and a period
+        // that ends by the next multiple of `TICKS` from there.
+        self.ticks = self.tick_period;
+        self.tick_spare = 0;
+        self.sp_phase = counters.phase;
+        self.reset_ticks();
         self.output = old.output.take();
         self.clock = old.clock.take();
         self.deadline = old.deadline;
@@ -96,38 +139,21 @@ impl Vm {
         self.host_code_in_snapshots = old.host_code_in_snapshots;
         self.known_modules = old.known_modules;
         self.host_args = old.host_args;
-        self.local_zone = old.local_zone.take();
-        // Read within `old`'s limit, so what it holds fits it.
-        self.heap.set_memory_limit(old.heap.memory_limit());
-        self.recursion_limit = old.recursion_limit;
-        self.recursion_ceiling = old.recursion_ceiling;
-        self.gc_off = old.gc_off;
-        self.gc_yield = old.gc_yield;
-        if old.gc_stress {
-            self.set_gc_stress(true);
-        }
-        if old.gc_inc_stress {
-            self.set_gc_inc_stress(true);
-        }
-        if old.host_ids.starts_with(&self.host_ids) && old.host_ids.len() > self.host_ids.len() {
-            self.host_ids = core::mem::take(&mut old.host_ids);
-            self.reserve_code(0)?;
-        }
-        self.next_call = counters.calls;
-        self.task_counter = counters.tasks;
-        // Phase `counters.phase` with no safepoint run since, and a period
-        // that ends by the next multiple of `TICKS` from there.
-        self.ticks = self.tick_period;
-        self.tick_spare = 0;
-        self.sp_phase = counters.phase;
-        self.reset_ticks();
-        for group in crate::HintGroup::ALL {
-            let text = old.hint_override(group);
-            if text != self.hint_override(group) {
-                self.set_hint(group, text.as_deref())?;
-            }
-        }
         Ok(())
+    }
+
+    /// Whether a session in `old`'s place may take this image's state
+    /// ([`Vm::adopt`]): the same host modules (name, functions, constants,
+    /// spec, in order), host call names one a prefix of the other, so no
+    /// function id changes, and the same local time zone, which modules
+    /// the setup imported have read.
+    #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub fn adoptable(&self, old: &Vm) -> bool {
+        let n = self.host_ids.len().min(old.host_ids.len());
+        self.same_host_modules(old)
+            && self.host_ids[..n] == old.host_ids[..n]
+            && self.local_zone == old.local_zone
     }
 
     /// Exact-sized tables that never grow after construction, plus the park

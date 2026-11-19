@@ -6,8 +6,8 @@
 #![allow(clippy::expect_used, clippy::panic, reason = "tests")]
 
 use micro_monty::{
-    Engine, EngineConfig, HostModule, HostValue, Progress, Resume, Session, SnapshotError,
-    test_hooks,
+    Engine, EngineConfig, HostModule, HostValue, Progress, Resume, Session, SessionTemplate,
+    SnapshotError, test_hooks,
 };
 
 fn engine() -> Engine {
@@ -48,6 +48,9 @@ fn assert_poisoned(engine: &Engine, session: &mut Session) {
             .expect("typed error")
     ));
     assert_eq!(session.snapshot(), Err(SnapshotError::Poisoned));
+    let mut fresh = Session::new(engine).expect("session");
+    let template = SessionTemplate::capture(engine, &mut fresh).expect("captures");
+    assert_eq!(session.reset_to(&template), Err(SnapshotError::Poisoned));
     assert_eq!(
         session.reset().expect_err("poisoned").type_name,
         "SystemError"

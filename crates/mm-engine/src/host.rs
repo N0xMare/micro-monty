@@ -1464,6 +1464,22 @@ impl Vm {
         Ok(())
     }
 
+    /// Whether `other` defines the same host modules, by name, functions,
+    /// constants and the embedder's spec, in the same order.
+    #[must_use]
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub fn same_host_modules(&self, other: &Vm) -> bool {
+        fn key(
+            m: &Arc<HostModule>,
+        ) -> (&String, &Vec<String>, &Vec<(String, HostValue)>, &HostValue) {
+            (&m.name, &m.functions, &m.constants, &m.spec)
+        }
+        self.host_modules
+            .iter()
+            .map(key)
+            .eq(other.host_modules.iter().map(key))
+    }
+
     /// Every host module: its name, constants and the embedder's spec.
     #[must_use]
     #[allow(clippy::type_complexity, reason = "plain parts for the facade")]
