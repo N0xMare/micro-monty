@@ -20,7 +20,10 @@
 //!   engine's default entropy for `random`/`os.urandom`/`uuid`);
 //! - the end: `getrusage` (resource report), `exit_group`, and what
 //!   `abort` needs to raise `SIGABRT` on itself (`getpid`, `gettid`,
-//!   `rt_sigaction`, `tgkill` aimed at this process).
+//!   `rt_sigaction`, and glibc's `tgkill` aimed at this process or musl's
+//!   `tkill` aimed at the main thread or the thread that installed the
+//!   filter, the worker's: a filter cannot tell another thread of this
+//!   process from one of another process).
 //!
 //! `openat` (and `open`) fail with `EACCES`: glibc's malloc reads
 //! `/proc/sys/vm/overcommit_memory` the first time it shrinks a thread
@@ -98,8 +101,9 @@ fn nr(n: libc::c_long) -> u32 {
     n as u32
 }
 
-/// The allowlist; `out_fds` may be written, `status_fd` read with `pread64`.
-fn rules(out_fds: &[u32], status_fd: u32) -> Vec<(u32, Check)> {
+/// The allowlist; `out_fds` may be written, `status_fd` read with `pread64`,
+/// and `tid`, the installing thread, signalled with `tkill`.
+fn rules(out_fds: &[u32], status_fd: u32, tid: u32) -> Vec<(u32, Check)> {
     use Check::{Allow, ArgClear, ArgIn, ArgSet, Errno};
     let mut writable = vec![1, 2];
     writable.extend_from_slice(out_fds);
@@ -134,6 +138,7 @@ fn rules(out_fds: &[u32], status_fd: u32) -> Vec<(u32, Check)> {
         (nr(libc::SYS_getpid), Allow),
         (nr(libc::SYS_rt_sigaction), Allow),
         (nr(libc::SYS_tgkill), ArgIn(0, vec![std::process::id()])),
+        (nr(libc::SYS_tkill), ArgIn(0, vec![std::process::id(), tid])),
         (nr(libc::SYS_pread64), ArgIn(0, vec![status_fd])),
         (nr(libc::SYS_getrusage), Allow),
         (nr(libc::SYS_exit), Allow),
@@ -272,7 +277,9 @@ pub(crate) fn install(report: &Report, out_fds: &[u32]) -> Result<(), String> {
     if std::env::var(OPT_OUT).as_deref() == Ok("1") {
         return Ok(());
     }
-    let mut code = program(&rules(out_fds, report.status_fd()));
+    // SAFETY: no arguments; returns the calling thread's id.
+    let tid = u32::try_from(unsafe { libc::gettid() }).unwrap_or(u32::MAX);
+    let mut code = program(&rules(out_fds, report.status_fd(), tid));
     let prog = libc::sock_fprog {
         len: u16::try_from(code.len()).map_err(|_| "seccomp filter too long")?,
         filter: code.as_mut_ptr(),
@@ -344,20 +351,42 @@ mod tests {
         println!("SOCKET {}", socket.is_ok());
     }
 
+    /// The child half of [`an_abort_raises_sigabrt`]: aborts, as a panic
+    /// in a shipped build does, under the filter.
     #[test]
-    fn a_forbidden_call_kills_the_process() {
-        use std::os::unix::process::ExitStatusExt;
-        let output = Command::new(std::env::current_exe().expect("test binary"))
-            .args([
-                "--exact",
-                "seccomp::tests::child_under_filter",
-                "--nocapture",
-            ])
+    fn child_aborts_under_filter() {
+        if std::env::var("MM_SECCOMP_TEST_CHILD").as_deref() != Ok("1") {
+            return;
+        }
+        let report = super::Report::prepare();
+        super::install(&report, &[]).expect("installed");
+        std::process::abort();
+    }
+
+    /// Runs the child test `name` in a new process and returns its output.
+    fn child(name: &str) -> std::process::Output {
+        Command::new(std::env::current_exe().expect("test binary"))
+            .args(["--exact", name, "--nocapture"])
             .args(["--test-threads", "1"])
             .env("MM_SECCOMP_TEST_CHILD", "1")
             .env_remove(super::OPT_OUT)
             .output()
-            .expect("child runs");
+            .expect("child runs")
+    }
+
+    /// glibc's `abort` signals with `tgkill`, musl's with `tkill`; either
+    /// way the parent sees `SIGABRT`, not the filter's `SIGSYS`.
+    #[test]
+    fn an_abort_raises_sigabrt() {
+        use std::os::unix::process::ExitStatusExt;
+        let output = child("seccomp::tests::child_aborts_under_filter");
+        assert_eq!(output.status.signal(), Some(libc::SIGABRT), "{output:?}");
+    }
+
+    #[test]
+    fn a_forbidden_call_kills_the_process() {
+        use std::os::unix::process::ExitStatusExt;
+        let output = child("seccomp::tests::child_under_filter");
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             stdout.contains("SURVIVED 469762048 Some(") && stdout.contains(") Some("),

@@ -225,6 +225,11 @@ hashes are pre-release history, kept in the private archive
   collection beside garbage.
   `xml.etree.ElementTree` reports ill-formed bytes as `ParseError` (it
   reads `e.start`, and raised `AttributeError`). The build id moves.
+- `mm-cell-worker` on musl: a panic, which aborts in a shipped build,
+  killed the worker with the seccomp filter's `SIGSYS` instead of
+  `SIGABRT`, as musl's `abort` signals with `tkill` where glibc's uses
+  `tgkill`. The filter allows `tkill` aimed at the main thread or the
+  thread that installed it.
 
 ### Added
 
