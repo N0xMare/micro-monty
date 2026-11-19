@@ -2486,7 +2486,7 @@ impl Session {
     fn progress(&mut self, exit: Exit) -> Progress {
         self.stop_charge = None;
         // Keep a small buffer for the next stop; let a large one go.
-        if self.stop.capacity() > 4096 {
+        if self.stop.capacity() > STOP_SLACK {
             self.stop = Vec::new();
         } else {
             self.stop.clear();
@@ -2597,8 +2597,15 @@ impl Session {
     /// to the memory limit while it is kept. It fits: a host call's
     /// arguments were just charged as their larger `HostValue` trees.
     fn stopped(&mut self, p: Progress) -> Progress {
+        self.stop.clear();
         image::write_stop(&mut self.stop, &p);
-        self.stop_charge = self.vm.heap.reserve_scratch(self.stop.capacity()).ok();
+        // Charged by its length, as a restore charges the stop it reads:
+        // the buffer is reused from stop to stop, and its room past the
+        // stop is held uncharged, at most `STOP_SLACK` bytes.
+        if self.stop.capacity() - self.stop.len() > STOP_SLACK {
+            self.stop.shrink_to_fit();
+        }
+        self.stop_charge = self.vm.heap.reserve_scratch(self.stop.len()).ok();
         p
     }
 
@@ -2649,5 +2656,47 @@ impl Session {
             TextCut::HeadTail => render::cut_head_tail(&text, max).0,
         };
         (cut, true)
+    }
+}
+
+/// The most a session holds uncharged for its stop buffer: its room past
+/// the kept stop, or all of it between stops.
+const STOP_SLACK: usize = 4096;
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, reason = "tests")]
+    use super::*;
+
+    /// The kept stop is charged the same in the session that stopped and
+    /// in one restored from its image, whatever room the reused buffer
+    /// has, and the room it holds uncharged is bounded.
+    #[test]
+    fn the_kept_stop_is_charged_alike_before_and_after_a_restore() {
+        let engine = Engine::new(EngineConfig::new());
+        let mut s = Session::new(&engine).expect("session");
+        let code = engine
+            .compile("while True:\n    pass\n", "t.py")
+            .expect("compiles");
+        // A buffer an earlier, larger stop left behind.
+        s.stop.reserve(1000);
+        s.set_fuel(Some(100));
+        assert!(matches!(s.start(&code), Progress::Parked { .. }));
+        let charged = s.stop_charge.as_ref().map(mm_core::Scratch::bytes);
+        assert_eq!(charged, Some(s.stop.len()));
+        assert!(s.stop.capacity() - s.stop.len() <= STOP_SLACK);
+        let r = engine
+            .restore(&s.snapshot().expect("snapshot"))
+            .expect("restore");
+        assert_eq!(r.stop, s.stop);
+        assert_eq!(r.stop_charge.as_ref().map(mm_core::Scratch::bytes), charged);
+        // Room past the bound goes back when the stop is written.
+        s.stop.reserve(3 * STOP_SLACK);
+        s.set_fuel(Some(100));
+        assert!(matches!(
+            s.resume(Resume::Continue),
+            Ok(Progress::Parked { .. })
+        ));
+        assert!(s.stop.capacity() - s.stop.len() <= STOP_SLACK);
     }
 }

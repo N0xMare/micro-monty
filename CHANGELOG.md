@@ -79,6 +79,11 @@ hashes are pre-release history, kept in the private archive
   session shares. It gets CPython's `AttributeError` for a builtin
   function or `TypeError` for an immutable type; instances, subclasses
   and module attributes stay writable.
+- The stop a session keeps for `Session::pending` is charged the same in
+  the session that took a snapshot and in one restored from it, by its
+  length: the first charged its reused buffer's capacity. The buffer's
+  room past the stop is held uncharged, at most 4,096 bytes, as the
+  buffer was between stops.
 - Host signature code keeps exact buffer capacities, as a restore decodes
   it. Compiled code still keeps the growth slack of its buffers, which a
   restore decodes without: code is charged by capacity, so a restored
