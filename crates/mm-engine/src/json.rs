@@ -2454,7 +2454,15 @@ fn str_run(
         n[0] += k as u64;
         n[1] += run.iter().filter(|&&c| c & 0xC0 != 0x80).count() as u64;
         if let Some(o) = out.as_deref_mut() {
-            o.extend_from_slice(run);
+            // Short runs between escapes byte by byte: a copy of a
+            // run-time length is a `memcpy` call per run.
+            if k <= 16 {
+                for &c in run {
+                    o.push(c);
+                }
+            } else {
+                o.extend_from_slice(run);
+            }
         }
         *r += k;
         let Some(&c) = b.get(*r).filter(|_| *r < lim) else {
@@ -2473,7 +2481,9 @@ fn str_run(
         n[0] += t.len() as u64;
         n[1] += 1;
         if let Some(o) = out.as_deref_mut() {
-            o.extend_from_slice(t.as_bytes());
+            for &c in t.as_bytes() {
+                o.push(c);
+            }
         }
         *r = e;
     }
