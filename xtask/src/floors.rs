@@ -90,14 +90,14 @@ fn parse(gate: &str, text: &str) -> Result<Floors, String> {
         let count = count
             .parse()
             .map_err(|_| format!("{}: `{count}` in `{line}` is not a count", file(gate)))?;
-        out.insert(
-            name.to_owned(),
-            Floor {
-                count,
-                build: build.to_owned(),
-                key: key.to_owned(),
-            },
-        );
+        let floor = Floor {
+            count,
+            build: build.to_owned(),
+            key: key.to_owned(),
+        };
+        if out.insert(name.to_owned(), floor).is_some() {
+            return Err(format!("{}: two lines for `{name}`", file(gate)));
+        }
     }
     Ok(out)
 }
@@ -217,28 +217,33 @@ pub(crate) fn build_id(root: &Path, rev: Option<&str>) -> Result<String, String>
     Ok(format!("b-{}", source_hash(read.join("\n").as_bytes())))
 }
 
-/// The commit whose build is `build`, newest first on the first-parent
-/// line from `base` back to the last `v*` tag it descends from.
-pub(crate) fn find_build(root: &Path, base: &str, build: &str) -> Result<Option<String>, String> {
+/// The build of each commit on the first-parent line from the last `v*`
+/// tag that `from` descends from (`from` itself when it is one) to `to`,
+/// newest first, as (build, commit); and that tag.
+fn builds(root: &Path, from: &str, to: &str) -> Result<(Vec<(String, String)>, String), String> {
     let tag = git(
         root,
-        &["describe", "--tags", "--abbrev=0", "--match", "v*", base],
+        &["describe", "--tags", "--abbrev=0", "--match", "v*", from],
     )
     .ok();
-    let range = tag
-        .as_ref()
-        .map_or_else(|| base.to_owned(), |t| format!("{t}^..{base}"));
-    for sha in git(root, &["rev-list", "--first-parent", &range])?.lines() {
-        if build_id(root, Some(sha))? == build {
-            return Ok(Some(sha.to_owned()));
-        }
+    // `<tag>^@`: the tag's parents, none for a root commit.
+    let not = tag.as_ref().map(|t| format!("{t}^@"));
+    let mut args = vec!["rev-list", "--first-parent", to];
+    if let Some(not) = &not {
+        args.extend(["--not", not]);
     }
-    Ok(None)
+    let mut out = Vec::new();
+    for sha in git(root, &args)?.lines() {
+        out.push((build_id(root, Some(sha))?, sha.to_owned()));
+    }
+    Ok((out, tag.unwrap_or_else(|| "the root".to_owned())))
 }
 
 /// The floors `gate` starts from (the base's, or at a tag the working
 /// tree's) whose key is not `keys`' (stale): the commit of each one's
-/// build, which the gate recounts, and the names it recounts. None when
+/// build, which the gate recounts, and the names it recounts. A build is
+/// looked for on the first-parent line since the last tag, up to the base
+/// (up to HEAD at a tag, where the floors are the head's). None when
 /// `write` seeds the floors at a tag.
 pub(crate) fn stale(
     root: &Path,
@@ -257,18 +262,25 @@ pub(crate) fn stale(
     } else {
         at(root, base, gate)?
     };
-    let mut builds: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    let mut wanted: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for (name, f) in &floors {
         if keys.get(name).is_some_and(|k| *k != f.key) {
-            builds.entry(&f.build).or_default().push(name.clone());
+            wanted.entry(&f.build).or_default().push(name.clone());
         }
     }
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (line, since) = builds(root, base, if tag { "HEAD" } else { base })?;
     let mut out = Vec::new();
-    for (build, names) in builds {
-        let Some(sha) = find_build(root, base, build)? else {
+    for (build, names) in wanted {
+        let Some((_, sha)) = line.iter().find(|(b, _)| b == build) else {
             return Err(format!(
                 "{gate}: the floors of {} are stale (another counting method, tool, host or \
-                 program source) and no commit since the last tag has their build {build}",
+                 program source) and no commit since {since} has their build {build}, so they \
+                 cannot be recounted. A tag starts new floors: seed them from it with `just \
+                 seed-floors {since}` as the first commit after it, and judge that commit with \
+                 `cargo xtask check --base {since}`",
                 names.join(", ")
             ));
         };
@@ -277,7 +289,7 @@ pub(crate) fn stale(
             names.join(", "),
             &sha[..sha.len().min(10)]
         );
-        out.push((sha, names));
+        out.push((sha.clone(), names));
     }
     Ok(out)
 }
@@ -321,28 +333,33 @@ pub(crate) struct Sides<'a> {
     pub(crate) recounted: &'a Counts,
 }
 
-/// The floors the head is measured against, and what is wrong with the
-/// head's floor file (empty when nothing). `raised(name, ratio)`: an
-/// accept line since the base names `name` with a ceiling at or above
-/// `ratio`. With `write`, writes the file the head must have first (at a
-/// tag, the file [`seed`] makes).
-#[allow(clippy::too_many_lines, reason = "the pre-tag check, then a landing's")]
-pub(crate) fn judge(
-    root: &Path,
-    gate: &str,
-    sides: &Sides<'_>,
-    raised: &dyn Fn(&str, f64) -> bool,
-    write: bool,
-) -> Result<(Counts, Vec<String>), String> {
-    if sides.tag && write {
-        seed(root, gate, sides)?;
+/// How a gate judges a count against another (the base's, the floor or
+/// the tag's), for [`judge`].
+pub(crate) struct Rules<'a> {
+    /// An accept line since the base names `name` with a ceiling at or
+    /// above `ratio`.
+    pub(crate) accepted: &'a dyn Fn(&str, f64) -> bool,
+    /// `name`'s count `head` is past the gate's limit over `other`.
+    pub(crate) past: &'a dyn Fn(&str, u64, u64) -> bool,
+}
+
+impl Rules<'_> {
+    /// Whether the head's count `h` raises a floor `f`: only a rise past
+    /// the limit that an accept line covers, so a line that lists more
+    /// names than rose leaves their floors where they are.
+    fn raises(&self, name: &str, h: u64, f: u64) -> bool {
+        h > f && (self.past)(name, h, f) && (self.accepted)(name, ratio(h, f))
     }
-    let source = if sides.tag {
-        here(root, gate)?
-    } else {
-        at(root, sides.base, gate)?
-    };
-    // The floors as this run counts them.
+}
+
+#[allow(clippy::cast_precision_loss, reason = "a ratio of counts")]
+fn ratio(a: u64, b: u64) -> f64 {
+    a as f64 / b.max(1) as f64
+}
+
+/// The floors as this run counts them: a stale floor's count and key are
+/// its build's recount.
+fn this_run(source: &Floors, sides: &Sides<'_>) -> Floors {
     let mut floors = source.clone();
     for (name, f) in &mut floors {
         if let (Some(&n), Some(k)) = (sides.recounted.get(name), sides.keys.get(name)) {
@@ -350,46 +367,35 @@ pub(crate) fn judge(
             f.key.clone_from(k);
         }
     }
-    let against: Counts = floors
+    floors
+}
+
+/// The floors the head is measured against, and what is wrong with the
+/// head's floor file (empty when nothing). With `write`, writes the file
+/// the head must have first; at a tag, the file [`seed`] makes.
+pub(crate) fn judge(
+    root: &Path,
+    gate: &str,
+    sides: &Sides<'_>,
+    rules: &Rules<'_>,
+    write: bool,
+) -> Result<(Counts, Vec<String>), String> {
+    if sides.tag {
+        if write {
+            seed(root, gate, sides, rules)?;
+        }
+        return pre_tag(root, gate, sides, rules);
+    }
+    let source = at(root, sides.base, gate)?;
+    let floors = this_run(&source, sides);
+    let mut against: Counts = floors
         .iter()
         .filter(|(name, f)| sides.keys.get(*name) == Some(&f.key))
         .map(|(name, f)| (name.clone(), f.count))
         .collect();
+    // A stale floor the gate could not recount is not a floor to measure
+    // or replace.
     let mut errors = Vec::new();
-    let ratio = |a: u64, b: u64| {
-        #[allow(clippy::cast_precision_loss, reason = "a ratio of counts")]
-        let r = a as f64 / b.max(1) as f64;
-        r
-    };
-    if sides.tag {
-        // The pre-tag check: the head's floors against the tag's counts
-        // and the head's.
-        for (name, &h) in sides.head {
-            let Some(&f) = against.get(name) else {
-                errors.push(format!(
-                    "{gate}: no floor for {name} (or a stale one) in {}",
-                    file(gate)
-                ));
-                continue;
-            };
-            let t = sides.base_counts.get(name).copied().unwrap_or(f);
-            if f > t && !raised(name, ratio(f, t)) {
-                errors.push(format!(
-                    "{gate}: {name}'s floor {f} is above the tag's count {t}, and no accept \
-                     line since the tag raises it so far"
-                ));
-            }
-            if h < f {
-                errors.push(format!(
-                    "{gate}: {name} is {h}, below its floor {f}: lower the floor \
-                     (`cargo xtask {gate} --write-floors`)"
-                ));
-            }
-        }
-        return Ok((against, errors));
-    }
-    // A landing: the file the head must have. A stale floor the gate
-    // could not recount is not a floor to measure or replace.
     for name in sides.head.keys() {
         if let (Some(f), Some(k)) = (floors.get(name), sides.keys.get(name))
             && f.key != *k
@@ -405,8 +411,12 @@ pub(crate) fn judge(
     if !errors.is_empty() {
         return Ok((against, errors));
     }
-    let have = here(root, gate)?;
-    let mut want = floors.clone();
+    // The line the head's file must hold for each counted name, and why;
+    // for a floor the head does not move, the base's line, which a stale
+    // floor keeps (its recount is this run's, not the file's): a file
+    // stays the same on every host until a count moves.
+    let mut have = here(root, gate)?;
+    let mut want: BTreeMap<String, (Floor, String)> = BTreeMap::new();
     for (name, &h) in sides.head {
         let Some(key) = sides.keys.get(name) else {
             continue;
@@ -416,60 +426,60 @@ pub(crate) fn judge(
             build: sides.head_build.to_owned(),
             key: key.clone(),
         };
-        match floors.get(name) {
+        let (line, why) = match floors.get(name) {
             // A count the base has no floor for: the head's file may seed
-            // it at or below the head's count (the least since the tag,
-            // which the first landing of the floors takes), never above.
+            // it at or below the head's count, never above.
             None => {
                 let seed = have
                     .get(name)
                     .filter(|f| f.count <= h && f.key == *key)
                     .cloned();
-                want.insert(name.clone(), seed.unwrap_or(at_head));
+                let line = seed.unwrap_or(at_head);
+                against.insert(name.clone(), line.count);
+                (line, "a new count".to_owned())
             }
-            Some(f) if h < f.count || (h > f.count && raised(name, ratio(h, f.count))) => {
-                want.insert(name.clone(), at_head);
+            Some(f) if h < f.count => {
+                let why = format!("the head's {h} is below the floor {}", f.count);
+                (at_head, why)
             }
-            Some(_) => {}
-        }
-    }
-    // The head is measured against the base's floors, and a new count
-    // against its seed.
-    let mut against = against;
-    for (name, w) in &want {
-        if !floors.contains_key(name) && sides.keys.get(name) == Some(&w.key) {
-            against.insert(name.clone(), w.count);
-        }
-    }
-    let mut have = have;
-    if write && have != want {
-        write_merged(root, gate, &mut have, &want)?;
-        println!("{gate}: wrote {}", file(gate));
-    }
-    for (name, w) in &want {
-        let h = have.get(name);
-        if h == Some(w) {
-            continue;
-        }
-        let was = source.get(name).map(|f| f.count);
-        let why = match (was, sides.head.get(name)) {
-            (Some(b), Some(&n)) if n < b => format!("the head's {n} is below the base's floor {b}"),
-            (Some(b), Some(&n)) if n > b && w.count == n => {
-                format!("an accept line raises it from {b} to the head's {n}")
+            Some(f) if rules.raises(name, h, f.count) => {
+                let why = format!(
+                    "an accept line raises it from {} to the head's {h}",
+                    f.count
+                );
+                (at_head, why)
             }
-            (Some(_), _) if sides.recounted.contains_key(name) => {
-                "the base's floor was stale and is recounted".to_owned()
+            Some(_) => {
+                let why = if sides.recounted.contains_key(name) {
+                    "the base's line: a stale floor is recounted, not rewritten"
+                } else {
+                    "only the head's count or an accept line moves a floor"
+                };
+                (source[name].clone(), why.to_owned())
             }
-            (None, _) => "a new count".to_owned(),
-            _ => "only the head's count or an accept line moves a floor".to_owned(),
         };
+        want.insert(name.clone(), (line, why));
+    }
+    let wrong: Floors = want
+        .iter()
+        .filter(|(name, (w, _))| have.get(*name) != Some(w))
+        .map(|(name, (w, _))| (name.clone(), w.clone()))
+        .collect();
+    if write && !wrong.is_empty() {
+        write_merged(root, gate, &mut have, &wrong)?;
+        println!("{gate}: wrote {}", file(gate));
+        return Ok((against, errors));
+    }
+    for (name, w) in &wrong {
         errors.push(format!(
-            "{gate}: {} must hold `{name}\t{}\t{}\t{}` ({why}){}",
+            "{gate}: {} must hold `{name}\t{}\t{}\t{}` ({}){}",
             file(gate),
             w.count,
             w.build,
             w.key,
-            h.map_or_else(String::new, |h| format!(", not {}", h.count))
+            want[name].1,
+            have.get(name)
+                .map_or_else(String::new, |h| format!(", not {}", h.count))
         ));
     }
     if !errors.is_empty() {
@@ -480,11 +490,105 @@ pub(crate) fn judge(
     Ok((against, errors))
 }
 
+/// The pre-tag check, with the base a `v*` tag (`just pretag`, and the
+/// first landing after a release): the head's own floors against the
+/// tag's counts and the head's.
+/// - Every counted line's build is on the first-parent line since the tag
+///   (or is the head's), so a stale floor can always be recounted: after
+///   a release the floors must be seeded from it (`just seed-floors`).
+/// - A line on the tag's build holds the tag's count and one on the head's
+///   build the head's, so a floor cannot be lowered or relabelled by hand.
+/// - No floor is above the tag's count without an accept line since the
+///   tag, or above the head's count; and a rise past the limit that a line
+///   accepts has raised its floor to the head's count, as a landing does.
+fn pre_tag(
+    root: &Path,
+    gate: &str,
+    sides: &Sides<'_>,
+    rules: &Rules<'_>,
+) -> Result<(Counts, Vec<String>), String> {
+    let source = here(root, gate)?;
+    let floors = this_run(&source, sides);
+    let against: Counts = floors
+        .iter()
+        .filter(|(name, f)| sides.keys.get(*name) == Some(&f.key))
+        .map(|(name, f)| (name.clone(), f.count))
+        .collect();
+    let (line, tag) = builds(root, sides.base, "HEAD")?;
+    let tag_build = build_id(root, Some(sides.base))?;
+    let seed = format!("seed the floors from the tag: `just seed-floors {tag}`");
+    let mut errors = Vec::new();
+    for (name, &h) in sides.head {
+        let Some(s) = source.get(name) else {
+            errors.push(format!(
+                "{gate}: no floor for {name} in {}; {seed}",
+                file(gate)
+            ));
+            continue;
+        };
+        if s.build != sides.head_build && !line.iter().any(|(b, _)| *b == s.build) {
+            errors.push(format!(
+                "{gate}: {name}'s floor is on build {}, which no commit since {tag} has, so it \
+                 could not be recounted once its key goes stale; {seed}",
+                s.build
+            ));
+            continue;
+        }
+        let Some(&f) = against.get(name) else {
+            errors.push(format!(
+                "{gate}: {name}'s floor is stale and was not recounted"
+            ));
+            continue;
+        };
+        let t = sides.base_counts.get(name).copied();
+        if sides.keys.get(name) == Some(&s.key) {
+            let held = if s.build == sides.head_build {
+                Some(("head", h))
+            } else if s.build == tag_build {
+                t.map(|t| ("tag", t))
+            } else {
+                None
+            };
+            if let Some((which, n)) = held
+                && s.count != n
+            {
+                errors.push(format!(
+                    "{gate}: {name}'s floor {} is on the {which}'s build, which counts {n}; {seed}",
+                    s.count
+                ));
+            }
+        }
+        if let Some(t) = t
+            && f > t
+            && !(rules.accepted)(name, ratio(f, t))
+        {
+            errors.push(format!(
+                "{gate}: {name}'s floor {f} is above the tag's count {t}, and no accept line \
+                 since the tag raises it so far"
+            ));
+        }
+        if h < f {
+            errors.push(format!(
+                "{gate}: {name} is {h}, below its floor {f}: lower the floor (`cargo xtask \
+                 {gate} --base {tag} --write-floors`)"
+            ));
+        }
+        if rules.raises(name, h, f) {
+            errors.push(format!(
+                "{gate}: an accept line raises {name}, so its floor is the head's {h}, not {f} \
+                 (`cargo xtask {gate} --base {tag} --write-floors`)"
+            ));
+        }
+    }
+    Ok((against, errors))
+}
+
 /// At a tag, `--write-floors`: each counted name's floor is the tag's
 /// count with the tag's build (a tie goes to the tag, the earlier build),
-/// or the head's count with the head's build where the head counts less
-/// or the tag has no count; names not counted this run keep their lines.
-fn seed(root: &Path, gate: &str, sides: &Sides<'_>) -> Result<(), String> {
+/// or the head's count with the head's build where the head counts less,
+/// where an accept line raises it past the limit (as a landing does), or
+/// where the tag has no count; names not counted keep their lines.
+fn seed(root: &Path, gate: &str, sides: &Sides<'_>, rules: &Rules<'_>) -> Result<(), String> {
     let tag_build = build_id(root, Some(sides.base))?;
     let mut want = Floors::new();
     for (name, &h) in sides.head {
@@ -492,7 +596,7 @@ fn seed(root: &Path, gate: &str, sides: &Sides<'_>) -> Result<(), String> {
             continue;
         };
         let (count, build) = match sides.base_counts.get(name) {
-            Some(&t) if t <= h => (t, tag_build.as_str()),
+            Some(&t) if t <= h && !rules.raises(name, h, t) => (t, tag_build.as_str()),
             _ => (h, sides.head_build),
         };
         want.insert(
@@ -525,12 +629,47 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn floor(count: u64, build: &str) -> Floor {
+    fn keyed(count: u64, build: &str, key: &str) -> Floor {
         Floor {
             count,
             build: build.to_owned(),
-            key: "k".to_owned(),
+            key: key.to_owned(),
         }
+    }
+
+    fn floor(count: u64, build: &str) -> Floor {
+        keyed(count, build, "k")
+    }
+
+    fn keys(names: &[&str], key: &str) -> BTreeMap<String, String> {
+        names
+            .iter()
+            .map(|n| ((*n).to_owned(), key.to_owned()))
+            .collect()
+    }
+
+    fn counts(of: &[(&str, u64)]) -> Counts {
+        of.iter().map(|(n, c)| ((*n).to_owned(), *c)).collect()
+    }
+
+    /// A program's limit, native-ir's +0.5%.
+    fn past(_: &str, h: u64, o: u64) -> bool {
+        ratio(h, o) > 1.005
+    }
+
+    fn commit(dir: &Path, message: &str) -> String {
+        let who = ["-c", "user.name=t", "-c", "user.email=t@t"];
+        git(dir, &[&who[..], &["add", "--all"]].concat()).unwrap();
+        git(
+            dir,
+            &[
+                &who[..],
+                &["commit", "--quiet", "--allow-empty", "-m", message],
+            ]
+            .concat(),
+        )
+        .unwrap();
+        git(dir, &["rev-parse", "HEAD"]).unwrap()
     }
 
     /// A repository whose base commit holds `base` as native-ir's floors.
@@ -540,36 +679,29 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         git(&dir, &["init", "--quiet"]).unwrap();
         write(&dir, "native-ir", base).unwrap();
-        let who = ["-c", "user.name=t", "-c", "user.email=t@t"];
-        git(&dir, &[&who[..], &["add", "--all"]].concat()).unwrap();
-        git(
-            &dir,
-            &[&who[..], &["commit", "--quiet", "-m", "base"]].concat(),
-        )
-        .unwrap();
-        let sha = git(&dir, &["rev-parse", "HEAD"]).unwrap();
+        let sha = commit(&dir, "base");
         (dir, sha)
     }
 
     #[test]
-    fn a_floor_moves_only_to_the_head_and_rises_only_with_a_line() {
+    fn a_floor_moves_only_to_the_head_and_rises_only_with_a_line_past_the_limit() {
         let base = Floors::from([
             ("fib".to_owned(), floor(1_000, "b-1")),
             ("dict".to_owned(), floor(2_000, "b-1")),
             ("loop".to_owned(), floor(3_000, "b-1")),
+            ("str".to_owned(), floor(4_000, "b-1")),
         ]);
         let (dir, sha) = repo("moves", &base);
-        let keys: BTreeMap<String, String> = ["fib", "dict", "loop", "aio"]
-            .into_iter()
-            .map(|n| (n.to_owned(), "k".to_owned()))
-            .collect();
-        // fib gained, dict rose 0.4% under a `dict 1.005` line, loop rose
-        // 0.2% without one, aio is new.
-        let head = Counts::from([
-            ("fib".to_owned(), 990),
-            ("dict".to_owned(), 2_008),
-            ("loop".to_owned(), 3_006),
-            ("aio".to_owned(), 500),
+        let keys = keys(&["fib", "dict", "loop", "str", "aio"], "k");
+        // fib gained; dict rose 0.6% under a `dict,str 1.007` line; str
+        // rose 0.25%, under the limit, though the line names it; loop rose
+        // 0.2% without a line; aio is new.
+        let head = counts(&[
+            ("fib", 990),
+            ("dict", 2_012),
+            ("loop", 3_006),
+            ("str", 4_010),
+            ("aio", 500),
         ]);
         let none = Counts::new();
         let sides = Sides {
@@ -581,49 +713,57 @@ mod tests {
             head_build: "b-2",
             recounted: &none,
         };
-        let raised = |name: &str, r: f64| name == "dict" && r <= 1.005;
+        let accepted = |name: &str, r: f64| (name == "dict" || name == "str") && r <= 1.007;
+        let rules = Rules {
+            accepted: &accepted,
+            past: &past,
+        };
         // The file as the base has it: the gain, the raise and the new
-        // count are each missing.
-        let (against, errors) = judge(&dir, "native-ir", &sides, &raised, false).unwrap();
+        // count are each missing; str keeps its floor.
+        let (against, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
         assert_eq!(against["loop"], 3_000);
         let wrong: Vec<&String> = errors.iter().filter(|e| e.contains("must hold")).collect();
         assert_eq!(wrong.len(), 3, "{errors:?}");
         assert!(wrong.iter().any(|e| e.contains("fib\t990\tb-2")));
-        assert!(wrong.iter().any(|e| e.contains("dict\t2008\tb-2")));
+        assert!(wrong.iter().any(|e| e.contains("dict\t2012\tb-2")));
         assert!(wrong.iter().any(|e| e.contains("aio\t500\tb-2")));
-        // A new count may be seeded below the head (the least since the
-        // tag), never above it.
+        // A new count may be seeded below the head, never above it.
         let mut seeded = base.clone();
         seeded.insert("aio".to_owned(), floor(480, "b-0"));
         write(&dir, "native-ir", &seeded).unwrap();
-        let (against, errors) = judge(&dir, "native-ir", &sides, &raised, false).unwrap();
+        let (against, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
         assert!(!errors.iter().any(|e| e.contains("aio")), "{errors:?}");
         assert_eq!(against["aio"], 480, "the head is measured against the seed");
         seeded.insert("aio".to_owned(), floor(520, "b-0"));
         write(&dir, "native-ir", &seeded).unwrap();
-        let (_, errors) = judge(&dir, "native-ir", &sides, &raised, false).unwrap();
+        let (_, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
         assert!(
             errors.iter().any(|e| e.contains("aio\t500\tb-2")),
             "{errors:?}"
         );
-        // Written, it passes, and loop keeps the base's floor.
-        let (_, errors) = judge(&dir, "native-ir", &sides, &raised, true).unwrap();
+        // Written, it passes; loop and str keep the base's floors.
+        let (_, errors) = judge(&dir, "native-ir", &sides, &rules, true).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
-        assert_eq!(
-            here(&dir, "native-ir").unwrap()["loop"],
-            floor(3_000, "b-1")
-        );
+        let (_, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        let written = here(&dir, "native-ir").unwrap();
+        assert_eq!(written["loop"], floor(3_000, "b-1"));
+        assert_eq!(written["str"], floor(4_000, "b-1"));
         // A floor lowered below what the head counts, or raised without a
         // line, fails.
-        let mut forged = here(&dir, "native-ir").unwrap();
+        let mut forged = written.clone();
         forged.insert("loop".to_owned(), floor(2_900, "b-2"));
         write(&dir, "native-ir", &forged).unwrap();
-        let (_, errors) = judge(&dir, "native-ir", &sides, &raised, false).unwrap();
+        let (_, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
         assert!(
             errors.iter().any(|e| e.contains("loop\t3000\tb-1")),
             "{errors:?}"
         );
-        let no_line = |_: &str, _: f64| false;
+        let none_accepted = |_: &str, _: f64| false;
+        let no_line = Rules {
+            accepted: &none_accepted,
+            past: &past,
+        };
         let (_, errors) = judge(&dir, "native-ir", &sides, &no_line, true).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(
@@ -633,82 +773,144 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Another host (another key) recounts the base's floors and judges
+    /// against its recount; the file keeps the base's lines while no count
+    /// moves, so two hosts both pass an unchanged tree, also after either
+    /// ran `--write-floors` (the review's Ho0 to Ho5 and 8e1).
     #[test]
-    fn the_pre_tag_check_holds_floors_to_the_tag_and_the_head() {
-        let (dir, sha) = repo("tag", &Floors::new());
-        let floors = Floors::from([
-            ("fib".to_owned(), floor(1_000, "b-1")),
-            ("dict".to_owned(), floor(2_010, "b-1")),
+    fn two_hosts_both_pass_an_unchanged_tree() {
+        let base = Floors::from([
+            ("fib".to_owned(), keyed(1_000, "b-1", "k-a")),
+            ("dict".to_owned(), keyed(2_000, "b-1", "k-a")),
         ]);
-        write(&dir, "native-ir", &floors).unwrap();
-        let keys: BTreeMap<String, String> = ["fib", "dict"]
-            .into_iter()
-            .map(|n| (n.to_owned(), "k".to_owned()))
-            .collect();
-        let tag = Counts::from([("fib".to_owned(), 1_002), ("dict".to_owned(), 2_000)]);
-        let head = Counts::from([("fib".to_owned(), 999), ("dict".to_owned(), 2_010)]);
+        let (dir, sha) = repo("hosts", &base);
         let none = Counts::new();
-        let sides = Sides {
-            base: &sha,
-            tag: true,
-            head: &head,
-            base_counts: &tag,
-            keys: &keys,
-            head_build: "b-2",
-            recounted: &none,
+        let no_line = |_: &str, _: f64| false;
+        let rules = Rules {
+            accepted: &no_line,
+            past: &past,
         };
-        // dict's floor is above the tag's count; fib's head is below its
-        // floor.
-        let (_, errors) = judge(&dir, "native-ir", &sides, &|_, _| false, false).unwrap();
-        assert_eq!(errors.len(), 2, "{errors:?}");
-        let line = |name: &str, r: f64| name == "dict" && r <= 1.006;
-        let (_, errors) = judge(&dir, "native-ir", &sides, &line, false).unwrap();
+        // Host b counts 4 more on fib than host a does, on every build.
+        let (keys_a, keys_b) = (keys(&["fib", "dict"], "k-a"), keys(&["fib", "dict"], "k-b"));
+        let head_a = counts(&[("fib", 1_000), ("dict", 2_000)]);
+        let head_b = counts(&[("fib", 1_004), ("dict", 2_000)]);
+        let side = |keys, head, recounted| Sides {
+            base: &sha,
+            tag: false,
+            head,
+            base_counts: &none,
+            keys,
+            head_build: "b-2",
+            recounted,
+        };
+        for _ in 0..2 {
+            let (_, errors) = judge(
+                &dir,
+                "native-ir",
+                &side(&keys_a, &head_a, &none),
+                &rules,
+                false,
+            )
+            .unwrap();
+            assert!(errors.is_empty(), "host a: {errors:?}");
+            // Host b's recount of b-1 is its own count of the floors.
+            let (against, errors) = judge(
+                &dir,
+                "native-ir",
+                &side(&keys_b, &head_b, &head_b),
+                &rules,
+                false,
+            )
+            .unwrap();
+            assert!(errors.is_empty(), "host b: {errors:?}");
+            assert_eq!(against["fib"], 1_004);
+            // --write-floors on either host leaves an unmoved file alone.
+            judge(
+                &dir,
+                "native-ir",
+                &side(&keys_b, &head_b, &head_b),
+                &rules,
+                true,
+            )
+            .unwrap();
+            assert_eq!(here(&dir, "native-ir").unwrap(), base);
+        }
+        // A count that moves takes this host's line.
+        let gain = counts(&[("fib", 994), ("dict", 2_000)]);
+        let (_, errors) = judge(
+            &dir,
+            "native-ir",
+            &side(&keys_b, &gain, &head_b),
+            &rules,
+            false,
+        )
+        .unwrap();
         assert!(
-            errors.len() == 1 && errors[0].contains("fib is 999"),
+            errors.len() == 2 && errors[0].contains("fib\t994\tb-2\tk-b"),
             "{errors:?}"
         );
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn at_a_tag_write_floors_seeds_the_tag_s_counts_whatever_the_file_held() {
-        let (dir, sha) = repo("seed", &Floors::new());
-        // The last cycle's floors: fib's build is in no commit here and its
-        // key is another method's, so only seeding can replace it; loop is
-        // not counted this run.
-        let old = Floor {
-            count: 900,
-            build: "b-gone".to_owned(),
-            key: "k-old".to_owned(),
+    fn a_recounted_floor_is_named_as_such() {
+        // Two lines for one name would leave one unread.
+        assert!(parse("native-ir", "fib\t1\tb-1\tk\nfib\t2\tb-1\tk\n").is_err());
+        let base = Floors::from([("fib".to_owned(), keyed(1_000, "b-1", "k-old"))]);
+        let (dir, sha) = repo("why", &base);
+        write(
+            &dir,
+            "native-ir",
+            &Floors::from([("fib".to_owned(), floor(1_000, "b-1"))]),
+        )
+        .unwrap();
+        let none = Counts::new();
+        let keys = keys(&["fib"], "k");
+        let (head, recount) = (counts(&[("fib", 1_016)]), counts(&[("fib", 1_016)]));
+        let sides = Sides {
+            base: &sha,
+            tag: false,
+            head: &head,
+            base_counts: &none,
+            keys: &keys,
+            head_build: "b-2",
+            recounted: &recount,
         };
-        let mut before = Floors::from([
-            ("fib".to_owned(), old),
-            ("dict".to_owned(), floor(1_990, "b-1")),
-            ("loop".to_owned(), floor(3_000, "b-1")),
-        ]);
-        write(&dir, "native-ir", &before).unwrap();
-        let keys: BTreeMap<String, String> = ["fib", "dict", "str", "aio"]
-            .into_iter()
-            .map(|n| (n.to_owned(), "k".to_owned()))
-            .collect();
-        assert!(stale(&dir, "native-ir", &sha, true, false, &keys).is_err());
-        let none_stale: Vec<(String, Vec<String>)> = Vec::new();
-        assert_eq!(
-            stale(&dir, "native-ir", &sha, true, true, &keys).unwrap(),
-            none_stale
+        let line = |_: &str, _: f64| true;
+        let rules = Rules {
+            accepted: &line,
+            past: &past,
+        };
+        let (_, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
+        assert!(
+            errors[0].contains("fib\t1000\tb-1\tk-old")
+                && errors[0].contains("a stale floor is recounted"),
+            "{errors:?}"
         );
-        // The head counts less than the tag on fib, more on dict, the same
-        // on str; aio is new since the tag.
-        let tag = Counts::from([
-            ("fib".to_owned(), 1_002),
-            ("dict".to_owned(), 2_000),
-            ("str".to_owned(), 700),
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The base a tag: the pre-tag check, and `--write-floors` seeding.
+    #[test]
+    fn at_a_tag_the_floors_are_the_tag_s_and_seeding_writes_them() {
+        let (dir, sha) = repo("tag", &Floors::new());
+        git(&dir, &["tag", "v0.0.9"]).unwrap();
+        let tb = build_id(&dir, Some(&sha)).unwrap();
+        let keys = keys(&["fib", "dict", "str", "loop", "aio"], "k");
+        // fib gains on the tag; dict rose 0.6% under `dict 1.007`; str
+        // and loop are the tag's; aio is new since the tag.
+        let tag = counts(&[
+            ("fib", 1_002),
+            ("dict", 2_000),
+            ("str", 700),
+            ("loop", 3_000),
         ]);
-        let head = Counts::from([
-            ("fib".to_owned(), 999),
-            ("dict".to_owned(), 2_010),
-            ("str".to_owned(), 700),
-            ("aio".to_owned(), 500),
+        let head = counts(&[
+            ("fib", 999),
+            ("dict", 2_012),
+            ("str", 700),
+            ("loop", 3_000),
+            ("aio", 500),
         ]);
         let none = Counts::new();
         let sides = Sides {
@@ -720,36 +922,112 @@ mod tests {
             head_build: "b-head",
             recounted: &none,
         };
-        let (against, errors) = judge(&dir, "native-ir", &sides, &|_, _| false, true).unwrap();
+        let accepted = |name: &str, r: f64| name == "dict" && r <= 1.007;
+        let rules = Rules {
+            accepted: &accepted,
+            past: &past,
+        };
+        let good = Floors::from([
+            ("fib".to_owned(), floor(999, "b-head")),
+            ("dict".to_owned(), floor(2_012, "b-head")),
+            ("str".to_owned(), floor(700, &tb)),
+            ("loop".to_owned(), floor(3_000, &tb)),
+            ("aio".to_owned(), floor(500, "b-head")),
+        ]);
+        let check = |file: &Floors| {
+            write(&dir, "native-ir", file).unwrap();
+            judge(&dir, "native-ir", &sides, &rules, false).unwrap().1
+        };
+        assert!(check(&good).is_empty(), "{:?}", check(&good));
+        // Each wrong line fails, and the check writes nothing.
+        let cases = [
+            ("dict", floor(2_000, &tb), "an accept line raises dict"),
+            (
+                "str",
+                floor(600, &tb),
+                "on the tag's build, which counts 700",
+            ),
+            (
+                "aio",
+                floor(490, "b-head"),
+                "on the head's build, which counts 500",
+            ),
+            ("loop", floor(3_000, "b-gone"), "just seed-floors v0.0.9"),
+            ("fib", floor(1_002, &tb), "fib is 999, below its floor 1002"),
+        ];
+        for (name, line, says) in cases {
+            let mut bad = good.clone();
+            bad.insert(name.to_owned(), line.clone());
+            let errors = check(&bad);
+            assert!(
+                errors.len() == 1 && errors[0].contains(says),
+                "{name}: {errors:?}"
+            );
+            assert_eq!(here(&dir, "native-ir").unwrap()[name], line);
+        }
+        let mut gone = good.clone();
+        gone.remove("str");
+        assert!(check(&gone)[0].contains("no floor for str"));
+        // Seeding: whatever the file held (another cycle's builds, a stale
+        // key, a missing line), the counted lines become `good`; a line no
+        // run counts stays.
+        let mut old: Floors = good
+            .keys()
+            .map(|n| (n.clone(), keyed(1, "b-gone", "k-old")))
+            .collect();
+        old.remove("aio");
+        old.insert("bogus".to_owned(), floor(1, "b-0"));
+        write(&dir, "native-ir", &old).unwrap();
+        assert!(
+            stale(&dir, "native-ir", &sha, true, false, &keys)
+                .unwrap_err()
+                .contains("just seed-floors v0.0.9")
+        );
+        assert_eq!(
+            stale(&dir, "native-ir", &sha, true, true, &keys).unwrap(),
+            Vec::new()
+        );
+        let (_, errors) = judge(&dir, "native-ir", &sides, &rules, true).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
-        let tag_build = build_id(&dir, Some(&sha)).unwrap();
-        let seeded = here(&dir, "native-ir").unwrap();
-        assert_eq!(seeded["fib"], floor(999, "b-head"));
-        assert_eq!(seeded["dict"], floor(2_000, &tag_build));
-        assert_eq!(seeded["str"], floor(700, &tag_build));
-        assert_eq!(seeded["aio"], floor(500, "b-head"));
-        assert_eq!(seeded["loop"], floor(3_000, "b-1"));
-        assert_eq!(against["dict"], 2_000);
-        // Seeding again changes nothing, and the pre-tag check passes it.
+        let mut want = good.clone();
+        want.insert("bogus".to_owned(), floor(1, "b-0"));
+        assert_eq!(here(&dir, "native-ir").unwrap(), want);
         let text = fs::read_to_string(dir.join(file("native-ir"))).unwrap();
-        let (_, errors) = judge(&dir, "native-ir", &sides, &|_, _| false, true).unwrap();
-        assert!(errors.is_empty(), "{errors:?}");
+        judge(&dir, "native-ir", &sides, &rules, true).unwrap();
         assert_eq!(
             fs::read_to_string(dir.join(file("native-ir"))).unwrap(),
             text
         );
-        let (_, errors) = judge(&dir, "native-ir", &sides, &|_, _| false, false).unwrap();
-        assert!(errors.is_empty(), "{errors:?}");
-        // Without `write` the old file is only checked: dict's 1,990 is
-        // below the head's 2,010 and stays.
-        before.remove("fib");
-        write(&dir, "native-ir", &before).unwrap();
-        let (_, errors) = judge(&dir, "native-ir", &sides, &|_, _| false, false).unwrap();
-        assert!(errors.iter().any(|e| e.contains("fib")), "{errors:?}");
-        assert_eq!(
-            here(&dir, "native-ir").unwrap()["dict"],
-            floor(1_990, "b-1")
-        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A stale floor is recounted on its build wherever it is since the
+    /// last tag: up to the base in a landing, up to HEAD at a tag.
+    #[test]
+    fn a_stale_floor_is_found_after_the_tag() {
+        let (dir, tag) = repo("find", &Floors::new());
+        git(&dir, &["tag", "v0.0.9"]).unwrap();
+        fs::create_dir_all(dir.join("crates")).unwrap();
+        fs::write(dir.join("crates/x.rs"), "fn x() {}\n").unwrap();
+        let later = commit(&dir, "a build after the tag");
+        let b = build_id(&dir, Some(&later)).unwrap();
+        assert_ne!(b, build_id(&dir, Some(&tag)).unwrap());
+        write(
+            &dir,
+            "native-ir",
+            &Floors::from([("fib".to_owned(), keyed(9, &b, "k-old"))]),
+        )
+        .unwrap();
+        commit(&dir, "floors");
+        let keys = keys(&["fib"], "k");
+        // Found in both modes, as a commit with that build (the newest).
+        let head = git(&dir, &["rev-parse", "HEAD"]).unwrap();
+        for (base, tag_base) in [(&tag, true), (&head, false)] {
+            let found = stale(&dir, "native-ir", base, tag_base, false, &keys).unwrap();
+            assert_eq!(found.len(), 1, "{found:?}");
+            assert_eq!(found[0].1, vec!["fib".to_owned()]);
+            assert_eq!(build_id(&dir, Some(&found[0].0)).unwrap(), b);
+        }
         fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -146,17 +146,23 @@ to `target/check/logs/<stage>.log`.
   when the tree is clean. A facade API or snapshot format change also
   needs `cargo xtask wasm-host` (in the release gate).
 - Ir: drops always pass; rises are gated against the base and against
-  each count's floor, the lowest it has been since the last `v*` tag, kept
+  each count's floor, the lowest it has been since the floors were seeded
+  at the last `v*` tag (the pre-tag check makes that seed happen), kept
   in `xtask/ir-floors/<gate>.txt` with the build that set it and its count
   key (counting method, tools, host, program source), so steps under a
   limit cannot add up and no gate builds history. A change that lowers a
-  count lowers its floor in the same commit, and `check` fails a head below
-  its floor whose file is not lowered: `cargo xtask <gate> --write-floors`
-  writes it. A floor rises only to the head's count, with an accept line
-  that covers the rise. A stale floor (another key) is recounted on its
-  build. Two landings that both move a floor: take the raise when one side
-  is an accepted raise, else the lower count; the gate then sets it.
-  Startup drift is not accepted (owner): `startup` may move 300
+  count lowers its floor in the same commit, and `check` fails a head
+  below its floor whose file is not lowered: `cargo xtask <gate>
+  --write-floors` writes it; a moved line names the build of the push's
+  tip, so in a push of several commits it is written at the tip. A floor
+  rises only to the head's count, with an accept line that covers the rise
+  and is past a limit. A stale floor (another key) is recounted on its
+  build and judged against the recount; the file keeps the base's line
+  unless the head moves that count, so hosts with different keys both pass
+  an unchanged tree. Keys are rewritten only by a moved count or a seed
+  (`--base <tag> --write-floors`). Two landings that both move a floor: take the raise
+  when one side is an accepted raise, else the lower count; the gate then
+  sets it. Startup drift is not accepted (owner): `startup` may move 300
   instructions without a line. Four gates, on Linux:
   - `cargo xtask native-ir` (both tiers): the gated count
     `python3 bench/callgrind.py` prints first, on the shipped native `mm`
@@ -187,15 +193,19 @@ to `target/check/logs/<stage>.log`.
   such as `Native-IR-Accepted: dict,startup 1.006 <reason>`. It passes
   only the names it lists (programs, `sessions`, `sessions-calls` or
   `geomean`; v8-ir may put `plain/` or `bundle/` before one) up to the
-  ceiling ratio, and raises only their floors. `MM_IR_ACCEPT`, `MM_WASM_IR_ACCEPT` and
-  `MM_V8_IR_ACCEPT` with the same text stand for the line in an
-  uncommitted tree only. `just pretag` runs each against the previous tag
-  and checks the floors against the tag's counts. A tag starts new
+  ceiling ratio, and raises only the floors of those past a limit.
+  `MM_IR_ACCEPT`, `MM_WASM_IR_ACCEPT` and `MM_V8_IR_ACCEPT` with the same
+  text stand for the line in an uncommitted tree only. A tag starts new
   floors: the first commit after it is `just seed-floors`, which runs each
-  gate with `--base <tag> --write-floors` and so writes every floor at the
-  tag's count and build (the head's where lower), whatever the file held,
-  stale keys included. Report the
-  whole-process count `bench/callgrind.py` prints second too.
+  gate with `--base <tag> --write-floors` and writes every floor at the
+  tag's count and build, or the head's where it is lower or an accepted
+  rise, whatever the file held, stale keys included; `--programs` cannot
+  seed. A seed that lands late is judged with `--base <tag>`. `just
+  pretag` runs each gate against the previous tag and fails a floor whose
+  build is not on the tag's first-parent line up to HEAD, a floor on the
+  tag's or the head's build that does not hold its count, and an accepted
+  rise not raised, each naming `just seed-floors`. With native-ir, report the whole-process
+  count `bench/callgrind.py` prints second too.
 - Snapshots: keep code that writes or reads an image in the codec files
   (`micro-monty/src/image.rs`, `mm-engine/src/snapshot.rs`,
   `mm-core/src/snapshot.rs`, `mm-compile/src/encode.rs`). Bump

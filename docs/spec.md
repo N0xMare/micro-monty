@@ -2906,28 +2906,39 @@ enough: one layout-only change moved `startup` +0.80% whole-process, +1.06%
 from `main` and +0.03% gated [M]. On the other programs the two counts
 differ by a constant of about 337K Ir, 0.10% of the smallest [M].
 
-**Floors.** Each Ir gate keeps, per count, its floor: the lowest it has
-been since the last `v*` tag, in `xtask/ir-floors/<gate>.txt` with the
-build that set it (a hash of the blob ids of what a shipped build reads)
-and its key (the counting method, the tools' versions, glibc and the CPU
-class valgrind shows, the program's source). The gates compare the head
-with the base and the floor and build no history (owner, 2026-11-14). The
-head's file must be what the head makes of the base's: a count below its
-floor lowers the floor in the same change, so an unrecorded gain does not
-become headroom; a floor rises only to the head's count and only with an
-accept line whose ceiling covers the rise; a new count is seeded at or
-below the head's. `--write-floors` writes the file. A floor whose key is
+**Floors.** Each Ir gate keeps, per count, its floor in
+`xtask/ir-floors/<gate>.txt` with the build that set it (a hash of the
+blob ids of what a shipped build reads) and its key (the counting method,
+the tools' versions, glibc and the CPU class valgrind shows, the program's
+source). The gates compare the head with the base and the floor and build
+no history (owner, 2026-11-14). The head's file must be what the head
+makes of the base's: a count below its floor lowers the floor in the same
+change, so an unrecorded gain does not become headroom; a floor rises
+only to the head's count and only with an accept line whose ceiling
+covers the rise, for a name past a limit; a new count is seeded at or
+below the head's. `--write-floors` writes the file; a moved line names the
+head's build, so a push of several commits writes it at its tip (the gate
+cannot count the commits in between). A floor whose key is
 not the run's is stale and is recounted on its build, found on the
-first-parent line since the tag. With `--base` at a tag (`just pretag`)
-the head is compared with the tag, and every floor is checked against the
-tag's count and the head's; `--write-floors` there seeds the file from the
-tag, each floor at the tag's count with the tag's build (the head's where
-the head counts less), whatever the file held. That is how each release
-starts its floors: `just seed-floors` is the first commit after a tag, so
-the floors since the tag begin at the tag's counts. When two landings both move a floor, the
-raise wins if one side is an accepted raise, else the lower count; the
-gate on the combined tree then sets it. What is lost against counting
-every commit is which commit moved a count.
+first-parent line from the last tag to the head, and judged against the
+recount; the file keeps the base's line unless the head moves that count,
+so two hosts with different keys both pass an unchanged tree, and keys
+are rewritten only by a moved count or a seed. With `--base` at
+a tag (`just pretag`) the head is compared with the tag, and every floor
+must be on the tag's first-parent line up to the head, hold the tag's
+count where it names the tag's build and the head's where it names the
+head's, and hold an accepted rise at the head's count; each failure names
+`just seed-floors`. `--write-floors` there seeds the file from the tag,
+each floor at the tag's count with the tag's build (the head's where the
+head counts less or rises with an accept line), whatever the file held;
+`--programs` cannot seed. That is how each release starts its floors:
+`just seed-floors` is the first commit after a tag (one that lands later
+is judged with `--base <tag>`). A floor is the lowest its count has been
+since the tag only because the pre-tag check forces that seed. When two
+landings both move a floor, the raise wins if one side is an accepted
+raise, else the lower count; the gate on the combined tree then sets it.
+What is lost against counting every commit is which commit moved a
+count.
 
 **Recorded sessions.** The bench programs reach a small part of the
 engine (one size change marked 261 functions; they ran 20 of them [M]),

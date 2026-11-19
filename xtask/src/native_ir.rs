@@ -242,7 +242,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             head_build: &head_build,
             recounted: &recounted,
         },
-        &raised,
+        &floors::Rules {
+            accepted: &raised,
+            past: &|name: &str, h: u64, o: u64| LIMITS.past(name, h, o),
+        },
         write,
     )?;
     failures.extend(report(&counts[0], ("floor", &against)));

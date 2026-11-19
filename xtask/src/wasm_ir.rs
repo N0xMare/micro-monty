@@ -181,6 +181,13 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         ],
     )
     .is_ok();
+    if tag && write && only.is_some() {
+        return Err(
+            "wasm-ir: --write-floors with the base at a tag seeds the whole floor file, so it \
+             counts every program: drop --programs"
+                .to_owned(),
+        );
+    }
     let mut sides = vec![
         head_side,
         Side {
@@ -243,7 +250,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             head_build: &head_build,
             recounted: &recounted,
         },
-        &raised,
+        &floors::Rules {
+            accepted: &raised,
+            past: &|name: &str, h: u64, o: u64| LIMITS.past(name, h, o),
+        },
         write,
     )?;
     let floor: Counts = against

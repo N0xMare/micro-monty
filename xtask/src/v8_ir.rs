@@ -223,6 +223,13 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         ],
     )
     .is_ok();
+    if tag && write && only.is_some() {
+        return Err(
+            "v8-ir: --write-floors with the base at a tag seeds the whole floor file, so it \
+             counts every program: drop --programs"
+                .to_owned(),
+        );
+    }
     // The floors (crate::floors), named `<plain|bundle>/<program>`, and
     // the build of each stale one.
     let mut keys = BTreeMap::new();
@@ -273,7 +280,14 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             head_build: &floors::build_id(&root, None)?,
             recounted: &recounted,
         },
-        &raised,
+        &floors::Rules {
+            accepted: &raised,
+            past: &|_: &str, h: u64, o: u64| {
+                #[allow(clippy::cast_precision_loss, reason = "a ratio of counts")]
+                let r = h as f64 / o.max(1) as f64;
+                r > PROGRAM_LIMIT
+            },
+        },
         write,
     )?;
     // The floors keyed as the counts are.
