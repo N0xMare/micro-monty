@@ -177,21 +177,16 @@ const MARK: &str = "optimize(size)";
 
 /// The commits since `base`, and the uncommitted changes, that add
 /// [`MARK`]s under `crates/` without saying how many of them an Ir
-/// workload runs: a commit that adds N (net of those it removes) needs a
-/// trailer `Size-Marks: N added, <run> run by an Ir workload (<how>)`,
+/// workload runs: a commit that adds N needs a trailer `Size-Marks: N
+/// added, <run> run by an Ir workload (<how>)` with `<run>` from 1 to N,
 /// since a marked function the workloads never run can slow down unseen
 /// (an `await` loop +17%, `gather` +21% with every gate green; size review
-/// of A+B). The check reads the statement; it does not count the runs.
+/// of A+B). A mark is its attribute, whitespace aside, with the function
+/// it marks (`crate::optimize_attrs`, as the release-gate tier reads
+/// marks): a mark moved to another function, or given another condition,
+/// is an added mark. The check reads the statement; it does not count the
+/// runs.
 fn marks(root: &Path, base: &str) -> Result<Vec<String>, String> {
-    let added = |diff: &str| -> i64 {
-        let count = |sign: char| {
-            diff.lines()
-                .filter(|l| l.starts_with(sign) && !l.starts_with("+++") && !l.starts_with("---"))
-                .filter(|l| l.contains(MARK) && !comment(&l[1..]))
-                .count()
-        };
-        i64::try_from(count('+')).unwrap_or(i64::MAX) - i64::try_from(count('-')).unwrap_or(0)
-    };
     let mut failed = Vec::new();
     let log = git(
         root,
@@ -203,23 +198,26 @@ fn marks(root: &Path, base: &str) -> Result<Vec<String>, String> {
     )?;
     for line in log.lines().filter(|l| !l.is_empty()) {
         let (sha, said) = line.split_once('\x1f').unwrap_or((line, ""));
-        let n = added(&git(
-            root,
-            &["show", "--format=", "-U0", sha, "--", "crates"],
-        )?);
-        if n <= 0 {
+        let n = added(root, &format!("{sha}^"), Some(sha))?;
+        if n == 0 {
             continue;
         }
         let short = &sha[..sha.len().min(10)];
-        let numbers: Vec<i64> = said
+        let numbers: Vec<usize> = said
             .split(|c: char| !c.is_ascii_digit())
             .filter_map(|t| t.parse().ok())
             .take(2)
             .collect();
         match numbers[..] {
-            [a, run] if a == n && run <= a => {
+            [a, run] if a == n && (1..=a).contains(&run) => {
                 println!("size: {short} adds {n} {MARK} marks; {run} run by an Ir workload");
             }
+            [a, 0] if a == n => failed.push(format!(
+                "{short} adds {n} {MARK} marks and says no Ir workload runs any of them: a mark \
+                 no workload runs can slow down unseen, so a bench program or a recorded \
+                 session must run at least one (`Size-Marks: {n} added, <run> run by an Ir \
+                 workload (<how>)`, <run> from 1)"
+            )),
             _ => failed.push(format!(
                 "{short} adds {n} {MARK} marks: its message needs a trailer `Size-Marks: {n} \
                  added, <run> run by an Ir workload (<how it was counted>)`{}",
@@ -233,20 +231,23 @@ fn marks(root: &Path, base: &str) -> Result<Vec<String>, String> {
     }
     // A mark on for wasm only also names `mm_size_wasm`, so replay-ir's
     // native worker, built with it, runs it (spec §6).
-    let listed = git(root, &["grep", "-n", "-F", MARK, "--", "crates"]).unwrap_or_default();
-    for line in listed.lines().filter(|l| {
-        !comment(l.splitn(3, ':').nth(2).unwrap_or(l))
-            && l.contains("target_arch = \"wasm32\"")
-            && !l.contains("not(target_arch = \"wasm32\")")
-            && !l.contains("mm_size_wasm")
-    }) {
-        failed.push(format!(
-            "{line}: a mark on for wasm only is written \
-             `cfg_attr(all(mm_shipped, any(target_arch = \"wasm32\", mm_size_wasm)), \
-             optimize(size))`, so replay-ir counts it natively"
-        ));
+    for path in git(root, &["ls-files", "--", "crates/*.rs"])?.lines() {
+        let src = fs::read_to_string(root.join(path)).unwrap_or_default();
+        for attr in crate::optimize_attrs(&src) {
+            if attr.contains(MARK)
+                && attr.contains("target_arch=\"wasm32\"")
+                && !attr.contains("not(target_arch=\"wasm32\")")
+                && !attr.contains("mm_size_wasm")
+            {
+                failed.push(format!(
+                    "{path}: `{attr}`: a mark on for wasm only is written \
+                     `cfg_attr(all(mm_shipped, any(target_arch = \"wasm32\", mm_size_wasm)), \
+                     optimize(size))`, so replay-ir counts it natively"
+                ));
+            }
+        }
     }
-    let n = added(&git(root, &["diff", "-U0", "HEAD", "--", "crates"])?);
+    let n = added(root, "HEAD", None)?;
     if n > 0 {
         failed.push(format!(
             "uncommitted changes add {n} {MARK} marks: commit them with a trailer `Size-Marks: \
@@ -256,9 +257,52 @@ fn marks(root: &Path, base: &str) -> Result<Vec<String>, String> {
     Ok(failed)
 }
 
-/// A line of Rust that is a comment, which names a mark without being one.
-fn comment(line: &str) -> bool {
-    line.trim_start().starts_with("//")
+/// The [`MARK`]s under `crates/` that `new` (a commit, or the working
+/// tree) has and `old` does not, counted per attribute and function.
+fn added(root: &Path, old: &str, new: Option<&str>) -> Result<usize, String> {
+    let names = match new {
+        Some(sha) => git(
+            root,
+            &[
+                "diff-tree",
+                "-r",
+                "--root",
+                "--name-only",
+                "--no-commit-id",
+                sha,
+                "--",
+                "crates",
+            ],
+        )?,
+        None => git(root, &["diff", "--name-only", "HEAD", "--", "crates"])?,
+    };
+    let marks = |src: &str| -> Vec<String> {
+        crate::optimize_attrs(src)
+            .into_iter()
+            .filter(|a| a.contains(MARK))
+            .collect()
+    };
+    let mut n = 0;
+    for path in names
+        .lines()
+        .filter(|p| Path::new(p).extension().is_some_and(|e| e == "rs"))
+    {
+        let before = git(root, &["show", &format!("{old}:{path}")]).unwrap_or_default();
+        let after = match new {
+            Some(sha) => git(root, &["show", &format!("{sha}:{path}")]).unwrap_or_default(),
+            None => fs::read_to_string(root.join(path)).unwrap_or_default(),
+        };
+        let mut left = marks(&before);
+        for mark in marks(&after) {
+            match left.iter().position(|m| *m == mark) {
+                Some(i) => {
+                    left.swap_remove(i);
+                }
+                None => n += 1,
+            }
+        }
+    }
+    Ok(n)
 }
 
 /// `git log`'s format for [`trailers`]: per commit its id, its message
@@ -752,6 +796,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one scratch repository, case by case"
+    )]
     fn a_commit_adding_size_marks_says_how_many_run() {
         let dir = env::temp_dir().join(format!("size-marks-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -828,7 +876,53 @@ mod tests {
         fs::write(&file, m.repeat(7)).unwrap();
         let failed = marks(&dir, &wrong).unwrap();
         assert!(
-            failed.len() == 1 && failed[0].starts_with("uncommitted changes add 1"),
+            failed.len() == 1 && failed[0].starts_with("uncommitted changes add 2"),
+            "{failed:?}"
+        );
+        // The review's Z2, Z4, Z5 and Z6b: a trailer that says none runs,
+        // a mark moved to another function, a mark given another
+        // condition, and a wasm-only mark wrapped over lines.
+        let start = commit(&m.repeat(2), "start");
+        let zero = commit(
+            &m.repeat(3),
+            "zero\n\nSize-Marks: 1 added, 0 run by an Ir workload (none)",
+        );
+        let moved = commit(
+            &format!("{m}#[optimize(size)]\nfn z() {{}}\nfn x() {{}}\n{m}"),
+            "moved to z",
+        );
+        let other = "#[cfg_attr(all(mm_shipped, not(target_arch = \"wasm32\")), optimize(size))]\n";
+        commit(
+            &format!("{m}{other}fn z() {{}}\nfn x() {{}}\n{m}"),
+            "native only, said\n\nSize-Marks: 1 added, 1 run by an Ir workload (bench)",
+        );
+        let widened = commit(
+            &format!("{m}#[cfg_attr(mm_shipped, optimize(size))]\nfn z() {{}}\nfn x() {{}}\n{m}"),
+            "on for wasm too",
+        );
+        let wrapped =
+            "#[cfg_attr(\n    all(mm_shipped, target_arch = \"wasm32\"),\n    optimize(size)\n)]\n";
+        commit(
+            &format!("{m}{wrapped}fn z() {{}}\nfn x() {{}}\n{m}"),
+            "wrapped\n\nSize-Marks: 1 added, 1 run by an Ir workload (sessions)",
+        );
+        let failed = marks(&dir, &start).unwrap();
+        assert_eq!(failed.len(), 4, "{failed:?}");
+        assert!(
+            failed
+                .iter()
+                .any(|f| f.starts_with(&zero[..10]) && f.contains("no Ir workload runs"))
+        );
+        assert!(
+            failed.iter().any(|f| f.starts_with(&moved[..10])),
+            "{failed:?}"
+        );
+        assert!(
+            failed.iter().any(|f| f.starts_with(&widened[..10])),
+            "{failed:?}"
+        );
+        assert!(
+            failed.iter().any(|f| f.contains("mm_size_wasm")),
             "{failed:?}"
         );
         fs::remove_dir_all(&dir).unwrap();

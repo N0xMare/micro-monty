@@ -997,9 +997,11 @@ bound (647 functions: Ir within 0.22%, `steps` failed as shipped [M]), and a
 marked function no Ir workload runs can slow down unseen (an `await` loop
 +17% and `gather` +21% with every gate green [M]). So a commit that adds
 marks under `crates/` carries a trailer `Size-Marks: <n> added, <run> run
-by an Ir workload (<how>)`, with `<n>` the marks it adds net of those it
-removes; `cargo xtask size` fails without it (it reads the statement, it
-does not count the runs). A mark that slows only the wasm guests is native
+by an Ir workload (<how>)`, with `<n>` the marks it adds (a mark is its
+attribute with the function it marks, so one moved to another function or
+given another condition is added) and `<run>` at least 1; `cargo xtask
+size` fails without it, per commit (it reads the statement, it does not
+count the runs). A mark that slows only the wasm guests is native
 only (`cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), …)`),
 including one that slows a function it does not mark: `Vm::arg_o` gets the
 stack's fields instead of `&Vm` only while LLVM proves every caller's `&Vm`

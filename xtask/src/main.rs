@@ -842,7 +842,7 @@ fn names_optimize(text: &str) -> bool {
 /// that name `optimize(`, in order, without whitespace; an outer one with
 /// the name of the function it marks, the next `fn` outside comments and
 /// attributes. A `]` in a string inside an attribute ends it early.
-fn optimize_attrs(src: &str) -> Vec<String> {
+pub(crate) fn optimize_attrs(src: &str) -> Vec<String> {
     let mut attrs = Vec::new();
     let mut rest = src;
     while let Some(at) = rest.find('#') {
