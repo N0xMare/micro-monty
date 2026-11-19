@@ -42,7 +42,7 @@ fn str_arg_value(vm: &mut Vm, v: Value, what: &str) -> Result<Value, Raised> {
     if Vm::is_str(v) {
         return Ok(v);
     }
-    let b = vm.unbx(v);
+    let b = vm.unbx_hot(v);
     str_arg(vm, v, what).map(|_| b)
 }
 
@@ -122,7 +122,7 @@ pub(crate) fn slice_copy(vm: &mut Vm, s: Value, st: usize, en: usize) -> Result<
         return vm.new_str("");
     };
     let n = en.saturating_sub(st);
-    if st == 0 && n == vm.str_bytes(s).len() {
+    if st == 0 && n == vm.str_bytes_hot(s).len() {
         return Ok(s);
     }
     if n < 1 << 16 {
@@ -133,7 +133,7 @@ pub(crate) fn slice_copy(vm: &mut Vm, s: Value, st: usize, en: usize) -> Result<
     } else {
         vm.str_index(s, en) - vm.str_index(s, st)
     };
-    let (src, h) = (data(vm, s)?, vm.str_bytes(s));
+    let (src, h) = (data(vm, s)?, vm.str_bytes_hot(s));
     if h.get(st..en).is_none() || ceil_char(h, st) != st || ceil_char(h, en) != en {
         return Err(vm.bad_step());
     }
@@ -336,7 +336,7 @@ type Ranges = NativeVec<(usize, usize)>;
 
 pub(crate) fn join(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let sep = this_value(vm, &a, "join")?;
-    let sep = vm.unbx(sep);
+    let sep = vm.unbx_hot(sep);
     // A long list or tuple of strs is read in place, a step at a time.
     let seq = vm.arg_o(&a, 1);
     if let Some(n) = vm.seq_items_len(seq)
@@ -366,19 +366,19 @@ pub(crate) fn join(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         return Ok(x);
     }
     let mut bytes = vm
-        .str_bytes(sep)
+        .str_bytes_hot(sep)
         .len()
         .saturating_mul(items.len().saturating_sub(1));
     for x in &items {
         if !Vm::is_str(*x) {
             return join_values(vm, sep, &items);
         }
-        bytes = bytes.saturating_add(vm.str_bytes(*x).len());
+        bytes = bytes.saturating_add(vm.str_bytes_hot(*x).len());
     }
     // A result past one step's copy steps; so do many short items, which
     // cost per item more than their bytes.
     if (bytes / UNIT) as u64 >= FILL || (bytes / UNIT + 4 * items.len()) as u64 >= BIG {
-        let items = vm.alloc_tuple(&items)?;
+        let items = vm.alloc_tuple_hot(&items)?;
         return join_big(vm, sep, items);
     }
     let result = vm.build_text(bytes, |vm, out| {
@@ -444,7 +444,7 @@ pub(crate) fn split(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         None => None,
         Some(sep) => {
             let sep = str_arg_value(vm, sep, "sep")?;
-            if vm.str_bytes(sep).is_empty() {
+            if vm.str_bytes_hot(sep).is_empty() {
                 return Err(vm.err(T::ValueError, "empty separator"));
             }
             Some(sep)
@@ -504,21 +504,21 @@ pub(crate) fn split(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if out.len() >= cap && max >= cap {
         return split_big(vm, s, sep.unwrap_or(Value::NONE), max, mode);
     }
-    vm.burn(vm.str_bytes(s).len() as u64 / 64);
+    vm.burn(vm.str_bytes_hot(s).len() as u64 / 64);
     list_of_ranges(vm, s, &out, sep.is_some() || max > 0)
 }
 
 pub(crate) fn rsplit(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let sv = this_value(vm, &a, "rsplit")?;
-    vm.burn_bytes(vm.str_bytes(sv).len());
+    vm.burn_bytes(vm.str_bytes_hot(sv).len());
     let max = maxsplit(vm, vm.arg_o(&a, 2))?;
     let max = usize::try_from(max).unwrap_or(usize::MAX);
     let sep = match opt(vm.arg_o(&a, 1)) {
         None => None,
         Some(sep) => {
             let sep = str_arg_value(vm, sep, "sep")?;
-            vm.burn_bytes(vm.str_bytes(sep).len());
-            if vm.str_bytes(sep).is_empty() {
+            vm.burn_bytes(vm.str_bytes_hot(sep).len());
+            if vm.str_bytes_hot(sep).is_empty() {
                 return Err(vm.err(T::ValueError, "empty separator"));
             }
             Some(sep)
@@ -785,8 +785,8 @@ pub(crate) fn replace(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     // A long text, or more matches than a step copies, goes a step at a
     // time (docs/spec.md §5).
     let cap = (BIG / 4) as usize;
-    let len = vm.str_bytes(s).len();
-    if (len / UNIT) as u64 >= BIG / 2 || vm.str_bytes(old).is_empty() && count.min(len) >= cap {
+    let len = vm.str_bytes_hot(s).len();
+    if (len / UNIT) as u64 >= BIG / 2 || vm.str_bytes_hot(old).is_empty() && count.min(len) >= cap {
         return replace_big(vm, s, old, new, count);
     }
     let (hay, pat, rep) = (vm.str_ref(s), vm.str_ref(old), vm.str_ref(new));
@@ -1023,12 +1023,12 @@ fn split_long(
     right: bool,
     new: Option<Value>,
 ) -> Option<Result<Value, Raised>> {
-    let n = vm.str_bytes(sep).len();
+    let n = vm.str_bytes_hot(sep).len();
     if (n as u64) < BIG {
         return None;
     }
-    let s = vm.unbx(s);
-    if n > vm.str_bytes(s).len() {
+    let s = vm.unbx_hot(s);
+    if n > vm.str_bytes_hot(s).len() {
         return None;
     }
     let max = match vm.new_int(i64::try_from(max).unwrap_or(-1)) {
@@ -1070,10 +1070,10 @@ pub(crate) fn str_in(vm: &mut Vm, s: Value, x: Value, neg: bool) -> Option<Resul
     if !Vm::is_str(x) {
         return None;
     }
-    if vm.str_bytes(x).is_empty() {
+    if vm.str_bytes_hot(x).is_empty() {
         return Some(Ok(Value::from_bool(!neg)));
     }
-    let n = vm.str_bytes(s).len();
+    let n = vm.str_bytes_hot(s).len();
     let mode = if neg { fm::NOT_IN } else { fm::IN };
     if let Some(r) = long_find(vm, s, x, (0, n), Some(mode), false) {
         return Some(r);
@@ -1083,7 +1083,7 @@ pub(crate) fn str_in(vm: &mut Vm, s: Value, x: Value, neg: bool) -> Option<Resul
 
 /// Whether `in` over str `s` searches in steps ([`str_in`]).
 pub(crate) fn str_in_long(vm: &Vm, s: Value) -> bool {
-    vm.str_bytes(s).len() as u64 >= BIG
+    vm.str_bytes_hot(s).len() as u64 >= BIG
 }
 
 pub(crate) fn find(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
@@ -1106,12 +1106,12 @@ pub(crate) fn count(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if opt(vm.arg_o(&a, 2)).is_none() && opt(vm.arg_o(&a, 3)).is_none() {
         let s = this_value(vm, &a, "count")?;
         let sub = str_arg_value(vm, vm.arg_o(&a, 1), "count() argument 1")?;
-        let len = vm.str_bytes(s).len();
+        let len = vm.str_bytes_hot(s).len();
         if let Some(r) = long_find(vm, s, sub, (0, len), None, false) {
             return r;
         }
         let cap = (BIG / 4) as usize;
-        if (len / UNIT) as u64 >= BIG / 2 && !vm.str_bytes(sub).is_empty() {
+        if (len / UNIT) as u64 >= BIG / 2 && !vm.str_bytes_hot(sub).is_empty() {
             return scan_big(vm, s, sub, sk::COUNT, 0, len);
         }
         let (hay, pat) = (vm.str_ref(s), vm.str_ref(sub));
@@ -1135,11 +1135,11 @@ pub(crate) fn count(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if let Some(r) = long_find(vm, s, subv, (st, en.max(st)), None, false) {
         return r;
     }
-    if (en.saturating_sub(st) / UNIT) as u64 >= BIG / 2 && !vm.str_bytes(subv).is_empty() {
+    if (en.saturating_sub(st) / UNIT) as u64 >= BIG / 2 && !vm.str_bytes_hot(subv).is_empty() {
         return scan_big(vm, s, subv, sk::COUNT, st, en);
     }
     let sub = String::from(vm.str_ref(subv));
-    let hay = vm.str_bytes(s).get(st..en).unwrap_or(&[]);
+    let hay = vm.str_bytes_hot(s).get(st..en).unwrap_or(&[]);
     let hay = core::str::from_utf8(hay).unwrap_or("");
     let n = if sub.is_empty() {
         char_len(hay) + 1
@@ -1169,7 +1169,7 @@ fn pred(
 ) -> Result<Value, Raised> {
     let v = this_value(vm, a, name)?;
     // One look at the text: short ones are tested at once.
-    let b = vm.str_bytes(v);
+    let b = vm.str_bytes_hot(v);
     let n = b.len();
     if (n / CHAR_UNIT) as u64 >= BIG {
         return scan_big(vm, v, v, kind, 0, n);
@@ -2186,7 +2186,7 @@ pub(crate) fn format(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
                 // Its `format` goes in steps: the twin calls it.
                 return Err(vm.need_py());
             }
-            if out.is_empty() && j + 1 == cs.len() && Vm::is_str(vm.unbx(v)) {
+            if out.is_empty() && j + 1 == cs.len() && Vm::is_str(vm.unbx_hot(v)) {
                 // The template's last write, into nothing: the formatted
                 // str itself, as CPython's writer gives it (a str the spec
                 // leaves as it is, a subclass instance too).
@@ -2560,7 +2560,7 @@ fn text(vm: &Vm, x: Value) -> &[u8] {
     if Vm::is_bytes_like(x) {
         vm.bytes_data(x)
     } else {
-        vm.str_bytes(x)
+        vm.str_bytes_hot(x)
     }
 }
 
@@ -2746,7 +2746,7 @@ pub(crate) fn fill_kind(
     for &(x, a, b) in parts {
         items.extend([x, smi(a), smi(b)]);
     }
-    let items = vm.alloc_tuple(&items)?;
+    let items = vm.alloc_tuple_hot(&items)?;
     walk(
         vm,
         op::STR_FILL,
@@ -3924,7 +3924,7 @@ pub(crate) fn ext_slice(
         smi(first),
         smi(picks),
     ];
-    let arg = vm.alloc_tuple(&arg)?;
+    let arg = vm.alloc_tuple_hot(&arg)?;
     let kv = Value::int(mk::SLICE).unwrap_or(Value::NONE);
     if vm.str_ascii(s) {
         if !vm.heap.would_fit(picks as u64) {

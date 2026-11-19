@@ -1,7 +1,7 @@
-//! The heap accessors' plain names (`Vm::slot`, `vslot`, `raw`,
-//! `set_slot`, `set_raw`, `str_ref`, `hx`) are out of line; their `_hot`
-//! forms are inline, and inlined copies of them cost about 90 KB of
-//! `hello.wasm` when used everywhere [M]. Only the functions in
+//! The heap accessors' and the small `Vm` helpers' plain names
+//! (`Vm::slot`, `raw`, `hx`, `backing`, `alloc_tuple`, ...; [`ACCESSORS`])
+//! are out of line; their `_hot` forms are inline, and inlined copies of
+//! them cost about 150 KB of `hello.wasm` when used everywhere [M]. Only the functions in
 //! `hot_accessors.txt`, the ones the dispatch loop inlines or calls and the
 //! natives with a measurable share of some bench program's instructions,
 //! may call a `_hot` form. A new hot function is added to the list with a
@@ -11,8 +11,28 @@
 
 use std::collections::BTreeSet;
 
-const ACCESSORS: [&str; 7] = [
-    "slot", "vslot", "raw", "set_slot", "set_raw", "str_ref", "hx",
+const ACCESSORS: [&str; 21] = [
+    "slot",
+    "vslot",
+    "raw",
+    "set_slot",
+    "set_raw",
+    "str_ref",
+    "hx",
+    "backing",
+    "raw_of",
+    "set_raw_of",
+    "unbx",
+    "alloc_tuple",
+    "dv",
+    "type_of_typeobj",
+    "str_bytes",
+    "intern",
+    "obj_len",
+    "list_len",
+    "new_dict",
+    "list_parts",
+    "meta_of",
 ];
 
 /// The name of the `fn` a line starts, if it starts one.
@@ -56,6 +76,14 @@ fn hot_callers() -> BTreeSet<String> {
             }
             if calls.iter().any(|c| line.contains(c.as_str())) {
                 let f = current.as_deref().unwrap_or("<top>");
+                // The out-of-line form and the other `_hot` forms are the
+                // definitions themselves.
+                if ACCESSORS
+                    .iter()
+                    .any(|a| f == *a || f.strip_suffix("_hot") == Some(a))
+                {
+                    continue;
+                }
                 out.insert(format!("{file}::{f}"));
             }
         }

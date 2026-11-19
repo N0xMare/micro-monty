@@ -1221,26 +1221,26 @@ impl Vm {
         let room = self.heap.reserve_interned(1024);
         self.hx_hot(room)?;
         for t in crate::types::ALL {
-            let name = self.intern(t.name())?;
+            let name = self.intern_hot(t.name())?;
             let r = {
                 let res = self.heap.alloc_init(ty::TYPE, 0, &[name], &[t as u64]);
                 self.hx_hot(res)
             }?;
             self.types.push(Value::from_ref(r, ty::TYPE as u8));
         }
-        self.builtins = self.new_dict()?;
+        self.builtins = self.new_dict_hot()?;
         crate::builtins::install(self)?;
         self.fresh_globals()?;
         self.shapes.push(crate::class::Shape::default());
         self.tramp = self.add_trampoline();
         let obj = self.type_obj(T::object);
         self.missing = self.new_instance(obj, 0)?;
-        self.empty_tuple = self.alloc_tuple(&[])?;
+        self.empty_tuple = self.alloc_tuple_hot(&[])?;
         // Room for what `init_prelude` binds: growing to it from 8 entries
         // cost startup about 15k Ir [M].
         self.prelude_globals = self.new_globals_dict(64)?;
         self.init_prelude()?;
-        let args = self.alloc_tuple(&[])?;
+        let args = self.alloc_tuple_hot(&[])?;
         let t = self.types[T::MemoryError as usize];
         self.memory_error = self.alloc_exc(t, args)?;
         Ok(())
@@ -1252,9 +1252,9 @@ impl Vm {
     /// the old modules.
     fn fresh_globals(&mut self) -> Result<(), Raised> {
         let g = self.new_globals_dict(8)?;
-        let modules = self.new_dict()?;
-        let n = self.intern("__name__")?;
-        let m = self.intern("__main__")?;
+        let modules = self.new_dict_hot()?;
+        let n = self.intern_hot("__name__")?;
+        let m = self.intern_hot("__main__")?;
         self.dict_set(g, n, m)?;
         self.globals = g;
         self.modules = modules;
@@ -1720,7 +1720,7 @@ impl Vm {
             return;
         }
         // A builtin-type subclass's instance changes its backing object.
-        let a = self.unbx(a);
+        let a = self.unbx_hot(a);
         // A list's `+=` and `*=` build or grow its buffer before they
         // change it; a dict's or set's `|=` adds an item at a time.
         let changed = inplace && (a.is_obj_kind(ty::DICT as u8) || a.is_obj_kind(ty::SET as u8));
@@ -2281,7 +2281,7 @@ impl Vm {
 
     /// The prelude function `name`.
     pub(crate) fn prelude_fn(&mut self, name: &str) -> Result<Value, Raised> {
-        let k = self.intern(name)?;
+        let k = self.intern_hot(name)?;
         match self.prelude_get(k)? {
             Some(f) => Ok(f),
             None => Err(self.err(
@@ -2376,7 +2376,7 @@ impl Vm {
         let tv = self.types[t as usize];
         let exc = (|| {
             let m = self.new_str(msg)?;
-            let args = self.alloc_tuple(&[m])?;
+            let args = self.alloc_tuple_hot(&[m])?;
             self.alloc_exc(tv, args)
         })();
         self.exc = match exc {
@@ -2390,7 +2390,7 @@ impl Vm {
     pub(crate) fn err_value(&mut self, t: T, arg: Value) -> Raised {
         let tv = self.types[t as usize];
         let exc = (|| {
-            let args = self.alloc_tuple(&[arg])?;
+            let args = self.alloc_tuple_hot(&[arg])?;
             self.alloc_exc(tv, args)
         })();
         self.exc = match exc {
@@ -2597,8 +2597,14 @@ impl Vm {
         self.int_of(v)
     }
 
-    /// Slot count of object `r`.
+    /// [`Vm::obj_len_hot`], out of line (`tests/hot_accessors.rs`).
+    #[inline(never)]
     pub(crate) fn obj_len(&self, r: Ref) -> u32 {
+        self.obj_len_hot(r)
+    }
+
+    /// Slot count of object `r`.
+    pub(crate) fn obj_len_hot(&self, r: Ref) -> u32 {
         self.heap.header(r).map_or(0, mm_core::Header::len)
     }
 
@@ -2620,8 +2626,14 @@ impl Vm {
         Ok(v)
     }
 
-    /// An interned `str`.
+    /// [`Vm::intern_hot`], out of line (`tests/hot_accessors.rs`).
+    #[inline(never)]
     pub(crate) fn intern(&mut self, s: &str) -> Result<Value, Raised> {
+        self.intern_hot(s)
+    }
+
+    /// An interned `str`.
+    pub(crate) fn intern_hot(&mut self, s: &str) -> Result<Value, Raised> {
         let r = {
             let res = self.heap.intern(s);
             self.hx_hot(res)
@@ -2632,7 +2644,7 @@ impl Vm {
     /// A new `str`, shared (interned) when it is [`shared_char`].
     pub(crate) fn new_str(&mut self, s: &str) -> Result<Value, Raised> {
         if shared_char(s.as_bytes()) {
-            return self.intern(s);
+            return self.intern_hot(s);
         }
         if s.len() >= 64 {
             self.burn_result(s.len(), true);
@@ -2738,7 +2750,7 @@ impl Vm {
     fn str_from_buf(&mut self, b: StrBuf) -> Result<Value, Raised> {
         let r = if shared_char(b.as_bytes()) {
             let s = core::str::from_utf8(b.as_bytes()).unwrap_or("");
-            self.intern(s)
+            self.intern_hot(s)
         } else {
             if b.len() >= 64 {
                 self.burn_result(b.len(), true);
@@ -2752,8 +2764,14 @@ impl Vm {
         r
     }
 
-    /// A tuple of `items`.
+    /// [`Vm::alloc_tuple_hot`], out of line (`tests/hot_accessors.rs`).
+    #[inline(never)]
     pub(crate) fn alloc_tuple(&mut self, items: &[Value]) -> Result<Value, Raised> {
+        self.alloc_tuple_hot(items)
+    }
+
+    /// A tuple of `items`.
+    pub(crate) fn alloc_tuple_hot(&mut self, items: &[Value]) -> Result<Value, Raised> {
         if items.is_empty() && self.empty_tuple != Value::NONE {
             return Ok(self.empty_tuple);
         }
@@ -2847,8 +2865,14 @@ impl Vm {
         self.types[t as usize]
     }
 
-    /// The `T` a type object stands for.
+    /// [`Vm::type_of_typeobj_hot`], out of line (`tests/hot_accessors.rs`).
+    #[inline(never)]
     pub(crate) fn type_of_typeobj(&self, v: Value) -> Option<T> {
+        self.type_of_typeobj_hot(v)
+    }
+
+    /// The `T` a type object stands for.
+    pub(crate) fn type_of_typeobj_hot(&self, v: Value) -> Option<T> {
         if !v.is_obj_kind(ty::TYPE as u8) {
             return None;
         }
@@ -2965,8 +2989,14 @@ impl Vm {
             .unwrap_or("")
     }
 
-    /// The UTF-8 bytes of a `str` value.
+    /// [`Vm::str_bytes_hot`], out of line (`tests/hot_accessors.rs`).
+    #[inline(never)]
     pub(crate) fn str_bytes(&self, v: Value) -> &[u8] {
+        self.str_bytes_hot(v)
+    }
+
+    /// The UTF-8 bytes of a `str` value.
+    pub(crate) fn str_bytes_hot(&self, v: Value) -> &[u8] {
         v.as_obj()
             .and_then(|r| self.heap.str_bytes(r).ok())
             .unwrap_or(&[])
@@ -3016,7 +3046,7 @@ impl Vm {
 
     /// Number of items of a tuple.
     pub(crate) fn tuple_len(&self, t: Value) -> usize {
-        t.as_obj().map_or(0, |r| self.obj_len(r) as usize)
+        t.as_obj().map_or(0, |r| self.obj_len_hot(r) as usize)
     }
 
     /// Items of a tuple, copied.
@@ -3027,9 +3057,15 @@ impl Vm {
         }
     }
 
+    /// [`Vm::list_len_hot`], out of line (`tests/hot_accessors.rs`).
+    #[inline(never)]
+    pub(crate) fn list_len(&self, l: Value) -> usize {
+        self.list_len_hot(l)
+    }
+
     /// Length of a list.
     #[inline]
-    pub(crate) fn list_len(&self, l: Value) -> usize {
+    pub(crate) fn list_len_hot(&self, l: Value) -> usize {
         l.as_obj()
             .map_or(0, |r| usize::try_from(self.raw_hot(r, 1)).unwrap_or(0))
     }
@@ -3049,9 +3085,15 @@ impl Vm {
         }
     }
 
+    /// [`Vm::list_parts_hot`], out of line (`tests/hot_accessors.rs`).
+    #[inline(never)]
+    pub(crate) fn list_parts(&self, l: Value) -> Option<(Ref, u64)> {
+        self.list_parts_hot(l)
+    }
+
     /// The buffer and length of a list, read with one validation.
     #[inline]
-    pub(crate) fn list_parts(&self, l: Value) -> Option<(Ref, u64)> {
+    pub(crate) fn list_parts_hot(&self, l: Value) -> Option<(Ref, u64)> {
         if !l.is_obj_kind(ty::LIST as u8) {
             return None;
         }
@@ -3276,7 +3318,7 @@ impl Vm {
 
     /// Items of a list, copied.
     pub(crate) fn list_items(&self, l: Value) -> Vec<Value> {
-        match self.list_parts(l) {
+        match self.list_parts_hot(l) {
             Some((b, n)) => self.values_of(b, usize::try_from(n).unwrap_or(0)),
             None => Vec::new(),
         }
@@ -3299,7 +3341,7 @@ impl Vm {
         v: Value,
     ) -> Result<Option<(Ref, u64)>, Raised> {
         let Some(r) = l.as_obj() else { return Ok(None) };
-        let Some((buf, len)) = self.list_parts(l) else {
+        let Some((buf, len)) = self.list_parts_hot(l) else {
             return Err(self.err(T::SystemError, "invalid list buffer"));
         };
         let at = u32::try_from(len).unwrap_or(u32::MAX);
@@ -3326,7 +3368,7 @@ impl Vm {
         let Some(r) = l.as_obj() else { return Ok(()) };
         let at = u32::try_from(len).unwrap_or(u32::MAX);
         {
-            let cap = u64::from(self.obj_len(buf));
+            let cap = u64::from(self.obj_len_hot(buf));
             if len < cap {
                 return Ok(());
             }
@@ -3394,7 +3436,7 @@ impl Vm {
     pub(crate) fn seq_words(&self, v: Value) -> &[u64] {
         let mut r = v.as_obj();
         let mut n = usize::MAX;
-        if let Some((b, len)) = self.list_parts(v) {
+        if let Some((b, len)) = self.list_parts_hot(v) {
             r = Some(b);
             n = usize::try_from(len).unwrap_or(0);
         } else if !v.is_obj_kind(ty::TUPLE as u8) {

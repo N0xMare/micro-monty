@@ -222,7 +222,7 @@ impl Text {
                 let bytes = if Vm::is_bytes_like(*v) {
                     vm.bytes_data(*v)
                 } else {
-                    vm.str_bytes(*v)
+                    vm.str_bytes_hot(*v)
                 };
                 &bytes[..(*end).min(bytes.len())]
             }
@@ -252,9 +252,9 @@ impl Vm {
         }
         // A builtin-type subclass instance is typed by the value it
         // extends; a tuple's items are read from it (`PyTuple_Check`).
-        let ta = self.type_of(self.unbx(args));
+        let ta = self.type_of(self.unbx_hot(args));
         let tuple = ta == T::tuple;
-        let args = if tuple { self.unbx(args) } else { args };
+        let args = if tuple { self.unbx_hot(args) } else { args };
         let mapping = !tuple
             && ta != T::str
             && !(bytes && ta == T::bytes)
@@ -276,7 +276,7 @@ impl Vm {
                 -1
             },
             argidx: if tuple { 0 } else { -2 },
-            pre: self.list_parts(pre),
+            pre: self.list_parts_hot(pre),
             used: 0,
         };
         let mut out = NativeVec::<u8>::default();
@@ -738,7 +738,7 @@ impl Vm {
         if Vm::is_bytes(fmt) {
             self.bytes_data(fmt)
         } else {
-            self.str_bytes(fmt)
+            self.str_bytes_hot(fmt)
         }
     }
 
@@ -844,7 +844,7 @@ impl Vm {
         let uf = self.uflags(v);
         // CPython tests `PyLong_Check` / `PyFloat_Check` before calling a
         // conversion dunder: an int or float subclass is its own value.
-        let back = self.backing(v);
+        let back = self.backing_hot(v);
         let int_back = back.filter(|&b| Vm::is_intlike(b));
         let float_back = back.filter(|b| b.is_float());
         let mut text = match conv {
@@ -878,7 +878,7 @@ impl Vm {
             b's' | b'b' => {
                 // CPython's `format_obj`: a bytes or bytearray (a subclass
                 // too) as it is, before `__bytes__`.
-                if let Some(b) = self.backing(v)
+                if let Some(b) = self.backing_hot(v)
                     && Vm::is_bytes_like(b)
                 {
                     v = b;
@@ -961,7 +961,7 @@ impl Vm {
                     // A long int's digits a step at a time, by `format`
                     // in Python (`_percent`).
                     let spec = self.new_str(&spec)?;
-                    let req = self.alloc_tuple(&[v, spec])?;
+                    let req = self.alloc_tuple_hot(&[v, spec])?;
                     let t = need!(r.converted(self, req, 'p'));
                     return Ok(Ok((Text::Arena(t, usize::MAX), Some(head), (0, 0))));
                 }
@@ -996,7 +996,7 @@ impl Vm {
         } else {
             (0x11_0000, "an int or a unicode character")
         };
-        let v = self.unbx(v);
+        let v = self.unbx_hot(v);
         if Vm::is_intlike(v) {
             let Some(c) = self.int_of_o(v).filter(|&i| (0..limit).contains(&i)) else {
                 let msg = format!(
@@ -1042,7 +1042,7 @@ impl Vm {
         original: Value,
     ) -> Result<Piece, Raised> {
         let int_only = matches!(conv, b'x' | b'X' | b'o');
-        let v = self.unbx(v);
+        let v = self.unbx_hot(v);
         if let Some(n) = v.as_int() {
             // A small int: digits on the stack, no bigint.
             let (radix, upper, prefix) = match conv {
@@ -1178,7 +1178,7 @@ impl Vm {
         bytes: bool,
         original: Value,
     ) -> Result<Piece, Raised> {
-        let v = self.unbx(v);
+        let v = self.unbx_hot(v);
         let x = match v.as_float() {
             Some(x) => Some(x),
             None if Vm::is_intlike(v) => self.big_of(v).and_then(|b| b.to_f64()),

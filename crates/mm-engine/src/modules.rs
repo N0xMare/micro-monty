@@ -194,7 +194,7 @@ impl Vm {
 
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn module_set(&mut self, m: Value, name: &str, v: Value) -> Result<(), Raised> {
-        let k = self.intern(name)?;
+        let k = self.intern_hot(name)?;
         let d = self.vslot_hot(m, module_slot::DICT);
         self.dict_set(d, k, v)
     }
@@ -290,7 +290,7 @@ impl Vm {
         top: bool,
         from_: bool,
     ) -> Result<Option<Value>, Raised> {
-        let k = self.intern(dotted)?;
+        let k = self.intern_hot(dotted)?;
         if let Some(m) = self.dict_get(self.modules, k)? {
             return Ok(Some(m));
         }
@@ -317,7 +317,7 @@ impl Vm {
             };
             let m = self.new_module(dotted)?;
             for attr in names {
-                let a = self.intern(attr)?;
+                let a = self.intern_hot(attr)?;
                 let v = match self.module_attr(parent, a)? {
                     Some(v) => Some(v),
                     None => self.prelude_get(a)?,
@@ -594,7 +594,7 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     fn import_star(&mut self, m: Value, g: Value) -> Result<Value, Raised> {
         let d = self.vslot_hot(m, module_slot::DICT);
-        let k = self.intern("__all__")?;
+        let k = self.intern_hot("__all__")?;
         let names = match self.dict_get(d, k)? {
             Some(all) => {
                 let Some(names) = self.seq_items(all) else {
@@ -751,7 +751,7 @@ impl Vm {
         let mods = self.modules;
         self.dict_set(mods, k, module)?;
         if let Some((parent, leaf)) = name.rsplit_once('.') {
-            let pk = self.intern(parent)?;
+            let pk = self.intern_hot(parent)?;
             if let Some(p) = self.dict_get(self.modules, pk)? {
                 self.module_set(p, leaf, module)?;
             }

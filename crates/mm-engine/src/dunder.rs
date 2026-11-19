@@ -90,7 +90,7 @@ impl Vm {
         args: &[Value],
         cont: Cont,
     ) -> Result<Option<Value>, Raised> {
-        if self.user_class(v).is_none() && self.meta_of(v).is_none() {
+        if self.user_class(v).is_none() && self.meta_of_hot(v).is_none() {
             return Ok(None);
         }
         self.dunder_request(v, name, args, cont)
@@ -224,7 +224,7 @@ impl Vm {
             .get((opb & 0x7f) as usize)
             .copied()
             .unwrap_or(BinOp::Add);
-        let (ua, ub) = (self.unbx(a), self.unbx(b));
+        let (ua, ub) = (self.unbx_hot(a), self.unbx_hot(b));
         if ua != a || ub != b {
             // An in-place dunder that declined (`NotImplemented`): as in
             // CPython's `binary_iop1`, the plain operator runs, which
@@ -472,7 +472,7 @@ impl Vm {
                 },
             );
         }
-        let (ua, ub) = (self.unbx(a), self.unbx(b));
+        let (ua, ub) = (self.unbx_hot(a), self.unbx_hot(b));
         if ua != a || ub != b {
             // Builtin-type subclasses compare as the values they extend
             // (errors name the subclasses).
@@ -544,7 +544,7 @@ impl Vm {
             }
             op::TEST_IN | op::TEST_NOT_IN => {
                 let neg = opcode == op::TEST_NOT_IN;
-                if self.user_class(b).is_some() || self.meta_of(b).is_some() {
+                if self.user_class(b).is_some() || self.meta_of_hot(b).is_some() {
                     let fl = self.uflags(b);
                     if fl & f::CONTAINS != 0 && self.user_method(b, Dn::Contains).is_none() {
                         // `__contains__ = None` opts out (no iteration).
@@ -660,14 +660,14 @@ impl Vm {
             if let Some(r) = self.dunder_request(o, Dn::Getitem, &[k], Cont::None)? {
                 return Ok(r);
             }
-            if self.backing(o).is_some() {
+            if self.backing_hot(o).is_some() {
                 return self.getitem(o, k);
             }
             let msg = format!("'{}' object is not subscriptable", self.type_name(o));
             return Err(self.err(T::TypeError, &msg));
         }
         if Vm::is_class(o) {
-            if self.meta_of(o).is_some()
+            if self.meta_of_hot(o).is_some()
                 && let Some(r) = self.dunder_request(o, Dn::Getitem, &[k], Cont::None)?
             {
                 return Ok(r);
@@ -685,7 +685,7 @@ impl Vm {
             let msg = format!("type '{}' is not subscriptable", self.class_tpname(o));
             return Err(self.err(T::TypeError, &msg));
         }
-        if self.type_of_typeobj(o).is_some_and(generic_type) {
+        if self.type_of_typeobj_hot(o).is_some_and(generic_type) {
             // `list[int]`: a `types.GenericAlias`.
             return self.prelude_request("_generic_alias", vec![o, k], Cont::None);
         }
@@ -712,7 +712,7 @@ impl Vm {
             {
                 return Ok(());
             }
-            if self.backing(o).is_some() {
+            if self.backing_hot(o).is_some() {
                 return self.setitem(o, k, v);
             }
             let msg = format!(
@@ -733,7 +733,7 @@ impl Vm {
             {
                 return Ok(());
             }
-            if self.backing(o).is_some() {
+            if self.backing_hot(o).is_some() {
                 return self.delitem(o, k);
             }
             let msg = format!(
@@ -749,7 +749,7 @@ impl Vm {
 
     /// `iter(v)` as the dispatch loop runs it.
     pub(crate) fn op_get_iter(&mut self, v: Value) -> Result<Value, Raised> {
-        if self.user_class(v).is_some() || self.meta_of(v).is_some() {
+        if self.user_class(v).is_some() || self.meta_of_hot(v).is_some() {
             if self.dunder(v, Dn::Iter) == Some(Value::NONE) {
                 // `__iter__ = None` opts out of iteration.
                 let msg = format!("'{}' object is not iterable", self.type_name(v));

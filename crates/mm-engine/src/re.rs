@@ -2084,7 +2084,7 @@ fn group_text(vm: &mut Vm, m: Value, g: usize, default: Value) -> Result<Value, 
     let (Ok(bs), Ok(be)) = (usize::try_from(bs), usize::try_from(be)) else {
         return Ok(default);
     };
-    let subj = vm.unbx(vm.vslot(m, mt::STRING));
+    let subj = vm.unbx_hot(vm.vslot(m, mt::STRING));
     piece(vm, subj, Vm::is_str(subj), bs, be)
 }
 

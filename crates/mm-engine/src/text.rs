@@ -660,7 +660,7 @@ impl Vm {
     /// The `str` a `str` subclass instance without its own `__str__`
     /// extends (`str(x)` is that value, whatever its `__repr__`).
     pub(crate) fn str_backing(&self, v: Value) -> Option<Value> {
-        self.backing(v)
+        self.backing_hot(v)
             .filter(|&b| Vm::is_str(b) && self.uflags(v) & crate::class::f::STR == 0)
     }
 
@@ -1496,21 +1496,21 @@ impl Vm {
         // A str subclass spec (`format(5, S('>3'))`, an f-string's lone
         // nested field) is read as the text it extends.
         let spec = match spec {
-            FormatSpec::Value(x) => FormatSpec::Value(self.unbx(x)),
+            FormatSpec::Value(x) => FormatSpec::Value(self.unbx_hot(x)),
             t @ FormatSpec::Text(_) => t,
         };
         // A str, or a str subclass instance without its own `__format__`.
-        let base = self.unbx(v);
+        let base = self.unbx_hot(v);
         if Vm::is_str(base) && self.uflags(v) & crate::class::f::FORMAT == 0 {
             // A spec that leaves the text as it is gives `v` itself, as
             // CPython's writer does (a subclass instance too): no copy of
             // a long text. An empty one is `str(v)`, a subclass's own.
             let text = match spec {
-                FormatSpec::Value(x) => self.str_bytes(x),
+                FormatSpec::Value(x) => self.str_bytes_hot(x),
                 FormatSpec::Text(t) => t.as_bytes(),
             };
             // An empty text is written as nothing: `''`, never a subclass.
-            let same = if self.str_bytes(base).is_empty() {
+            let same = if self.str_bytes_hot(base).is_empty() {
                 base
             } else {
                 v
@@ -1525,7 +1525,9 @@ impl Vm {
             }
         }
         match self.format_in(v, spec, true)? {
-            Fmt::Str(s) if s == base && Vm::is_str(base) && !self.str_bytes(base).is_empty() => {
+            Fmt::Str(s)
+                if s == base && Vm::is_str(base) && !self.str_bytes_hot(base).is_empty() =>
+            {
                 Ok(v)
             }
             Fmt::Str(s) => Ok(s),
@@ -1768,7 +1770,7 @@ impl Vm {
             }
             return self.stringify(v).map(Fmt::Text);
         }
-        if let Some(b) = self.backing(v) {
+        if let Some(b) = self.backing_hot(v) {
             return self.format_in(b, spec, steps);
         }
         let spec = text;
@@ -1853,7 +1855,7 @@ impl Vm {
                     }
                     // Arena strings are UTF-8. Locate the requested prefix in raw
                     // storage, then validate only that prefix once after admission.
-                    let text = self.str_bytes(v);
+                    let text = self.str_bytes_hot(v);
                     let end = s.precision.map_or(text.len(), |p| {
                         text.iter()
                             .enumerate()
@@ -1867,8 +1869,9 @@ impl Vm {
                     }
                     let mut text = NativeText::default();
                     text.reserve(self, end)?;
-                    text.text
-                        .push_str(core::str::from_utf8(&self.str_bytes(v)[..end]).unwrap_or(""));
+                    text.text.push_str(
+                        core::str::from_utf8(&self.str_bytes_hot(v)[..end]).unwrap_or(""),
+                    );
                     if zeros {
                         s.align = Some('<');
                     }

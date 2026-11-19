@@ -255,7 +255,7 @@ impl Vm {
         match self.type_of(v) {
             T::str => self.str_len(v) > 0,
             T::bytes | T::bytearray => !self.bytes_data(v).is_empty(),
-            T::list => self.list_len(v) > 0,
+            T::list => self.list_len_hot(v) > 0,
             T::tuple => self.tuple_len(v) > 0,
             T::dict => self.dict_len(v) > 0,
             T::set | T::frozenset => self.set_len(v) > 0,
@@ -267,7 +267,7 @@ impl Vm {
             T::dict_keys | T::dict_values | T::dict_items => {
                 self.dict_len(self.vslot_hot(v, 0)) > 0
             }
-            _ => self.backing(v).is_none_or(|b| self.truthy(b)),
+            _ => self.backing_hot(v).is_none_or(|b| self.truthy(b)),
         }
     }
 
@@ -282,7 +282,7 @@ impl Vm {
             T::dict_items => Ok((self.vslot_hot(v, 0), crate::set::act::ITEMS)),
             // A set subclass's instance is read as its set
             // (`PyAnySet_Check`), whatever its `__iter__`.
-            _ if self.backing(v).is_some_and(Vm::is_set) => Ok((self.unbx(v), 0)),
+            _ if self.backing_hot(v).is_some_and(Vm::is_set) => Ok((self.unbx_hot(v), 0)),
             _ => Ok((self.bulk_src(v)?, 0)),
         }
     }
@@ -403,7 +403,7 @@ impl Vm {
             return Err(self.need_py());
         }
         if (a.is_obj_kind(ty::INST as u8) || b.is_obj_kind(ty::INST as u8))
-            && (self.backing(a).is_some() || self.backing(b).is_some())
+            && (self.backing_hot(a).is_some() || self.backing_hot(b).is_some())
         {
             // A list's `+=` iterates its operand as `extend` does: only an
             // exact list or tuple, a dict's keys, and the list itself
@@ -413,7 +413,7 @@ impl Vm {
                 && inplace
                 && a != b
                 && b.is_obj_kind(ty::INST as u8)
-                && self.unbx(a).is_obj_kind(ty::LIST as u8)
+                && self.unbx_hot(a).is_obj_kind(ty::LIST as u8)
                 && self.dunder(b, Dn::Iter).is_some()
             {
                 return Err(self.need_py());
@@ -494,10 +494,10 @@ impl Vm {
             }
             (BinOp::Add, T::list, T::list | T::tuple)
                 if top
-                    && self.list_len(a) + self.seq_words(b).len() >= SEQ_LONG
+                    && self.list_len_hot(a) + self.seq_words(b).len() >= SEQ_LONG
                     && (inplace || tb == T::list) =>
             {
-                let (la, lb) = (self.list_len(a), self.seq_words(b).len());
+                let (la, lb) = (self.list_len_hot(a), self.seq_words(b).len());
                 let segs = [Seg::of(3, 0, 1, la as u64), Seg::of(4, 0, 1, lb as u64)];
                 if inplace {
                     return self.list_rebuild(a, a, &[a, b], &segs, la + lb);
@@ -531,7 +531,7 @@ impl Vm {
             (BinOp::Add, T::tuple, T::tuple) => {
                 let mut items = self.tuple_items(a);
                 items.extend(self.tuple_items(b));
-                return self.alloc_tuple(&items);
+                return self.alloc_tuple_hot(&items);
             }
             (BinOp::Add, T::str | T::list | T::tuple, _) => {
                 let what = ta.name();
@@ -614,7 +614,7 @@ impl Vm {
                 if inplace {
                     return self.bulk(&[a, b], phase(act::DICT, 0, 1, 0), 0, top);
                 }
-                let out = self.new_dict()?;
+                let out = self.new_dict_hot()?;
                 let prog = phase(act::DICT, 0, 1, 0) | phase(act::DICT, 0, 2, 0) << 16;
                 return self.bulk(&[out, a, b], prog, 0, top);
             }
@@ -752,7 +752,7 @@ impl Vm {
         b: Value,
         inplace: bool,
     ) -> Result<Value, Raised> {
-        let (x, y) = (self.unbx(a), self.unbx(b));
+        let (x, y) = (self.unbx_hot(a), self.unbx_hot(b));
         // `Sub(3) *= [1, 2]`, `N() *= T((1,))`: CPython's in-place repeat
         // reads the left operand's sequence slots, which a class defined in
         // Python has (empty), so the right one repeats only through its
@@ -890,8 +890,8 @@ impl Vm {
             };
         }
         let unit = match t {
-            T::str => self.str_bytes(seq).len(),
-            T::list => self.list_len(seq) * 8,
+            T::str => self.str_bytes_hot(seq).len(),
+            T::list => self.list_len_hot(seq) * 8,
             _ => self.tuple_len(seq) * 8,
         };
         let total = unit.saturating_mul(k);
@@ -935,7 +935,7 @@ impl Vm {
                 for _ in 0..k {
                     out.extend_from_slice(&items);
                 }
-                self.alloc_tuple(&out)
+                self.alloc_tuple_hot(&out)
             }
         }
     }
@@ -1133,7 +1133,7 @@ impl Vm {
         if self.uflags(v) & f::UNARY != 0 {
             return Err(self.need_py());
         }
-        if let Some(b) = self.backing(v)
+        if let Some(b) = self.backing_hot(v)
             && (Vm::is_number(b) || Vm::is_complex(b))
         {
             return self.unary(op, b);
@@ -1201,7 +1201,7 @@ impl Vm {
                 };
                 let setlike =
                     |t: T| matches!(t, T::set | T::frozenset | T::dict_keys | T::dict_items);
-                let (ua, ub) = (self.unbx(a), self.unbx(b));
+                let (ua, ub) = (self.unbx_hot(a), self.unbx_hot(b));
                 let (ta, tb) = (self.type_of(ua), self.type_of(ub));
                 if setlike(ta) && setlike(tb) && !(Vm::is_set(ua) && Vm::is_set(ub)) {
                     if ua != a || ub != b {
@@ -1259,7 +1259,7 @@ impl Vm {
     /// `__getitem__` keeps).
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn container_backing(&self, v: Value) -> Option<Value> {
-        self.backing(v).filter(|&b| {
+        self.backing_hot(v).filter(|&b| {
             matches!(
                 self.type_of(b),
                 T::str | T::list | T::tuple | T::dict | T::set | T::frozenset | T::bytes
@@ -1275,7 +1275,7 @@ impl Vm {
                 let item = if Vm::is_str(item) {
                     item
                 } else {
-                    self.unbx(item)
+                    self.unbx_hot(item)
                 };
                 if !Vm::is_str(item) {
                     return Err(self.err(
@@ -1289,8 +1289,8 @@ impl Vm {
                 // A one-byte needle (an ASCII char) searches the bytes
                 // without re-validating UTF-8. The search is byte work
                 // (docs/spec.md §5).
-                let hay = self.str_bytes(container);
-                let (found, n) = if let [b] = *self.str_bytes(item) {
+                let hay = self.str_bytes_hot(container);
+                let (found, n) = if let [b] = *self.str_bytes_hot(item) {
                     (hay.contains(&b), hay.len())
                 } else {
                     let hay = self.str_ref_hot(container);
@@ -1407,7 +1407,7 @@ impl Vm {
                 {
                     return Err(self.need_py());
                 }
-                if let Some(b) = self.backing(container) {
+                if let Some(b) = self.backing_hot(container) {
                     return self.contains(b, item);
                 }
                 let msg = format!(
@@ -1880,7 +1880,7 @@ impl Vm {
             if let (Some(r), true) = (src.as_obj(), src.is_obj_kind(ty::ITER as u8)) {
                 let (seq, kind, at) = (self.vslot_hot(src, 0), self.raw(r, 1), self.raw(r, 2));
                 let n = match kind {
-                    it::LIST => self.list_len(seq),
+                    it::LIST => self.list_len_hot(seq),
                     it::TUPLE => self.tuple_len(seq),
                     _ => 0,
                 };
@@ -1915,12 +1915,12 @@ impl Vm {
     #[inline(never)]
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn list_to_tuple(&mut self, l: Value) -> Result<Value, Raised> {
-        let n = self.list_len(l);
+        let n = self.list_len_hot(l);
         if n >= SEQ_LONG {
             return self.seq_new(true, &[l], &[Seg::of(3, 0, 1, n as u64)], n);
         }
         let items = self.list_items(l);
-        self.alloc_tuple(&items)
+        self.alloc_tuple_hot(&items)
     }
 
     /// List `l` gets a new buffer of the items of `segs`, `total` long, in
@@ -2305,7 +2305,7 @@ impl Vm {
         match t {
             T::list | T::tuple => {
                 let n = if t == T::list {
-                    self.list_len(obj)
+                    self.list_len_hot(obj)
                 } else {
                     self.tuple_len(obj)
                 };
@@ -2338,7 +2338,7 @@ impl Vm {
                     return if t == T::list {
                         self.new_list(&picked)
                     } else {
-                        self.alloc_tuple(&picked)
+                        self.alloc_tuple_hot(&picked)
                     };
                 }
                 if let Some(v) = self.index_key(obj, t, key)? {
@@ -2363,12 +2363,12 @@ impl Vm {
                         return Err(self.err(T::IndexError, "string index out of range"));
                     };
                     let c = if self.str_ascii(obj) {
-                        self.str_bytes(obj).get(k).map(|b| char::from(*b))
+                        self.str_bytes_hot(obj).get(k).map(|b| char::from(*b))
                     } else {
                         // From the nearest known position, not from the
                         // start, with the walk charged (docs/spec.md §5).
                         let at = self.str_offset(obj, k);
-                        let b = self.str_bytes(obj);
+                        let b = self.str_bytes_hot(obj);
                         let c = b.get(at..char_end(b, at)).unwrap_or(&[]);
                         core::str::from_utf8(c).ok().and_then(|c| c.chars().next())
                     };
@@ -2457,7 +2457,7 @@ impl Vm {
             T::type_ if !Vm::is_class(obj) => {
                 // `list[int]`: a `types.GenericAlias`, built in Python.
                 if self
-                    .type_of_typeobj(obj)
+                    .type_of_typeobj_hot(obj)
                     .is_some_and(crate::dunder::generic_type)
                 {
                     return Err(self.need_py());
@@ -2466,7 +2466,7 @@ impl Vm {
                 Err(self.err(T::TypeError, &msg))
             }
             _ => {
-                if let Some(b) = self.backing(obj) {
+                if let Some(b) = self.backing_hot(obj) {
                     return self.getitem_bx(obj, b, key);
                 }
                 if self.user_class(obj).is_some() || Vm::is_class(obj) {
@@ -2503,7 +2503,7 @@ impl Vm {
         }
         match self.type_of(obj) {
             T::list => {
-                let n = self.list_len(obj);
+                let n = self.list_len_hot(obj);
                 if let Some(i) = self.int_of(key) {
                     let Some(k) = Vm::norm_index(i, n) else {
                         return Err(self.err(T::IndexError, "list assignment index out of range"));
@@ -2574,9 +2574,9 @@ impl Vm {
             T::dict => self.dict_set_top(obj, key, v),
             T::bytearray => self.bytearray_setitem(obj, key, v),
             _ => {
-                if let Some(b) = self.backing(obj) {
+                if let Some(b) = self.backing_hot(obj) {
                     let key = if b.is_obj_kind(ty::LIST as u8) {
-                        self.unbx(key)
+                        self.unbx_hot(key)
                     } else {
                         key
                     };
@@ -2606,7 +2606,7 @@ impl Vm {
         }
         match self.type_of(obj) {
             T::list => {
-                let n = self.list_len(obj);
+                let n = self.list_len_hot(obj);
                 if n >= SEQ_LONG
                     && let Some(r) = self.list_del_long(obj, key, n)?
                 {
@@ -2656,9 +2656,9 @@ impl Vm {
             },
             T::bytearray => self.bytearray_delitem(obj, key),
             _ => {
-                if let Some(b) = self.backing(obj) {
+                if let Some(b) = self.backing_hot(obj) {
                     let key = if b.is_obj_kind(ty::LIST as u8) {
-                        self.unbx(key)
+                        self.unbx_hot(key)
                     } else {
                         key
                     };
@@ -2846,7 +2846,7 @@ impl Vm {
                 let ascii = v
                     .as_obj()
                     .and_then(|r| self.heap.str_chars(r).ok())
-                    .is_some_and(|n| n as usize == self.str_bytes(v).len());
+                    .is_some_and(|n| n as usize == self.str_bytes_hot(v).len());
                 self.new_iter(v, if ascii { it::STR_ASCII } else { it::STR }, 0, 0, 0)
             }
             T::bytes => self.new_iter(v, it::BYTES, 0, 0, 0),
@@ -2897,7 +2897,7 @@ impl Vm {
                 {
                     return Err(self.need_py());
                 }
-                if let Some(b) = self.backing(v) {
+                if let Some(b) = self.backing_hot(v) {
                     return self.get_iter(b);
                 }
                 let msg = format!("'{}' object is not iterable", self.type_name(v));
@@ -2925,7 +2925,7 @@ impl Vm {
             let seq = Value::from_bits(seq).unwrap_or(Value::NONE);
             match kind {
                 it::LIST => {
-                    let (next, item) = match self.list_parts(seq) {
+                    let (next, item) = match self.list_parts_hot(seq) {
                         Some((buf, n)) if a < n => {
                             let item = self
                                 .heap
@@ -2965,7 +2965,7 @@ impl Vm {
                     return Ok(Some(Value::int(i64::from(c)).unwrap_or(Value::NONE)));
                 }
                 it::STR | it::STR_ASCII => {
-                    let bytes = self.str_bytes(seq);
+                    let bytes = self.str_bytes_hot(seq);
                     let i = usize::try_from(a).unwrap_or(usize::MAX);
                     if i >= bytes.len() {
                         self.iter_drop(r);
@@ -3033,7 +3033,7 @@ impl Vm {
                             return Ok(Some(match kind {
                                 it::DICT_KEYS => k,
                                 it::DICT_VALUES => v,
-                                _ => self.alloc_tuple(&[k, v])?,
+                                _ => self.alloc_tuple_hot(&[k, v])?,
                             }));
                         }
                         i += 1;
@@ -3090,7 +3090,7 @@ impl Vm {
                     self.set_raw_hot(r, 2, (n + 1).cast_unsigned());
                     self.new_int(n)?
                 };
-                Ok(Some(self.alloc_tuple(&[iv, x])?))
+                Ok(Some(self.alloc_tuple_hot(&[iv, x])?))
             }
             T::zip => {
                 let iters = self.tuple_items(self.vslot_hot(itv, 0));
@@ -3107,7 +3107,7 @@ impl Vm {
                         None => return Ok(None),
                     }
                 }
-                Ok(Some(self.alloc_tuple(&out)?))
+                Ok(Some(self.alloc_tuple_hot(&out)?))
             }
             T::list_reverseiterator => {
                 let Some(r) = itv.as_obj() else {
@@ -3255,7 +3255,7 @@ impl Vm {
         let seq = if v.is_obj_kind(ty::TUPLE as u8) {
             v.as_obj().map(|r| (r, usize::MAX))
         } else {
-            self.list_parts(v).map(|(r, n)| (r, n as usize))
+            self.list_parts_hot(v).map(|(r, n)| (r, n as usize))
         };
         if let Some((r, n)) = seq {
             let res = NativeValues::from_heap(&mut self.heap, r, n);
@@ -3412,9 +3412,9 @@ impl Vm {
             self.new_list(&items)?
         };
         *slot = xs;
-        let t = self.alloc_tuple(&args)?;
+        let t = self.alloc_tuple_hot(&args)?;
         let kw = if kw == Value::NONE {
-            self.new_dict()?
+            self.new_dict_hot()?
         } else {
             kw
         };
@@ -3561,7 +3561,7 @@ impl Vm {
                 } else {
                     Value::NONE
                 };
-                let k = self.intern("__name__")?;
+                let k = self.intern_hot("__name__")?;
                 match g {
                     g if g.is_obj_kind(ty::DICT as u8) => self.dict_get(g, k)?,
                     _ => None,
@@ -3592,7 +3592,7 @@ impl Vm {
                     .as_native()
                     .and_then(crate::builtins::native)
                     .map_or("?", |x| x.name());
-                Some(self.intern(nm)?)
+                Some(self.intern_hot(nm)?)
             }
             (_, "__class__") => Some(self.type_obj(t)),
             (T::range | T::slice, "start" | "stop" | "step") => {
@@ -3674,7 +3674,7 @@ impl Vm {
     pub(crate) fn method_owner(&self, obj: Value) -> T {
         let t = self.type_of(obj);
         if t == T::type_ {
-            return self.type_of_typeobj(obj).unwrap_or(T::object);
+            return self.type_of_typeobj_hot(obj).unwrap_or(T::object);
         }
         if t.is_exception() {
             return T::BaseException;
@@ -3696,7 +3696,7 @@ impl Vm {
         if obj.is_obj_kind(ty::EXC as u8) && self.inst_del(obj, name)? {
             return Ok(());
         }
-        if self.type_of_typeobj(obj).is_some() {
+        if self.type_of_typeobj_hot(obj).is_some() {
             // The same TypeError as setting it.
             return self.setattr(obj, name, Value::NONE);
         }
@@ -3769,7 +3769,7 @@ impl Vm {
             }
         }
         let mut kind = T::AttributeError;
-        let msg = if let Some(t) = self.type_of_typeobj(obj) {
+        let msg = if let Some(t) = self.type_of_typeobj_hot(obj) {
             kind = T::TypeError;
             format!(
                 "cannot set '{n}' attribute of immutable type '{}'",
@@ -3911,7 +3911,7 @@ pub(crate) fn cmp_int_float(i: i64, f: f64) -> Option<Ordering> {
 #[cold]
 #[inline(never)]
 fn backed_slice_index(vm: &mut Vm, v: Value) -> Result<i64, Raised> {
-    match vm.backing(v).and_then(|b| vm.int_of(b)) {
+    match vm.backing_hot(v).and_then(|b| vm.int_of(b)) {
         Some(x) => Ok(x),
         None => Err(vm.err(
             T::TypeError,

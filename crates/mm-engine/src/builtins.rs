@@ -2247,18 +2247,18 @@ pub(crate) fn install(vm: &mut Vm) -> Result<(), Raised> {
         if is_type {
             continue;
         }
-        let k = vm.intern(name)?;
+        let k = vm.intern_hot(name)?;
         vm.dict_set(b, k, Value::native(u32::try_from(i).unwrap_or(0)))?;
     }
     for t in crate::types::ALL {
         if t.is_builtin_name() {
-            let k = vm.intern(t.name())?;
+            let k = vm.intern_hot(t.name())?;
             let v = vm.type_obj(t);
             vm.dict_set(b, k, v)?;
         }
     }
     for name in ["IOError", "EnvironmentError"] {
-        let k = vm.intern(name)?;
+        let k = vm.intern_hot(name)?;
         let v = vm.type_obj(T::OSError);
         vm.dict_set(b, k, v)?;
     }
@@ -2267,12 +2267,12 @@ pub(crate) fn install(vm: &mut Vm) -> Result<(), Raised> {
         ("NotImplemented", Value::NOT_IMPLEMENTED),
         ("__debug__", Value::TRUE),
     ] {
-        let k = vm.intern(name)?;
+        let k = vm.intern_hot(name)?;
         vm.dict_set(b, k, v)?;
     }
     // Code run without a `__name__` global sees the builtins module's.
-    let k = vm.intern("__name__")?;
-    let v = vm.intern("builtins")?;
+    let k = vm.intern_hot("__name__")?;
+    let v = vm.intern_hot("builtins")?;
     vm.dict_set(b, k, v)?;
     Ok(())
 }
@@ -2338,7 +2338,7 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn ssize_arg(&mut self, v: Value) -> Result<i64, Raised> {
         let v = if self.uflags(v) & crate::class::f::INDEX == 0 {
-            self.unbx(v)
+            self.unbx_hot(v)
         } else {
             v
         };
@@ -2355,9 +2355,9 @@ impl Vm {
         match self.int_of_o(v) {
             Some(i) => Ok(i),
             None if self.uflags(v) & crate::class::f::INDEX == 0
-                && self.backing(v).is_some_and(Vm::is_intlike) =>
+                && self.backing_hot(v).is_some_and(Vm::is_intlike) =>
             {
-                let b = self.unbx(v);
+                let b = self.unbx_hot(v);
                 self.int_arg(b, "")
             }
             None if Vm::is_heap_int(v) => Err(self.err(
@@ -2394,7 +2394,7 @@ impl Vm {
         if let Some(o) = n.owner
             && Vm::is_bx_type(o)
             && npos > 0
-            && let Some(b) = self.backing(self.stack[base as usize])
+            && let Some(b) = self.backing_hot(self.stack[base as usize])
             && !keeps_instance(n)
         {
             self.stack[base as usize] = b;
@@ -2517,7 +2517,7 @@ impl Vm {
                 let d = if let Some(d) = extra {
                     d
                 } else {
-                    let d = self.new_dict()?;
+                    let d = self.new_dict_hot()?;
                     extra = Some(d);
                     d
                 };
@@ -2616,7 +2616,7 @@ impl Vm {
             *p = self.unconsume(*p)?;
         }
         self.consumed.clear();
-        let t = self.alloc_tuple(&pos)?;
+        let t = self.alloc_tuple_hot(&pos)?;
         let mut args = alloc::vec![t];
         for j in 0..u32::try_from(n.kwonly().len()).unwrap_or(0) {
             let v = self.kwarg(&a, j);
@@ -2626,7 +2626,7 @@ impl Vm {
                 v
             });
         }
-        let k = self.intern(&name)?;
+        let k = self.intern_hot(&name)?;
         // A native of a bundled Python module continues in that module's
         // `_<name>_py`, a method of a module's type in its `_<Type>_<name>`.
         let module_twin = match (n.owner, n.module()) {
@@ -4246,7 +4246,7 @@ fn sort_lt(
             Ok(x.as_int() < y.as_int())
         }
         kind::STRS => {
-            let (p, q) = (vm.str_bytes(x), vm.str_bytes(y));
+            let (p, q) = (vm.str_bytes_hot(x), vm.str_bytes_hot(y));
             let n = 1 + p.len().min(q.len()) / 64;
             let Some(rest) = u32::try_from(n).ok().and_then(|n| left.checked_sub(n)) else {
                 return Err(crate::ops::OrdErr::Py);
@@ -4438,7 +4438,7 @@ impl Vm {
             get(8).as_int().unwrap_or(-1),
         );
         let pos = |j: usize| get(j).as_int().and_then(|v| usize::try_from(v).ok());
-        let n = self.list_len(xs);
+        let n = self.list_len_hot(xs);
         let keyed = keys != xs;
         let (Some(mut pass), Some(i), Some(l), Some(r), Some(k)) =
             (pos(2), pos(3), pos(4), pos(5), pos(6))
@@ -4454,10 +4454,10 @@ impl Vm {
         let no_b = b == Value::NONE && pass % 2 == 0 && (pass <= SORT_RUN_BITS || pass >= FINISH_A);
         if w.len() != 10
             || !a.is_obj_kind(ty::LIST as u8)
-            || !(no_b || b.is_obj_kind(ty::LIST as u8) && self.list_len(b) == n)
+            || !(no_b || b.is_obj_kind(ty::LIST as u8) && self.list_len_hot(b) == n)
             || !keys.is_obj_kind(ty::LIST as u8)
-            || self.list_len(a) != n
-            || self.list_len(keys) != n
+            || self.list_len_hot(a) != n
+            || self.list_len_hot(keys) != n
             || !(kind::ANY..=kind::FLOATS).contains(&kind)
             || pass > FINISH_B
             || (pass != 0 && pass < SORT_RUN_BITS)
@@ -4621,7 +4621,7 @@ impl Vm {
                         at,
                         out,
                         vs,
-                        |v| vm.str_bytes(key(v)),
+                        |v| vm.str_bytes_hot(key(v)),
                         |x, y, vs| {
                             *vs += (x.len().min(y.len()) / 64) as u64;
                             Ok(x < y)
@@ -6603,7 +6603,7 @@ fn object_init_subclass(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 fn exc_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let e = vm.arg_o(&a, 0);
     let rest: Vec<Value> = (1..a.n).map(|i| vm.arg_o(&a, i)).collect();
-    let t = vm.alloc_tuple(&rest)?;
+    let t = vm.alloc_tuple_hot(&rest)?;
     if let Some(r) = e.as_obj().filter(|_| e.is_obj_kind(ty::EXC as u8)) {
         vm.set_slot(r, crate::vm::exc_slot::ARGS, t);
         // `NameError`, `AttributeError` and `ImportError` take keywords
@@ -7671,7 +7671,7 @@ fn bi_int(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             }
         }
         // A builtin-type subclass converts as its value.
-        let b = vm.unbx(v);
+        let b = vm.unbx_hot(v);
         if let Some(i) = vm.int_of_o(b) {
             return vm.new_int(i);
         }
@@ -7747,7 +7747,7 @@ fn bi_float(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 fn bi_str(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg(&a, 0);
     if v == Value::UNDEFINED {
-        return vm.intern("");
+        return vm.intern_hot("");
     }
     let (enc, errs) = (vm.arg(&a, 1), vm.arg(&a, 2));
     if enc != Value::UNDEFINED || errs != Value::UNDEFINED {
@@ -7790,7 +7790,7 @@ fn bi_str(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         && !v.is_obj_kind(ty::EXC as u8)
         // A bytes or bytearray subclass's `str` is its value's repr
         // (CPython's `bytes_str`), not its own `__repr__`.
-        && !vm.backing(v).is_some_and(Vm::is_bytes_like)
+        && !vm.backing_hot(v).is_some_and(Vm::is_bytes_like)
         && let Some(r) = vm.dunder_call(v, Dn::Repr, &[], Cont::Check(check::REPR))?
     {
         return Ok(r);
@@ -7874,7 +7874,7 @@ fn bi_tuple(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn dict_fill_phase(vm: &mut Vm, src: Value, reg: u64) -> Result<(Value, u64), Raised> {
     use crate::set::{act, phase};
-    let src = match vm.backing(src) {
+    let src = match vm.backing_hot(src) {
         Some(b) if b.is_obj_kind(ty::DICT as u8) && vm.uflags(src) & crate::class::f::ITER == 0 => {
             b
         }
@@ -7887,7 +7887,7 @@ pub(crate) fn dict_fill_phase(vm: &mut Vm, src: Value, reg: u64) -> Result<(Valu
     if src.is_obj_kind(ty::DICT as u8) {
         return Ok((src, phase(act::DICT, 0, reg, 0)));
     }
-    if vm.user_class(src).is_some() && vm.backing(src).is_none() {
+    if vm.user_class(src).is_some() && vm.backing_hot(src).is_none() {
         return Err(vm.need_py());
     }
     Ok((vm.bulk_src(src)?, phase(act::PAIRS, 0, reg, 0)))
@@ -8111,7 +8111,7 @@ fn list_append(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 fn list_grow_steps(vm: &mut Vm, l: Value, len: usize, k: usize, x: Value) -> Result<Value, Raised> {
     use crate::ops::Seg;
-    let one = vm.alloc_tuple(&[x])?;
+    let one = vm.alloc_tuple_hot(&[x])?;
     let segs = [
         Seg::of(3, 0, 1, k as u64),
         Seg::of(4, 0, 1, 1),

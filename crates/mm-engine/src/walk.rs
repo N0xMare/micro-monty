@@ -381,7 +381,7 @@ impl Vm {
             let Some(rest) = left.checked_sub(1) else {
                 return Err(i);
             };
-            let (p, q) = (self.str_bytes(x), self.str_bytes(y));
+            let (p, q) = (self.str_bytes_hot(x), self.str_bytes_hot(y));
             *left = rest;
             self.spend_text(left, p.len().min(q.len()));
             let o = p.cmp(q);
@@ -520,7 +520,7 @@ impl Vm {
             if (self.uflags(a) | self.uflags(b)) & (f::EQ | f::NE) != 0 {
                 return Leaf(Err(OrdErr::Py));
             }
-            let (x, y) = (self.unbx(a), self.unbx(b));
+            let (x, y) = (self.unbx_hot(a), self.unbx_hot(b));
             if x != a || y != b {
                 (a, b, depth) = (x, y, depth.saturating_add(1));
                 continue;

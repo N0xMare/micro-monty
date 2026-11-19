@@ -352,7 +352,7 @@ impl Vm {
                 if v != Value::UNDEFINED && word & 2 == 0 {
                     self.list_push(keys, v)?;
                 }
-                let i = self.list_len(keys);
+                let i = self.list_len_hot(keys);
                 if let Some(&x) = self.seq_words(xs).get(i) {
                     let x = Value::from_bits(x).unwrap_or(Value::NONE);
                     let cont = Cont::Native { op, state };
@@ -368,7 +368,7 @@ impl Vm {
                         }
                         let call = self
                             .prelude_fn("_invoke")
-                            .and_then(|f| Ok((f, self.alloc_tuple(&[x])?)));
+                            .and_then(|f| Ok((f, self.alloc_tuple_hot(&[x])?)));
                         let (f, a) = match call {
                             Ok(c) => c,
                             Err(e) => {
@@ -381,7 +381,7 @@ impl Vm {
                     }
                     return Ok(Next::Invoke(key, Args::of(&[x]), Value::NONE, cont));
                 }
-                if i != self.list_len(xs) {
+                if i != self.list_len_hot(xs) {
                     return Err(self.bad_step());
                 }
                 // Waiting for a collection (below): the sort goes on once it
@@ -439,7 +439,7 @@ impl Vm {
         }
         // `list.sort`: the list must still be empty (CPython detaches its
         // items while it sorts); the sorted items go back either way.
-        let modified = self.list_len(target) != 0;
+        let modified = self.list_len_hot(target) != 0;
         self.list_move(target, sorted)?;
         if modified {
             return Err(self.err(T::ValueError, "list modified during sort"));

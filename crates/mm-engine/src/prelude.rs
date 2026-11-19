@@ -299,18 +299,18 @@ impl Vm {
     /// and `__name__`.
     pub(crate) fn init_prelude(&mut self) -> Result<(), Raised> {
         let ns = self.prelude_globals;
-        let k = self.intern("_MISSING")?;
+        let k = self.intern_hot("_MISSING")?;
         let m = self.missing;
         self.dict_set(ns, k, m)?;
         for (i, n) in crate::builtins::NATIVES.iter().enumerate() {
             if n.module() == Some("_prelude") {
-                let k = self.intern(n.name())?;
+                let k = self.intern_hot(n.name())?;
                 let f = Value::native(u32::try_from(i).unwrap_or(0));
                 self.dict_set(ns, k, f)?;
             }
         }
-        let k = self.intern("__name__")?;
-        let v = self.intern(PRELUDE_NAME)?;
+        let k = self.intern_hot("__name__")?;
+        let v = self.intern_hot(PRELUDE_NAME)?;
         self.dict_set(ns, k, v)
     }
 
@@ -358,7 +358,7 @@ impl Vm {
             return Ok(Some(v));
         };
         let v = if kind == ALIAS {
-            let other = self.intern(name_of(chunk as usize))?;
+            let other = self.intern_hot(name_of(chunk as usize))?;
             match self.prelude_get(other)? {
                 Some(v) => v,
                 None => return Ok(None),

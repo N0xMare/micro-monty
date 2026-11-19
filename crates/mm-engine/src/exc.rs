@@ -266,7 +266,7 @@ impl Vm {
             self.name_error_built = true;
         }
         let tv = self.type_obj(t);
-        let a = self.alloc_tuple(args)?;
+        let a = self.alloc_tuple_hot(args)?;
         self.alloc_exc(tv, a)
     }
 
@@ -491,7 +491,7 @@ impl Vm {
     pub(crate) fn set_import_names(&mut self, name: &str, from: Value) {
         let e = self.exc;
         let set = |vm: &mut Vm, k: &str, v: Value| -> Result<(), Raised> {
-            let k = vm.intern(k)?;
+            let k = vm.intern_hot(k)?;
             vm.inst_set(e, k, v).map(drop)
         };
         if let Ok(n) = self.new_str(name) {

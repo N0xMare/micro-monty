@@ -388,14 +388,20 @@ impl Vm {
     /// The dunder flags of `v`'s user class (0 for builtin values).
     #[inline]
     pub(crate) fn uflags(&self, v: Value) -> u64 {
-        match self.user_class(v).or_else(|| self.meta_of(v)) {
+        match self.user_class(v).or_else(|| self.meta_of_hot(v)) {
             Some(c) => c.as_obj().map_or(0, |r| self.raw_hot(r, cls::FLAGS)),
             None => 0,
         }
     }
 
-    /// The metaclass of class `c` when it is not `type`.
+    /// [`Vm::meta_of_hot`], out of line (`tests/hot_accessors.rs`).
+    #[inline(never)]
     pub(crate) fn meta_of(&self, c: Value) -> Option<Value> {
+        self.meta_of_hot(c)
+    }
+
+    /// The metaclass of class `c` when it is not `type`.
+    pub(crate) fn meta_of_hot(&self, c: Value) -> Option<Value> {
         if !c.is_obj_kind(ty::CLASS as u8) {
             return None;
         }
@@ -405,7 +411,7 @@ impl Vm {
 
     /// `type(v)`.
     pub(crate) fn class_of(&self, v: Value) -> Value {
-        if let Some(m) = self.meta_of(v) {
+        if let Some(m) = self.meta_of_hot(v) {
             return m;
         }
         if v.is_obj_kind(ty::INST as u8) {
@@ -424,7 +430,7 @@ impl Vm {
                 T::from_index(usize::try_from(self.raw_hot(r, cls::BASE)).unwrap_or(0))
                     .unwrap_or(T::object)
             }
-            _ => self.type_of_typeobj(c).unwrap_or(T::object),
+            _ => self.type_of_typeobj_hot(c).unwrap_or(T::object),
         }
     }
 
@@ -433,7 +439,7 @@ impl Vm {
         if Vm::is_class(c) {
             self.str_ref_hot(self.vslot_hot(c, cls::NAME))
         } else {
-            self.type_of_typeobj(c).map_or("object", T::name)
+            self.type_of_typeobj_hot(c).map_or("object", T::name)
         }
     }
 
@@ -480,7 +486,10 @@ impl Vm {
             let mro = self.vslot_hot(c, cls::MRO);
             return (0..self.tuple_len(mro)).any(|k| self.vslot(mro, k as u32) == target);
         }
-        match (self.type_of_typeobj(c), self.type_of_typeobj(target)) {
+        match (
+            self.type_of_typeobj_hot(c),
+            self.type_of_typeobj_hot(target),
+        ) {
             (Some(a), Some(b)) => a.is_subclass(b),
             _ => false,
         }
@@ -498,7 +507,7 @@ impl Vm {
 
     /// `isinstance(v, cls)` for one class.
     pub(crate) fn instance_of(&self, v: Value, c: Value) -> bool {
-        if let Some(t) = self.type_of_typeobj(c)
+        if let Some(t) = self.type_of_typeobj_hot(c)
             && self.user_class(v).is_none()
         {
             return self.type_of(v).is_subclass(t);
@@ -517,7 +526,7 @@ impl Vm {
     /// Looks `name` up along the MRO of class `c` (a user class or a
     /// builtin type): namespace dicts, then builtin method tables.
     pub(crate) fn class_lookup(&self, c: Value, name: Value) -> Option<Value> {
-        let s = self.str_bytes(name);
+        let s = self.str_bytes_hot(name);
         if Vm::is_class(c) {
             // One validation of the MRO and of the name for every entry.
             let mro = self.vslot_hot(c, cls::MRO).as_obj()?;
@@ -526,7 +535,7 @@ impl Vm {
                 let v = if Vm::is_class(k) {
                     self.dict_get_str(self.vslot_hot(k, cls::DICT), name)
                 } else {
-                    self.type_of_typeobj(k)
+                    self.type_of_typeobj_hot(k)
                         .and_then(|t| crate::builtins::method_index(t, s))
                         .map(Value::native)
                 };
@@ -536,7 +545,7 @@ impl Vm {
             }
             return None;
         }
-        let mut t = self.type_of_typeobj(c)?;
+        let mut t = self.type_of_typeobj_hot(c)?;
         loop {
             if let Some(f) = crate::builtins::method_index(t, s) {
                 return Some(Value::native(f));
@@ -554,13 +563,13 @@ impl Vm {
             let d = self.vslot(k, cls::DICT);
             return self.dict_get_str(d, name);
         }
-        let t = self.type_of_typeobj(k)?;
-        crate::builtins::method_index(t, self.str_bytes(name)).map(Value::native)
+        let t = self.type_of_typeobj_hot(k)?;
+        crate::builtins::method_index(t, self.str_bytes_hot(name)).map(Value::native)
     }
 
     /// The dunder `name` of `v`'s user class, if Python code defines it.
     pub(crate) fn dunder(&mut self, v: Value, name: Dn) -> Option<Value> {
-        let c = self.user_class(v).or_else(|| self.meta_of(v))?;
+        let c = self.user_class(v).or_else(|| self.meta_of_hot(v))?;
         let n = self.dn(name).ok()?;
         self.user_lookup(c, n)
     }
@@ -579,7 +588,7 @@ impl Vm {
     #[cold]
     #[inline(never)]
     fn dn_slow(&mut self, i: usize) -> Result<Value, Raised> {
-        let v = self.intern(DUNDER_NAMES.get(i).copied().unwrap_or("__init__"))?;
+        let v = self.intern_hot(DUNDER_NAMES.get(i).copied().unwrap_or("__init__"))?;
         if self.dunders.len() < NDUNDERS {
             self.dunders.resize(NDUNDERS, Value::UNDEFINED);
         }
@@ -1262,10 +1271,16 @@ impl Vm {
         )
     }
 
+    /// [`Vm::backing_hot`], out of line (`tests/hot_accessors.rs`).
+    #[inline(never)]
+    pub(crate) fn backing(&self, v: Value) -> Option<Value> {
+        self.backing_hot(v)
+    }
+
     /// The builtin value `v` extends, if it is an instance of a subclass of
     /// a builtin type.
     #[inline]
-    pub(crate) fn backing(&self, v: Value) -> Option<Value> {
+    pub(crate) fn backing_hot(&self, v: Value) -> Option<Value> {
         if !v.is_obj_kind(ty::INST as u8) {
             return None;
         }
@@ -1277,7 +1292,7 @@ impl Vm {
     /// `__int__`, `__float__` and `__trunc__`, so they read its value and
     /// never call its own `__index__` (CPython's `nb_int`, `nb_float`).
     pub(crate) fn num_backed(&self, v: Value) -> bool {
-        self.backing(v)
+        self.backing_hot(v)
             .is_some_and(|b| Vm::is_intlike(b) || b.as_float().is_some())
     }
 
@@ -1291,10 +1306,16 @@ impl Vm {
         }
     }
 
+    /// [`Vm::unbx_hot`], out of line (`tests/hot_accessors.rs`).
+    #[inline(never)]
+    pub(crate) fn unbx(&self, v: Value) -> Value {
+        self.unbx_hot(v)
+    }
+
     /// `v`, or the builtin value it extends.
     #[inline]
-    pub(crate) fn unbx(&self, v: Value) -> Value {
-        self.backing(v).unwrap_or(v)
+    pub(crate) fn unbx_hot(&self, v: Value) -> Value {
+        self.backing_hot(v).unwrap_or(v)
     }
 
     /// A new instance of builtin-type subclass `c` extending `value`.
@@ -1302,7 +1323,7 @@ impl Vm {
         let hint = c.as_obj().map_or(2, |r| self.raw_hot(r, cls::HINT));
         let o = self.new_instance(c, u32::try_from(hint).unwrap_or(2))?;
         if let Some(r) = o.as_obj() {
-            self.set_slot_hot(r, inst::BACK, self.unbx(value));
+            self.set_slot_hot(r, inst::BACK, self.unbx_hot(value));
         }
         Ok(o)
     }
@@ -1311,7 +1332,7 @@ impl Vm {
     /// the extended builtin value for its own type's methods.
     pub(crate) fn native_self(&self, d: Value, obj: Value) -> Value {
         match (
-            self.backing(obj),
+            self.backing_hot(obj),
             d.as_native().and_then(crate::builtins::native),
         ) {
             (Some(_), Some(n)) if crate::builtins::keeps_instance(n) => obj,
@@ -1346,7 +1367,7 @@ impl Vm {
             if matches!(base, T::NameError | T::UnboundLocalError) {
                 self.name_error_built = true;
             }
-            let a = self.alloc_tuple(args)?;
+            let a = self.alloc_tuple_hot(args)?;
             return self.alloc_exc(c, a);
         }
         let hint = c.as_obj().map_or(2, |r| self.raw_hot(r, cls::HINT));
@@ -1372,7 +1393,7 @@ impl Vm {
     fn attr_slot(&self, o: Value, i: usize) -> (bool, u32) {
         let ninline = o
             .as_obj()
-            .map_or(0, |r| self.obj_len(r).saturating_sub(inst::FIRST));
+            .map_or(0, |r| self.obj_len_hot(r).saturating_sub(inst::FIRST));
         let i = u32::try_from(i).unwrap_or(u32::MAX);
         if i < ninline {
             (true, inst::FIRST + i)
@@ -1487,7 +1508,7 @@ impl Vm {
         if o.is_obj_kind(ty::EXC as u8) {
             let mut d = self.slot(r, exc_slot::DICT);
             if d == Value::NONE {
-                d = self.new_dict()?;
+                d = self.new_dict_hot()?;
                 self.set_slot(r, exc_slot::DICT, d);
             }
             self.dict_set(d, name, v)?;
@@ -1519,7 +1540,7 @@ impl Vm {
             self.set_slot(r, k, v);
         } else {
             let mut over = self.slot(r, inst::OVER);
-            let cap = over.as_obj().map_or(0, |b| self.obj_len(b));
+            let cap = over.as_obj().map_or(0, |b| self.obj_len_hot(b));
             if k >= cap {
                 let nb = self.alloc_buf(((cap * 2).max(4).max(k + 1)) as usize)?;
                 for j in 0..cap {
@@ -1834,13 +1855,13 @@ impl Vm {
                 Got::Missing => return Err(self.attr_error(obj, name)),
             },
             ty::TYPE => {
-                let Some(t) = self.type_of_typeobj(obj) else {
+                let Some(t) = self.type_of_typeobj_hot(obj) else {
                     return Ok(None);
                 };
                 match n.as_str() {
                     "__mro__" => {
                         let m = self.mro_of(obj);
-                        self.alloc_tuple(&m)?
+                        self.alloc_tuple_hot(&m)?
                     }
                     "__bases__" => {
                         let b = if t == T::object {
@@ -1848,11 +1869,11 @@ impl Vm {
                         } else {
                             vec![self.type_obj(t.base())]
                         };
-                        self.alloc_tuple(&b)?
+                        self.alloc_tuple_hot(&b)?
                     }
                     "__base__" if t == T::object => Value::NONE,
                     "__base__" => self.type_obj(t.base()),
-                    "__module__" => self.intern(t.module())?,
+                    "__module__" => self.intern_hot(t.module())?,
                     "__dict__" => crate::builtins::type_dict(self, t)?,
                     "__class_getitem__" if crate::dunder::generic_type(t) => {
                         let f = self.prelude_fn("_class_getitem")?;
@@ -1979,7 +2000,7 @@ impl Vm {
                 if let Some(v) = self.dict_get_str(d, name) {
                     v
                 } else {
-                    let v = self.new_dict()?;
+                    let v = self.new_dict_hot()?;
                     self.dict_set(d, name, v)?;
                     self.class_changed(c, name);
                     v
@@ -1991,7 +2012,7 @@ impl Vm {
             },
             _ => {
                 // The metaclass's attributes, bound to the class.
-                let Some(m) = self.meta_of(c).and_then(|m| self.class_lookup(m, name)) else {
+                let Some(m) = self.meta_of_hot(c).and_then(|m| self.class_lookup(m, name)) else {
                     return Ok(Got::Missing);
                 };
                 if self.uflags(m) & f::DESCR != 0
@@ -2482,7 +2503,7 @@ impl Vm {
                     }
                     Err(err) => return Err(err),
                 };
-                let t = self.alloc_tuple(&items)?;
+                let t = self.alloc_tuple_hot(&items)?;
                 self.set_slot_hot(r, exc_slot::ARGS, t);
             }
             "__traceback__" => self.set_traceback(e, v)?,

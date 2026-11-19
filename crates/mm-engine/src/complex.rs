@@ -1109,7 +1109,7 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn number_text(&self, v: Value) -> (&[u8], bool) {
         if Vm::is_str(v) {
-            (self.str_bytes(v), true)
+            (self.str_bytes_hot(v), true)
         } else {
             (self.bytes_data(v), false)
         }

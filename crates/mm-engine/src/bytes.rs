@@ -1428,7 +1428,7 @@ pub(crate) fn join(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         len = len.saturating_add(vm.bytes_data(*x).len());
     }
     if (len / 64 + 4 * items.len()) as u64 >= crate::strmeth::BIG {
-        let items = vm.alloc_tuple(&items)?;
+        let items = vm.alloc_tuple_hot(&items)?;
         return crate::strmeth::join_bytes(vm, sep, items);
     }
     // Built in place: the result's block, zeros, then each part copied in.

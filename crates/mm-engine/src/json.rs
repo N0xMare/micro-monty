@@ -161,7 +161,7 @@ impl Out {
     fn finish(self, vm: &mut Vm) -> Result<Value, Raised> {
         let n = self.buf.len();
         if n <= 1 {
-            return vm.intern(core::str::from_utf8(self.buf.as_bytes()).unwrap_or(""));
+            return vm.intern_hot(core::str::from_utf8(self.buf.as_bytes()).unwrap_or(""));
         }
         if n >= 64 {
             vm.burn_result(n, true);
@@ -793,14 +793,15 @@ impl Vm {
     #[inline(always)]
     fn seq_storage(&self, v: Value) -> Option<(Ref, u32)> {
         if v.is_obj_kind(ty::LIST as u8) {
-            self.list_parts(v).map(|(buf, n)| {
+            self.list_parts_hot(v).map(|(buf, n)| {
                 (
                     buf,
-                    self.obj_len(buf).min(u32::try_from(n).unwrap_or(u32::MAX)),
+                    self.obj_len_hot(buf)
+                        .min(u32::try_from(n).unwrap_or(u32::MAX)),
                 )
             })
         } else if v.is_obj_kind(ty::TUPLE as u8) {
-            v.as_obj().map(|buf| (buf, self.obj_len(buf)))
+            v.as_obj().map(|buf| (buf, self.obj_len_hot(buf)))
         } else {
             None
         }
@@ -1011,7 +1012,7 @@ fn encode(
             Level::Str { v, next, .. } => {
                 let ascii = enc.has(ASCII);
                 let (len, e, plain) = {
-                    let b = vm.str_bytes(*v);
+                    let b = vm.str_bytes_hot(*v);
                     let mut e = b.len().min(*next + STR_SLICE);
                     while b.get(e).is_some_and(|&c| c & 0xC0 == 0x80) {
                         e -= 1;
@@ -1031,7 +1032,7 @@ fn encode(
                         vm.hx_hot(res)?;
                     } else {
                         let s = String::from(
-                            core::str::from_utf8(vm.str_bytes(*v).get(from..e).unwrap_or(&[]))
+                            core::str::from_utf8(vm.str_bytes_hot(*v).get(from..e).unwrap_or(&[]))
                                 .unwrap_or(""),
                         );
                         // Escaping goes a char at a time.
@@ -1087,7 +1088,7 @@ enum KeyText {
 #[cold]
 #[inline(never)]
 fn key_text(vm: &mut Vm, enc: &Enc, k: Value) -> Result<KeyText, Raised> {
-    let k = vm.unbx(k);
+    let k = vm.unbx_hot(k);
     Ok(KeyText::Text(if Vm::is_str(k) {
         String::from(vm.str_ref_hot(k))
     } else if let Some(f) = k.as_float() {
@@ -1179,7 +1180,7 @@ fn value(vm: &mut Vm, enc: &Enc, v: Value, out: &mut Out, work: &mut u64) -> Res
         crate::builtins::sort_values(vm, &mut keys, false, false)?;
         let l = vm.new_list(&keys)?;
         return Ok(Step::Open(sorted_level(vm, v, l)?));
-    } else if let Some(b) = vm.backing(v) {
+    } else if let Some(b) = vm.backing_hot(v) {
         return subclass_value(vm, enc, v, b, out, work);
     } else {
         return Ok(Step::NeedPython);
@@ -1271,7 +1272,7 @@ fn subclass_value(
     } else if b.is_obj_kind(ty::LIST as u8) || b.is_obj_kind(ty::TUPLE as u8) {
         return seq_value(vm, v, b, out);
     } else if b.is_obj_kind(ty::DICT as u8) && !enc.has(SORT_KEYS) {
-        let key = vm.intern("items")?;
+        let key = vm.intern_hot("items")?;
         if vm
             .class_lookup(vm.class_of(v), key)
             .is_some_and(|m| m.as_native().is_none())
@@ -1438,7 +1439,7 @@ impl KeyMemo {
             while self.keys[slot] != Value::UNDEFINED {
                 let key = self.keys[slot];
                 if key.as_obj().and_then(|r| vm.heap.str_hash(r).ok()) == Some(hash)
-                    && vm.str_bytes(key) == text.as_bytes()
+                    && vm.str_bytes_hot(key) == text.as_bytes()
                 {
                     return Ok(key);
                 }
@@ -1556,7 +1557,7 @@ impl Dec {
 
     /// Reads the innermost of `ctxs`.
     fn load_top(&mut self, vm: &Vm) {
-        let n = vm.list_len(self.ctxs);
+        let n = vm.list_len_hot(self.ctxs);
         let mut top = [Value::NONE; 3];
         if let (Some(buf), Some(at)) = (vm.list_buf(self.ctxs), n.checked_sub(3)) {
             let words = vm.heap.slot_words(buf).unwrap_or(&[]);
@@ -1588,7 +1589,7 @@ fn big_table(vm: &Vm, c: Value) -> Option<(usize, usize)> {
 /// object cap.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn grow_target(vm: &mut Vm, ctxs: Value, up: bool) -> Result<Option<(Value, usize)>, Raised> {
-    let at = vm.list_len(ctxs).checked_sub(if up { 6 } else { 3 });
+    let at = vm.list_len_hot(ctxs).checked_sub(if up { 6 } else { 3 });
     let (Some(buf), Some(at)) = (vm.list_buf(ctxs), at) else {
         return Ok(None);
     };
@@ -2187,12 +2188,12 @@ fn flush(vm: &mut Vm, d: &Dec, n: usize) -> Result<(), Raised> {
         return Ok(());
     }
     // List `c` takes `items` after its own, in a buffer grown once.
-    let (Some((buf, len)), Some(r)) = (vm.list_parts(c), c.as_obj()) else {
+    let (Some((buf, len)), Some(r)) = (vm.list_parts_hot(c), c.as_obj()) else {
         return Err(vm.bad_step());
     };
     let len = len as usize;
     let mut dst = buf;
-    if len + n > vm.obj_len(buf) as usize {
+    if len + n > vm.obj_len_hot(buf) as usize {
         dst = vm.alloc_items((len + n).max(len * 2))?;
         // Copied through a stack buffer, as `Vm::list_push` grows a list:
         // a native copy of a long list would be as large again.
@@ -2241,7 +2242,7 @@ fn close(vm: &mut Vm, d: &mut Dec) -> Result<Value, Raised> {
         let items = d.vals.get(start..).unwrap_or(&[]);
         let v = match ctx {
             Ctx::Arr(_) => vm.new_list(items)?,
-            Ctx::Obj(..) if d.raw => vm.alloc_tuple(items)?,
+            Ctx::Obj(..) if d.raw => vm.alloc_tuple_hot(items)?,
             Ctx::Obj(..) => vm.dict_from_pairs(items)?,
         };
         d.vals.truncate(start);
@@ -2252,7 +2253,7 @@ fn close(vm: &mut Vm, d: &mut Dec) -> Result<Value, Raised> {
     };
     flush(vm, d, d.vals.len())?;
     d.vals.truncate(0);
-    let n = u32::try_from(vm.list_len(d.ctxs) - 3).unwrap_or(0);
+    let n = u32::try_from(vm.list_len_hot(d.ctxs) - 3).unwrap_or(0);
     let res = vm.heap.set_values(buf, n, &[Value::NONE; 3]);
     vm.hx_hot(res)?;
     if let Some(r) = d.ctxs.as_obj() {
@@ -2262,7 +2263,7 @@ fn close(vm: &mut Vm, d: &mut Dec) -> Result<Value, Raised> {
     if obj && d.raw {
         // The pairs so far were a list.
         let items = vm.collect(c)?;
-        return vm.alloc_tuple(&items);
+        return vm.alloc_tuple_hot(&items);
     }
     Ok(c)
 }
@@ -2746,7 +2747,7 @@ fn string(
 /// `(text,)`: a literal left for a `json.loads` hook.
 fn raw_text(vm: &mut Vm, text: &str) -> Result<Value, Raised> {
     let t = vm.new_str(text)?;
-    vm.alloc_tuple(&[t])
+    vm.alloc_tuple_hot(&[t])
 }
 
 /// The end of the number at `i` (CPython's `_match_number_unicode`) and

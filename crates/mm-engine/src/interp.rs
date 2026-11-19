@@ -1419,7 +1419,7 @@ impl Vm {
             )?;
             return Ok(Some(v));
         }
-        if let Some(t) = self.type_of_typeobj(callee) {
+        if let Some(t) = self.type_of_typeobj_hot(callee) {
             if t.is_exception() {
                 if nkw > 0 {
                     return self.exc_with_kwargs(t, args, npos, kwnames).map(Some);
@@ -1488,11 +1488,11 @@ impl Vm {
             // Indirect callables can form cycles without entering a Python
             // function (for example A.__init__ = A). Cross a bytecode frame
             // before following the next link, so limits and parking apply.
-            let args = self.alloc_tuple(pos)?;
+            let args = self.alloc_tuple_hot(pos)?;
             let kw = if kws.is_empty() {
                 Value::NONE
             } else {
-                let d = self.new_dict()?;
+                let d = self.new_dict_hot()?;
                 for &(k, v) in kws {
                     self.dict_set(d, k, v)?;
                 }
@@ -1516,7 +1516,7 @@ impl Vm {
             Value::NONE
         } else {
             let names: Vec<Value> = kws.iter().map(|(k, _)| *k).collect();
-            self.alloc_tuple(&names)?
+            self.alloc_tuple_hot(&names)?
         };
         self.call_value_at(
             st,
@@ -1576,7 +1576,7 @@ impl Vm {
     fn new_ic(&mut self, c: Value, argc: usize) -> Option<Ic> {
         let cr = c.as_obj().filter(|_| Vm::is_class(c))?;
         // A metaclass could gain `__call__` without changing `c`'s version.
-        if self.meta_of(c).is_some() {
+        if self.meta_of_hot(c).is_some() {
             return None;
         }
         let base = self.class_base_t(c);
@@ -1701,11 +1701,11 @@ impl Vm {
             let mut all = Vec::with_capacity(pos.len() + 1);
             all.push(cls);
             all.extend_from_slice(pos);
-            let args = self.alloc_tuple(pos)?;
+            let args = self.alloc_tuple_hot(pos)?;
             let kw = if kws.is_empty() {
                 Value::NONE
             } else {
-                let d = self.new_dict()?;
+                let d = self.new_dict_hot()?;
                 for &(k, v) in kws {
                     self.dict_set(d, k, v)?;
                 }
@@ -1715,11 +1715,11 @@ impl Vm {
         } else if Vm::is_bx_type(self.class_base_t(cls)) {
             // A subclass of a builtin type: the prelude builds the value
             // and runs `__init__`.
-            let args = self.alloc_tuple(pos)?;
+            let args = self.alloc_tuple_hot(pos)?;
             let kw = if kws.is_empty() {
                 Value::NONE
             } else {
-                let d = self.new_dict()?;
+                let d = self.new_dict_hot()?;
                 for &(k, v) in kws {
                     self.dict_set(d, k, v)?;
                 }
@@ -1963,8 +1963,8 @@ impl Vm {
         let r = st.base + ((w >> 8) & 0xff) as usize;
         let n = (w >> 16) as usize;
         let parts = self.stack[r..r + n].to_vec();
-        let res = self.alloc_tuple(&parts).and_then(|t| {
-            let sep = self.intern("")?;
+        let res = self.alloc_tuple_hot(&parts).and_then(|t| {
+            let sep = self.intern_hot("")?;
             crate::strmeth::join_big(self, sep, t)
         });
         let landed = match res {
@@ -2342,7 +2342,7 @@ impl Vm {
             };
             self.stack[base + vararg_slot] = match rest {
                 Some(t) => t,
-                None => self.alloc_tuple(extra)?,
+                None => self.alloc_tuple_hot(extra)?,
             };
         } else if pos.len() > argc {
             let defaults = self.vslot_hot(func, fn_slot::DEFAULTS);
@@ -2385,7 +2385,7 @@ impl Vm {
             overflow = Some(format!("{name}() takes {takes} but {given}"));
         }
         let kwdict = if p.varkw {
-            let d = self.new_dict()?;
+            let d = self.new_dict_hot()?;
             self.stack[base + kwarg_slot] = d;
             Some(d)
         } else {
@@ -2477,7 +2477,7 @@ impl Vm {
             if self.stack[base + i] == Value::UNDEFINED {
                 let mut filled = false;
                 if kwdefaults.is_obj_kind(ty::DICT as u8) {
-                    let k = self.intern(pname)?;
+                    let k = self.intern_hot(pname)?;
                     if let Some(v) = self.dict_get(kwdefaults, k)? {
                         self.stack[base + i] = v;
                         filled = true;
@@ -2558,8 +2558,8 @@ impl Vm {
         let (name, qual) = if code.name == Value::NONE {
             // A module body's names, not interned at its load.
             (
-                self.intern(&code.code.name)?,
-                self.intern(&code.code.qualname)?,
+                self.intern_hot(&code.code.name)?,
+                self.intern_hot(&code.code.qualname)?,
             )
         } else {
             (code.name, code.qualname)
@@ -2743,7 +2743,7 @@ impl Vm {
         if v.is_obj_kind(ty::EXC as u8) {
             return Ok(v);
         }
-        if let Some(t) = self.type_of_typeobj(v)
+        if let Some(t) = self.type_of_typeobj_hot(v)
             && t.is_exception()
         {
             return self.new_exception(t, &[]);
@@ -2935,7 +2935,7 @@ impl Vm {
                 None => format!("{}()", n.name()),
             };
         }
-        if let Some(t) = self.type_of_typeobj(f) {
+        if let Some(t) = self.type_of_typeobj_hot(f) {
             return format!("{}()", t.name());
         }
         String::from("function")
@@ -3936,7 +3936,7 @@ impl Vm {
                         };
                         match opcode {
                             op::BUILD_LIST => acc = tri!(self.new_list(items)),
-                            op::BUILD_TUPLE => acc = tri!(self.alloc_tuple(items)),
+                            op::BUILD_TUPLE => acc = tri!(self.alloc_tuple_hot(items)),
                             _ => {
                                 let r = self.set_from(items);
                                 if r.is_err() && self.slow {
@@ -3953,7 +3953,7 @@ impl Vm {
                         let r = base + wa!();
                         let n = wu2!();
                         let d = tri!(if n == 0 {
-                            self.new_dict()
+                            self.new_dict_hot()
                         } else {
                             self.new_dict_for(n)
                         });
@@ -3978,7 +3978,7 @@ impl Vm {
                         let r = base + wa!();
                         let n = wu2!();
                         let bytes = self.stack[r..r + n].iter().fold(0usize, |len, &v| {
-                            len.saturating_add(self.str_bytes(v).len())
+                            len.saturating_add(self.str_bytes_hot(v).len())
                         });
                         acc = tri!(self.build_str(bytes, |vm, buf| {
                             for k in 0..n {
@@ -4036,7 +4036,7 @@ impl Vm {
                                 self.new_str(&s)
                             }
                         });
-                        let empty = tri!(self.intern(""));
+                        let empty = tri!(self.intern_hot(""));
                         op_result!(
                             r,
                             2,
@@ -4178,7 +4178,7 @@ impl Vm {
                         if o.is_obj_kind(ty::LIST as u8)
                             && let Some(i) = acc.as_int()
                             && let Ok(k) = u64::try_from(i)
-                            && let Some((buf, n)) = self.list_parts(o)
+                            && let Some((buf, n)) = self.list_parts_hot(o)
                             && k < n
                         {
                             acc = self.slot_hot(buf, u32::try_from(k).unwrap_or(u32::MAX));
@@ -4940,7 +4940,7 @@ impl Vm {
                         self.op_user_next(it, cont)
                     }
                 } else {
-                    let k = tri!(self.intern("send"));
+                    let k = tri!(self.intern_hot("send"));
                     self.getattr(it, k).and_then(|m| {
                         if m == Value::UNDEFINED {
                             self.request = None;
@@ -5082,7 +5082,7 @@ impl Vm {
                         let cause = if acc == Value::NONE {
                             Value::NONE
                         } else if acc.is_obj_kind(ty::EXC as u8)
-                            || self.type_of_typeobj(acc).is_some_and(T::is_exception)
+                            || self.type_of_typeobj_hot(acc).is_some_and(T::is_exception)
                         {
                             tri!(self.raisable(acc))
                         } else {
@@ -5286,7 +5286,7 @@ impl Vm {
         let kwnames = if names.is_empty() {
             Value::NONE
         } else {
-            self.alloc_tuple(&names)
+            self.alloc_tuple_hot(&names)
                 .map_err(|_| self.oom_retry_expansion(st, call_pc))?
         };
         // Arguments go above this frame; the callee's frame starts after
@@ -5335,7 +5335,7 @@ impl Vm {
         self.ensure_stack(free + npos + nkw + 64)?;
         let native = if let Some(i) = callee.as_native() {
             Some((i, false))
-        } else if let Some(t) = self.type_of_typeobj(callee)
+        } else if let Some(t) = self.type_of_typeobj_hot(callee)
             && !t.is_exception()
         {
             self.ctor_of(t).map(|c| (c, false))

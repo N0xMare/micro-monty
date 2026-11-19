@@ -414,8 +414,14 @@ const NOT_TOP: u64 = u64::MAX;
 pub(crate) const MAX_CAP: usize = mm_core::MAX_OBJECT_BYTES as usize / 32;
 
 impl Vm {
-    /// A new empty dict.
+    /// [`Vm::new_dict_hot`], out of line (`tests/hot_accessors.rs`).
+    #[inline(never)]
     pub(crate) fn new_dict(&mut self) -> Result<Value, Raised> {
+        self.new_dict_hot()
+    }
+
+    /// A new empty dict.
+    pub(crate) fn new_dict_hot(&mut self) -> Result<Value, Raised> {
         self.new_dict_for(EMPTY_ROOM)
     }
 
@@ -479,9 +485,15 @@ impl Vm {
         self.hx_hot(res)
     }
 
+    /// [`Vm::dv_hot`], out of line (`tests/hot_accessors.rs`).
+    #[inline(never)]
+    pub(crate) fn dv(&self, r: Ref) -> Option<Dv> {
+        self.dv_hot(r)
+    }
+
     /// The storage of dict `r`.
     #[inline]
-    pub(crate) fn dv(&self, r: Ref) -> Option<Dv> {
+    pub(crate) fn dv_hot(&self, r: Ref) -> Option<Dv> {
         let (hdr, w) = self.heap.object_words(r).ok()?;
         let (&c, vals) = w.split_last()?;
         // Verified but mutated bytecode can hand a dict op another object
@@ -531,7 +543,7 @@ impl Vm {
         if dv.inline > 0 {
             dv.inline
         } else {
-            self.obj_len(dv.entries) / 2
+            self.obj_len_hot(dv.entries) / 2
         }
     }
 
@@ -585,7 +597,7 @@ impl Vm {
     #[inline(never)]
     pub(crate) fn dict_len(&self, d: Value) -> usize {
         d.as_obj()
-            .and_then(|r| self.dv(r))
+            .and_then(|r| self.dv_hot(r))
             .map_or(0, |v| v.len as usize)
     }
 
@@ -593,20 +605,20 @@ impl Vm {
     #[inline(never)]
     pub(crate) fn dict_used(&self, d: Value) -> usize {
         d.as_obj()
-            .and_then(|r| self.dv(r))
+            .and_then(|r| self.dv_hot(r))
             .map_or(0, |v| v.used as usize)
     }
 
     /// The entries buffer of an indexed dict (for globals inline caches).
     pub(crate) fn dict_entries(&self, d: Value) -> Option<Ref> {
-        let dv = self.dv(d.as_obj()?)?;
+        let dv = self.dv_hot(d.as_obj()?)?;
         dv.index.map(|_| dv.entries)
     }
 
     /// Entry `i`: `(key, value)`, or `None` if deleted or out of range.
     #[inline(never)]
     pub(crate) fn dict_entry(&self, d: Value, i: usize) -> Option<(Value, Value)> {
-        let e = self.dv(d.as_obj()?)?.entries;
+        let e = self.dv_hot(d.as_obj()?)?.entries;
         let i = u32::try_from(i).ok()?;
         let k = self.heap.get(e, 2 * i).ok()?;
         if k == Value::UNDEFINED {
@@ -618,8 +630,11 @@ impl Vm {
     /// Entry storage and its used slot bound, including deleted pairs.
     /// Valid only while no mutation or collection can change the storage.
     pub(crate) fn dict_items_buf(&self, d: Value) -> Option<(Ref, u32)> {
-        let dv = self.dv(d.as_obj()?)?;
-        Some((dv.entries, dv.used.min(self.obj_len(dv.entries) / 2) * 2))
+        let dv = self.dv_hot(d.as_obj()?)?;
+        Some((
+            dv.entries,
+            dv.used.min(self.obj_len_hot(dv.entries) / 2) * 2,
+        ))
     }
 
     /// Number of pairs `dict_items_vec` returns, counted without copying.
@@ -648,7 +663,7 @@ impl Vm {
 
     /// Live `(key, value)` pairs in order.
     pub(crate) fn dict_items_vec(&self, d: Value) -> Vec<(Value, Value)> {
-        let Some(dv) = d.as_obj().and_then(|r| self.dv(r)) else {
+        let Some(dv) = d.as_obj().and_then(|r| self.dv_hot(r)) else {
             return Vec::new();
         };
         let kvs = self.values_of(dv.entries, 2 * dv.used as usize);
@@ -687,7 +702,7 @@ impl Vm {
     /// in place: global inline caches stay valid, as their fast paths
     /// treat a deleted entry (`UNDEFINED`) as a miss.
     fn bump_own_version(&mut self, r: Ref) {
-        let Some(index) = self.dv(r).and_then(|v| v.index) else {
+        let Some(index) = self.dv_hot(r).and_then(|v| v.index) else {
             return;
         };
         if let Ok(words) = self.heap.raw_words_mut(index)
@@ -722,7 +737,7 @@ impl Vm {
             let r = v.as_obj();
             if r.is_some_and(|r| !self.heap.str_hashed(r)) {
                 // A first hash reads the whole text: byte work.
-                self.burn_bytes(self.str_bytes(v).len());
+                self.burn_bytes(self.str_bytes_hot(v).len());
             }
             let h = r
                 .and_then(|r| self.heap.str_hash_mut(r).ok())
@@ -838,7 +853,7 @@ impl Vm {
             }
             return Err(self.need_py());
         }
-        if let Some(b) = self.backing(v) {
+        if let Some(b) = self.backing_hot(v) {
             return self.hash_depth(b, depth + 1, left);
         }
         if matches!(
@@ -1087,7 +1102,7 @@ impl Vm {
         left: &mut u32,
         undecided: &mut dyn FnMut(u32, Value),
     ) -> Result<(u32, Option<u32>), Hard> {
-        match self.dv(d) {
+        match self.dv_hot(d) {
             Some(dv) => self.probe_dv(dv, k, h, depth, left, undecided),
             None => Ok((0, None)),
         }
@@ -1485,7 +1500,7 @@ impl Vm {
             if let Some((e, i, at, n)) =
                 self.dict_resize(d, r, dv.len as usize + 1, !linear_key(k), budget)?
             {
-                let src = self.alloc_tuple(&[k])?;
+                let src = self.alloc_tuple_hot(&[k])?;
                 let tables = (
                     Value::from_ref(e, ty::BUF as u8),
                     Value::from_ref(i, ty::RAW as u8),
@@ -1495,7 +1510,7 @@ impl Vm {
                 let prog = crate::set::phase(crate::set::act::KEYS, 0, 1, 2);
                 return self.bulk_with(&[d, src, v], prog, top, tables).map(|_| ());
             }
-            match self.dv(r) {
+            match self.dv_hot(r) {
                 Some(n) if self.has_room(&n, k) => dv = n,
                 _ => return Err(self.err(T::SystemError, "malformed dict")),
             }
@@ -1641,7 +1656,7 @@ impl Vm {
     /// `d[k]` if present.
     pub(crate) fn dict_get(&mut self, d: Value, k: Value) -> Result<Option<Value>, Raised> {
         let h = self.key_hash(k)?;
-        let Some(dv) = d.as_obj().and_then(|r| self.dv(r)) else {
+        let Some(dv) = d.as_obj().and_then(|r| self.dv_hot(r)) else {
             return Ok(None);
         };
         let mut left = WALK;
@@ -1655,7 +1670,7 @@ impl Vm {
     /// or if deciding needs Python code.
     pub(crate) fn dict_lookup_str(&self, d: Value, k: Value) -> Option<Value> {
         let h = self.key_hash_pure(k)?;
-        let dv = self.dv(d.as_obj()?)?;
+        let dv = self.dv_hot(d.as_obj()?)?;
         // Uncharged and never handed on: a long chain is walked to its end
         // (str keys of names), not taken as absent.
         let mut left = u32::MAX;
@@ -1714,7 +1729,7 @@ impl Vm {
     #[inline(always)]
     fn dict_store(&mut self, d: Value, k: Value, h: u64, v: Value, top: u64) -> Result<(), Raised> {
         let Some(r) = d.as_obj() else { return Ok(()) };
-        let Some(dv) = self.dv(r) else {
+        let Some(dv) = self.dv_hot(r) else {
             return Err(self.err(T::SystemError, "invalid dict table"));
         };
         let mut left = WALK;
@@ -1744,7 +1759,9 @@ impl Vm {
         index: bool,
         budget: u64,
     ) -> Result<Option<(Ref, Ref, u64, u64)>, Raised> {
-        let Some(o) = self.dv(r) else { return Ok(None) };
+        let Some(o) = self.dv_hot(r) else {
+            return Ok(None);
+        };
         // No more entries than the old storage holds (a restored snapshot's
         // counts are not trusted).
         let held = self.heap.slot_words(o.entries).map_or(0, |w| w.len() / 2);
@@ -1821,7 +1838,7 @@ impl Vm {
     ) -> Option<(usize, u32, u64, u64)> {
         /// Entries moved per batch, through stack buffers (no heap copies).
         const BATCH: usize = 128;
-        let Some(o) = self.dv(r) else {
+        let Some(o) = self.dv_hot(r) else {
             return Some((to, n, 0, 0));
         };
         // No more entries than the old storage holds (a restored snapshot's
@@ -1902,7 +1919,7 @@ impl Vm {
     /// Dict `r` takes the tables [`Vm::dict_move`] filled with `n`
     /// entries.
     pub(crate) fn dict_install(&mut self, d: Value, r: Ref, entries: Ref, index: Ref, n: u32) {
-        let Some(o) = self.dv(r) else { return };
+        let Some(o) = self.dv_hot(r) else { return };
         // The version goes on (globals inline caches compare it).
         let version = o
             .index
@@ -2004,7 +2021,7 @@ impl Vm {
         v: Value,
     ) -> Result<bool, Raised> {
         let Some(r) = d.as_obj() else { return Ok(true) };
-        let Some(dv) = self.dv(r) else {
+        let Some(dv) = self.dv_hot(r) else {
             return Err(self.err(T::SystemError, "invalid dict table"));
         };
         let mut left = WALK;
@@ -2043,7 +2060,7 @@ impl Vm {
         h: u64,
         at: &mut Option<(u64, u64)>,
     ) -> Result<Option<bool>, Raised> {
-        let Some(dv) = d.as_obj().and_then(|r| self.dv(r)) else {
+        let Some(dv) = d.as_obj().and_then(|r| self.dv_hot(r)) else {
             return Ok(Some(false));
         };
         #[allow(clippy::cast_possible_truncation, reason = "the low half")]
@@ -2095,7 +2112,7 @@ impl Vm {
         let Some(r) = d.as_obj() else { return Ok(None) };
         let (slot, found) = self.probe_charged(r, k, h).map_err(|x| self.hard(x))?;
         let Some(e) = found else { return Ok(None) };
-        let Some(dv) = self.dv(r) else {
+        let Some(dv) = self.dv_hot(r) else {
             return Ok(None);
         };
         let v = self.slot_hot(dv.entries, 2 * e + 1);

@@ -576,5 +576,5 @@ pub(crate) fn unpack(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             }
         }
     }
-    vm.alloc_tuple(&values)
+    vm.alloc_tuple_hot(&values)
 }

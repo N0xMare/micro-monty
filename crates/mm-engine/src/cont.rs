@@ -665,10 +665,10 @@ impl Vm {
             return self.new_delegation(v);
         }
         let ok = match k {
-            check::REPR | check::STR | check::FORMAT => Vm::is_str(self.unbx(v)),
+            check::REPR | check::STR | check::FORMAT => Vm::is_str(self.unbx_hot(v)),
             check::HASH => self.int_of(v).is_some(),
             // int subclasses give the int they extend (CPython warns).
-            check::INDEX | check::INT | check::INDEX_FLOAT => Vm::is_intlike(self.unbx(v)),
+            check::INDEX | check::INT | check::INDEX_FLOAT => Vm::is_intlike(self.unbx_hot(v)),
             check::ANEXT | check::AENTER | check::AEXIT => Vm::is_awaitable(v) || self.has_await(v),
             check::AITER_FOR | check::AITER => self.is_async_iterator(v),
             _ => self.is_iterator(v),
@@ -682,9 +682,11 @@ impl Vm {
                 check::INDEX | check::INT if v.as_special().is_some() => {
                     self.new_int(self.int_of(v).unwrap_or(0))?
                 }
-                check::INDEX | check::INT | check::REPR | check::STR => self.unbx(v),
+                check::INDEX | check::INT | check::REPR | check::STR => self.unbx_hot(v),
                 // An int always converts (OverflowError when too large).
-                check::INDEX_FLOAT => Value::float(self.num_to_f64(self.unbx(v))?.unwrap_or(0.0)),
+                check::INDEX_FLOAT => {
+                    Value::float(self.num_to_f64(self.unbx_hot(v))?.unwrap_or(0.0))
+                }
                 // `check::FORMAT` among them: `format()` gives what
                 // `__format__` returned, a str subclass included, as
                 // CPython's `PyObject_Format`.
@@ -722,7 +724,7 @@ impl Vm {
 
     /// Does `v`'s class define `__await__`?
     pub(crate) fn has_await(&mut self, v: Value) -> bool {
-        let Ok(key) = self.intern("__await__") else {
+        let Ok(key) = self.intern_hot("__await__") else {
             return false;
         };
         let cls = self.class_of(v);

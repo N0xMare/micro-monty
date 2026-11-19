@@ -267,7 +267,7 @@ impl Vm {
         let r = s.as_obj()?;
         let k = self.slot(r, 0).as_obj()?;
         let h = self.slot(r, 1).as_obj()?;
-        Some((r, k, h, self.obj_len(k) as usize))
+        Some((r, k, h, self.obj_len_hot(k) as usize))
     }
 
     /// Number of elements.
@@ -486,7 +486,7 @@ impl Vm {
     fn set_key_hash(&mut self, key: Value) -> Result<u64, Raised> {
         // A subclass instance without its own `__hash__` is as unhashable
         // as the set it extends.
-        let b = self.unbx(key);
+        let b = self.unbx_hot(key);
         if b.is_obj_kind(ty::SET as u8)
             && !self.set_frozen(b)
             && (b == key || self.uflags(key) & crate::class::f::HASH == 0)
@@ -1279,7 +1279,7 @@ impl Vm {
         v: Value,
         res: u64,
     ) -> Result<(), Raised> {
-        let src = self.alloc_tuple(&[x])?;
+        let src = self.alloc_tuple_hot(&[x])?;
         let prog = if Self::is_set(out) {
             phase(act::ADD, 0, 1, 0)
         } else {
@@ -1547,7 +1547,7 @@ impl Vm {
                 if b.nk == Value::NONE {
                     self.bulk_grow(b, out, usize::try_from(b.j).unwrap_or(usize::MAX))?;
                 } else {
-                    let size = b.nk.as_obj().map_or(8, |k| self.obj_len(k) as usize);
+                    let size = b.nk.as_obj().map_or(8, |k| self.obj_len_hot(k) as usize);
                     let nv = if Self::is_set(out) {
                         // A big table's keys come unfilled
                         // (`set_rebuild_start`): marked empty a slice per
@@ -2092,7 +2092,7 @@ impl Vm {
         let Some(k) = k.as_obj() else { return 1 };
         let to = j
             .saturating_add(left.max(1).saturating_mul(8))
-            .min(u64::from(self.obj_len(k)));
+            .min(u64::from(self.obj_len_hot(k)));
         let _ = self.heap.clear_values(k, *j as u32, to as u32);
         let done = (to - *j).div_ceil(8);
         *j = to;
@@ -2181,7 +2181,7 @@ impl Vm {
             while at < used {
                 if let Some((k, v)) = self.dict_entry(src, at) {
                     if items {
-                        let t = self.alloc_tuple(&[k, v])?;
+                        let t = self.alloc_tuple_hot(&[k, v])?;
                         return Ok(Some((at, t, v, None)));
                     }
                     return Ok(Some((at, k, v, self.dict_hash_at(src, at))));

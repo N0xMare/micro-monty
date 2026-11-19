@@ -424,11 +424,23 @@ impl Vm {
         Ok(Value::from_ref(r, kind as u8))
     }
 
+    /// [`Vm::raw_of_hot`], out of line (`tests/hot_accessors.rs`).
+    #[inline(never)]
     fn raw_of(&self, v: Value, i: u32) -> u64 {
+        self.raw_of_hot(v, i)
+    }
+
+    fn raw_of_hot(&self, v: Value, i: u32) -> u64 {
         v.as_obj().map_or(0, |r| self.raw_hot(r, i))
     }
 
+    /// [`Vm::set_raw_of_hot`], out of line (`tests/hot_accessors.rs`).
+    #[inline(never)]
     fn set_raw_of(&mut self, v: Value, i: u32, w: u64) {
+        self.set_raw_of_hot(v, i, w);
+    }
+
+    fn set_raw_of_hot(&mut self, v: Value, i: u32, w: u64) {
         if let Some(r) = v.as_obj() {
             self.set_raw_hot(r, i, w);
         }
@@ -553,8 +565,8 @@ impl Vm {
 
     /// Marks a coroutine frame finished (returned or raised out).
     pub(crate) fn coro_finished(&mut self, c: Value) {
-        let state = self.raw_of(c, coro::STATE);
-        self.set_raw_of(c, coro::STATE, coro::DONE);
+        let state = self.raw_of_hot(c, coro::STATE);
+        self.set_raw_of_hot(c, coro::STATE, coro::DONE);
         if let Some(r) = c.as_obj() {
             let _ = self.heap.set_values(
                 r,
@@ -657,7 +669,7 @@ impl Vm {
         ret_pc: usize,
         cont: crate::cont::Cont,
     ) -> Result<(), Raised> {
-        let state = self.raw_of(c, coro::STATE) & 3;
+        let state = self.raw_of_hot(c, coro::STATE) & 3;
         let resume = state == coro::SUSPENDED
             && if cont == crate::cont::Cont::CoroSend {
                 self.vslot_hot(c, coro::AWAITER) == Value::NONE
@@ -687,8 +699,8 @@ impl Vm {
         self.ensure_stack(new_base + nregs + 1)?;
         self.load_coro_args(c, new_base, nregs);
         self.enter_frame(st, func, cidx, new_base, call_pc, ret_pc, cont)?;
-        let keep = self.raw_of(c, coro::STATE) & coro::RUN_BITS;
-        self.set_raw_of(c, coro::STATE, coro::RUNNING | keep);
+        let keep = self.raw_of_hot(c, coro::STATE) & coro::RUN_BITS;
+        self.set_raw_of_hot(c, coro::STATE, coro::RUNNING | keep);
         st.coro = c;
         if let Some(r) = c.as_obj() {
             if resume {
@@ -892,9 +904,9 @@ impl Vm {
             }),
             ty::TASK | ty::FUTURE | ty::GATHER => {
                 if kind == ty::FUTURE {
-                    self.set_raw_of(a, aw::AWAITED, 1);
+                    self.set_raw_of_hot(a, aw::AWAITED, 1);
                 }
-                match self.raw_of(a, aw::STATE) {
+                match self.raw_of_hot(a, aw::STATE) {
                     aw::PENDING => {
                         // The task's wakeup, in line with the other done
                         // callbacks.
@@ -915,25 +927,25 @@ impl Vm {
                     }
                 }
             }
-            ty::SLEEP => match self.raw_of(a, aw::STATE) {
+            ty::SLEEP => match self.raw_of_hot(a, aw::STATE) {
                 aw::PENDING => {
                     self.arm_sleep(a);
                     Ok(Awaited::Block)
                 }
                 aw::ARMED if self.sleep_due(a) => {
-                    self.set_raw_of(a, aw::STATE, aw::SPENT);
+                    self.set_raw_of_hot(a, aw::STATE, aw::SPENT);
                     Ok(Awaited::Value(self.vslot_hot(a, aw::RESULT)))
                 }
                 aw::ARMED => Ok(Awaited::Block),
                 aw::CANCELLED => {
                     self.exc = self.cancelled_error(a)?;
-                    self.set_raw_of(a, aw::STATE, aw::SPENT);
+                    self.set_raw_of_hot(a, aw::STATE, aw::SPENT);
                     Err(Raised)
                 }
                 _ => Err(self.err(T::RuntimeError, REUSED)),
             },
             _ => {
-                let key = self.intern("__await__")?;
+                let key = self.intern_hot("__await__")?;
                 let cls = self.class_of(a);
                 match self.class_lookup(cls, key) {
                     Some(m) => {
@@ -960,7 +972,7 @@ impl Vm {
         if !d.is_obj_kind(ty::DICT as u8) {
             return false;
         }
-        let Ok(k) = self.intern(ITERABLE_COROUTINE) else {
+        let Ok(k) = self.intern_hot(ITERABLE_COROUTINE) else {
             return false;
         };
         matches!(self.dict_get(d, k), Ok(Some(v)) if v == Value::TRUE)
@@ -973,7 +985,7 @@ impl Vm {
     }
 
     fn sleep_due(&self, a: Value) -> bool {
-        self.vclock >= f64::from_bits(self.raw_of(a, aw::AUX))
+        self.vclock >= f64::from_bits(self.raw_of_hot(a, aw::AUX))
     }
 
     // ------------------------------------------------------ scheduler
@@ -1242,7 +1254,7 @@ impl Vm {
             let msg = self.vslot_hot(h, aw::RESULT);
             let exc = self.exc;
             match self.cancel_tree(a, msg) {
-                Ok(true) => self.set_raw_of(h, aw::MUST_CANCEL, 0),
+                Ok(true) => self.set_raw_of_hot(h, aw::MUST_CANCEL, 0),
                 Ok(false) => {}
                 // No room to cancel what it waits on (nothing changed): it
                 // raises `CancelledError` at its `await` at once instead.
@@ -1268,8 +1280,8 @@ impl Vm {
     /// step?
     fn must_cancel(&self, h: Value) -> bool {
         h.is_obj_kind(ty::TASK as u8)
-            && self.raw_of(h, aw::STATE) == aw::PENDING
-            && self.raw_of(h, aw::MUST_CANCEL) != 0
+            && self.raw_of_hot(h, aw::STATE) == aw::PENDING
+            && self.raw_of_hot(h, aw::MUST_CANCEL) != 0
     }
 
     /// The running child task ended: settles its `TASK` and frees it. A
@@ -1292,7 +1304,7 @@ impl Vm {
             let h = t.handle;
             let log = !ok && !escapes && !self.gathered(h);
             self.end_task(h, ok, result);
-            if log && self.raw_of(h, aw::STATE) == aw::FAILED {
+            if log && self.raw_of_hot(h, aw::STATE) == aw::FAILED {
                 self.note_unretrieved(h);
             }
         }
@@ -1362,8 +1374,8 @@ impl Vm {
     /// `a`'s exception was retrieved.
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn retrieved(&mut self, a: Value) {
-        if self.raw_of(a, aw::STATE) == aw::FAILED {
-            self.set_raw_of(a, aw::MUST_CANCEL, 0);
+        if self.raw_of_hot(a, aw::STATE) == aw::FAILED {
+            self.set_raw_of_hot(a, aw::MUST_CANCEL, 0);
         }
     }
 
@@ -1412,9 +1424,9 @@ impl Vm {
     /// with the message.
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn cancelled_error(&mut self, a: Value) -> Result<Value, Raised> {
-        if self.raw_of(a, aw::MUST_CANCEL) == aw::HELD {
+        if self.raw_of_hot(a, aw::MUST_CANCEL) == aw::HELD {
             let e = self.vslot_hot(a, aw::RESULT);
-            self.set_raw_of(a, aw::MUST_CANCEL, 0);
+            self.set_raw_of_hot(a, aw::MUST_CANCEL, 0);
             if let Some(r) = a.as_obj() {
                 self.set_slot_hot(r, aw::RESULT, Value::NONE);
             }
@@ -1507,8 +1519,8 @@ impl Vm {
     fn arm_sleep(&mut self, a: Value) {
         let delay = self.vslot_hot(a, aw::EXTRA).as_float().unwrap_or(0.0);
         let wake = self.vclock + delay.max(0.0);
-        self.set_raw_of(a, aw::AUX, wake.to_bits());
-        self.set_raw_of(a, aw::STATE, aw::ARMED);
+        self.set_raw_of_hot(a, aw::AUX, wake.to_bits());
+        self.set_raw_of_hot(a, aw::STATE, aw::ARMED);
     }
 
     /// Makes task `i` the running one and returns its registers, starting
@@ -1779,7 +1791,7 @@ impl Vm {
                 };
                 let (h, waited, started) = (t.handle, t.awaiting, t.st.is_some());
                 // A task settled before it ran: free its slot.
-                if i != 0 && !started && self.raw_of(h, aw::STATE) != aw::PENDING {
+                if i != 0 && !started && self.raw_of_hot(h, aw::STATE) != aw::PENDING {
                     self.tasks[i] = None;
                     self.task_hint = self.task_hint.min(i);
                     continue;
@@ -1787,10 +1799,10 @@ impl Vm {
                 // `cancel()` asked for a `CancelledError` at this step.
                 let must = self.must_cancel(h);
                 if must {
-                    self.set_raw_of(h, aw::MUST_CANCEL, 0);
+                    self.set_raw_of_hot(h, aw::MUST_CANCEL, 0);
                     // Woken by a cancelled awaitable (or a gather that one
                     // failed): its own error goes in.
-                    let s = self.raw_of(waited, aw::STATE);
+                    let s = self.raw_of_hot(waited, aw::STATE);
                     if s == aw::CANCELLED
                         || (s == aw::FAILED
                             && self.instance_of(
@@ -1818,7 +1830,7 @@ impl Vm {
                     self.cur = i;
                     let c = self.vslot_hot(h, aw::EXTRA);
                     if c.is_obj_kind(ty::SLEEP as u8) {
-                        self.set_raw_of(c, aw::STATE, aw::SPENT);
+                        self.set_raw_of_hot(c, aw::STATE, aw::SPENT);
                     } else {
                         self.coro_close(c);
                     }
@@ -1872,11 +1884,12 @@ impl Vm {
             for (k, &t) in self.blocked.iter().enumerate() {
                 if let Some(Some(task)) = self.tasks.get(t) {
                     let a = task.awaiting;
-                    if a.is_obj_kind(ty::SLEEP as u8) && self.raw_of(a, aw::STATE) == aw::ARMED {
+                    if a.is_obj_kind(ty::SLEEP as u8) && self.raw_of_hot(a, aw::STATE) == aw::ARMED
+                    {
                         if *hosts.get_or_insert_with(|| !self.pending_ids(true).is_empty()) {
                             continue;
                         }
-                        sleepers.push((f64::from_bits(self.raw_of(a, aw::AUX)), k));
+                        sleepers.push((f64::from_bits(self.raw_of_hot(a, aw::AUX)), k));
                     }
                 }
             }
@@ -2159,7 +2172,7 @@ impl Vm {
         self.burn(all.len() as u64);
         all.retain(|&x| {
             if x.is_obj_kind(ty::GATHER as u8) {
-                return self.raw_of(x, aw::STATE) == aw::PENDING;
+                return self.raw_of_hot(x, aw::STATE) == aw::PENDING;
             }
             match x.as_int().and_then(|t| usize::try_from(t).ok()) {
                 Some(t) => {
@@ -2173,7 +2186,7 @@ impl Vm {
             g
         } else {
             all.push(g);
-            self.alloc_tuple(&all)?
+            self.alloc_tuple_hot(&all)?
         };
         if let Some(r) = c.as_obj() {
             self.set_slot_hot(r, aw::WAITERS, w);
@@ -2767,7 +2780,7 @@ impl Vm {
             if depth > limit {
                 return Err(self.err(T::RecursionError, "maximum recursion depth exceeded"));
             }
-            if self.raw_of(v, aw::STATE) != aw::PENDING {
+            if self.raw_of_hot(v, aw::STATE) != aw::PENDING {
                 continue;
             }
             match v.obj_kind().map(u16::from) {
@@ -2792,7 +2805,7 @@ impl Vm {
                         nodes[k].3 = true;
                     }
                 }
-                Some(ty::GATHER) if self.raw_of(v, aw::AUX) == FIRST => {}
+                Some(ty::GATHER) if self.raw_of_hot(v, aw::AUX) == FIRST => {}
                 Some(ty::GATHER) => {
                     let children = self.vslot_hot(v, aw::EXTRA);
                     let n = self.tuple_len(children);
@@ -2807,7 +2820,7 @@ impl Vm {
                     }
                     work.extend((base..nodes.len()).rev());
                 }
-                Some(ty::FUTURE) if self.raw_of(v, aw::AUX) != STOP_FUTURE => {
+                Some(ty::FUTURE) if self.raw_of_hot(v, aw::AUX) != STOP_FUTURE => {
                     // A future reached twice counts twice: room to spare.
                     if self.pays_at_settle(v) || !self.live(v) {
                         callbacks = callbacks.saturating_add(self.done_callbacks(v));
@@ -2821,12 +2834,12 @@ impl Vm {
         }
         for &k in &order {
             let (v, _, _, passes_on) = nodes[k];
-            let pending = self.raw_of(v, aw::STATE) == aw::PENDING;
+            let pending = self.raw_of_hot(v, aw::STATE) == aw::PENDING;
             let took = match v.obj_kind().map(u16::from) {
                 Some(ty::TASK) if pending => {
-                    let n = self.raw_of(v, aw::CANCELS);
+                    let n = self.raw_of_hot(v, aw::CANCELS);
                     if n & aw::COUNT != aw::COUNT {
-                        self.set_raw_of(v, aw::CANCELS, n + 1);
+                        self.set_raw_of_hot(v, aw::CANCELS, n + 1);
                     }
                     // A task whose waiter is not in the tree raises at its
                     // next step.
@@ -2835,14 +2848,14 @@ impl Vm {
                     }
                     true
                 }
-                Some(ty::GATHER) if pending && self.raw_of(v, aw::AUX) == FIRST => {
+                Some(ty::GATHER) if pending && self.raw_of_hot(v, aw::AUX) == FIRST => {
                     // `as_completed`'s and `wait_for`'s waiter future.
                     self.untrack_gather(v);
                     self.settle_cancelled(v, msg, Value::NONE);
                     true
                 }
-                Some(ty::FUTURE) if pending && self.raw_of(v, aw::AUX) != STOP_FUTURE => {
-                    let id = self.raw_of(v, aw::AUX);
+                Some(ty::FUTURE) if pending && self.raw_of_hot(v, aw::AUX) != STOP_FUTURE => {
+                    let id = self.raw_of_hot(v, aw::AUX);
                     self.settle_cancelled(v, msg, Value::NONE);
                     if id < STOP_FUTURE {
                         // The host call it stands for is abandoned.
@@ -2850,7 +2863,9 @@ impl Vm {
                     }
                     true
                 }
-                Some(ty::SLEEP) if self.raw_of(v, aw::STATE) == aw::ARMED && !self.sleep_due(v) => {
+                Some(ty::SLEEP)
+                    if self.raw_of_hot(v, aw::STATE) == aw::ARMED && !self.sleep_due(v) =>
+                {
                     self.settle_cancelled(v, msg, Value::NONE);
                     true
                 }
@@ -2871,9 +2886,9 @@ impl Vm {
             }
         }
         for &(v, _, _, took) in &nodes {
-            if took && v.is_obj_kind(ty::GATHER as u8) && self.raw_of(v, aw::AUX) != FIRST {
-                let f = self.raw_of(v, aw::FAILS);
-                self.set_raw_of(v, aw::FAILS, f | aw::CANCEL_REQUESTED);
+            if took && v.is_obj_kind(ty::GATHER as u8) && self.raw_of_hot(v, aw::AUX) != FIRST {
+                let f = self.raw_of_hot(v, aw::FAILS);
+                self.set_raw_of_hot(v, aw::FAILS, f | aw::CANCEL_REQUESTED);
             }
         }
         Ok(nodes[0].3)
