@@ -278,6 +278,58 @@ print(out, len(base))
     assert_eq!(restored, "['ok', 'ok', 'ok', 'ok'] 200000\n");
 }
 
+/// Callbacks registered on pending loop futures grow the run queue
+/// ahead of their settle (`Vm::queue_spare`); a restore that did not give
+/// the queue that room back left a restored session less of it than the
+/// one that went on, so after the program filled memory the settles raised
+/// `MemoryError` (after 71 futures at 3.2 MiB [M, reviewer]) where the
+/// unparked run settles all 2,000 and runs their 20,000 callbacks. A
+/// restore at every park must print the same.
+#[test]
+fn a_restored_run_queue_keeps_the_room_of_loop_future_callbacks() {
+    let src = "\
+import asyncio
+await asyncio.sleep(0)
+loop = asyncio.get_running_loop()
+ran = 0
+def cb(f):
+    global ran
+    ran += 1
+fs = [loop.create_future() for _ in range(2000)]
+for f in fs:
+    for _ in range(10):
+        f.add_done_callback(cb)
+pad = []
+try:
+    while True:
+        pad.append(bytearray(4096))
+except MemoryError:
+    del pad[-4:]
+settled = 0
+try:
+    for f in fs:
+        f.set_result(1)
+        settled += 1
+except MemoryError:
+    pass
+await asyncio.sleep(0)
+pad = None
+print(settled, ran)
+";
+    let e = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(3_355_443)));
+    let out = Arc::new(Mutex::new(String::new()));
+    let mut s = Session::new(&e).expect("session");
+    attach(&mut s, &out);
+    let p = s.start(&e.compile(src, "hint.py").expect("compiles"));
+    let want = (out.lock().expect("output lock").clone(), outcome(&p));
+    assert_eq!(want.0, "2000 20000\n", "unparked");
+    for slice in [147_000, 167_000] {
+        let (text, end, parks) = hopping_in(&e, src, "hint.py", slice, 1);
+        assert!(parks > 0, "{slice}: {parks} parks");
+        assert_eq!((text, end), want, "restored at every park of {slice}");
+    }
+}
+
 /// Whether an operation that ran out of memory runs again after a
 /// collection must not depend on the host's snapshots: the retry needs
 /// 1 MiB allocated since the last collection (`Vm::oom_retry_if`), and a

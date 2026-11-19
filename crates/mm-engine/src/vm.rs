@@ -788,6 +788,13 @@ pub struct Vm {
     /// Done callbacks registered on pending awaitables: run-queue slots
     /// reserved for them.
     pub(crate) cb_slots: usize,
+    /// The run-queue room the queue's callbacks and the gathers' pending
+    /// notifications take: the entries of `ready` that are not a task's
+    /// step, plus each tracked gather's `LEFT`. Kept as they change, so a
+    /// reservation reads it instead of walking the queue and every
+    /// gather's children (`Vm::callback_slots`); not in the image, which
+    /// holds both terms: a restore counts it (`Vm::count_callback_queue`).
+    pub(crate) callback_queue: usize,
     /// Tasks named so far (`Task-N`), across cells as CPython's counter.
     pub(crate) task_counter: u64,
     /// Names the program gave tasks: a dict from task to name, or `None`.
@@ -1129,6 +1136,7 @@ impl Vm {
             iter_open: false,
             stop_wait: 0,
             cb_slots: 0,
+            callback_queue: 0,
             task_counter: 0,
             task_names: Value::NONE,
             context: Value::NONE,
@@ -1648,6 +1656,13 @@ impl Vm {
             Some(T::list) if n.name() == "append" => true,
             Some(T::set) if n.name() == "add" => true,
             Some(T::dict) => n.name() == "fromkeys",
+            // A loop future's settle and any awaitable's cancel reserve the
+            // run-queue room of everything they will queue before anything
+            // changes (`Vm::settle_pending`, `Vm::cancel_tree`), and run no
+            // user code: they raise `MemoryError` with nothing changed.
+            Some(T::Future) => matches!(n.name(), "set_result" | "cancel"),
+            Some(T::Task | T::GatheringFuture) => n.name() == "cancel",
+            None if n.module() == Some("_mm") => n.name() == "aio_set",
             Some(T::set) => matches!(
                 n.name(),
                 "union" | "intersection" | "difference" | "symmetric_difference"

@@ -4203,3 +4203,55 @@ for kind in ['queue', 'condition', 'semaphore', 'lock']:
          lock ['MemoryError at main', 'big ran', 'second locked'] 0 False 0 False\n"
     );
 }
+
+/// A task's cancel that cannot be passed to the future it awaits for lack
+/// of room (`block_current`): F, a loop future from an earlier cell (whose
+/// end released the queue's capacity), has 60,000 done callbacks whose room
+/// its settle must reserve, and about 900 KB are free. The task keeps its
+/// cancel and is woken: it ends cancelled, as python3.14's `Task.__step`
+/// ends one when `fut.cancel()` returns `False`. F stays pending and is
+/// settled later, its other waiter gets the result and every callback runs.
+#[test]
+fn a_cancel_with_no_room_to_pass_on_cancels_the_task_and_leaves_the_future() {
+    let fill = LEAVE_FREE.replace("{free}", "900_000");
+    let second = format!(
+        "\
+import asyncio
+import gc
+other = []
+async def other_waiter():
+    other.append(await F)
+async def victim():
+    asyncio.current_task().cancel()
+    await F
+o = asyncio.create_task(other_waiter())
+await asyncio.sleep(0)
+t = asyncio.create_task(victim())
+{fill}await asyncio.sleep(0)
+await asyncio.sleep(0)
+pad = None
+gc.collect()
+state = (t.done(), t.cancelled(), F.done())
+F.set_result(5)
+await asyncio.sleep(0)
+await asyncio.sleep(0)
+print(state, other, len(seen), set(seen))
+"
+    );
+    let first = "\
+import asyncio
+await asyncio.sleep(0)
+loop = asyncio.get_running_loop()
+F = loop.create_future()
+seen = []
+def cb(f):
+    seen.append(f.result())
+for _ in range(60_000):
+    F.add_done_callback(cb)
+";
+    let runs = run_cells(Limits::new().with_memory(8 << 20), &[first, &second]);
+    assert!(matches!(runs[0].0, Progress::Complete(_)), "{runs:?}");
+    let (p, out) = &runs[1];
+    assert!(matches!(p, Progress::Complete(_)), "{p:?} {out}");
+    assert_eq!(out, "(True, True, False) [5] 60000 {5}\n");
+}

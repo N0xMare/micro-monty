@@ -788,6 +788,7 @@ impl Vm {
         put_bool(out, self.iter_open);
         put_u32(out, self.stop_wait);
         put_len(out, self.cb_slots);
+        put_len(out, self.queue_spare());
         put_u64(out, self.task_counter);
         put_value(out, self.task_names);
         put_value(out, self.context);
@@ -2012,6 +2013,7 @@ impl Vm {
         let iter_open = need(r.bool(), "run queue")?;
         let stop_wait = need(r.u32(), "run queue")?;
         let cb_slots = read_index(r, "run queue")?;
+        let spare = read_index(r, "run queue")?;
         let task_counter = need(r.u64(), "run queue")?;
         let task_names = need(r.value(), "run queue")?;
         let context = need(r.value(), "run queue")?;
@@ -2251,6 +2253,7 @@ impl Vm {
             iter_open,
             stop_wait,
             cb_slots,
+            callback_queue: 0,
             task_counter,
             task_names,
             context,
@@ -2327,13 +2330,17 @@ impl Vm {
             vm.oom_rerun = vm.op_stamp();
         }
         vm.oom_rerun_at = rerun_at;
+        // Both of its terms are in the image (the queue, the gathers' LEFT).
+        vm.callback_queue = vm.count_callback_queue();
         vm.reserve_code(u64::from(n_ics) * size_of::<crate::vm::Ic>() as u64)
             .map_err(|_| SnapError::TooLarge)?;
         vm.ics
             .try_reserve_exact(ics_len)
             .map_err(|_| SnapError::TooLarge)?;
         vm.ics.resize(ics_len, crate::vm::Ic::Empty);
-        vm.reserve_scheduler(ntasks, ngathers, 0)
+        // The queue's spare room too: a restored queue grows as the running
+        // one would (`Vm::queue_spare`).
+        vm.reserve_scheduler(ntasks, ngathers, spare)
             .map_err(|_| SnapError::TooLarge)?;
         if check {
             check_steps(&vm)?;

@@ -1453,6 +1453,11 @@ differs:
   main task's `await` (inside `asyncio.run`, at its main coroutine's
   `await`, or from `asyncio.run` itself once that coroutine has returned).
   Free memory and await again, and it runs. CPython would complete there.
+- A loop future's done callbacks take their queue room when it settles:
+  `set_result`, `set_exception` and `cancel` (of a future, or of a task or
+  gather that cancels one) reserve it first, and with no room left raise
+  `MemoryError` with nothing changed, where CPython completes. Free memory
+  and settle it again.
 - An unfinished async generator is never finalized; use
   `contextlib.aclosing`. Coroutines have no `cr_frame`, `cr_await` or
   `cr_code`.

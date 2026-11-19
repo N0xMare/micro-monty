@@ -2485,8 +2485,18 @@ bound owned capacities, not an allocator's transient peak or process RSS.
   storage is reserved up front so unwinding does not allocate.
 - **Scheduler.** Task, future and gather tables and the blocked and ready
   queues. Registration reserves room for every task wakeup and gather
-  callback before it can become pending, so settling and unwinding need no
-  queue allocation. Host futures use an id-sorted vector with logarithmic
+  callback before it can become pending, and for the done callbacks of a
+  task, gather or host future, which settle where nothing may fail, so
+  settling and unwinding them need no queue allocation. A loop future
+  (`asyncio.Future`), which only the program settles and which can outlive
+  its cell, reserves for its done callbacks when it settles, and a cancel
+  for everything its tree will queue, in one reservation before anything
+  changes: no room raises `MemoryError` with nothing changed. So a
+  program that fills memory and then settles such a future gets that
+  `MemoryError` at `set_result` where CPython completes: a loud failure,
+  never a dropped callback. The room
+  already taken is a count kept as entries are queued and taken, not a
+  walk of the queue. Host futures use an id-sorted vector with logarithmic
   lookup, keeping settled ids until the cell ends. Cell end releases
   scheduler capacities.
 - **Instance shapes.** Shape tables, name lists and transition buffers.

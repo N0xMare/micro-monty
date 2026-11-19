@@ -491,6 +491,12 @@ impl Vm {
         if let Some(r) = v.as_obj() {
             self.set_slot(r, aw::WAITERS, Value::NONE);
         }
+        // Whether the callbacks' room is in `cb_slots`: not a loop future's
+        // (reserved by its settle), nor an earlier cell's task or host
+        // future's (released with that cell; a cancel reserves it). A gather
+        // settles only in its own cell: an earlier cell's `FIRST` waiter
+        // future holds task wakeups only.
+        let held = !self.pays_at_settle(v) && (v.is_obj_kind(ty::GATHER as u8) || self.live(v));
         let single = !waiters.is_obj_kind(ty::TUPLE as u8);
         let n = if waiters == Value::NONE {
             0
@@ -517,8 +523,11 @@ impl Vm {
             }
             if !g.is_obj_kind(ty::GATHER as u8) {
                 // `add_done_callback`: called soon with the awaitable.
-                self.cb_slots = self.cb_slots.saturating_sub(1);
+                if held {
+                    self.cb_slots = self.cb_slots.saturating_sub(1);
+                }
                 self.ready.push_back(Ready::Call(g, v));
+                self.callback_queue += 1;
                 continue;
             }
             // Gathers dropped with their `asyncio.run` no longer listen.
@@ -528,12 +537,17 @@ impl Vm {
             if was_pending {
                 let left = self.raw_of(g, aw::LEFT);
                 self.set_raw_of(g, aw::LEFT, left.saturating_sub(1));
+                // The notification it waited for is now in the queue.
+                if left != 0 {
+                    self.callback_queue -= 1;
+                }
                 if !ok {
                     let f = self.raw_of(g, aw::FAILS);
                     self.set_raw_of(g, aw::FAILS, f | aw::FAILED_CHILD);
                 }
             }
             self.ready.push_back(Ready::Gather(g));
+            self.callback_queue += 1;
         }
     }
 
@@ -968,23 +982,47 @@ impl Vm {
     /// child references overestimate pending notifications, never undercount.
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn callback_slots(&self) -> usize {
+        debug_assert_eq!(
+            self.callback_queue,
+            self.count_callback_queue(),
+            "callback_queue out of step"
+        );
+        self.callback_queue.saturating_add(self.cb_slots)
+    }
+
+    /// The run queue's room beyond what a reservation needs for the tasks
+    /// and the callbacks that hold room (`callback_slots`): what callbacks
+    /// registered on pending loop futures grew it by, less what their
+    /// settles have taken. Part of the image, and reserved again by the
+    /// restore, so a restored session has the room the running one had.
+    pub(crate) fn queue_spare(&self) -> usize {
+        self.ready
+            .capacity()
+            .saturating_sub(self.tasks.capacity().saturating_add(self.callback_slots()))
+    }
+
+    /// [`Vm::callback_queue`] counted: the queue's entries that are not a
+    /// task's step, and the notifications each tracked gather still waits
+    /// for (one per distinct pending child, `LEFT`).
+    pub(crate) fn count_callback_queue(&self) -> usize {
         let queued = self
             .ready
             .iter()
             .filter(|r| !matches!(r, Ready::Task(_)))
-            .count()
-            .saturating_add(self.cb_slots);
+            .count();
         self.gathers.iter().fold(queued, |n, &g| {
-            let children = self.vslot(g, aw::EXTRA);
-            n.saturating_add(
-                (0..self.tuple_len(children))
-                    .filter(|&k| {
-                        let c = self.vslot(children, u32::try_from(k).unwrap_or(0));
-                        self.raw_of(c, aw::STATE) == aw::PENDING
-                    })
-                    .count(),
-            )
+            n.saturating_add(usize::try_from(self.raw_of(g, aw::LEFT)).unwrap_or(usize::MAX))
         })
+    }
+
+    /// Takes tracked gather `g` out of `gathers`, with its notifications
+    /// from [`Vm::callback_queue`].
+    fn untrack_gather(&mut self, g: Value) {
+        if let Some(k) = self.gathers.iter().position(|&x| x == g) {
+            self.gathers.remove(k);
+            let left = usize::try_from(self.raw_of(g, aw::LEFT)).unwrap_or(usize::MAX);
+            self.callback_queue = self.callback_queue.saturating_sub(left);
+        }
     }
 
     /// Reserve all possible wakeups before registering work. Settling and
@@ -1076,6 +1114,7 @@ impl Vm {
         self.ready.clear();
         self.blocked.clear();
         self.gathers.clear();
+        self.callback_queue = 0;
         self.iter_left = 0;
         self.iter_open = false;
         self.stop_wait = 0;
@@ -1153,6 +1192,7 @@ impl Vm {
         self.ready.clear();
         self.blocked.clear();
         self.gathers.clear();
+        self.callback_queue = 0;
         self.iter_left = 0;
         self.iter_open = false;
         self.stop_wait = 0;
@@ -1572,7 +1612,7 @@ impl Vm {
         }
         if self.raw_of(g, aw::AUX) == FIRST {
             if let Some(c) = self.first_done(g) {
-                self.gathers.retain(|&x| x != g);
+                self.untrack_gather(g);
                 self.settle(g, true, c);
             }
             return;
@@ -1596,13 +1636,13 @@ impl Vm {
                 }
             }
             if let Some((_, c)) = first {
-                self.gathers.retain(|&x| x != g);
+                self.untrack_gather(g);
                 let e = self.child_error(c);
                 self.settle(g, false, e);
                 return;
             }
         }
-        self.gathers.retain(|&x| x != g);
+        self.untrack_gather(g);
         if flags & aw::CANCEL_REQUESTED != 0 {
             // `gather(..., return_exceptions=True)` cancelled still raises:
             // CPython's `_make_cancelled_error()` of the last child.
@@ -1682,6 +1722,9 @@ impl Vm {
             }
             if let Some(entry) = self.ready.pop_front() {
                 self.iter_left = self.iter_left.saturating_sub(1);
+                if !matches!(entry, Ready::Task(_)) {
+                    self.callback_queue -= 1;
+                }
                 // Whether this entry is the retry after a start that waited
                 // for a collection (`Vm::start_failed`).
                 let retry = self.loop_flags & crate::vm::LOOP_START_WAIT != 0;
@@ -2086,10 +2129,12 @@ impl Vm {
             };
             self.reserve_scheduler(self.tasks.len(), capacity, children.len())?;
             self.gathers.push(g);
+            self.callback_queue += usize::try_from(left).unwrap_or(usize::MAX);
             // Done callbacks added to settled children run soon.
             for &c in &children {
                 if self.raw_of(c, aw::STATE) != aw::PENDING {
                     self.ready.push_back(Ready::Gather(g));
+                    self.callback_queue += 1;
                 }
             }
         }
@@ -2141,9 +2186,31 @@ impl Vm {
     #[cfg(feature = "asyncio")]
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn add_done_callback(&mut self, fut: Value, f: Value) -> Result<(), Raised> {
+        let pending = self.raw_of(fut, aw::STATE) == aw::PENDING;
+        if pending && self.pays_at_settle(fut) {
+            // The settle reserves this callback's room; the queue grows by
+            // one past its spare room now if it can, while the heap has not
+            // yet committed the segments the program goes on to fill, which
+            // a collection does not give back. Without it, 3.5% fewer
+            // callbacks could be registered and run at 16 MiB [M]. The
+            // spare room is in the image (`Vm::queue_spare`), so a restored
+            // queue grows as the running one would.
+            let exc = self.exc;
+            let want = self.queue_spare().saturating_add(1);
+            if self
+                .reserve_scheduler(self.tasks.len(), self.gathers.len(), want)
+                .is_err()
+            {
+                self.heap.take_refused();
+                self.exc = exc;
+            }
+            self.add_waiter(fut, f)?;
+            return Ok(());
+        }
         self.reserve_scheduler(self.tasks.len(), self.gathers.len(), 1)?;
-        if self.raw_of(fut, aw::STATE) != aw::PENDING {
+        if !pending {
             self.ready.push_back(Ready::Call(f, fut));
+            self.callback_queue += 1;
             return Ok(());
         }
         self.add_waiter(fut, f)?;
@@ -2194,7 +2261,11 @@ impl Vm {
         if let Some(r) = fut.as_obj() {
             self.set_slot(r, aw::WAITERS, w);
         }
-        self.cb_slots = self.cb_slots.saturating_sub(n);
+        // Only room this cell reserved goes back: a loop future holds none,
+        // and an earlier cell's awaitable lost its room with that cell.
+        if !self.pays_at_settle(fut) && self.live(fut) {
+            self.cb_slots = self.cb_slots.saturating_sub(n);
+        }
         Ok(n)
     }
 
@@ -2205,6 +2276,7 @@ impl Vm {
     pub(crate) fn call_soon(&mut self, h: Value) -> Result<(), Raised> {
         self.reserve_scheduler(self.tasks.len(), self.gathers.len(), 1)?;
         self.ready.push_back(Ready::Handle(h));
+        self.callback_queue += 1;
         Ok(())
     }
 
@@ -2222,6 +2294,7 @@ impl Vm {
             return Err(self.err(T::MemoryError, "scheduler allocation failed"));
         }
         self.ready.push_front(Ready::Handle(h));
+        self.callback_queue += 1;
         self.iter_left += 1;
         Ok(())
     }
@@ -2525,7 +2598,11 @@ impl Vm {
             self.gathers.capacity()
         };
         self.reserve_scheduler(self.tasks.len(), capacity, items.len())?;
+        // Every item is pending and holds one waiter entry per place it
+        // has in `items`: what the gather waits for (`callback_queue`).
+        self.set_raw_of(g, aw::LEFT, items.len() as u64);
         self.gathers.push(g);
+        self.callback_queue += items.len();
         Ok(g)
     }
 
@@ -2568,7 +2645,7 @@ impl Vm {
         v.is_obj_kind(ty::FUTURE as u8) && self.raw_of(v, aw::AUX) == LOOP_FUTURE
     }
 
-    /// Settles a pending awaitable; `false` if it was already done, and
+    /// Settles a pending loop future; `false` if it was already done, and
     /// `MemoryError`, with nothing changed, if its callbacks have no room.
     #[cfg(feature = "asyncio")]
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
@@ -2576,37 +2653,55 @@ impl Vm {
         if self.raw_of(a, aw::STATE) != aw::PENDING {
             return Ok(false);
         }
-        self.reserve_done_callbacks(a)?;
+        let k = self.done_callbacks(a);
+        if k != 0 {
+            self.reserve_scheduler(self.tasks.len(), self.gathers.len(), k)?;
+        }
         self.settle(a, ok, v);
         Ok(true)
     }
 
-    /// Reserves run-queue room for the done callbacks of loop future `a`
-    /// before the program settles it. `cb_slots` holds the room of the
-    /// callbacks registered on pending awaitables in this cell, so it
-    /// covers every callback of a future of this cell. A future kept in
-    /// globals from an earlier cell holds callbacks whose room ended with
-    /// that cell (`end_cell`); settling it queues them all, so what
-    /// `cb_slots` cannot cover is reserved here. A settle that queues more
-    /// than `cb_slots` covers takes room from other futures' callbacks,
-    /// which reserve it again when they settle.
-    #[cfg(feature = "asyncio")]
-    fn reserve_done_callbacks(&mut self, a: Value) -> Result<(), Raised> {
+    /// Whether `a`'s done callbacks get their run-queue room when it
+    /// settles rather than when they are registered: a loop future, which
+    /// only the program settles (`set_result`, `cancel`), so its settle can
+    /// raise `MemoryError`, and which can outlive its cell. Tasks, gathers
+    /// and host futures settle where nothing may fail (a task's end, a
+    /// host's answer), so their callbacks' room is reserved as they register
+    /// and held in `cb_slots` until the cell ends.
+    fn pays_at_settle(&self, a: Value) -> bool {
+        a.is_obj_kind(ty::FUTURE as u8) && self.raw_of(a, aw::AUX) >= STOP_FUTURE
+    }
+
+    /// Whether awaitable `a` belongs to the running cell: a task in the task
+    /// table, a gather the scheduler tracks, a host future whose call is
+    /// pending in this cell (call ids are never reused in a session). One
+    /// from an earlier cell holds no run-queue room: `end_cell` released
+    /// it with `cb_slots`.
+    fn live(&self, a: Value) -> bool {
+        match a.obj_kind().map(u16::from) {
+            Some(ty::TASK) => self.task_index(a).is_some(),
+            Some(ty::GATHER) => self.gathers.contains(&a),
+            Some(ty::FUTURE) => {
+                let id = self.raw_of(a, aw::AUX);
+                matches!(self.futures.binary_search_by_key(&id, |&(id, _)| id),
+                    Ok(i) if self.futures[i].1 == a)
+            }
+            _ => false,
+        }
+    }
+
+    /// How many done callbacks wait on `a` (its waiters that are neither a
+    /// task's wakeup nor a gather), counted in place.
+    fn done_callbacks(&self, a: Value) -> usize {
         let w = self.vslot(a, aw::WAITERS);
         let callable = |x: Value| x.as_int().is_none() && !x.is_obj_kind(ty::GATHER as u8);
-        // Counted in place: the waiters are guest-sized, so no copy.
-        let k = if w.is_obj_kind(ty::TUPLE as u8) {
+        if w.is_obj_kind(ty::TUPLE as u8) {
             (0..self.tuple_len(w))
                 .filter(|&i| callable(self.vslot(w, u32::try_from(i).unwrap_or(0))))
                 .count()
         } else {
             usize::from(w != Value::NONE && callable(w))
-        };
-        let uncovered = k.saturating_sub(self.cb_slots);
-        if uncovered == 0 {
-            return Ok(());
         }
-        self.reserve_scheduler(self.tasks.len(), self.gathers.len(), uncovered)
     }
 
     /// The pending awaitable state as `asyncio.Future` reports it: 0
@@ -2636,33 +2731,47 @@ impl Vm {
     /// Iterative: the awaitables reached, in CPython's call order with
     /// their parents, act first; then the results flow back to them.
     /// `false` if nothing took the cancel.
+    ///
+    /// Two passes: the first walks the tree and changes nothing, counting
+    /// the done callbacks the settles will queue whose room is not held
+    /// (a loop future's, an earlier cell's); one reservation pays for them
+    /// all, and only then the second acts. So a cancel that raises
+    /// (`MemoryError`, `RecursionError`) has changed nothing, and its cost
+    /// is linear in the tree.
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn cancel_tree(&mut self, root: Value, msg: Value) -> Result<bool, Raised> {
-        // (awaitable, parent index, depth, cancelled)
+        // (awaitable, parent index, depth, took the cancel)
         let mut nodes: Vec<(Value, usize, u32, bool)> = Vec::new();
         let mut work: Vec<usize> = Vec::new();
-        let grow = |nodes: &mut Vec<(Value, usize, u32, bool)>, work: &mut Vec<usize>, n: usize| {
-            nodes.try_reserve(n).is_ok() && work.try_reserve(n).is_ok()
+        // The nodes in the order they act.
+        let mut order: Vec<usize> = Vec::new();
+        let grow = |nodes: &mut Vec<(Value, usize, u32, bool)>,
+                    work: &mut Vec<usize>,
+                    order: &mut Vec<usize>,
+                    n: usize| {
+            nodes.try_reserve(n).is_ok()
+                && work.try_reserve(n).is_ok()
+                && order.try_reserve(n).is_ok()
         };
-        if !grow(&mut nodes, &mut work, 1) {
+        if !grow(&mut nodes, &mut work, &mut order, 1) {
             return Err(self.err(T::MemoryError, "cancel allocation failed"));
         }
         nodes.push((root, usize::MAX, 0, false));
         work.push(0);
         let limit = self.recursion_limit;
+        let mut callbacks = 0usize;
         while let Some(k) = work.pop() {
+            order.push(k);
             let (v, _, depth, _) = nodes[k];
             self.burn(1);
             if depth > limit {
                 return Err(self.err(T::RecursionError, "maximum recursion depth exceeded"));
             }
-            let pending = self.raw_of(v, aw::STATE) == aw::PENDING;
-            let took = match v.obj_kind().map(u16::from) {
-                Some(ty::TASK) if pending => {
-                    let n = self.raw_of(v, aw::CANCELS);
-                    if n & aw::COUNT != aw::COUNT {
-                        self.set_raw_of(v, aw::CANCELS, n + 1);
-                    }
+            if self.raw_of(v, aw::STATE) != aw::PENDING {
+                continue;
+            }
+            match v.obj_kind().map(u16::from) {
+                Some(ty::TASK) => {
                     // What it waits on now (`_fut_waiter`): nothing while it
                     // runs or before it starts.
                     let w = self
@@ -2674,41 +2783,66 @@ impl Vm {
                         w.obj_kind().map(u16::from),
                         Some(ty::TASK | ty::FUTURE | ty::GATHER | ty::SLEEP)
                     ) {
-                        if !grow(&mut nodes, &mut work, 1) {
+                        if !grow(&mut nodes, &mut work, &mut order, 1) {
                             return Err(self.err(T::MemoryError, "cancel allocation failed"));
                         }
                         work.push(nodes.len());
                         nodes.push((w, k, depth + 1, false));
-                    } else {
+                        // Until the second pass: it passes the cancel on.
+                        nodes[k].3 = true;
+                    }
+                }
+                Some(ty::GATHER) if self.raw_of(v, aw::AUX) == FIRST => {}
+                Some(ty::GATHER) => {
+                    let children = self.vslot(v, aw::EXTRA);
+                    let n = self.tuple_len(children);
+                    if !grow(&mut nodes, &mut work, &mut order, n) {
+                        return Err(self.err(T::MemoryError, "cancel allocation failed"));
+                    }
+                    // Pushed last first, so they act in order.
+                    let base = nodes.len();
+                    for i in 0..n {
+                        let c = self.vslot(children, u32::try_from(i).unwrap_or(0));
+                        nodes.push((c, k, depth + 1, false));
+                    }
+                    work.extend((base..nodes.len()).rev());
+                }
+                Some(ty::FUTURE) if self.raw_of(v, aw::AUX) != STOP_FUTURE => {
+                    // A future reached twice counts twice: room to spare.
+                    if self.pays_at_settle(v) || !self.live(v) {
+                        callbacks = callbacks.saturating_add(self.done_callbacks(v));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if callbacks != 0 {
+            self.reserve_scheduler(self.tasks.len(), self.gathers.len(), callbacks)?;
+        }
+        for &k in &order {
+            let (v, _, _, passes_on) = nodes[k];
+            let pending = self.raw_of(v, aw::STATE) == aw::PENDING;
+            let took = match v.obj_kind().map(u16::from) {
+                Some(ty::TASK) if pending => {
+                    let n = self.raw_of(v, aw::CANCELS);
+                    if n & aw::COUNT != aw::COUNT {
+                        self.set_raw_of(v, aw::CANCELS, n + 1);
+                    }
+                    // A task whose waiter is not in the tree raises at its
+                    // next step.
+                    if !passes_on {
                         self.set_must_cancel(v, msg);
                     }
                     true
                 }
                 Some(ty::GATHER) if pending && self.raw_of(v, aw::AUX) == FIRST => {
                     // `as_completed`'s and `wait_for`'s waiter future.
-                    self.gathers.retain(|&x| x != v);
+                    self.untrack_gather(v);
                     self.settle_cancelled(v, msg, Value::NONE);
                     true
                 }
-                Some(ty::GATHER) if pending => {
-                    let children = self.tuple_items(self.vslot(v, aw::EXTRA));
-                    if !grow(&mut nodes, &mut work, children.len()) {
-                        return Err(self.err(T::MemoryError, "cancel allocation failed"));
-                    }
-                    // Pushed last first, so they act in order.
-                    let base = nodes.len();
-                    for &c in &children {
-                        nodes.push((c, k, depth + 1, false));
-                    }
-                    work.extend((base..nodes.len()).rev());
-                    false
-                }
                 Some(ty::FUTURE) if pending && self.raw_of(v, aw::AUX) != STOP_FUTURE => {
                     let id = self.raw_of(v, aw::AUX);
-                    #[cfg(feature = "asyncio")]
-                    if id == LOOP_FUTURE {
-                        self.reserve_done_callbacks(v)?;
-                    }
                     self.settle_cancelled(v, msg, Value::NONE);
                     if id < STOP_FUTURE {
                         // The host call it stands for is abandoned.
@@ -2963,6 +3097,9 @@ impl Vm {
     /// tried once more; `None` then. A second failure (`waited`) raises the
     /// error in the main task at its `await` ([`Vm::raise_at_main`]).
     fn start_failed(&mut self, entry: Ready, waited: bool) -> Option<Next> {
+        if !matches!(entry, Ready::Task(_)) {
+            self.callback_queue += 1;
+        }
         self.ready.push_front(entry);
         self.iter_left += 1;
         if !waited && self.exc_type(self.exc) == T::MemoryError && self.room_may_help() {
@@ -3082,7 +3219,13 @@ impl Vm {
                 self.escape = e;
             }
             if requeued {
-                self.ready.pop_front();
+                if self
+                    .ready
+                    .pop_front()
+                    .is_some_and(|r| !matches!(r, Ready::Task(_)))
+                {
+                    self.callback_queue -= 1;
+                }
                 self.iter_left = self.iter_left.saturating_sub(1);
             }
             return None;
