@@ -1656,13 +1656,44 @@ impl Vm {
             Some(T::list) if n.name() == "append" => true,
             Some(T::set) if n.name() == "add" => true,
             Some(T::dict) => n.name() == "fromkeys",
-            // A loop future's settle and any awaitable's cancel reserve the
-            // run-queue room of everything they will queue before anything
-            // changes (`Vm::settle_pending`, `Vm::cancel_tree`), and run no
-            // user code: they raise `MemoryError` with nothing changed.
-            Some(T::Future) => matches!(n.name(), "set_result" | "cancel"),
-            Some(T::Task | T::GatheringFuture) => n.name() == "cancel",
-            None if n.module() == Some("_mm") => n.name() == "aio_set",
+            // The asyncio natives that run no user code and change nothing
+            // before what they allocate (an awaitable, a waiters tuple, a
+            // name, a list) or reserve (run-queue room: a loop future's
+            // settle and any awaitable's cancel reserve that of everything
+            // they will queue first, `Vm::settle_pending`,
+            // `Vm::cancel_tree`), so a guest that freed memory can sleep,
+            // make a future, queue a callback and settle again (the start
+            // rule's "free memory and await again"). Not `create_task`,
+            // `gather`, `_mm.aio_spawn_internal`, `_mm.aio_first`,
+            // `current_task`, `_mm.aio_unretrieved` or `_mm.aio_main_end`:
+            // each takes a task number or slot, queues, registers or takes
+            // something before an allocation that can fail. Not `result()`
+            // or `exception()` either: they raise the future's own
+            // exception, which may be a `MemoryError` that no collection
+            // changes.
+            Some(T::Future | T::Task | T::GatheringFuture)
+                if matches!(
+                    n.name(),
+                    "cancel" | "add_done_callback" | "remove_done_callback"
+                ) =>
+            {
+                true
+            }
+            Some(T::Future) => n.name() == "set_result",
+            Some(T::Task) => matches!(n.name(), "get_name" | "set_name"),
+            None if n.module() == Some("_mm") => matches!(
+                n.name(),
+                "aio_set"
+                    | "aio_set_exc"
+                    | "aio_future"
+                    | "aio_deadline"
+                    | "aio_soon"
+                    | "aio_stop"
+                    | "aio_all_tasks"
+                    | "aio_tasks"
+                    | "aio_name_set"
+            ),
+            None if n.module() == Some("asyncio") => n.name() == "sleep",
             Some(T::set) => matches!(
                 n.name(),
                 "union" | "intersection" | "difference" | "symmetric_difference"

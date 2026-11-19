@@ -1531,6 +1531,17 @@ differs:
   main task's `await` (inside `asyncio.run`, at its main coroutine's
   `await`, or from `asyncio.run` itself once that coroutine has returned).
   Free memory and await again, and it runs. CPython would complete there.
+  When the collection frees what earlier callbacks left behind, the start
+  succeeds and the `await` returns normally, but each such collection is
+  charged (a unit per 64 bytes of the memory limit), so a long queue run
+  near the limit can cost far more fuel than the same queue with room;
+  when it frees nothing, every `await` raises until memory is dropped.
+  Which of the two a program meets moves with the heap's layout.
+  `asyncio.sleep`, `loop.create_future()`, `call_soon`'s queueing,
+  `add_done_callback` and settling a future wait for a collection after
+  `MemoryError` and run once more, so they succeed after `pad = None`
+  without `gc.collect()`; `create_task`, `gather` and making an `Event`,
+  `Lock` or `Queue` do not, so call `gc.collect()` first.
 - A loop future's done callbacks take their queue room when it settles:
   `set_result`, `set_exception` and `cancel` (of a future, or of a task or
   gather that cancels one) reserve it first, and with no room left raise

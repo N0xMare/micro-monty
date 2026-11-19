@@ -1581,8 +1581,27 @@ guest code between them as an instruction's retry after `MemoryError` is
 image, so a park or a restore inside it resumes it), and tries once more.
 A second failure raises `MemoryError` in the main task at its `await`,
 where the guest can catch it, free memory and await again; the entry then
-runs. An exception that leaves `_aio_callback` (`SystemExit`,
-`KeyboardInterrupt`, or a `MemoryError` its report could not get past)
+runs. So a full queue runs in one of two regimes, by what the collection
+frees: if it frees the garbage of the callbacks that ran (their arguments
+and context copies) or memory the program dropped, every start succeeds
+after its wait, the `await` returns normally and the iteration runs to its
+end, each failed start charged a collection (a unit per 64 bytes of the
+limit, §9.2), so such a queue's fuel grows with how often its starts
+reach the limit; if it frees nothing, every turn fails, charged that one
+collection, and nothing runs until the guest drops memory. Where the edge
+between them falls moves with the heap's layout. The asyncio natives the
+guest uses to await, queue and settle again change nothing before what
+they allocate, so after `MemoryError` they too wait for a collection and
+run once more (§9.2, `Vm::native_pure`): `asyncio.sleep`,
+`loop.create_future()`, a timer's deadline, `call_soon`'s queue entry,
+`add_done_callback`, `remove_done_callback`, `set_result`,
+`set_exception`'s settle, `cancel` and a task's name; `create_task`,
+`gather`, `wait`'s and `as_completed`'s waits and `current_task()` do not (each takes a task number or slot, queues or
+registers before an allocation that can fail), nor does making a prelude
+object (`Handle`, `Event`, `Lock`, `Queue`), nor `result()` and
+`exception()`, which raise the future's own exception. An exception that
+leaves `_aio_callback` (`SystemExit`, `KeyboardInterrupt`, or a
+`MemoryError` its report could not get past)
 goes to the same `await`; anything else its report raises (a
 `sys.stderr` that fails) is dropped, as CPython's
 `call_exception_handler` drops it. In `asyncio.run` after the run's coroutine has

@@ -124,8 +124,20 @@ hashes are pre-release history, kept in the private archive
   that has no room to start stays queued: the scheduler waits for one
   full collection and tries again, and a second failure raises
   `MemoryError` at the main task's `await`, where the guest can free
-  memory and await again. Before, such entries were dropped and the
-  awaits returned normally. An exception that leaves a callback unreported
+  memory and await again. When that collection frees the garbage earlier
+  callbacks left, the start succeeds and the `await` returns normally,
+  each such collection charged (a unit per 64 bytes of the limit: 26,822
+  done callbacks at 6 MiB cost 52 to 124 million units where the failing
+  turns of the same cell cost 3.6 million [M]); when it frees nothing,
+  every `await` raises. Before, such entries were dropped and the awaits
+  returned normally. `asyncio.sleep`, `loop.create_future()`,
+  `call_soon`'s queueing, `add_done_callback`, `remove_done_callback`,
+  settling and cancelling a future and a task's name wait for a collection after `MemoryError` and run once more, so
+  awaiting again after dropping memory needs no `gc.collect()`; before,
+  `asyncio.sleep(0)` right after `pad = None` raised `MemoryError` [M].
+  `create_task`, `gather` and the prelude's objects (`Event`, `Lock`,
+  `Queue`, a `Handle`) still raise beside uncollected garbage. An
+  exception that leaves a callback unreported
   (`SystemExit`, `KeyboardInterrupt`, or `MemoryError` in its own report)
   reaches the same `await`, also in a top-level-await cell, where
   `SystemExit` from a callback was lost with no limit set. `Semaphore` and

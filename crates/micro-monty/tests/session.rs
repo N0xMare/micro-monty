@@ -3710,16 +3710,22 @@ fn stale_done_callbacks_settled_near_the_memory_limit_raise_memory_error() {
 
 /// The loop's queue entries with no room to start: done callbacks reserved
 /// as they were queued, `call_soon` entries, a timer and tasks not yet
-/// started, behind a heap filled and the scheduler's slack eaten. Each
-/// `await` meanwhile raises `MemoryError` (the scheduler's start rule:
-/// requeue, collect once, raise at the main task), and once memory is
-/// freed every entry runs. On fe8b1c2 and f2ff43c the awaits returned
-/// normally and every entry was dropped [M].
+/// started, behind a heap filled to `{fill}`'s 600,000 free bytes (room for
+/// the setup at any limit) and the rest eaten by the done callbacks. With
+/// `{spare}` freed after the fill, a failed start's collection frees it and
+/// the callbacks' garbage, so every start succeeds and the first `await`
+/// runs the whole queue; without it the collection frees nothing and every
+/// `await` raises `MemoryError` (the start rule: requeue, collect once,
+/// raise at the main task) until `pad = None`. Every accepted entry runs.
+/// On fe8b1c2 and f2ff43c the awaits returned normally and every entry was
+/// dropped [M].
 const START_RULE_CELL: &str = "\
 import asyncio
+import gc
 await asyncio.sleep(0)
 loop = asyncio.get_running_loop()
-ran = soon = timer = started = 0
+ran = soon = timer = started = queued = errors = k = 0
+first = -1
 def cb(*a):
     global ran
     ran += 1
@@ -3734,27 +3740,133 @@ async def work():
     started += 1
 d = loop.create_future()
 d.set_result(0)
-pad = []
-try:
-    while True:
-        pad.append(bytearray(4096))
-except MemoryError:
-    del pad[-2:]
-for _ in range(20):
+{fill}for _ in range(20):
     loop.call_soon(on_soon)
 loop.call_later(0.01, on_timer)
 tasks = [asyncio.create_task(work()) for _ in range(20)]
 # Nothing below allocates until `pad = None`: the sleeps are made first.
 sleeps = [asyncio.sleep(0) for _ in range({spins})]
-queued = 0
-errors = 0
-k = 0
+spare = bytearray({spare})
 try:
     while queued < 300000:
         d.add_done_callback(cb)
         queued += 1
 except MemoryError:
     pass
+spare = None
+while k < {spins}:
+    try:
+        await sleeps[k]
+    except MemoryError:
+        errors += 1
+    if k == 0:
+        first = ran
+    k += 1
+pad = None
+await asyncio.sleep(0.05)
+for _ in range(3):
+    await asyncio.sleep(0)
+print(queued, ran, soon, timer, started, errors, first)
+";
+
+fn start_rule_cell(spins: u64, spare: u64) -> String {
+    START_RULE_CELL
+        .replace("{fill}", &LEAVE_FREE.replace("{free}", "600_000"))
+        .replace("{spins}", &spins.to_string())
+        .replace("{spare}", &spare.to_string())
+}
+
+/// `(queued, ran, soon, timer, started, errors, first)`: `first` is what
+/// had run when the first `await` returned or raised.
+fn start_rule_outcome(out: &str) -> [u64; 7] {
+    let n: Vec<u64> = out
+        .split_whitespace()
+        .map(|w| w.parse().expect("int"))
+        .collect();
+    n.try_into().unwrap_or_else(|_| panic!("{out}"))
+}
+
+/// Runs `src` under a memory limit of `limit` bytes: its progress, output
+/// and fuel.
+fn run_fueled(limit: u64, src: &str) -> (Progress, String, u64) {
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(limit)));
+    let mut session = Session::new(&engine).expect("session");
+    let out = Arc::new(Mutex::new(String::new()));
+    let sink = Arc::clone(&out);
+    session.set_output(Box::new(move |s: &str| {
+        sink.lock().expect("lock").push_str(s);
+    }));
+    session.set_fuel_total(Some(u64::MAX / 2));
+    let p = session.start(&engine.compile(src, "t.py").expect("compiles"));
+    let fuel = u64::MAX / 2 - session.fuel_total().expect("a total");
+    let out = out.lock().expect("lock").clone();
+    (p, out, fuel)
+}
+
+/// The start rule across limits, spin counts and spare room, each run in
+/// one of its two regimes, wherever the edge between them falls: every
+/// start succeeds after the collection it waits for (no `await` raises, and
+/// the first runs the whole queue, each extra turn costing no collection),
+/// or none does (every `await` raises, nothing runs before `pad = None`,
+/// and each turn pays a collection: a unit per 64 bytes of the limit).
+/// Either way the cell completes and every accepted entry runs. On 8194867
+/// 6 of 95 spin counts at 6 MiB of the cell before it ended in an uncaught
+/// `MemoryError`: `asyncio.sleep(0)` after `pad = None` found its memory
+/// not yet collected, and the call did not wait for a collection [M].
+#[test]
+fn queue_entries_with_no_room_to_start_run_once_memory_is_freed() {
+    let mut regimes = [false; 2];
+    for limit in (16..=32).map(|q| q << 18) {
+        let charge = limit / 64;
+        for spare in [0, 200_000] {
+            let mut fuels = Vec::new();
+            for spins in [4, 40] {
+                let (p, out, fuel) = run_fueled(limit, &start_rule_cell(spins, spare));
+                let at = format!("{limit} B, spare {spare}, {spins} spins: {p:?} {out}");
+                assert!(matches!(p, Progress::Complete(_)), "{at}");
+                let [queued, ran, soon, timer, started, errors, first] = start_rule_outcome(&out);
+                assert!(queued > 0, "{at}");
+                assert_eq!((ran, soon, timer, started), (queued, 20, 1, 20), "{at}");
+                if errors == 0 {
+                    assert_eq!(first, queued, "{at}");
+                } else {
+                    assert_eq!((errors, first), (spins, 0), "{at}");
+                    assert!(fuel >= spins * charge, "{at}: fuel {fuel}");
+                }
+                regimes[usize::from(errors == 0)] = true;
+                fuels.push((errors, fuel));
+            }
+            if let [(0, a), (0, b)] = fuels[..] {
+                assert!(b - a < charge, "{limit} B, spare {spare}: fuel {a} {b}");
+            }
+        }
+    }
+    assert_eq!(regimes, [true, true]);
+}
+
+/// A guest that catches the `MemoryError` and awaits again without freeing
+/// memory loops: each turn fails, is charged for the collection its failed
+/// start waited for (a unit per 64 bytes of the limit), and ends at the
+/// next start's failure, so a fuel budget stops it. The entry first in the
+/// queue is a `call_soon` of a method with 100,000 arguments, whose start
+/// needs about 800 KB where at most `free` bytes are left, which no
+/// collection can give back: every turn fails, at every `free`. Once the
+/// program drops its fill, the next `await` runs it.
+#[test]
+fn awaiting_again_without_freeing_memory_is_charged_each_turn() {
+    let cell = |free: u64, spins: u64| {
+        format!(
+            "\
+import asyncio
+import gc
+class O:
+    def m(self, *a):
+        global big
+        big = len(a)
+o = O()
+big = errors = k = 0
+asyncio.get_running_loop().call_soon(o.m, *range(100_000))
+{}sleeps = [asyncio.sleep(0) for _ in range({spins})]
 while k < {spins}:
     try:
         await sleeps[k]
@@ -3762,72 +3874,77 @@ while k < {spins}:
         errors += 1
     k += 1
 pad = None
-await asyncio.sleep(0.05)
-for _ in range(3):
-    await asyncio.sleep(0)
-print(queued, ran, soon, timer, started, errors)
-";
-
-fn start_rule_outcome(out: &str) -> (u64, u64, u64, u64, u64, u64) {
-    let n: Vec<u64> = out
-        .split_whitespace()
-        .map(|w| w.parse().expect("int"))
-        .collect();
-    let [queued, ran, soon, timer, started, errors] = n[..] else {
-        panic!("{out}")
+await asyncio.sleep(0)
+print(errors, big)
+",
+            LEAVE_FREE.replace("{free}", &free.to_string())
+        )
     };
-    (queued, ran, soon, timer, started, errors)
-}
-
-#[test]
-fn queue_entries_with_no_room_to_start_raise_at_the_await_and_run_later() {
-    let src = START_RULE_CELL.replace("{spins}", "4");
-    for mib in [4, 6, 8] {
-        let (p, out) = run_with(Limits::new().with_memory(mib << 20), &src);
-        assert!(matches!(p, Progress::Complete(_)), "{mib} MiB: {p:?} {out}");
-        let (queued, ran, soon, timer, started, errors) = start_rule_outcome(&out);
-        // Every entry accepted ran: ran plus still queued is what was queued.
-        assert_eq!(
-            (ran, soon, timer, started),
-            (queued, 20, 1, 20),
-            "{mib} MiB: {out}"
-        );
+    let limit = 6 << 20;
+    for free in [150_000, 300_000, 500_000] {
+        let mut fuel = [0; 2];
+        for (i, spins) in [4, 40].into_iter().enumerate() {
+            let (p, out, f) = run_fueled(limit, &cell(free, spins));
+            assert!(matches!(p, Progress::Complete(_)), "{free}: {p:?} {out}");
+            assert_eq!(out, format!("{spins} 100000\n"), "free {free}");
+            fuel[i] = f;
+        }
+        // 36 more failed turns, each paying at least a collection.
         assert!(
-            queued > 0 && errors > 0,
-            "{mib} MiB: no start failed: {out}"
+            fuel[1] - fuel[0] >= 36 * (limit / 64),
+            "free {free}: {fuel:?}"
         );
     }
 }
 
-/// A guest that catches the `MemoryError` and awaits again without freeing
-/// memory loops; each turn is charged (the collection a failed start waits
-/// for costs fuel) and ends at the next start's failure, so a fuel budget
-/// stops it.
+/// The asyncio calls a guest makes to await, queue and settle again, after
+/// it dropped a fill that left no room (no `gc.collect()`): each waits for
+/// the collection that frees the fill and runs again, as `list.append`
+/// does. On 8194867 `asyncio.sleep(0)` raised `MemoryError` there, beside
+/// the dropped fill [M].
 #[test]
-fn awaiting_again_without_freeing_memory_is_charged_each_turn() {
-    let few = START_RULE_CELL.replace("{spins}", "4");
-    let many = START_RULE_CELL.replace("{spins}", "40");
-    let fuel = |src: &str| {
-        let engine =
-            Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(6 << 20)));
-        let mut session = Session::new(&engine).expect("session");
-        session.set_fuel_total(Some(u64::MAX / 2));
-        let p = session.start(&engine.compile(src, "t.py").expect("compiles"));
-        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
-        u64::MAX / 2 - session.fuel_total().expect("a total")
-    };
-    let (a, b) = (fuel(&few), fuel(&many));
-    // 36 more failed turns, each paying at least a collection's charge
-    // (a unit per 64 bytes of the limit).
-    assert!(b - a >= 36 * ((6 << 20) / 64), "{a} {b}");
+fn asyncio_calls_after_dropping_a_fill_wait_for_its_collection() {
+    let src = "\
+import asyncio
+loop = asyncio.get_running_loop()
+got = []
+def seen(f):
+    got.append(f.result())
+for round in range(3):
+    pad = []
+    cur = []
+    try:
+        while True:
+            cur.append([0])
+            if len(cur) == 512:
+                pad.append(cur)
+                cur = []
+    except MemoryError:
+        pass
+    pad = cur = None
+    await asyncio.sleep(0)
+    f = loop.create_future()
+    f.add_done_callback(seen)
+    f.set_result(round)
+    await f
+    await asyncio.sleep(0)
+print(got)
+";
+    for mib in [4, 6, 8] {
+        let (p, out) = run_with(Limits::new().with_memory(mib << 20), src);
+        assert!(matches!(p, Progress::Complete(_)), "{mib} MiB: {p:?} {out}");
+        assert_eq!(out, "[0, 1, 2]\n", "{mib} MiB");
+    }
 }
 
 /// The start rule parked at every fuel slice, and snapshotted and restored
 /// at every park, also while the scheduler waits for a start's collection
-/// (`LOOP_START_WAIT`): the same outcome, every accepted entry run.
+/// (`LOOP_START_WAIT`): every accepted entry runs. (A restore gives the
+/// run queue and the VM's tables their length as capacity, which can move
+/// a start's edge: docs/spec.md §5.1 clause 4.)
 #[test]
 fn the_start_rule_survives_a_restore_at_every_park() {
-    let src = START_RULE_CELL.replace("{spins}", "4");
+    let src = start_rule_cell(4, 0);
     let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(6 << 20)));
     let code = engine.compile(&src, "t.py").expect("compiles");
     for restore in [false, true] {
@@ -3859,9 +3976,9 @@ fn the_start_rule_survives_a_restore_at_every_park() {
             p = session.resume(Resume::Continue).expect("resumes");
         }
         assert!(matches!(p, Progress::Complete(_)), "{p:?}");
-        assert!(parks > 100, "{parks}");
+        assert!(parks > 50, "{parks}");
         let out = out.lock().expect("lock").clone();
-        let (queued, ran, soon, timer, started, errors) = start_rule_outcome(&out);
+        let [queued, ran, soon, timer, started, errors, _] = start_rule_outcome(&out);
         assert_eq!(
             (ran, soon, timer, started),
             (queued, 20, 1, 20),
