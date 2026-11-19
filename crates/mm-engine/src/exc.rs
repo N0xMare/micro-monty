@@ -407,7 +407,8 @@ impl Vm {
 
     pub(crate) fn set_hint_suffix(&mut self, hint: &str) {
         let e = self.exc;
-        if let Ok(s) = self.new_str(hint)
+        if e != self.memory_error
+            && let Ok(s) = self.new_str(hint)
             && let Some(r) = e.as_obj()
             && e.is_obj_kind(ty::EXC as u8)
         {
@@ -429,7 +430,11 @@ impl Vm {
         note: Value,
     ) {
         let e = self.exc;
+        // Not on the shared `MemoryError` raised when the error itself had
+        // no room: it is a root, and its hint would keep `data` (a frame's
+        // globals) alive past `reset`, which then freed nothing.
         if let Some(r) = e.as_obj()
+            && e != self.memory_error
             && e.is_obj_kind(ty::EXC as u8)
             && let Some(k) = Value::int(kind)
             && let Ok(t) = self.alloc_tuple(&[k, name, data, locals, note])

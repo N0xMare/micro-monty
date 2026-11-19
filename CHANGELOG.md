@@ -10,6 +10,44 @@ repository. The 0.0.1 entry stays as published: the docs it cites
 hashes are pre-release history, kept in the private archive
 `N0xMare/micro-monty-archive` (branch `history-0.0.1`).
 
+## 0.0.3 (unreleased)
+
+### Fixed
+
+- A session whose heap is at its wall no longer keeps failing cell starts
+  with `MemoryError` and fuel 0 beside garbage it could collect. A start
+  at the wall reclaims dead code with its one collection, whether or not
+  the host snapshotted, and a start refused after reclamation dropped
+  code runs again after collecting that code's constants. Anything
+  allocated between cells (a start refused part way, a host definition,
+  a hint, a module dunder) leaves the next start at the wall to collect,
+  and a module body's name is interned only when a function is made from
+  it, so `del xs` loads without allocating. 8,000 dead string constants
+  then a live fill at 64 MiB: the next three cells run; at 6 MiB, `del
+  xs` after failed starts of 200 kB literal cells, or after a `define`
+  before each start, runs [M].
+- `Session::set_hint` and `Session::set_module_dunders` refused for room
+  with no cell stopped run once more after a full collection, as a cell
+  start does, and one refused part way leaves what it released to the
+  next start's collection.
+- A `reset` after a cell whose `NameError` found no room frees the old
+  globals: the shared `MemoryError` raised in its place kept the error's
+  hint data, the globals included, so the reset returned `Ok` and every
+  later cell was refused (6 MiB, a kept fill, then `append`) [M].
+
+### Known issues
+
+- A start at the wall reclaims dead code, and with it the names only
+  that code held; a later cell that uses such a name again (the fill's
+  `append`, a loop's `pop`) can be refused at the wall where 0.0.2,
+  still holding the dead code, ran it: 20 of 6,000 random sessions at 2
+  to 8 MiB, against 305 where 0.0.3 runs a cell 0.0.2 refused [M].
+- A session at its wall on live data collects at every start refused
+  part way (one full collection, 47 ms a start at 256 MiB, where 0.0.2
+  refused it without one), and a start that completes takes 9 to 17 ms
+  more for reclamation's reference scan: 67 ms mean on a 256 MiB live
+  heap of 4M strings, against 50 ms [M].
+
 ## 0.0.2 (2026-11-18)
 
 The second release, from `7e59d6c` (this entry as of 2026-11-18). Every API may have changed since 0.0.1, and images written

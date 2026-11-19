@@ -235,17 +235,23 @@ impl Vm {
     /// restores the default). `{module}` in it stands for the module.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub fn set_hint(&mut self, group: HintGroup, text: Option<&str>) -> Result<(), Raised> {
-        // The text this replaces is released (`Heap::idle_collected`).
-        self.heap.idle_collected = false;
-        let d = self.hint_dict()?;
-        let k = self.intern(group.key())?;
-        match text {
-            Some(t) => {
-                let v = self.new_str(t)?;
-                self.dict_set(d, k, v)
+        // Retried after a collection when refused, as a start is
+        // (`Vm::between_cells`).
+        let set = self.between_cells(|vm| {
+            let d = vm.hint_dict()?;
+            let k = vm.intern(group.key())?;
+            match text {
+                Some(t) => {
+                    let v = vm.new_str(t)?;
+                    vm.dict_set(d, k, v)
+                }
+                None => vm.dict_del(d, k).map(|_| ()),
             }
-            None => self.dict_del(d, k).map(|_| ()),
-        }
+        });
+        // The text this replaces is released (`Heap::idle`), also when the
+        // step was refused.
+        self.heap.idle_collected = false;
+        set
     }
 
     /// The prelude's override table, made on first use.

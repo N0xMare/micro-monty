@@ -342,7 +342,8 @@ pub(crate) struct CodeObj {
     pub consts: Vec<Value>,
     pub names: Vec<Value>,
     /// The code's name and qualified name, interned when it is loaded:
-    /// every function made from it takes them (`Vm::new_function`).
+    /// every function made from it takes them (`Vm::new_function`). A
+    /// module body's, and the trampoline's, are `Value::NONE`.
     pub name: Value,
     pub qualname: Value,
     pub ic_base: u32,
@@ -1238,21 +1239,28 @@ impl Vm {
         name: Option<&str>,
         file: Option<&str>,
     ) -> Result<(), Raised> {
-        // The names these replace are released (`Heap::idle_collected`).
-        self.heap.idle_collected = false;
-        let g = self.globals;
-        for (key, v) in [("__name__", name), ("__file__", file)] {
-            let k = self.intern(key)?;
-            match v {
-                Some(s) => {
-                    let v = self.new_str(s)?;
-                    self.dict_set(g, k, v)?;
-                }
-                None => {
-                    self.dict_del(g, k)?;
+        // Retried after a collection when refused, as a start is, so the
+        // outcome does not depend on whether the host snapshotted first.
+        let set = self.between_cells(|vm| {
+            let g = vm.globals;
+            for (key, v) in [("__name__", name), ("__file__", file)] {
+                let k = vm.intern(key)?;
+                match v {
+                    Some(s) => {
+                        let v = vm.new_str(s)?;
+                        vm.dict_set(g, k, v)?;
+                    }
+                    None => {
+                        vm.dict_del(g, k)?;
+                    }
                 }
             }
-        }
+            Ok(())
+        });
+        // The names these replace are released (`Heap::idle`), also when a
+        // later step was refused: `__name__` may be deleted already.
+        self.heap.idle_collected = false;
+        set?;
         self.gver = self.gver.wrapping_add(1);
         self.ics.fill(Ic::Empty);
         Ok(())
@@ -2020,9 +2028,12 @@ impl Vm {
         &mut self,
         mut step: impl FnMut(&mut Vm) -> Result<R, Raised>,
     ) -> Result<R, Raised> {
+        // Read before the step: what a refused step allocates is what a
+        // rerun would allocate again, so only garbage from before it counts.
+        let idle = self.heap.idle();
         let r = match step(self) {
             Err(Raised)
-                if !self.heap.idle_collected
+                if !idle
                     && !self.gc_off
                     && self.tasks.is_empty()
                     && self.exc_type(self.exc) == T::MemoryError
@@ -2034,6 +2045,9 @@ impl Vm {
             r => r,
         };
         if r.is_err() {
+            // A step refused part way (a load's constants and names before
+            // the one refused) leaves what it allocated as garbage: the next
+            // start collects it (`Heap::idle`).
             self.heap.take_refused();
         }
         r
@@ -2116,8 +2130,20 @@ impl Vm {
                 for n in &code.names {
                     names.push(self.intern_shared(&mut seen, n)?);
                 }
-                let name = self.intern_shared(&mut seen, &code.name)?;
-                let qualname = self.intern_shared(&mut seen, &code.qualname)?;
+                // A module body is never made into a function by a load, and
+                // its name would be the one object a load at a full heap
+                // allocates for a cell with no new name (`del xs`): its
+                // `<module>` went with the last code that held it, and a
+                // refused load left the session stuck. Interned when
+                // needed (`Vm::new_function`).
+                let (name, qualname) = if &*code.name == "<module>" {
+                    (Value::NONE, Value::NONE)
+                } else {
+                    (
+                        self.intern_shared(&mut seen, &code.name)?,
+                        self.intern_shared(&mut seen, &code.qualname)?,
+                    )
+                };
                 let ic_base = u32::try_from(self.ics.len()).unwrap_or(u32::MAX);
                 self.ics
                     .extend(core::iter::repeat_n(Ic::Empty, code.n_ics as usize));

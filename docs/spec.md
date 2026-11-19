@@ -1788,13 +1788,26 @@ timer deadlines.
   bytes space, the memory left is under the cost of its next segment
   (1,081,344 B at full size) and its free blocks under 1/8 of the limit;
   or the object count is at least 3/4 of the mark stack's capacity and
-  its doubling (4 bytes a slot) is more than the memory left. A start
-  refused for room anyway (a large cell's code, `reset`'s new globals)
-  runs once more after one. None runs twice unless code ran or something
-  held between cells was released (a stopped cell, an error, globals, host
-  definitions, a hint or a module dunder) since the last
-  (`Heap::idle_collected`, not in the image, clear in a restored heap,
-  which may hold a stopped cell). At 256 MiB it
+  its doubling (4 bytes a slot) is more than the memory left. That
+  collection is code reclamation's (Session lifetime), on a condition no snapshot
+  resets, so whether dead code is dropped before the next load does not
+  depend on whether the host snapshotted. A start, a `reset`'s new
+  globals, a hint or a module dunder refused for room anyway runs once
+  more after one, unless the heap was idle (below) before it: the
+  constants of the code reclamation drops after its collection are
+  freed this way, so a start whose reclamation dropped code and that is
+  then refused collects twice. That reclamation also drops the names
+  only the dead code held, so a later cell that uses one again can be
+  refused at the wall where the dead code, kept, would have let it run. A
+  module body's name is interned when a function is made from it, not
+  when it loads, so a cell such as `del xs` loads without allocating.
+  None runs twice unless, since the last, code ran, something held
+  between cells was released (a stopped cell, an error, globals, a host
+  definition's old module, a hint, a module dunder, the code
+  reclamation drops) or anything was allocated (a host definition, a
+  start refused part way, the rerun of one)
+  (`Heap::idle`, not in the image, false in a restored heap, which may
+  hold a stopped cell). At 256 MiB it
   takes 7–34 ms over garbage and 38–105 ms over live data, which it
   repeats at each start while the heap stays at the wall, also when every
   cell completes: 2.5M strings and 1 kB bytes objects live at 256 MiB, 200
@@ -2283,7 +2296,8 @@ quotas and resolves uncertain external effects.
 Before starting another cell, the facade cancels the old computation. Once
 the code and shapes loaded since the last reclamation pass an eighth of the
 live heap (at least 16 KiB) or a quarter of the memory left, or when a full
-collection is due anyway (`Vm::prepare_cell`), it collects in full and
+collection is due anyway or the heap is at its wall (`Vm::prepare_cell`),
+it collects in full and
 reclaims user compilation units not referenced by live functions,
 generators or saved tracebacks; dead code below that threshold stays, in
 the session and in its images. Keeping a unit keeps its nested function

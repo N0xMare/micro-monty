@@ -296,12 +296,14 @@ pub struct Heap {
     pub(crate) str_pos: crate::string::StrPos,
     /// The incremental mark in progress, if any (not snapshotted).
     pub(crate) inc: crate::gc::Inc,
-    /// The engine's last full collection between cells left nothing for
-    /// the next cell's start to drop, and since then no code ran and
-    /// nothing held between cells was released, so another collection
-    /// would free only what a refused start allocated. False for a new
-    /// heap, a restored one included: its image may hold a stopped cell or
-    /// an error that the next start drops. Not snapshotted.
+    /// Set by the engine's full collection between cells when it left
+    /// nothing for the next cell's start to drop; cleared when code runs
+    /// or something held between cells is released (code reclamation's
+    /// dropped code, a reset's globals, a redefined module, a hint, a
+    /// module dunder). False for a
+    /// new heap, a restored one included: its image may hold a stopped
+    /// cell or an error that the next start drops. Not snapshotted. Read
+    /// through [`Heap::idle`].
     pub idle_collected: bool,
 }
 
@@ -1079,6 +1081,17 @@ impl Heap {
     fn refuse(&self, bytes: u64) -> Error {
         self.refused.store(bytes.max(1), Ordering::Relaxed);
         Error::OutOfMemory
+    }
+
+    /// Another collection would free nothing: the engine's last one
+    /// between cells is the last change to the heap (`idle_collected`)
+    /// and nothing was allocated since. Whatever allocates between cells
+    /// (a load or a start refused part way, a host definition, a hint)
+    /// ends it without marking it, and so does a release that replaces
+    /// what it releases.
+    #[must_use]
+    pub fn idle(&self) -> bool {
+        self.idle_collected && self.stats.allocated_since_gc == 0
     }
 
     /// The bytes of the last request refused for room since the last call

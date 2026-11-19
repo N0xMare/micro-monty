@@ -184,15 +184,7 @@ impl Vm {
         // allocated, not to the data the session keeps, and dead code
         // (also in images) stays under that bound. Under `gc_off` no
         // collection starts by itself, this one included.
-        let debt = self.code_charge.saturating_sub(self.code_kept);
-        if !self.gc_off
-            && (debt > (self.heap.stats().live_bytes / 8).max(16 << 10)
-                || debt > self.heap.available_bytes() / 4
-                || (self.heap.should_collect() && !self.heap.incremental()))
-        {
-            self.reclaim_code();
-            self.code_kept = self.code_charge;
-        }
+        //
         // A cell that ends with the heap at its wall leaves what it or a
         // later cell drops (`del xs` after a fill) to no safepoint: none
         // runs before the next cell's first object, its load's included,
@@ -200,16 +192,34 @@ impl Vm {
         // full and uncharged, as a snapshot's collection is, so fuel does
         // not depend on whether the host snapshotted between cells. With
         // live data at the wall each start pays it once
-        // (`Heap::idle_collected`).
-        if !self.gc_off && !self.heap.idle_collected && self.heap.at_wall() {
-            self.collect_now();
+        // (`Heap::idle`). That collection is reclamation's: the triggers
+        // above read counts a snapshot's collection resets, so a plain
+        // session dropped the dead code before the next load where one
+        // snapshotted between the cells did not, and a cell's outcome at
+        // the wall depended on the snapshot. It is the start's one
+        // collection; the constants of the code it drops are collected by
+        // `Vm::between_cells`' rerun if the start is refused.
+        let debt = self.code_charge.saturating_sub(self.code_kept);
+        let wall = !self.gc_off && !self.heap.idle() && self.heap.at_wall();
+        if wall
+            || !self.gc_off
+                && (debt > (self.heap.stats().live_bytes / 8).max(16 << 10)
+                    || debt > self.heap.available_bytes() / 4
+                    || (self.heap.should_collect() && !self.heap.incremental()))
+        {
+            let collected = self.reclaim_code();
+            self.code_kept = self.code_charge;
+            if wall && !collected {
+                self.collect_now();
+            }
         }
     }
 
+    /// Returns whether it collected.
     #[cold]
-    pub(crate) fn reclaim_code(&mut self) {
+    pub(crate) fn reclaim_code(&mut self) -> bool {
         if !self.tasks.is_empty() || self.saved.is_some() || self.request.is_some() {
-            return;
+            return false;
         }
         // Synthesized functions are hidden from tracebacks like the prelude,
         // but only live functions keep their code. Bundled source and the
@@ -220,7 +230,7 @@ impl Vm {
             }
         }
         if self.codes.iter().all(|c| c.reclaim_live) && self.shapes.len() <= 1 {
-            return;
+            return false;
         }
         self.stack.fill(Value::UNDEFINED);
         self.consumed.clear();
@@ -280,8 +290,11 @@ impl Vm {
         let codes_changed = count as usize != self.codes.len();
         let shapes_changed = self.map_shapes();
         if !codes_changed && !shapes_changed {
-            return;
+            return true;
         }
+        // The collection above ran before the dead code's constants are let
+        // go below: a refused load collects them (`Heap::idle_collected`).
+        self.heap.idle_collected = false;
         // Dropping only trailing records does not change any live reference.
         // This is the usual case for transient cells; avoid a second heap scan.
         let codes_moved = self
@@ -339,7 +352,7 @@ impl Vm {
         }
         if !codes_changed {
             let _ = self.reserve_code(0);
-            return;
+            return true;
         }
         let remap = |ci: u32| {
             self.codes
@@ -402,6 +415,7 @@ impl Vm {
         self.synth.shrink_to_fit();
         // Reclamation only decreases the reservation.
         let _ = self.reserve_code(0);
+        true
     }
 
     /// Visits code and shape references in one heap scan without copying

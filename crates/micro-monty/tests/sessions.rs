@@ -298,6 +298,429 @@ fn cells_after_one_that_filled_memory_run_once_its_garbage_is_collected() {
             .expect("defined");
         assert_eq!(start(&mut session, "import tools"), "ok", "{mib} MiB");
     }
+    let cell = |engine: &Engine, session: &mut Session, src: &str| {
+        let code = engine.compile(src, "cell.py").expect("compiles");
+        match session.start(&code) {
+            Progress::Complete(_) => "ok".to_owned(),
+            Progress::Error(e) => e.type_name,
+            p => panic!("{p:?}"),
+        }
+    };
+    let fill = "xs = []\ntry:\n    while True:\n        xs.append(str(len(xs)))\nexcept MemoryError:\n    pass";
+    // Code reclamation collects before it lets go of the dead cells' code,
+    // whose constants then were garbage beside a flag that said collected.
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(64 << 20)));
+    let mut session = Session::new(&engine).expect("session");
+    let consts: Vec<String> = (0..8000).map(|i| format!("\"k{i:05}x\"")).collect();
+    let dead = format!("t = [{}]\nt = None\n{fill}", consts.join(", "));
+    assert_eq!(cell(&engine, &mut session, &dead), "ok");
+    for next in ["y = 'one'", "z = 'two'", "w = 'three'"] {
+        assert_eq!(cell(&engine, &mut session, next), "ok", "{next}");
+    }
+    // That collection, once the fill's code is reclaimed at the wall, also
+    // frees `<module>`, which every load needs; loads refused part way
+    // follow (a 200 kB literal each). A cell with no other new object
+    // (`del xs`) must still load: the refused loads' garbage held the room
+    // `<module>` needs while no start collected it.
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(6 << 20)));
+    let literal = "a".repeat(200_000);
+    let freed = [
+        "del xs",
+        "pass",
+        "xs = None",
+        "del xs",
+        "pass",
+        "print('after del')",
+    ];
+    let reused = ["del xs", "y = [str(i) for i in range(1000)]\nprint(len(y))"];
+    for (literals, tail) in [(8, &freed[..]), (8, &reused[..]), (4, &reused[..])] {
+        let mut session = Session::new(&engine).expect("session");
+        assert_eq!(cell(&engine, &mut session, fill), "ok");
+        for k in 0..literals {
+            cell(&engine, &mut session, &format!("s{k} = \"{literal}\""));
+        }
+        for next in tail {
+            let outcome = cell(&engine, &mut session, next);
+            assert_eq!(outcome, "ok", "{literals} literals: {next}");
+        }
+    }
+}
+
+fn wall_cell(engine: &Engine, session: &mut Session, src: &str) -> String {
+    let code = engine.compile(src, "cell.py").expect("compiles");
+    match session.start(&code) {
+        Progress::Complete(_) => "ok".to_owned(),
+        Progress::Error(e) => e.type_name,
+        p => panic!("{p:?}"),
+    }
+}
+
+fn wall_engine(mib: u64) -> Engine {
+    Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(mib << 20)))
+}
+
+/// A cell that appends `item` to a new `xs` until memory runs out.
+fn fill_with(item: &str) -> String {
+    format!(
+        "xs = []\ntry:\n    while True:\n        xs.append({item})\nexcept MemoryError:\n    pass"
+    )
+}
+
+/// A `define` before each start at the wall: its bindings are garbage the
+/// next start collects, and `del xs`, whose load allocates nothing, runs.
+#[test]
+fn a_define_before_each_start_at_the_wall_leaves_no_cell_stuck() {
+    for (mib, item) in [
+        (6, "(len(xs), None)"),
+        (3, "(len(xs), None)"),
+        (3, "str(len(xs))"),
+    ] {
+        for builtins in [false, true] {
+            let engine = wall_engine(mib);
+            let mut session = Session::new(&engine).expect("session");
+            if builtins {
+                session
+                    .define(&HostModule::untyped("", &["h"]))
+                    .expect("defined");
+            }
+            assert_eq!(wall_cell(&engine, &mut session, &fill_with(item)), "ok");
+            wall_cell(&engine, &mut session, "n = 1");
+            let tools = HostModule::untyped("tools0", &["a", "b"]);
+            let _ = session.define(&tools);
+            let outcome = wall_cell(&engine, &mut session, "del xs");
+            assert_eq!(outcome, "ok", "{mib} MiB {item} builtins={builtins}");
+            for _ in 0..3 {
+                let _ = session.define(&tools);
+                assert_eq!(wall_cell(&engine, &mut session, "del xs"), "NameError");
+            }
+        }
+    }
+}
+
+/// A module imported and redefined at the wall while no global holds it:
+/// its first definition's 200 kB constant is garbage the next start frees.
+#[test]
+fn a_module_redefined_at_the_wall_leaves_its_old_constants_to_collect() {
+    let engine = wall_engine(64);
+    let mut session = Session::new(&engine).expect("session");
+    let module = |bytes: usize| {
+        let mut m = HostModule::untyped("tools", &["a", "b"]);
+        m.constants
+            .push(("BIG".to_owned(), HostValue::Str("z".repeat(bytes))));
+        m
+    };
+    session.define(&module(200_000)).expect("defined");
+    let first = format!(
+        "import tools\nq = len(tools.BIG)\ndel tools\n{}",
+        fill_with("str(len(xs))")
+    );
+    assert_eq!(wall_cell(&engine, &mut session, &first), "ok");
+    session.define(&module(1000)).expect("defined");
+    for next in [
+        "y = 'one'",
+        "z = 'two'",
+        "w = 'three'",
+        "pass",
+        "y = 'four'",
+    ] {
+        assert_eq!(wall_cell(&engine, &mut session, next), "ok", "{next}");
+    }
+}
+
+/// The same cells with and without a snapshot between them: the code
+/// reclaimed at the wall must not depend on a collection request that a
+/// snapshot serves.
+#[test]
+fn cells_at_the_wall_run_the_same_with_snapshots_between_them() {
+    let engine = wall_engine(6);
+    let literal = format!("s = \"{}\"", "a".repeat(50_000));
+    let mut outcomes = Vec::new();
+    for mode in 0..3 {
+        let mut session = Session::new(&engine).expect("session");
+        let mut out = Vec::new();
+        let filled = fill_with("(len(xs), None)");
+        for src in [
+            filled.as_str(),
+            &literal,
+            "v = 1",
+            "w = 2",
+            "del xs",
+            "print('freed')",
+        ] {
+            out.push(wall_cell(&engine, &mut session, src));
+            if mode > 0 {
+                let image = session.snapshot().expect("snapshot");
+                if mode == 2 {
+                    session = engine.restore(&image).expect("restore");
+                }
+            }
+        }
+        outcomes.push(out);
+    }
+    assert_eq!(outcomes[0], outcomes[1]);
+    assert_eq!(outcomes[0], outcomes[2]);
+    assert_eq!(outcomes[0][4..], ["ok", "ok"]);
+}
+
+/// A session restored after every cell, whose heap ends with no free word
+/// slot: a cell that loads without allocating (`del xs`) still runs. The
+/// cells marked `#!` are host actions.
+#[test]
+fn a_session_restored_after_every_cell_runs_del_at_the_wall() {
+    let engine = wall_engine(8);
+    let a = |n: usize| format!("\"{}\"", "a".repeat(n));
+    let names: Vec<String> = (0..8000).map(|i| format!("\"c8_{i:05}x\"")).collect();
+    let cells = [
+        format!(
+            "base = [str(i) for i in range(50000)]\n{}\ndel xs[-1:]",
+            fill_with("bytes(1000)")
+        ),
+        "pass".to_owned(),
+        format!("n = {}", a(100)),
+        format!(
+            "#!abandon\nzs = []\n{}",
+            fill_with("str(len(zs))")
+                .replace("xs = []\n", "")
+                .replace("xs.append", "zs.append")
+        ),
+        "print(len(xs))".to_owned(),
+        format!("#!compile\nw5 = \"{}\"", "c".repeat(100_000)),
+        format!("n = {}", a(1000)),
+        "print(len(xs))".to_owned(),
+        format!("t = [{}]\nt = None", names.join(", ")),
+        format!("s = {}", a(400_000)),
+        "n = 1".to_owned(),
+        "y11 = 'new constant 11'".to_owned(),
+        "try:\n    while True:\n        xs.append(str(len(xs)))\nexcept MemoryError:\n    pass"
+            .to_owned(),
+        "#!compile\nq = 1".to_owned(),
+        "#!define".to_owned(),
+        "def f15():\n    return 'c15'".to_owned(),
+        "#!hint".to_owned(),
+        "for _ in range(1):\n    xs.pop()".to_owned(),
+        "del xs".to_owned(),
+        "del xs".to_owned(),
+        "pass".to_owned(),
+        "xs = None".to_owned(),
+        "del xs".to_owned(),
+    ];
+    let mut session = Session::new(&engine).expect("session");
+    session
+        .define(&HostModule::untyped("", &["h", "hf"]))
+        .expect("defined");
+    let mut out = Vec::new();
+    for src in &cells {
+        let (first, body) = src.split_once('\n').unwrap_or((src, ""));
+        match first {
+            "#!define" => {
+                let _ = session.define(&HostModule::untyped("tools2", &["a", "b"]));
+                continue;
+            }
+            "#!hint" => {
+                let _ = session.set_hint(HintGroup::Network, Some("call_the_tool_16"));
+                continue;
+            }
+            // A cell that does not compile is not run, nor restored after.
+            "#!compile" => match session.compile(body, "cell.py") {
+                Ok(code) => {
+                    session.start(&code);
+                }
+                Err(_) => continue,
+            },
+            "#!abandon" => {
+                let code = engine.compile(body, "cell.py").expect("compiles");
+                session.set_fuel(Some(20_000));
+                // At 8 MiB it fills before its fuel runs out.
+                session.start(&code);
+                session.set_fuel(None);
+                continue;
+            }
+            _ if src.len() > 256 << 10 => continue,
+            _ => out.push(wall_cell(&engine, &mut session, src)),
+        }
+        let image = session.snapshot().expect("snapshot");
+        session = engine.restore(&image).expect("restore");
+    }
+    assert_eq!(out[out.len() - 5..], ["ok", "NameError", "ok", "ok", "ok"]);
+}
+
+/// A `reset` that returns `Ok` after a cell's `NameError` found no room
+/// frees the session: the shared `MemoryError` raised in its place takes no
+/// hint data, which held the old globals alive past the reset. `n += 1`
+/// loads once reclamation at the wall freed a slot for `n`; `append` was
+/// interned already, the older form.
+#[test]
+fn a_reset_after_a_name_error_with_no_room_frees_the_globals() {
+    let engine = wall_engine(6);
+    for second in ["n += 1", "append"] {
+        let mut session = Session::new(&engine).expect("session");
+        assert_eq!(
+            wall_cell(&engine, &mut session, &fill_with("str(len(xs))")),
+            "ok"
+        );
+        let refused = wall_cell(&engine, &mut session, second);
+        assert_eq!(refused, "MemoryError", "{second}");
+        session.reset().expect("reset");
+        for next in ["a = 'after reset'\nprint(a)", "print('second')"] {
+            assert_eq!(
+                wall_cell(&engine, &mut session, next),
+                "ok",
+                "{second}: {next}"
+            );
+        }
+    }
+}
+
+/// Off the wall, a start refused after its rerun leaves what the rerun
+/// allocated; the next start refused for room reruns after collecting it,
+/// whether or not a snapshot came between (`Heap::idle` read before the
+/// step).
+#[test]
+fn a_start_refused_off_the_wall_reruns_over_the_last_refusal_garbage() {
+    let engine = wall_engine(6);
+    let lit = |c: char, n: usize| format!("\"{}\"", c.to_string().repeat(n));
+    let cells = [
+        fill_with("(len(xs), None)"),
+        "for i in range(0, len(xs), 2):\n    xs[i] = None".to_owned(),
+        format!("pad = {}", lit('z', 50_000)),
+        format!("p = {}\nq = {}", lit('a', 50_000), lit('b', 60_000)),
+        format!("r = {}", lit('c', 60_000)),
+        format!("r = {}", lit('c', 60_000)),
+        format!("r = {}", lit('c', 60_000)),
+        "pass".to_owned(),
+        format!("r = {}", lit('c', 60_000)),
+    ];
+    for snapshot in [false, true] {
+        let mut session = Session::new(&engine).expect("session");
+        let out: Vec<String> = cells
+            .iter()
+            .map(|src| {
+                let outcome = wall_cell(&engine, &mut session, src);
+                if snapshot {
+                    drop(session.snapshot().expect("snapshot"));
+                }
+                outcome
+            })
+            .collect();
+        assert_eq!(out[3], "MemoryError");
+        for (i, outcome) in out.iter().enumerate().skip(4) {
+            assert_eq!(outcome, "ok", "cell {i}, snapshot {snapshot}");
+        }
+    }
+}
+
+/// `set_module_dunders` refused part way, after it deleted `__name__`,
+/// leaves the next start to collect what it released.
+#[test]
+fn module_dunders_refused_part_way_leave_the_next_start_to_collect() {
+    let engine = wall_engine(4);
+    let mut session = Session::new(&engine).expect("session");
+    session
+        .define(&HostModule::untyped("", &["h", "hf"]))
+        .expect("defined");
+    let fill = "d = {}\nxs = []\ntry:\n    while True:\n        d[len(d)] = str(len(d))\nexcept MemoryError:\n    pass";
+    for src in [
+        fill,
+        "print(len(xs))",
+        "print(len(xs))",
+        "pass",
+        "class C4:\n    a4 = 1\no4 = C4()\no4.z4 = 2",
+        "xs = None",
+    ] {
+        wall_cell(&engine, &mut session, src);
+    }
+    // A cell left at its first park.
+    let parked = "def g():\n    zs = []\n    while True:\n        zs.append(str(len(zs)))\ng()";
+    let code = engine.compile(parked, "cell.py").expect("compiles");
+    session.set_fuel(Some(20_000));
+    session.start(&code);
+    session.set_fuel(None);
+    assert!(session.set_module_dunders(None, None).is_err());
+    assert_eq!(
+        wall_cell(&engine, &mut session, "y8 = 'new constant 8'"),
+        "MemoryError"
+    );
+    let refill =
+        "try:\n    while True:\n        xs.append(bytes(1000))\nexcept MemoryError:\n    pass";
+    assert_eq!(wall_cell(&engine, &mut session, refill), "ok");
+}
+
+/// An untyped redefinition at the wall of a module no global holds
+/// releases its old copy without allocating: the next start collects it.
+#[test]
+fn an_untyped_redefinition_after_a_collection_leaves_the_next_start_to_collect() {
+    let engine = wall_engine(6);
+    let mut session = Session::new(&engine).expect("session");
+    session
+        .define(&HostModule::untyped("", &["h", "hf"]))
+        .expect("defined");
+    let module = |bytes: usize| {
+        let mut m = HostModule::untyped("tools", &["a", "b"]);
+        m.constants
+            .push(("BIG".to_owned(), HostValue::Str("z".repeat(bytes))));
+        m
+    };
+    session.define(&module(200_000)).expect("defined");
+    let first = format!(
+        "import tools\nq = len(tools.BIG)\ndel tools\n{}",
+        fill_with("str(len(xs))")
+    );
+    assert_eq!(wall_cell(&engine, &mut session, &first), "ok");
+    let y = "y = 'new constant one'";
+    assert_eq!(wall_cell(&engine, &mut session, y), "MemoryError");
+    session.define(&module(1000)).expect("defined");
+    assert_eq!(wall_cell(&engine, &mut session, y), "ok");
+    assert_eq!(
+        wall_cell(&engine, &mut session, "z = 'new constant two'"),
+        "ok"
+    );
+}
+
+/// Each way between cells that allocates or releases leaves the heap
+/// not collected, and the next start at the wall collects once; a start
+/// refused at its first object, a snapshot and a cancel with no cell
+/// leave it collected. The bytes space is full, so a 200 kB `bytes`
+/// literal is refused at its first object while the host actions, which
+/// allocate words, succeed.
+#[test]
+fn each_way_between_cells_that_allocates_or_releases_makes_the_next_start_collect() {
+    let engine = wall_engine(6);
+    let start = |session: &mut Session, src: &str| {
+        let before = session.gc_collections();
+        let outcome = wall_cell(&engine, session, src);
+        (outcome, session.gc_collections() - before)
+    };
+    let me = |n| ("MemoryError".to_owned(), n);
+    let fill = "def fill():\n    xs = []\n    try:\n        while True:\n            xs.append(bytes(1000))\n    except MemoryError:\n        pass\n    return xs\nxs = fill()";
+    let mut session = Session::new(&engine).expect("session");
+    assert_eq!(start(&mut session, fill).0, "ok");
+    let refused = format!("b = b\"{}\"", "b".repeat(200_000));
+    assert_eq!(start(&mut session, &refused), me(1));
+    assert_eq!(start(&mut session, &refused), me(0));
+    let tools = |f: &[&str]| HostModule::untyped("tools", f);
+    session.define(&tools(&["a"])).expect("defined");
+    assert_eq!(start(&mut session, &refused), me(1));
+    session.define(&tools(&["a", "b"])).expect("defined");
+    assert_eq!(start(&mut session, &refused), me(1));
+    session
+        .set_hint(HintGroup::Network, Some("x"))
+        .expect("set");
+    assert_eq!(start(&mut session, &refused), me(1));
+    session.set_hint(HintGroup::Network, None).expect("set");
+    assert_eq!(start(&mut session, &refused), me(1));
+    session.set_module_dunders(Some("m"), None).expect("set");
+    assert_eq!(start(&mut session, &refused), me(1));
+    session.set_module_dunders(None, None).expect("set");
+    assert_eq!(start(&mut session, &refused), me(1));
+    assert_eq!(start(&mut session, &refused), me(0));
+    // Refused part way: its first constant is garbage.
+    let part = format!("t = 'part way'\n{refused}");
+    assert_eq!(start(&mut session, &part), me(0));
+    assert_eq!(start(&mut session, &refused), me(1));
+    drop(session.snapshot().expect("snapshot"));
+    assert_eq!(start(&mut session, &refused), me(0));
+    assert!(!session.cancel());
+    assert_eq!(start(&mut session, &refused), me(0));
 }
 
 /// A cell start at the wall collects once per cell that ran since the last
@@ -327,7 +750,14 @@ fn a_cell_start_at_the_wall_collects_once_per_cell_that_ran() {
     let me = |n| ("MemoryError".to_owned(), n);
     let ok = |n| ("ok".to_owned(), n);
     let mut session = Session::new(&engine).expect("session");
-    let fill = "xs = []\ntry:\n    while True:\n        xs.append(str(len(xs)))\nexcept MemoryError:\n    pass";
+    // The fill runs in a function the session keeps, so its code stays
+    // live: reclamation at the wall frees nothing either.
+    let filling = |item: &str| {
+        format!(
+            "def fill():\n    xs = []\n    try:\n        while True:\n            xs.append({item})\n    except MemoryError:\n        pass\n    return xs\nxs = fill()"
+        )
+    };
+    let fill = &filling("str(len(xs))");
     assert_eq!(start(&mut session, fill).0, "ok");
     // Live data at the wall: the collection frees nothing.
     assert_eq!(start(&mut session, "y = 1"), me(1));

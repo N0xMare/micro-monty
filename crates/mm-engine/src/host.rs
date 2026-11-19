@@ -517,6 +517,9 @@ impl Vm {
         spec: &HostValue,
         program: Option<&Arc<HostProgram>>,
     ) -> Result<(), Raised> {
+        // A redefinition releases the module's imported copy and its stale
+        // definitions, possibly without allocating (`Heap::idle`).
+        self.heap.idle_collected = false;
         let mut bytes = (size_of::<HostModule>()
             + 2 * size_of::<usize>()
             + name.len()
@@ -1395,7 +1398,10 @@ impl Vm {
         data: &HostValue,
     ) -> Result<(), Raised> {
         // First, so a heap the last cell left at its wall is collected
-        // before anything here allocates.
+        // before anything here allocates. What the definition then
+        // releases (stale definitions, the module's imported copy in
+        // `Vm::define_host_module`, which the facade runs next) is left to
+        // the next start: the bindings below allocate (`Heap::idle`).
         self.prepare_cell();
         let pg = self.prelude_globals;
         let dk = self.intern("_host_defs")?;
@@ -1425,8 +1431,6 @@ impl Vm {
             ("_host_msgs", self.py_value(msgs)?),
             ("_host_data", self.py_value(data)?),
         ];
-        // The definitions these replace are released.
-        self.heap.idle_collected = false;
         for (name, v) in binds {
             let k = self.intern(name)?;
             self.dict_set(pg, k, v)?;

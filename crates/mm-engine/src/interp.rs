@@ -2399,7 +2399,15 @@ impl Vm {
         let Some(code) = self.codes.get(cidx as usize).cloned() else {
             return Err(self.err(T::SystemError, "bad code index"));
         };
-        let (name, qual) = (code.name, code.qualname);
+        let (name, qual) = if code.name == Value::NONE {
+            // A module body's names, not interned at its load.
+            (
+                self.intern(&code.code.name)?,
+                self.intern(&code.code.qualname)?,
+            )
+        } else {
+            (code.name, code.qualname)
+        };
         let g = self.globals_of(&code);
         let f = {
             let res = self.heap.alloc_init(
