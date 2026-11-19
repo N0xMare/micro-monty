@@ -1678,3 +1678,130 @@ print(t)
         assert_eq!(got, want, "slice {slice}, {parks} parks");
     }
 }
+
+/// Each cell's outcome, output and fuel, on one session at memory `limit`
+/// with real incremental marks (`set_gc_incremental(4096, 0)`), parked
+/// every `slice` fuel units (`None`: unparked).
+fn near_limit_cells(limit: u64, cells: &[&str], slice: Option<u64>) -> Vec<(String, String, u64)> {
+    let engine =
+        Engine::new(EngineConfig::new().with_limits(micro_monty::Limits::new().with_memory(limit)));
+    let out = Arc::new(Mutex::new(String::new()));
+    let mut s = session(&engine, &out);
+    s.set_gc_incremental(4096, 0);
+    s.set_fuel_total(Some(1 << 60));
+    let mut rows = Vec::new();
+    for src in cells {
+        out.lock().expect("output lock").clear();
+        let before = s.fuel_total().expect("total");
+        let code = engine.compile(src, "near_limit.py").expect("compiles");
+        s.set_fuel(Some(slice.unwrap_or(1 << 60)));
+        let mut p = s.start(&code);
+        while let Progress::Parked { .. } = p {
+            s.set_fuel(Some(slice.unwrap_or(1 << 60)));
+            p = s.resume(Resume::Continue).expect("resumes");
+        }
+        let used = before - s.fuel_total().expect("total");
+        rows.push((outcome(&p), out.lock().expect("output lock").clone(), used));
+    }
+    rows
+}
+
+/// [`near_limit_cells`] unparked against parks every 1, 997 and 20,011
+/// units. The programs are reduced near-limit ones: each tells a build
+/// with its fix from one without at its limit and this layout, which a
+/// later change can shift, so the tests guarding a fix are rechecked by
+/// undoing it. This test binary links the facade through its
+/// dev-dependency on itself, without default features: another build id
+/// and layout than a host's default build, so a limit found with an
+/// example or another driver does not carry over.
+fn near_limit_parks_agree(limit: u64, cells: &[&str]) {
+    let plain = near_limit_cells(limit, cells, None);
+    for slice in [1, 997, 20_011] {
+        assert_eq!(
+            near_limit_cells(limit, cells, Some(slice)),
+            plain,
+            "parked every {slice}"
+        );
+    }
+}
+
+#[test]
+fn a_retry_after_memory_error_pays_the_same_parked() {
+    // A retry asked for while a result's collection was pending skipped
+    // its charge; whether one was pending depended on the slices: 414,904
+    // units unparked, 382,136 parked (a random near-limit program,
+    // reduced).
+    near_limit_parks_agree(
+        2 << 20,
+        &[
+            r#"
+import gc
+def gen(k, sz):
+    while i < 300:
+        i += 1
+    return xs
+log = []
+H = {}
+try:
+    s = "é," * 65274
+    H["k0"] = s + s
+    t = f"{s}{s}"
+    u = s[1:] * 2
+except MemoryError:
+    x = list(range(22515))
+print(log, sorted(H))
+"#,
+            r#"
+try:
+    s = "ab," * 40118
+    H["k3"] = s.upper()
+    t = s.replace("a", "xy")
+    u = s.split(",")
+    v = s.encode()
+except MemoryError:
+    log.append(8)
+x = [{"a": i, "b": str(i)} for i in range(2099)]
+try:
+    x = [{"a": i, "b": str(i)} for i in range(4329)]
+    t = json.dumps(x)
+    H["k1"] = json.loads(t)
+except MemoryError:
+    log.append(13)
+a = set(range(14841))
+b = a.copy()
+try:
+    print(sum(len(x) for x in load(4, 534964)))
+except MemoryError:
+    log.append(17)
+print(spin(1839))
+"#,
+        ],
+    );
+}
+
+#[test]
+fn a_retry_after_memory_error_pays_whatever_collection_was_asked_for() {
+    // Three cells that fail alike: `s.upper()` has no room, is retried
+    // after a collection and raises. In the first a result's collection
+    // was asked for and not ended when it failed, and its retry went
+    // uncharged: 7,500 units against the others' 40,268 (the retry's
+    // charge is 2 MiB / 64 = 32,768). The same from 1,650,000 to 1,750,000
+    // bytes of `pad` [M].
+    let limit = 2 << 20;
+    let cell = "try:\n    t = s.upper()\nexcept MemoryError:\n    n += 1\n";
+    let rows = near_limit_cells(
+        limit,
+        &[
+            "pad = bytearray(1_700_000)\ns = 'ab,' * 40_000\nn = 0\n",
+            cell,
+            cell,
+            cell,
+            "print(n)",
+        ],
+        None,
+    );
+    assert_eq!(rows[4].1, "3\n");
+    let fuel: Vec<u64> = rows[1..4].iter().map(|r| r.2).collect();
+    assert!(fuel[0] >= limit / 64, "{fuel:?}");
+    assert_eq!(fuel, [fuel[0]; 3]);
+}

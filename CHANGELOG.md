@@ -278,6 +278,10 @@ hashes are pre-release history, kept in the private archive
   instruction, `SIGILL`, and makes no system call.) On musl the filter
   allows `tkill` aimed at the main thread or the thread that installed it; an
   abort on the reader thread still ends in `SIGSYS` there.
+- A retry after `MemoryError` is always charged for its collection, also
+  while another collection was asked for and not ended: the charge no
+  longer depends on whether a mark or a result's collection was in
+  progress, which the GC mode and the host's fuel slices decide.
 
 ### Added
 

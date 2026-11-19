@@ -406,8 +406,15 @@ impl Vm {
     /// starts a wait: a native building many results asks for the same
     /// collection again for each, and a top-up per result charged
     /// `big.split(',')` into 61 parts of 70 KB 32.6 million units past a
-    /// slice [M, reviewer]. So a step charges no more than a 64 MiB
-    /// result's own 2^20 units for it (the steps oracle's overdraft bound).
+    /// slice [M, reviewer]. So a result and its top-up together charge no
+    /// more than a 64 MiB result's own 2^20 units. A retry after
+    /// `MemoryError` in the same step pays its own charge on top
+    /// (`Vm::collect_for_retry`, whatever was asked for before it), so one
+    /// step can pay for two collections, 2^21 units at limits of 64 MiB
+    /// and more. The steps oracle has no row for that case; at the 64 MiB
+    /// cap, ten operations building a result near the wall (2,400 heaps,
+    /// default GC and incremental marks) charged at most 1,156,324 units
+    /// past a slice of 1,000 [M], under its 2^21 + 2^17 bound.
     pub(crate) fn collect_for_result(&mut self, bytes: usize) {
         if bytes >= 1 << 16
             && self.heap.stats().allocated_since_gc >= self.heap.available_bytes() / 2

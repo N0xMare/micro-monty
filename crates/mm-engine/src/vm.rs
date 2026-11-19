@@ -604,7 +604,9 @@ pub(crate) const HDR: usize = 2;
 
 /// The most fuel a retry after `MemoryError` charges for its collection
 /// (`Vm::collect_for_retry`): 64 MiB of a limit's worth at a unit per 64
-/// bytes, within a slice's overdraft bound (docs/spec.md §5).
+/// bytes. A step that also topped up a result's charge
+/// (`Vm::collect_for_result`) pays both, at most twice this (docs/spec.md
+/// §5).
 pub(crate) const RETRY_CHARGE: u64 = 1 << 20;
 
 /// The length of the call instructions plain frames return to.
@@ -2132,17 +2134,15 @@ impl Vm {
     /// is charged for it instead, at once: a unit per 64 bytes of the
     /// memory limit (what one collection can mark at most), at most
     /// [`RETRY_CHARGE`] units, so a guest that catches `MemoryError` in a
-    /// loop pays for each collection in fuel. A constant of the session per
-    /// collection; how many collections a run asks for still moves with
-    /// snapshots, whose own collection can leave a retry nothing to wait
-    /// for (-4.2M to +5.0M units on the correctness review's programs
-    /// [M, reviewer]), until snapshots stop collecting (lane D step 5).
+    /// loop pays for each collection in fuel. Every retry pays, whatever the
+    /// collector had asked for or done before it: the charge is a function
+    /// of the failure, not of whether a mark or a result's collection was
+    /// in progress, which the GC mode and the slices decide. A result's
+    /// collection asked for before (`Vm::collect_for_result`, which tops
+    /// its result's charge up) is restarted here, so the retry pays for the
+    /// fresh one it waits for.
     pub(crate) fn collect_for_retry(&mut self) {
-        // A collection already asked for (a result's, `collect_for_result`)
-        // and not ended is paid for: one charge per collection.
-        if self.gc_wait <= self.heap.stats().collections {
-            self.burn(self.collection_charge());
-        }
+        self.burn(self.collection_charge());
         self.heap.restart_collection();
         self.collect_in_steps(false);
     }

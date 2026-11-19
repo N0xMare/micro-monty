@@ -1661,8 +1661,9 @@ differs:
   where the result fits (three dropped `s.copy()` of a 2M-item set at 256
   MiB, as in CPython \[M\]). A retry's collection is charged, a unit per 64
   bytes of `Limits::memory` up to 2^20, so a loop that catches `MemoryError`
-  pays for each. A suspended generator keeps no dead temporary its yield
-  saved past the next collection. A snapshot collects first, so it can
+  pays for each; every retry pays, also one made while another collection
+  was already asked for. A suspended generator keeps no dead temporary its
+  yield saved past the next collection. A snapshot collects first, so it can
   flip an unretried outcome either way, and it moves fuel totals (six `f(*big, **kw)`: 11%
   less with a snapshot at every park \[M\]).
 - **Fuel after a snapshot, long non-ASCII strs.** A snapshot's collection

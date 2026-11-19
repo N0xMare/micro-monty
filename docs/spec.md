@@ -1795,8 +1795,12 @@ timer deadlines.
   differed by 4 units after a restore [M]); how many collections a run
   asks for still moves with snapshots, whose collection can leave a retry
   nothing to wait for (-4.2M to +5.0M units [M, reviewer]), until
-  snapshots stop collecting. A collection is charged once: a retry while
-  one is asked for and not ended pays nothing more. A result of 64 KiB or
+  snapshots stop collecting. Every retry pays, also while a collection is
+  asked for and not ended: the retry restarts it, and what it pays is a
+  function of the failure, not of whether a mark or another request was
+  in progress, which the GC mode and the fuel slices decide (paying only
+  when no collection was pending moved a retry's fuel by up to 2^20
+  units between drive modes and GC modes [S, collector study]). A result of 64 KiB or
   more that asks for a collection (`Vm::collect_for_result`) with less
   than 1/64 of the limit allocated since the engine's own last one tops
   its result's charge up to the same amount, only for the request that
