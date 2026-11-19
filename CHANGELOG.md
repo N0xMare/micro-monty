@@ -291,10 +291,7 @@ hashes are pre-release history, kept in the private archive
   that wait set once its collection has ended. Left set, it made the next
   request for a collection a step that found nothing due where the
   unparked run collected in full, so outcomes and fuel moved with the
-  host's fuel slices under incremental marking. Programs that differ
-  between a plain run and parks alone, under the default GC and
-  incremental marks in slices of 4,096: 4 of 1,200 random near-limit runs
-  and 4 of 600 asyncio runs before, none after [M].
+  host's fuel slices under incremental marking.
 
 ### Added
 

@@ -1849,3 +1849,89 @@ except MemoryError:
 "#],
     );
 }
+
+/// A reduced near-limit program with a park inside the wait of a retry
+/// after `MemoryError`, at [`RETRY_WAIT_LIMIT`] and every slice the tests
+/// use: from 4 to 116 KiB under 2 MiB [M]; at 2 MiB later fixes hide it.
+const RETRY_WAIT_CELL: &str = r#"
+import gc
+def load(k, sz):
+    return i
+log = []
+H = {}
+try:
+    x = list(range(39819))
+    H["k3"] = sorted(x, reverse=True)
+    H["k0"] = [bytes(b) for b in x]
+except MemoryError:
+    log.append(3)
+try:
+    x = bytearray(83864)
+    x += bytes(250221)
+except MemoryError:
+    x = list(range(30952))
+"#;
+const RETRY_WAIT_LIMIT: u64 = (2 << 20) - (64 << 10);
+
+#[test]
+fn a_park_inside_a_retrys_wait_moves_no_collection_under_incremental_marks() {
+    // A retry after `MemoryError` asked for during a mark waits for the
+    // count after the next; the collection it restarts ends the wait
+    // early (`Vm::gc_held`). A park inside that wait left the ended wait
+    // set, so a later request for a collection ran a step that found
+    // nothing due where the unparked run collected in full: 551,636 units
+    // unparked, 516,815 parked (a random near-limit program, reduced).
+    near_limit_parks_agree(RETRY_WAIT_LIMIT, &[RETRY_WAIT_CELL]);
+}
+
+#[test]
+fn a_cell_cancelled_inside_a_retrys_wait_leaves_no_wait_to_the_next_cell() {
+    // A park inside a retry's wait leaves the wait marked for the resume.
+    // Cancelled there, the mark must go with the cell: left set, the next
+    // cell's first failing instruction ran again as if it were that
+    // retry, here a `sort` that raises `TypeError` after its comparisons,
+    // 21,812 units against 12,782, after the parks inside the wait (4 of
+    // the 8 parks) [M].
+    let engine = Engine::new(
+        EngineConfig::new().with_limits(micro_monty::Limits::new().with_memory(RETRY_WAIT_LIMIT)),
+    );
+    let waits = engine
+        .compile(RETRY_WAIT_CELL, "near_limit.py")
+        .expect("compiles");
+    let next = engine
+        .compile(
+            "x = list(range(3000, 0, -1)) + ['a']\nx.sort()\n",
+            "next.py",
+        )
+        .expect("compiles");
+    let mut rows = Vec::new();
+    for cancel_at in 1.. {
+        let out = Arc::new(Mutex::new(String::new()));
+        let mut s = session(&engine, &out);
+        s.set_gc_incremental(4096, 0);
+        s.set_fuel_total(Some(1 << 60));
+        s.set_fuel(Some(20_011));
+        let mut p = s.start(&waits);
+        let mut parks = 0;
+        while let Progress::Parked { .. } = p {
+            parks += 1;
+            if parks == cancel_at {
+                break;
+            }
+            s.set_fuel(Some(20_011));
+            p = s.resume(Resume::Continue).expect("resumes");
+        }
+        if parks < cancel_at {
+            break;
+        }
+        assert!(s.cancel());
+        let before = s.fuel_total().expect("total");
+        s.set_fuel(Some(1 << 60));
+        let p = s.start(&next);
+        let o = outcome(&p);
+        assert!(o.contains("TypeError"), "{o}");
+        rows.push(before - s.fuel_total().expect("total"));
+    }
+    assert!(rows.len() >= 4, "{rows:?}");
+    assert_eq!(rows, vec![rows[0]; rows.len()]);
+}

@@ -1075,7 +1075,11 @@ pub struct Vm {
     /// with `ParkReason::Fuel` and fuel left (`Session::set_gc_yield`).
     /// Not in the image.
     pub gc_yield: bool,
-    /// The faulting `CALL` runs again once that collection ends.
+    /// The faulting `CALL` runs again once that collection ends; also set
+    /// by a park inside that wait, which `Vm::resume` goes on with. Not in
+    /// the image: a snapshot's collection leaves `gc_wait` 0, so a resume
+    /// that goes back into the wait ends it at once and runs the `CALL`
+    /// again, as a restored session does.
     pub(crate) oom_wait: bool,
     /// The instruction that may not run again after `MemoryError`
     /// ([`Vm::op_stamp`] when it was marked; `u64::MAX`: none): the rerun

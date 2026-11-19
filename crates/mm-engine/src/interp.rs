@@ -417,7 +417,10 @@ impl Vm {
                 // Only an operator that parked before starting may now
                 // run; after any other park the next one still checks.
                 self.afford = self.fuel_wanted != 0;
-                self.execute(st, false)
+                // A park inside a retry's wait after `MemoryError` goes on
+                // with that wait (`Vm::execute`).
+                let waiting = self.oom_wait;
+                self.execute(st, waiting)
             }
             None => Exit::Error,
         }
@@ -566,6 +569,12 @@ impl Vm {
                     while self.gc_waiting() {
                         if let Some(r) = self.safepoint(&st) {
                             self.oom_rerun = self.op_stamp();
+                            // The resume comes back into this wait
+                            // (`Vm::resume`), whose last `gc_waiting` ends
+                            // it as the unparked run's does: left set, an
+                            // ended wait made the next request a step
+                            // that found nothing due.
+                            self.oom_wait = true;
                             self.saved = Some(st);
                             return Exit::Parked(r);
                         }
@@ -827,10 +836,10 @@ impl Vm {
         if request {
             // A collection asked for in steps (`gc_wait`) and not ended runs
             // its next step; any other request collects in full. An ended
-            // wait stays set until a `gc_waiting` call clears it, which a
-            // park inside a retry's wait skips (the resume reruns the
-            // `CALL` straight after the owed steps): it must not make this
-            // a step, or parks would move collections.
+            // wait stays set until a `gc_waiting` call clears it (a park
+            // inside a retry's wait goes back into that wait at the resume,
+            // whose `gc_waiting` clears it): it must not make this a step,
+            // or parks would move collections.
             let step = self.gc_pending && self.gc_wait > self.heap.stats().collections;
             self.gc_requested_done();
             self.gc(st, if step { Gc::Step } else { Gc::Full });

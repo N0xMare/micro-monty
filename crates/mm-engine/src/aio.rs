@@ -1139,6 +1139,7 @@ impl Vm {
         // cell's code runs before the collection the pass was for, and a
         // generator behind the cursor may yield meanwhile.
         self.gens_at = 0;
+        self.oom_wait = false;
         self.oom_rerun = u64::MAX;
         self.cb_slots = 0;
         self.task_names = Value::NONE;
