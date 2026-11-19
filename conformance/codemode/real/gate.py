@@ -15,7 +15,13 @@ counter. The script sends the recorded `Configure`, `Reset` and
 `StartCell` frames and answers the k-th nested call of a cell with the
 recorded result of the cell's k-th call once the worker reports it
 `Waiting`. A call whose name or input differs from the recording diverges
-the session: its later cells are not run.
+the session: its later cells are not run. So does a worker that answers
+every cell and then exits with an error.
+
+`--worker` runs a given worker, or a wrapper that `exec`s it, with
+`MM_REPLAY_SESSION` naming the session; `--lockstep` sends each frame only
+once the worker has settled, so a count of its instructions repeats
+(`cargo xtask replay-ir` runs both under callgrind; Linux only).
 
 Per cell it compares, against the recording: the nested calls (name and
 input), the batches (`Waiting`), the delivery verdicts, the printed output,

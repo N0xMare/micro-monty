@@ -122,8 +122,11 @@ to `target/check/logs/<stage>.log`.
   `crates/micro-monty/src/image.rs` or `tests/golden/`;
   `crates/mm-compile/src/encode.rs`; a `crates/mm-wasm-*` crate;
   `xtask/src/wasm.rs` or `shipped.rs`; the release-gate-only Ir gates'
-  code (`xtask/src/v8_ir.rs`, `replay_ir.rs`, `accept.rs`, `floors.rs`)
-  and `xtask/ir-floors/v8-ir.txt`; `rust-toolchain.toml`,
+  code (`xtask/src/v8_ir.rs`, `replay_ir.rs`, `accept.rs`, `floors.rs`),
+  `xtask/ir-floors/v8-ir.txt` and what only they read
+  (`conformance/codemode/real/gate.py` and `traces.tar.xz`;
+  `hosts/js/src/`, `hosts/js/bench/count.ts`, `hosts/js/package.json`);
+  `rust-toolchain.toml`,
   `Cargo.lock`, `.cargo/` or `.agents/setup`. A line of a `[profile.*]`
   table, an `optimize` mark (`size`, `speed` or `none`, bare or in
   `cfg_attr`) added, removed, edited or moved to another function (a

@@ -118,7 +118,8 @@ the session's recorded start and entropy a counter (no recorded cell reads the c
 `random` cells seed their own generators). It sends the recorded `Configure`, `Reset` and
 `StartCell` frames and answers the k-th nested call of a cell with the recorded result of that
 cell's k-th call when the worker reports it `Waiting`; a call whose name or input differs from the
-recording diverges the session and skips its later cells. Sessions recorded on Monty's worker are
+recording diverges the session and skips its later cells, as does a worker that answers every cell
+and then exits with an error. Sessions recorded on Monty's worker are
 replayed the same way, so their cells check mm on Monty's transcripts.
 
 For every cell it compares the nested calls (name and input), the batch sizes, the delivery
@@ -130,6 +131,11 @@ cell that differs from that file; without `--check` the file is rewritten, keepi
 cell still differs the same way. Commit it to record an intended change, as with
 `conformance/results/`. A run takes 8.6 s on 16 cores and 16.7 s on one (the 16-core gVisor sandbox, [M]), most of it
 one 4 s `dict-review` cell.
+
+`--worker <path>` replays on a given worker, or on a wrapper that `exec`s it; the wrapper reads
+`MM_REPLAY_SESSION` for the session's id. `--lockstep` (Linux) sends each frame only once the worker
+has settled in `read` or `futex`, so the instructions it runs repeat run to run. `cargo xtask
+replay-ir` uses both to count every session under callgrind (docs/spec.md §12).
 
 ## Idle state and carrying it across builds
 

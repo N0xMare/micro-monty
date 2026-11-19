@@ -3100,9 +3100,9 @@ opens a draft release.
   (baseline ISA, so every machine compiles the same code). It counts each
   bench program once under callgrind: the instructions at addresses in
   wasmtime's perf map (the guest's compiled code), plus the inclusive cost
-  of wasmtime's `memory.copy` and `memory.fill` libcalls (share: str 6.3%,
-  json 4.2%, dict 3.6%, fmt 3.1%, sort 2.2%, generators 1.4%, under 1%
-  elsewhere, none on fib, loop or closure [M]), so a loop turned into a
+  of wasmtime's `memory.copy` and `memory.fill` libcalls (share at 0.0.2:
+  str 4.9%, json 3.2%, fmt 2.6%, dict 2.2%, sort 1.9% [M]; none on fib,
+  loop or closure), so a loop turned into a
   bulk copy does not read as a gain. Limits, against the base and the
   floor (§12) alike: a program rising past 1.0%, the geomean of the ratios
   (without `startup`) past 0.5%, or `startup` (about 0.9M instructions)
