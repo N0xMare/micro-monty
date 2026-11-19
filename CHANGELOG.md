@@ -23,6 +23,17 @@ hashes are pre-release history, kept in the private archive
   more for one with it, two more for an `AttributeError` with it, and
   nothing more for any other exception.
 
+### Changed
+
+- The Huffman decoder tables of the bundled modules and the prelude are
+  built once per `Engine` and kept in its module cache (about 90 KB),
+  instead of once per prelude chunk part and per cell or restore. A
+  restore on a fresh `Engine` builds each table at most once: over 6,241
+  recorded code-mode images it takes 7.5% fewer instructions (53.9 G to
+  49.9 G) and its native p50 falls from 1.09 to 0.97 ms [M]. Charges and
+  behavior do not change: each unpacking is still charged its decoder
+  workspace.
+
 ### Fixed
 
 - A session whose heap is at its wall no longer keeps failing cell starts

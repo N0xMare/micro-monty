@@ -58,12 +58,50 @@ pub struct Packing {
     pub ends: &'static [u8],
 }
 
-/// One decoder per [`Packing`] section, built on first use and kept across
-/// the modules a cell (or a restore) decodes. Each part is still
-/// charged its decoder workspace, so charges do not depend on what was
-/// built before.
-pub(crate) type Unpackers =
-    Option<Box<[mm_compile::pack::Unpacker<'static>; mm_compile::section::COUNT]>>;
+/// How many headers have decoder tables ([`ModuleCache::decoders`]): the
+/// bundled modules' [`Packing`] sections, then the prelude's parts.
+#[must_use]
+pub fn decoder_headers() -> usize {
+    mm_compile::section::COUNT + crate::prelude::PARTS
+}
+
+/// The decoder tables a session or a restore built or took from its
+/// engine, by header ([`decoder_headers`]), kept across the modules and prelude
+/// chunks it unpacks. Each part is still charged its decoder workspace,
+/// so charges do not depend on what was built before.
+pub(crate) type Unpackers = Option<
+    Box<
+        [Option<Arc<mm_compile::pack::Tables>>; mm_compile::section::COUNT + crate::prelude::PARTS],
+    >,
+>;
+
+/// The decoder tables of header `k` (`header`): kept in `local`, else
+/// the engine's (`cache`), else built now and offered to it.
+pub(crate) fn decoders(
+    k: usize,
+    header: &[u8],
+    cache: Option<&dyn ModuleCache>,
+    local: &mut Unpackers,
+) -> Result<Arc<mm_compile::pack::Tables>, mm_compile::DecodeError> {
+    let local = local.get_or_insert_with(Box::default);
+    let slot = local.get_mut(k).ok_or(mm_compile::DecodeError::Invalid)?;
+    if let Some(t) = slot {
+        return Ok(t.clone());
+    }
+    let t = if let Some(t) = cache.and_then(|c| c.decoders(k)) {
+        t
+    } else {
+        let t = Arc::new(
+            mm_compile::pack::Tables::new(header).ok_or(mm_compile::DecodeError::Invalid)?,
+        );
+        if let Some(c) = cache {
+            c.offer_decoders(k, &t);
+        }
+        t
+    };
+    *slot = Some(t.clone());
+    Ok(t)
+}
 
 impl Packing {
     /// The program packed in `code`, admitting each unpacked section and
@@ -71,6 +109,7 @@ impl Packing {
     fn decode(
         &'static self,
         code: &[u8],
+        cache: Option<&dyn ModuleCache>,
         unpackers: &mut Unpackers,
         budget: &mut u64,
     ) -> Result<Program, mm_compile::DecodeError> {
@@ -91,18 +130,14 @@ impl Packing {
                 }
             }
         }
-        let unpackers = unpackers.get_or_insert_with(|| {
-            Box::new(core::array::from_fn(|k| {
-                mm_compile::pack::Unpacker::new(self.headers[k])
-            }))
-        });
         let mut sections: [Vec<u8>; COUNT] = Default::default();
         for (k, len) in lens.into_iter().enumerate() {
             // The last section is the rest.
             let len = if k == COUNT - 1 { rest.len() } else { len };
             let (part, tail) = rest.split_at_checked(len).ok_or(DecodeError::Invalid)?;
             rest = tail;
-            sections[k] = unpackers[k].unpack_bounded(part, budget)?;
+            sections[k] =
+                decoders(k, self.headers[k], cache, unpackers)?.unpack_bounded(part, budget)?;
         }
         let refs: [&[u8]; COUNT] = core::array::from_fn(|k| sections[k].as_slice());
         let shared = mm_compile::SharedStrings::new(self.text, self.ends);
@@ -144,7 +179,7 @@ impl StdModule {
         #[cfg(not(feature = "host-bundle"))]
         let code = self.code;
         let program = if let Some(p) = self.packing {
-            p.decode(code, unpackers, budget)?
+            p.decode(code, cache, unpackers, budget)?
         } else {
             let bytes = mm_compile::pack::unpack_bounded(code, budget)?;
             Program::decode_bounded(&bytes, budget)?
@@ -226,6 +261,17 @@ pub trait ModuleCache: Send + Sync {
     /// it or not.
     fn offer_prelude_unit(&self, u: usize, program: &Arc<DecodedModule>) {
         let _ = (u, program);
+    }
+    /// The decoder tables of header `k` (below [`decoder_headers`]), if the cache
+    /// holds them.
+    fn decoders(&self, k: usize) -> Option<Arc<mm_compile::pack::Tables>> {
+        let _ = k;
+        None
+    }
+    /// Decoder tables of header `k` a session built; the cache may keep
+    /// them or not.
+    fn offer_decoders(&self, k: usize, tables: &Arc<mm_compile::pack::Tables>) {
+        let _ = (k, tables);
     }
     /// The host-module code compiled under `key`, if the cache holds it.
     fn host_program(&self, key: &[u8; 16]) -> Option<Arc<crate::HostProgram>>;

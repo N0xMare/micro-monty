@@ -2555,6 +2555,7 @@ fn prelude_chunks_from_the_cache_are_charged_as_unpacked() {
         Ok::<_, String>((progress, session.snapshot().ok()))
     };
     let mut outcomes = Vec::new();
+    let mut fewer = false;
     for kb in (100..1200).step_by(4) {
         let limits = Limits::new().with_memory(kb << 10);
         let cold = run(&Engine::with_module_cache(
@@ -2565,12 +2566,16 @@ fn prelude_chunks_from_the_cache_are_charged_as_unpacked() {
         drop(run(&Engine::new(EngineConfig::default())));
         let _ = run(&warm);
         assert!(run(&warm) == cold, "{kb} KB");
-        // The mm-wasm guest's engine keeps no chunks, and behaves the same.
+        // The mm-wasm guest's engine keeps no chunks, only the decoder
+        // tables `warm` keeps beside its chunks, and behaves the same.
         let unshared = Engine::without_prelude_chunk_cache(EngineConfig::new().with_limits(limits));
         assert!(run(&unshared) == cold, "{kb} KB");
-        assert_eq!(unshared.module_cache_bytes(), 0);
+        let (kept, chunks) = (unshared.module_cache_bytes(), warm.module_cache_bytes());
+        assert!(kept <= chunks, "{kb} KB: {kept} {chunks}");
+        fewer |= kept < chunks;
         outcomes.push(cold.is_ok_and(|r| r.0.starts_with("Complete")));
     }
+    assert!(fewer, "the guest's engine kept chunks");
     assert!(
         outcomes.contains(&true) && outcomes.contains(&false),
         "{outcomes:?}"

@@ -7,7 +7,9 @@
 
 use crate::types::T;
 use crate::types::ty;
-use crate::vm::{DecodedModule, GSLOT_PRELUDE, ModuleCache, PreludeChunk, Raised, Vm};
+use crate::vm::{
+    DecodedModule, GSLOT_PRELUDE, ModuleCache, PreludeChunk, Raised, Unpackers, Vm, decoders,
+};
 use alloc::{sync::Arc, vec::Vec};
 use mm_compile::bytecode::Program;
 use mm_compile::section::COUNT;
@@ -62,6 +64,7 @@ pub(crate) fn fingerprint() -> u64 {
 fn unpack_parts(
     chunk: usize,
     cache: Option<&dyn ModuleCache>,
+    unpackers: &mut Unpackers,
     budget: &mut u64,
 ) -> Result<[Vec<u8>; PARTS], DecodeError> {
     let end = *CHUNK_END.get(chunk).ok_or(DecodeError::Invalid)? as usize;
@@ -101,7 +104,7 @@ fn unpack_parts(
         let header = CHUNKS
             .get(start..HEADER_END[k])
             .ok_or(DecodeError::Invalid)?;
-        parts[k] = mm_compile::pack::unpack_shared_bounded(header, part, budget)?;
+        parts[k] = decoders(COUNT + k, header, cache, unpackers)?.unpack_bounded(part, budget)?;
         // One part's decoders at a time: all but the last give their
         // workspace back, so the chunk peaks at its parts plus one.
         if k < PARTS - 1 {
@@ -152,8 +155,9 @@ fn locate<'a>(
 #[cfg_attr(mm_shipped, optimize(size))]
 pub fn prelude_programs() -> Option<Vec<Program>> {
     let mut out = Vec::new();
+    let mut unpackers = None;
     for c in 0..CHUNK_END.len() {
-        let owned = unpack_parts(c, None, &mut { u64::MAX }).ok()?;
+        let owned = unpack_parts(c, None, &mut unpackers, &mut { u64::MAX }).ok()?;
         let parts: [&[u8]; PARTS] = core::array::from_fn(|k| owned[k].as_slice());
         for u in UNITS
             .iter()
@@ -198,7 +202,9 @@ pub(crate) fn unit_program(
         Some(c) => c,
         None => {
             let mut remaining = budget;
-            let parts = unpack_parts(chunk.into(), cache, &mut remaining)?;
+            // The engine's decoder tables, when it has them, serve every
+            // unit a restore decodes.
+            let parts = unpack_parts(chunk.into(), cache, &mut None, &mut remaining)?;
             let c = Arc::new(PreludeChunk {
                 parts,
                 workspace: budget - remaining,
@@ -495,8 +501,13 @@ impl Vm {
             c
         } else {
             let before = remaining;
-            let parts = unpack_parts(chunk.into(), cache.as_deref(), &mut remaining)
-                .map_err(|e| self.decode_error(e))?;
+            let parts = unpack_parts(
+                chunk.into(),
+                cache.as_deref(),
+                &mut self.unpackers,
+                &mut remaining,
+            )
+            .map_err(|e| self.decode_error(e))?;
             let c = Arc::new(PreludeChunk {
                 parts,
                 workspace: before - remaining,

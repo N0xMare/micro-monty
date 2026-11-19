@@ -156,14 +156,12 @@ pub fn unpack(src: &[u8]) -> Option<Vec<u8>> {
 /// unchanged. The workspace charge bounds both tables, symbol/code buffers
 /// and unpacked header, even though their allocations do not all coexist.
 pub fn unpack_bounded(src: &[u8], budget: &mut u64) -> Result<Vec<u8>, crate::DecodeError> {
-    let mut remaining = Some(*budget);
-    let bytes = unpack_in(src, &mut remaining).ok_or(if remaining.is_none() {
-        crate::DecodeError::TooLarge
-    } else {
-        crate::DecodeError::Invalid
-    })?;
-    *budget = remaining.unwrap_or(0);
-    Ok(bytes)
+    let (n, i) = unpacked_len(src).ok_or(crate::DecodeError::Invalid)?;
+    let (header, body) = src
+        .get(i..)
+        .and_then(|rest| rest.split_at_checked(HEADER))
+        .ok_or(crate::DecodeError::Invalid)?;
+    unpack_with(n, None, header, body, budget)
 }
 
 /// Like [`unpack_bounded`], for one part [`pack_shared`] packed: `header`
@@ -173,18 +171,33 @@ pub fn unpack_shared_bounded(
     src: &[u8],
     budget: &mut u64,
 ) -> Result<Vec<u8>, crate::DecodeError> {
-    let mut remaining = Some(*budget);
-    let bytes = (|| {
-        let (n, i) = unpacked_len(src)?;
-        decode(n, header, src.get(i..)?, &mut remaining)
-    })()
-    .ok_or(if remaining.is_none() {
-        crate::DecodeError::TooLarge
+    let (n, i) = unpacked_len(src).ok_or(crate::DecodeError::Invalid)?;
+    let body = src.get(i..).ok_or(crate::DecodeError::Invalid)?;
+    unpack_with(n, None, header, body, budget)
+}
+
+/// The `n` bytes `body` codes, with `tables`, else with the decoders of
+/// `header` built now; admits `n` and the decoder workspace first.
+fn unpack_with(
+    n: usize,
+    tables: Option<&Tables>,
+    header: &[u8],
+    body: &[u8],
+    budget: &mut u64,
+) -> Result<Vec<u8>, crate::DecodeError> {
+    let left = budget
+        .checked_sub((n + scratch()) as u64)
+        .ok_or(crate::DecodeError::TooLarge)?;
+    let built;
+    let t = if let Some(t) = tables {
+        t
     } else {
-        crate::DecodeError::Invalid
-    })?;
-    *budget = remaining.unwrap_or(0);
-    Ok(bytes)
+        built = Tables::new(header).ok_or(crate::DecodeError::Invalid)?;
+        &built
+    };
+    let out = decode_with(n, &t.lit, &t.dist, body).ok_or(crate::DecodeError::Invalid)?;
+    *budget = left;
+    Ok(out)
 }
 
 /// The unpacked length `src` starts with, and the bytes it takes.
@@ -205,75 +218,51 @@ fn unpacked_len(src: &[u8]) -> Option<(usize, usize)> {
     (n <= MAX_LEN).then_some((n, i))
 }
 
-fn unpack_in(src: &[u8], budget: &mut Option<u64>) -> Option<Vec<u8>> {
-    let (n, i) = unpacked_len(src)?;
-    let (header, body) = src.get(i..)?.split_at_checked(HEADER)?;
-    decode(n, header, body, budget)
+/// The decoders of one shared header ([`pack_shared`]), built once and
+/// shared by every part packed against it, across sessions too. Each part
+/// is still charged as [`unpack_shared_bounded`] charges it, decoder
+/// workspace included, so a charge does not depend on whether the tables
+/// were built before.
+pub struct Tables {
+    lit: Huff,
+    dist: Huff,
 }
 
-/// The `n` bytes `body` codes with the code lengths in `header`.
-fn decode(n: usize, header: &[u8], body: &[u8], budget: &mut Option<u64>) -> Option<Vec<u8>> {
-    if header.len() != HEADER {
-        return None;
-    }
-    *budget = (*budget)?.checked_sub((n + scratch()) as u64);
-    (*budget)?;
-    let (lit, dist) = tables(header)?;
-    decode_with(n, &lit, &dist, body)
-}
-
-/// The literal/length and distance decoders of `header`.
-fn tables(header: &[u8]) -> Option<(Huff, Huff)> {
-    let lens: Vec<u8> = header.iter().flat_map(|&b| [b & 15, b >> 4]).collect();
-    Some((
-        Huff::new(lens.get(..NLIT)?),
-        Huff::new(lens.get(NLIT..NLIT + NDIST)?),
-    ))
-}
-
-/// Unpacks several parts [`pack_shared`] packed against one header,
-/// building the header's decoders once. Each part is charged as
-/// [`unpack_shared_bounded`] charges it.
-pub struct Unpacker<'a> {
-    header: &'a [u8],
-    tables: Option<(Huff, Huff)>,
-}
-
-impl<'a> Unpacker<'a> {
-    /// An unpacker for parts packed against `header`; its decoders are
-    /// built on the first part.
+impl Tables {
+    /// The decoders of `header`; `None` if it is malformed.
     #[must_use]
-    pub fn new(header: &'a [u8]) -> Unpacker<'a> {
-        Unpacker {
-            header,
-            tables: None,
+    pub fn new(header: &[u8]) -> Option<Tables> {
+        if header.len() != HEADER {
+            return None;
         }
+        let lens: Vec<u8> = header.iter().flat_map(|&b| [b & 15, b >> 4]).collect();
+        Some(Tables {
+            lit: Huff::new(lens.get(..NLIT)?),
+            dist: Huff::new(lens.get(NLIT..NLIT + NDIST)?),
+        })
     }
 
-    /// [`unpack_shared_bounded`] of `src` against this header.
+    /// [`unpack_shared_bounded`] of `src` against these decoders' header.
     pub fn unpack_bounded(
-        &mut self,
+        &self,
         src: &[u8],
         budget: &mut u64,
     ) -> Result<Vec<u8>, crate::DecodeError> {
-        if self.header.len() != HEADER {
-            return Err(crate::DecodeError::Invalid);
-        }
         let (n, i) = unpacked_len(src).ok_or(crate::DecodeError::Invalid)?;
-        let need = (n + scratch()) as u64;
-        let left = budget
-            .checked_sub(need)
-            .ok_or(crate::DecodeError::TooLarge)?;
-        if self.tables.is_none() {
-            self.tables = tables(self.header);
-        }
-        let (lit, dist) = self.tables.as_ref().ok_or(crate::DecodeError::Invalid)?;
-        let out = src
-            .get(i..)
-            .and_then(|body| decode_with(n, lit, dist, body))
-            .ok_or(crate::DecodeError::Invalid)?;
-        *budget = left;
-        Ok(out)
+        let body = src.get(i..).ok_or(crate::DecodeError::Invalid)?;
+        unpack_with(n, Some(self), &[], body, budget)
+    }
+
+    /// The bytes they keep alive.
+    #[must_use]
+    pub fn bytes(&self) -> u64 {
+        [&self.lit, &self.dist]
+            .iter()
+            .map(|h| {
+                (h.table.capacity() * size_of::<u16>() + h.sym.capacity() * size_of::<u16>()) as u64
+            })
+            .sum::<u64>()
+            + size_of::<Tables>() as u64
     }
 }
 
@@ -744,7 +733,7 @@ fn emit(out: Vec<u8>, toks: &[Token], lit_lens: &[u8], dist_lens: &[u8]) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::{
-        FAST, NLIT, Unpacker, pack, pack_shared, unpack, unpack_bounded, unpack_shared_bounded,
+        FAST, NLIT, Tables, pack, pack_shared, unpack, unpack_bounded, unpack_shared_bounded,
     };
     use crate::DecodeError;
     use alloc::vec::Vec;
@@ -812,7 +801,7 @@ mod tests {
     }
 
     #[test]
-    fn unpacker_matches_unpack_shared() {
+    fn tables_match_unpack_shared() {
         // A skewed, unrepetitive part, so that rare bytes get codes longer
         // than the decoder's lookup table.
         let mut x = 1u32;
@@ -827,10 +816,12 @@ mod tests {
         let (header, packed) = pack_shared(&parts);
         let lens: Vec<u8> = header.iter().flat_map(|&b| [b & 15, b >> 4]).collect();
         assert!(lens[..NLIT].iter().any(|&l| u32::from(l) > FAST));
-        let mut unpacker = Unpacker::new(&header);
+        let tables = Tables::new(&header);
+        assert!(tables.is_some());
+        let Some(tables) = tables else { return };
         for (p, data) in packed.iter().zip(parts) {
             let (mut a, mut b) = (1u64 << 30, 1u64 << 30);
-            assert_eq!(unpacker.unpack_bounded(p, &mut a).as_deref(), Ok(data));
+            assert_eq!(tables.unpack_bounded(p, &mut a).as_deref(), Ok(data));
             assert_eq!(
                 unpack_shared_bounded(&header, p, &mut b).as_deref(),
                 Ok(data)
@@ -839,20 +830,16 @@ mod tests {
             if !data.is_empty() {
                 let mut tight = data.len() as u64 - 1;
                 assert_eq!(
-                    unpacker.unpack_bounded(p, &mut tight),
+                    tables.unpack_bounded(p, &mut tight),
                     Err(DecodeError::TooLarge)
                 );
                 assert_eq!(tight, data.len() as u64 - 1);
             }
             for cut in 0..p.len().min(64) {
-                let _ = unpacker.unpack_bounded(&p[..cut], &mut u64::MAX.clone());
+                let _ = tables.unpack_bounded(&p[..cut], &mut u64::MAX.clone());
             }
         }
-        assert!(
-            Unpacker::new(&header[1..])
-                .unpack_bounded(&packed[0], &mut u64::MAX.clone())
-                .is_err()
-        );
+        assert!(Tables::new(&header[1..]).is_none());
     }
 
     #[test]

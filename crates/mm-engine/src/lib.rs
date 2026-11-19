@@ -128,4 +128,5 @@ pub use snapshot::{
 pub use vm::{
     CallArgs, Clock, DecodedModule, Entropy, Exit, ModuleCache, Output, Packing, ParkReason,
     PreludeChunk, Raised, StdModule, Stopped, Stream, Vm, VmConfig, WallClock, ZoneSource,
+    decoder_headers,
 };

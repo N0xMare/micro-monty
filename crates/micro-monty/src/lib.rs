@@ -196,6 +196,9 @@ struct ModuleCache {
     /// the first offer, so an engine that restores none pays nothing
     /// (none without the chunk cache).
     units: std::sync::OnceLock<Vec<std::sync::OnceLock<Arc<mm_engine::DecodedModule>>>>,
+    /// The bundled code's decoder tables, by header
+    /// ([`mm_engine::decoder_headers`]): built once per engine.
+    decoders: Vec<std::sync::OnceLock<Arc<mm_compile::pack::Tables>>>,
     /// Host-module code compiled once ([`Session::define`]), by key.
     host: std::sync::Mutex<Vec<Arc<mm_engine::HostProgram>>>,
     /// Bytes still free under the limit.
@@ -277,6 +280,14 @@ impl mm_engine::ModuleCache for ModuleCache {
                 .collect()
         });
         ModuleCache::offer(self, units.get(u), program, program.bytes());
+    }
+
+    fn decoders(&self, k: usize) -> Option<Arc<mm_compile::pack::Tables>> {
+        self.decoders.get(k)?.get().cloned()
+    }
+
+    fn offer_decoders(&self, k: usize, tables: &Arc<mm_compile::pack::Tables>) {
+        ModuleCache::offer(self, self.decoders.get(k), tables, tables.bytes());
     }
 
     fn host_program(&self, key: &[u8; 16]) -> Option<Arc<mm_engine::HostProgram>> {
@@ -1146,6 +1157,9 @@ impl Engine {
                     .collect(),
                 chunks: (0..chunks).map(|_| std::sync::OnceLock::new()).collect(),
                 units: std::sync::OnceLock::new(),
+                decoders: (0..mm_engine::decoder_headers())
+                    .map(|_| std::sync::OnceLock::new())
+                    .collect(),
                 host: std::sync::Mutex::new(Vec::new()),
                 free: max_bytes.into(),
             })
@@ -1193,8 +1207,9 @@ impl Engine {
         self.config.limits
     }
 
-    /// Bytes of decoded modules and prelude units, unpacked prelude chunks
-    /// and compiled host-module code the engine's cache holds now.
+    /// Bytes of decoded modules and prelude units, unpacked prelude chunks,
+    /// the bundled code's decoder tables and compiled host-module code the
+    /// engine's cache holds now.
     #[must_use]
     pub fn module_cache_bytes(&self) -> u64 {
         self.modules.as_ref().map_or(0, |c| {
@@ -1218,7 +1233,13 @@ impl Engine {
                 .iter()
                 .map(|p| p.bytes())
                 .sum();
-            modules + chunks + host
+            let decoders: u64 = c
+                .decoders
+                .iter()
+                .filter_map(|s| s.get())
+                .map(|t| t.bytes())
+                .sum();
+            modules + chunks + host + decoders
         })
     }
 

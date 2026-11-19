@@ -1103,8 +1103,12 @@ references, other metadata, opcodes, registers, `u` operands (inline-cache
 slots predicted), and `b`, `i` and `j` operands. Strings that three or more
 modules use are stored once, raw, and made `Arc`s only when a decode uses
 them. Each stream is packed against one set of Huffman codes for every
-module (`pack_shared`). A session keeps the nine decoders it built for its
-first decode. The prelude is packed the same way, in chunks of units (one
+module (`pack_shared`). The decoder tables of each header (nine for the
+modules, ten for the prelude's parts) are built once and kept in the
+facade `Engine`'s cache (`pack::Tables`, about 90 KB for all of them [M]),
+else by the session for one cell or one restore; each unpacking is still
+charged its decoder workspace, so a session's charges do not depend on
+whether the tables existed. The prelude is packed the same way, in chunks of units (one
 per top-level `def`, class, instance or literal binding), and a unit is
 built in a session on the first lookup of its name (`mm-engine/src/prelude.rs`);
 no prelude Python runs at session start. The stdlib and the prelude are
@@ -2427,7 +2431,8 @@ Sessions own their arenas and the engine crates have no global or static
 state, so one process can run many sessions with independent limits. The one
 thing sessions share is immutable: the facade's `Engine` holds a cache of
 decoded bundled modules (their bytecode, as the prelude's is shared), the
-prelude's unpacked chunks and compiled host-module programs, filled on first
+prelude's unpacked chunks, the bundled code's decoder tables and compiled
+host-module programs, filled on first
 use and capped at `DEFAULT_MODULE_CACHE` (8 MiB) unless
 `Engine::with_module_cache` sets another cap. It is charged once to the
 Engine, not to any session, and a session is charged and behaves the same
