@@ -284,20 +284,20 @@ impl Vm {
         }
         let mut o = h;
         for _ in 0..10_000 {
-            let c = self.vslot(o, exc_slot::CONTEXT);
+            let c = self.vslot_hot(o, exc_slot::CONTEXT);
             if c == Value::NONE || c == Value::UNDEFINED {
                 break;
             }
             if c == exc {
                 if let Some(r) = o.as_obj() {
-                    self.set_slot(r, exc_slot::CONTEXT, Value::NONE);
+                    self.set_slot_hot(r, exc_slot::CONTEXT, Value::NONE);
                 }
                 break;
             }
             o = c;
         }
         if let Some(r) = exc.as_obj() {
-            self.set_slot(r, exc_slot::CONTEXT, h);
+            self.set_slot_hot(r, exc_slot::CONTEXT, h);
         }
     }
 
@@ -377,12 +377,12 @@ impl Vm {
         if !exc.is_obj_kind(ty::EXC as u8) {
             return;
         }
-        let mut tb = self.slot(r, exc_slot::TRACEBACK);
+        let mut tb = self.slot_hot(r, exc_slot::TRACEBACK);
         if !tb.is_obj_kind(ty::LIST as u8) {
             match self.new_list(&[]) {
                 Ok(l) => {
                     tb = l;
-                    self.set_slot(r, exc_slot::TRACEBACK, l);
+                    self.set_slot_hot(r, exc_slot::TRACEBACK, l);
                 }
                 Err(Raised) => return self.drop_tb_refusal(),
             }
@@ -412,7 +412,7 @@ impl Vm {
             && let Some(r) = e.as_obj()
             && e.is_obj_kind(ty::EXC as u8)
         {
-            self.set_slot_o(r, HINT, s);
+            self.set_slot(r, HINT, s);
         }
         self.keep_raising(e);
     }
@@ -439,14 +439,14 @@ impl Vm {
             && let Some(k) = Value::int(kind)
             && let Ok(t) = self.alloc_tuple(&[k, name, data, locals, note])
         {
-            self.set_slot_o(r, HINT, t);
+            self.set_slot(r, HINT, t);
         }
         self.keep_raising(e);
     }
 
     /// The hint data of `e` (see [`HINT`]), when it is of `kind`.
     fn hint_data(&self, e: Value, kind: i64) -> Option<Vec<Value>> {
-        let h = self.vslot_o(e, HINT);
+        let h = self.vslot(e, HINT);
         if !h.is_obj_kind(ty::TUPLE as u8) {
             return None;
         }
@@ -460,7 +460,7 @@ impl Vm {
         // The builtin base decides, by a constant match rather than a walk
         // up the bases (every `raise` asks): `UnboundLocalError` is the
         // only builtin subclass of either.
-        match self.class_base_t(self.vslot_o(e, exc_slot::TYPE)) {
+        match self.class_base_t(self.vslot(e, exc_slot::TYPE)) {
             T::NameError | T::UnboundLocalError => Some(PENDING_NAME),
             T::AttributeError => Some(PENDING_ATTR),
             _ => None,
@@ -470,7 +470,7 @@ impl Vm {
     /// Is `e` an `ImportError` (or a subclass)?
     pub(crate) fn is_import_error(&self, e: Value) -> bool {
         matches!(
-            self.class_base_t(self.vslot_o(e, exc_slot::TYPE)),
+            self.class_base_t(self.vslot(e, exc_slot::TYPE)),
             T::ImportError | T::ModuleNotFoundError
         )
     }
@@ -478,9 +478,9 @@ impl Vm {
     /// An `ImportError`'s `name`, `path`, `name_from` or `msg` when its
     /// instance dict has none: `msg` is the one argument, the rest `None`.
     pub(crate) fn import_attr(&self, e: Value, attr: &str) -> Value {
-        let args = self.vslot_o(e, exc_slot::ARGS);
+        let args = self.vslot(e, exc_slot::ARGS);
         if attr == "msg" && self.tuple_len(args) == 1 {
-            self.vslot_o(args, 0)
+            self.vslot(args, 0)
         } else {
             Value::NONE
         }
@@ -513,16 +513,16 @@ impl Vm {
         {
             return v;
         }
-        let args = self.vslot_o(e, exc_slot::ARGS);
+        let args = self.vslot(e, exc_slot::ARGS);
         let n = self.tuple_len(args);
         if attr == "msg" {
             return if n == 0 {
                 Value::NONE
             } else {
-                self.vslot_o(args, 0)
+                self.vslot(args, 0)
             };
         }
-        let info = self.vslot_o(args, 1);
+        let info = self.vslot(args, 1);
         if n != 2 || !info.is_obj_kind(ty::TUPLE as u8) {
             return Value::NONE;
         }
@@ -540,7 +540,7 @@ impl Vm {
             _ => 6,
         };
         if i < len {
-            self.vslot_o(info, i as u32)
+            self.vslot(info, i as u32)
         } else {
             Value::NONE
         }
@@ -555,7 +555,7 @@ impl Vm {
         let file = self.syntax_attr(e, "filename");
         let line = self.syntax_attr(e, "lineno");
         let file = Vm::is_str(file).then(|| {
-            let f = self.str_ref_o(file);
+            let f = self.str_ref(file);
             String::from(f.rsplit('/').next().unwrap_or(f))
         });
         let line = line.as_int();
@@ -621,7 +621,7 @@ impl Vm {
         }
         let t = self.alloc_tuple(&p)?;
         if let Some(r) = e.as_obj() {
-            self.set_slot_o(r, HINT, t);
+            self.set_slot(r, HINT, t);
         }
         Ok(true)
     }
@@ -640,10 +640,10 @@ impl Vm {
         if self.is_import_error(e) {
             // `name`, `path` and `name_from` live in the instance dict.
             for &(k, v) in kws {
-                if !IMPORT_ATTRS.contains(&self.str_ref_o(k)) {
+                if !IMPORT_ATTRS.contains(&self.str_ref(k)) {
                     let msg = format!(
                         "ImportError() got an unexpected keyword argument '{}'",
-                        self.str_ref_o(k)
+                        self.str_ref(k)
                     );
                     return Err(self.err(T::TypeError, &msg));
                 }
@@ -656,7 +656,7 @@ impl Vm {
             return Err(self.err(T::TypeError, &msg));
         }
         for &(k, v) in kws {
-            let n = String::from(self.str_ref_o(k));
+            let n = String::from(self.str_ref(k));
             if !self.set_exc_name_attr(e, &n, v)? {
                 let base = if self.hint_kind(e) == Some(PENDING_NAME) {
                     "NameError"
@@ -703,7 +703,7 @@ impl Vm {
         }
         let t = self.alloc_tuple(&p)?;
         if let Some(r) = e.as_obj() {
-            self.set_slot_o(r, HINT, t);
+            self.set_slot(r, HINT, t);
         }
         Ok(())
     }
@@ -714,7 +714,7 @@ impl Vm {
     /// the raising frame; an `AttributeError`'s from its `name` and `obj`;
     /// an `ImportError`'s from the module.
     pub(crate) fn hint_of(&mut self, exc: Value, with_tb: bool) -> Value {
-        let h = self.vslot_o(exc, HINT);
+        let h = self.vslot(exc, HINT);
         if !h.is_obj_kind(ty::TUPLE as u8) {
             return h;
         }
@@ -734,7 +734,7 @@ impl Vm {
             Some(PENDING_NAME) => {
                 // The suggestion needs the raising frame; the stdlib note
                 // does not.
-                let name = String::from(self.str_ref_o(name));
+                let name = String::from(self.str_ref(name));
                 let frame = (with_tb && data != Value::NONE).then_some((data, locals));
                 self.name_hint_text(&name, frame)
             }
@@ -785,7 +785,7 @@ impl Vm {
         let keep = |n: &str| wrong.starts_with('_') || !n.starts_with('_');
         let n = names
             .iter()
-            .filter(|&&n| Vm::is_str(n) && keep(self.str_ref_o(n)))
+            .filter(|&&n| Vm::is_str(n) && keep(self.str_ref(n)))
             .count();
         if n > MAX_CANDIDATES {
             return None;
@@ -793,8 +793,8 @@ impl Vm {
         Some(
             names
                 .iter()
-                .filter(|&&n| Vm::is_str(n) && keep(self.str_ref_o(n)))
-                .map(|&n| String::from(self.str_ref_o(n)))
+                .filter(|&&n| Vm::is_str(n) && keep(self.str_ref(n)))
+                .map(|&n| String::from(self.str_ref(n)))
                 .collect(),
         )
     }
@@ -808,7 +808,7 @@ impl Vm {
 
     #[cfg_attr(mm_shipped, optimize(size))]
     fn attr_hint_text(&mut self, obj: Value, name: Value) -> Option<String> {
-        let wrong = String::from(self.str_ref_o(name));
+        let wrong = String::from(self.str_ref(name));
         // User instances and classes: `dir()` is the instance's attributes
         // and the namespaces along the MRO.
         let class = if Vm::is_class(obj) {
@@ -824,7 +824,7 @@ impl Vm {
             };
             for k in self.mro_of(c) {
                 if Vm::is_class(k) {
-                    let d = self.vslot_o(k, crate::class::cls::DICT);
+                    let d = self.vslot(k, crate::class::cls::DICT);
                     names.extend(self.dict_items_vec(d).into_iter().map(|(n, _)| n));
                 }
             }
@@ -851,7 +851,7 @@ impl Vm {
     /// Records the hint of a `NameError` for `name` (pending until
     /// rendered); `locals` are the bound local names of the frame.
     pub(crate) fn set_name_hint(&mut self, name: Value, locals: &[String]) {
-        let n = self.str_ref_o(name);
+        let n = self.str_ref(name);
         // Outside the subset (docs/spec.md §4): say so where a model reads
         // it, with or without a traceback.
         let note = if matches!(n, "eval" | "exec" | "compile") {
@@ -883,23 +883,20 @@ impl Vm {
         let mut hint = String::new();
         let mut s = None;
         if let Some((globals, locals)) = frame {
-            if Vm::is_str(locals) && self.str_ref_o(locals) == SELF_HAS_NAME {
+            if Vm::is_str(locals) && self.str_ref(locals) == SELF_HAS_NAME {
                 let _ = write!(hint, ". Did you mean: 'self.{name}'?");
                 s = Some(());
             } else {
                 let mut owned: Vec<String> = if Vm::is_str(locals) {
-                    self.str_ref_o(locals)
-                        .split('\n')
-                        .map(String::from)
-                        .collect()
+                    self.str_ref(locals).split('\n').map(String::from).collect()
                 } else {
                     Vec::new()
                 };
                 for (k, _) in self.dict_items_vec(globals) {
-                    owned.push(self.str_ref_o(k).to_string());
+                    owned.push(self.str_ref(k).to_string());
                 }
                 for (k, _) in self.dict_items_vec(self.builtins) {
-                    owned.push(self.str_ref_o(k).to_string());
+                    owned.push(self.str_ref(k).to_string());
                 }
                 for n in crate::prelude::AS_BUILTINS {
                     if !owned.iter().any(|o| o == n) {
@@ -926,7 +923,7 @@ impl Vm {
     /// `(type name, str(exc))`.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub fn exception_parts(&mut self, exc: Value) -> (String, String) {
-        let c = self.vslot_o(exc, exc_slot::TYPE);
+        let c = self.vslot(exc, exc_slot::TYPE);
         let name = self.class_report_name(c);
         let saved = self.exc;
         self.host_text = true;
@@ -945,7 +942,7 @@ impl Vm {
     fn final_line(&mut self, exc: Value) -> String {
         let with_tb = !self.tb_entries(exc).is_empty();
         let mut line = if self.exc_type(exc).is_subclass(T::SyntaxError) {
-            let c = self.vslot_o(exc, exc_slot::TYPE);
+            let c = self.vslot(exc, exc_slot::TYPE);
             let t = self.class_report_name(c);
             self.syntax_lines(exc, &t)
         } else {
@@ -957,7 +954,7 @@ impl Vm {
                 format!("{t}: {msg}")
             };
             if Vm::is_str(hint) {
-                line.push_str(self.str_ref_o(hint));
+                line.push_str(self.str_ref(hint));
             } else if self.forgot_await(exc) {
                 line.push_str(crate::hints::AWAIT_HINT);
             }
@@ -971,7 +968,7 @@ impl Vm {
             && let Some(notes) = self.seq_items(notes)
         {
             for n in notes.into_iter().filter(|&n| Vm::is_str(n)) {
-                for l in self.str_ref_o(n).split('\n') {
+                for l in self.str_ref(n).split('\n') {
                     line.push_str(l);
                     line.push('\n');
                 }
@@ -1012,7 +1009,7 @@ impl Vm {
         if Vm::is_str(text) {
             // Char counts, without a char copy of a text that can be as
             // long as the memory limit allows.
-            let full = self.str_ref_o(text);
+            let full = self.str_ref(text);
             let body = full.trim_end_matches('\n');
             let ltext = body.trim_start_matches([' ', '\n', '\x0c']);
             let rtext = body.chars().count();
@@ -1084,7 +1081,7 @@ impl Vm {
     /// `exc`'s traceback entries `(code, pc)`, innermost first.
     #[cfg_attr(mm_shipped, optimize(size))]
     fn tb_entries(&self, exc: Value) -> Vec<(u32, u32)> {
-        let tb = self.vslot_o(exc, exc_slot::TRACEBACK);
+        let tb = self.vslot(exc, exc_slot::TRACEBACK);
         if !tb.is_obj_kind(ty::LIST as u8) {
             return Vec::new();
         }
@@ -1105,7 +1102,7 @@ impl Vm {
     fn new_traceback(&mut self, exc: Value, k: usize) -> Result<Value, Raised> {
         let r = {
             let res = self.heap.alloc_init(ty::TRACEBACK, 0, &[exc], &[k as u64]);
-            self.hx_o(res)
+            self.hx(res)
         }?;
         Ok(Value::from_ref(r, ty::TRACEBACK as u8))
     }
@@ -1126,8 +1123,8 @@ impl Vm {
             .as_obj()
             .filter(|_| tb.is_obj_kind(ty::TRACEBACK as u8))?;
         Some((
-            self.slot_o(r, 0),
-            usize::try_from(self.raw_o(r, 1)).unwrap_or(usize::MAX),
+            self.slot(r, 0),
+            usize::try_from(self.raw(r, 1)).unwrap_or(usize::MAX),
         ))
     }
 
@@ -1137,13 +1134,13 @@ impl Vm {
     pub(crate) fn set_traceback(&mut self, exc: Value, v: Value) -> Result<(), Raised> {
         let Some(r) = exc.as_obj() else { return Ok(()) };
         if v == Value::NONE {
-            self.set_slot_o(r, exc_slot::TRACEBACK, Value::NONE);
+            self.set_slot(r, exc_slot::TRACEBACK, Value::NONE);
             return Ok(());
         }
         let Some((owner, k)) = self.traceback_parts(v) else {
             return Err(self.err(T::TypeError, "__traceback__ must be a traceback or None"));
         };
-        let tb = self.vslot_o(owner, exc_slot::TRACEBACK);
+        let tb = self.vslot(owner, exc_slot::TRACEBACK);
         let mut items = self.list_items(tb);
         items.truncate(k.saturating_add(1));
         self.burn(items.len() as u64);
@@ -1151,7 +1148,7 @@ impl Vm {
             self.list_set_items(tb, &items)
         } else {
             let l = self.new_list(&items)?;
-            self.set_slot_o(r, exc_slot::TRACEBACK, l);
+            self.set_slot(r, exc_slot::TRACEBACK, l);
             Ok(())
         }
     }
@@ -1274,11 +1271,11 @@ impl Vm {
         // Out of memory, the chain stops there, as at a cycle.
         let _ = seen.insert(&mut self.heap, e);
         while e.is_obj_kind(ty::EXC as u8) {
-            let cause = self.vslot_o(e, exc_slot::CAUSE);
-            let context = self.vslot_o(e, exc_slot::CONTEXT);
+            let cause = self.vslot(e, exc_slot::CAUSE);
+            let context = self.vslot(e, exc_slot::CONTEXT);
             let suppress = e
                 .as_obj()
-                .is_some_and(|r| self.raw_o(r, exc_slot::FLAGS) & 1 != 0);
+                .is_some_and(|r| self.raw(r, exc_slot::FLAGS) & 1 != 0);
             let (link, next) = if cause.is_obj_kind(ty::EXC as u8) {
                 (
                     "\nThe above exception was the direct cause of the following exception:\n\n",
@@ -1342,7 +1339,7 @@ impl Vm {
             let n = len.min(MAX_WIDTH + 1);
             *need_close = false;
             for j in 0..n {
-                let sub = self.vslot_o(items, j as u32);
+                let sub = self.vslot(items, j as u32);
                 let last_exc = j + 1 == n;
                 if last_exc {
                     *need_close = true;

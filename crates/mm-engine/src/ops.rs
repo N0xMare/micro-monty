@@ -264,7 +264,9 @@ impl Vm {
             T::complex => self
                 .complex_of(v)
                 .is_some_and(|(re, im)| re != 0.0 || im != 0.0),
-            T::dict_keys | T::dict_values | T::dict_items => self.dict_len(self.vslot(v, 0)) > 0,
+            T::dict_keys | T::dict_values | T::dict_items => {
+                self.dict_len(self.vslot_hot(v, 0)) > 0
+            }
             _ => self.backing(v).is_none_or(|b| self.truthy(b)),
         }
     }
@@ -276,8 +278,8 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn view_src(&mut self, v: Value) -> Result<(Value, u64), Raised> {
         match self.type_of(v) {
-            T::dict_keys => Ok((self.vslot(v, 0), crate::set::act::VIEW)),
-            T::dict_items => Ok((self.vslot(v, 0), crate::set::act::ITEMS)),
+            T::dict_keys => Ok((self.vslot_hot(v, 0), crate::set::act::VIEW)),
+            T::dict_items => Ok((self.vslot_hot(v, 0), crate::set::act::ITEMS)),
             // A set subclass's instance is read as its set
             // (`PyAnySet_Check`), whatever its `__iter__`.
             _ if self.backing(v).is_some_and(Vm::is_set) => Ok((self.unbx(v), 0)),
@@ -353,7 +355,7 @@ impl Vm {
             return Ok(a);
         };
         let res = self.heap.str_concat_n(ra, rb, long);
-        let (r, n) = self.hx(res)?;
+        let (r, n) = self.hx_hot(res)?;
         if n >= 64 {
             if n == usize::MAX {
                 return crate::strmeth::concat_steps(self, a, b);
@@ -667,9 +669,9 @@ impl Vm {
             // the view reads the view (`set.intersection`); of two views
             // the longer is probed; otherwise the other operand is read.
             let (v, o) = if view(ta) { (a, b) } else { (b, a) };
-            let lv = self.dict_len(self.vslot(v, 0));
+            let lv = self.dict_len(self.vslot_hot(v, 0));
             let (src, mut probe) = if (exact && self.type_of(o) == T::set && lv <= self.set_len(o))
-                || (view(self.type_of(o)) && self.dict_len(self.vslot(o, 0)) > lv)
+                || (view(self.type_of(o)) && self.dict_len(self.vslot_hot(o, 0)) > lv)
             {
                 (v, o)
             } else {
@@ -691,7 +693,7 @@ impl Vm {
                 return Ok(out);
             }
             if self.type_of(probe) == T::dict_keys {
-                probe = self.vslot(probe, 0);
+                probe = self.vslot_hot(probe, 0);
             }
             let (src, fs) = self.view_src(src)?;
             return self.bulk(&[out, src, probe], phase(act::AND | fs, 0, 1, 2), 0, top);
@@ -1291,8 +1293,8 @@ impl Vm {
                 let (found, n) = if let [b] = *self.str_bytes(item) {
                     (hay.contains(&b), hay.len())
                 } else {
-                    let hay = self.str_ref(container);
-                    (hay.contains(self.str_ref(item)), hay.len())
+                    let hay = self.str_ref_hot(container);
+                    (hay.contains(self.str_ref_hot(item)), hay.len())
                 };
                 self.burn_bytes(n);
                 Ok(found)
@@ -1315,7 +1317,7 @@ impl Vm {
             }
             T::dict => Ok(self.dict_get(container, item)?.is_some()),
             T::dict_keys => {
-                let d = self.vslot(container, 0);
+                let d = self.vslot_hot(container, 0);
                 Ok(self.dict_get(d, item)?.is_some())
             }
             T::set | T::frozenset => self.set_contains(container, item),
@@ -1348,8 +1350,8 @@ impl Vm {
                 if !item.is_obj_kind(ty::TUPLE as u8) || self.tuple_len(item) != 2 {
                     return Ok(false);
                 }
-                let (k, v) = (self.vslot(item, 0), self.vslot(item, 1));
-                let d = self.vslot(container, 0);
+                let (k, v) = (self.vslot_hot(item, 0), self.vslot_hot(item, 1));
+                let d = self.vslot_hot(container, 0);
                 match self.dict_get(d, k)? {
                     Some(found) => self.eq_elem(found, v),
                     None => Ok(false),
@@ -1507,7 +1509,7 @@ impl Vm {
         i: &mut usize,
         neg: bool,
     ) -> Result<Option<Value>, Raised> {
-        let d = self.vslot_o(v, 0);
+        let d = self.vslot(v, 0);
         let start = self.work;
         let mut n = 0u64;
         let out = loop {
@@ -1751,11 +1753,11 @@ impl Vm {
         let (out, dst) = if tuple {
             let n = u32::try_from(total).map_err(|_| self.err(T::MemoryError, ""))?;
             let res = self.heap.alloc_unfilled(ty::TUPLE, 0, n);
-            let t = Value::from_ref(self.hx(res)?, ty::TUPLE as u8);
+            let t = Value::from_ref(self.hx_hot(res)?, ty::TUPLE as u8);
             (t, t)
         } else {
             let l = self.list_of_len(total)?;
-            let buf = self.vslot(l, 0);
+            let buf = self.vslot_hot(l, 0);
             (l, buf)
         };
         self.seq_build(Value::NONE, out, dst, srcs, segs, total, 0, 1)
@@ -1876,7 +1878,7 @@ impl Vm {
             // the buffer grows once to hold them first, so running out of
             // memory leaves the list as it was, as in CPython.
             if let (Some(r), true) = (src.as_obj(), src.is_obj_kind(ty::ITER as u8)) {
-                let (seq, kind, at) = (self.vslot(src, 0), self.raw_o(r, 1), self.raw_o(r, 2));
+                let (seq, kind, at) = (self.vslot_hot(src, 0), self.raw(r, 1), self.raw(r, 2));
                 let n = match kind {
                     it::LIST => self.list_len(seq),
                     it::TUPLE => self.tuple_len(seq),
@@ -2206,7 +2208,7 @@ impl Vm {
     /// than a wasm32 `usize`.
     pub(crate) fn slice_span(&mut self, s: Value, n: i64) -> Result<(i64, i64, i64, i64), Raised> {
         let get = |vm: &mut Vm, i: u32| -> Result<Option<i64>, Raised> {
-            let v = vm.vslot(s, i);
+            let v = vm.vslot_hot(s, i);
             if v == Value::NONE {
                 return Ok(None);
             }
@@ -2312,7 +2314,7 @@ impl Vm {
                         Some(k) => Ok(if t == T::list {
                             self.list_get(obj, k)
                         } else {
-                            self.vslot(obj, u32::try_from(k).unwrap_or(0))
+                            self.vslot_hot(obj, u32::try_from(k).unwrap_or(0))
                         }),
                         None => Err(self.err(
                             T::IndexError,
@@ -2507,7 +2509,7 @@ impl Vm {
                         return Err(self.err(T::IndexError, "list assignment index out of range"));
                     };
                     if let Some(b) = self.list_buf(obj) {
-                        self.set_slot(b, u32::try_from(k).unwrap_or(0), v);
+                        self.set_slot_hot(b, u32::try_from(k).unwrap_or(0), v);
                     }
                     return Ok(());
                 }
@@ -2728,7 +2730,7 @@ impl Vm {
         let n = i128::from(self.range_len(r));
         let mut part = [None; 3];
         for (i, p) in (0u32..).zip(part.iter_mut()) {
-            let v = self.vslot(s, i);
+            let v = self.vslot_hot(s, i);
             if v == Value::NONE {
                 continue;
             }
@@ -2794,9 +2796,9 @@ impl Vm {
             return (0, 0, 1);
         };
         (
-            self.raw(o, 0).cast_signed(),
-            self.raw(o, 1).cast_signed(),
-            self.raw(o, 2).cast_signed(),
+            self.raw_hot(o, 0).cast_signed(),
+            self.raw_hot(o, 1).cast_signed(),
+            self.raw_hot(o, 2).cast_signed(),
         )
     }
 
@@ -2854,18 +2856,18 @@ impl Vm {
                 let d = if self.type_of(v) == T::dict {
                     v
                 } else {
-                    self.vslot(v, 0)
+                    self.vslot_hot(v, 0)
                 };
                 let n = self.dict_len(d) as u64;
                 self.new_iter(d, it::DICT_KEYS, 0, n, 0)
             }
             T::dict_values => {
-                let d = self.vslot(v, 0);
+                let d = self.vslot_hot(v, 0);
                 let n = self.dict_len(d) as u64;
                 self.new_iter(d, it::DICT_VALUES, 0, n, 0)
             }
             T::dict_items => {
-                let d = self.vslot(v, 0);
+                let d = self.vslot_hot(v, 0);
                 let n = self.dict_len(d) as u64;
                 self.new_iter(d, it::DICT_ITEMS, 0, n, 0)
             }
@@ -2907,7 +2909,7 @@ impl Vm {
     /// An exhausted builtin iterator `r` drops its sequence, as CPython's
     /// do: it holds no memory, and one that grows later is not read again.
     fn iter_drop(&mut self, r: Ref) {
-        self.set_slot_o(r, 0, Value::NONE);
+        self.set_slot(r, 0, Value::NONE);
     }
 
     /// `next(it)`: `None` when exhausted.
@@ -2945,8 +2947,8 @@ impl Vm {
                 }
                 it::TUPLE => {
                     if (a as usize) < self.tuple_len(seq) {
-                        self.set_raw(r, 2, a + 1);
-                        return Ok(Some(self.vslot(seq, u32::try_from(a).unwrap_or(0))));
+                        self.set_raw_hot(r, 2, a + 1);
+                        return Ok(Some(self.vslot_hot(seq, u32::try_from(a).unwrap_or(0))));
                     }
                     self.iter_drop(r);
                     return Ok(None);
@@ -2959,7 +2961,7 @@ impl Vm {
                         self.iter_drop(r);
                         return Ok(None);
                     };
-                    self.set_raw(r, 2, a + 1);
+                    self.set_raw_hot(r, 2, a + 1);
                     return Ok(Some(Value::int(i64::from(c)).unwrap_or(Value::NONE)));
                 }
                 it::STR | it::STR_ASCII => {
@@ -2982,28 +2984,28 @@ impl Vm {
                     let s: String = core::str::from_utf8(bytes.get(i..i + w).unwrap_or(&[]))
                         .unwrap_or("")
                         .into();
-                    self.set_raw(r, 2, (i + w) as u64);
+                    self.set_raw_hot(r, 2, (i + w) as u64);
                     return Ok(Some(self.new_str(&s)?));
                 }
                 it::RANGE => {
-                    let left = self.raw(r, 3);
+                    let left = self.raw_hot(r, 3);
                     if left == 0 {
                         return Ok(None);
                     }
                     // Wraps only past the last item, which is never read.
-                    let next = a.wrapping_add(self.raw(r, 4));
-                    self.set_raw(r, 2, next);
-                    self.set_raw(r, 3, left - 1);
+                    let next = a.wrapping_add(self.raw_hot(r, 4));
+                    self.set_raw_hot(r, 2, next);
+                    self.set_raw_hot(r, 3, left - 1);
                     return Ok(Some(self.new_int(a.cast_signed())?));
                 }
                 it::DICT_KEYS | it::DICT_VALUES | it::DICT_ITEMS => {
                     if a == DEAD {
                         return Ok(None);
                     }
-                    let expect = self.raw(r, 3);
+                    let expect = self.raw_hot(r, 3);
                     if self.dict_len(seq) as u64 != expect {
                         // Sticky, as in CPython.
-                        self.set_raw(r, 3, u64::MAX);
+                        self.set_raw_hot(r, 3, u64::MAX);
                         return Err(
                             self.err(T::RuntimeError, "dictionary changed size during iteration")
                         );
@@ -3018,16 +3020,16 @@ impl Vm {
                             }
                             // CPython's second guard: a live entry after all
                             // `len` were handed out means keys were replaced.
-                            let yielded = self.raw(r, 4);
+                            let yielded = self.raw_hot(r, 4);
                             if yielded >= expect {
-                                self.set_raw(r, 2, DEAD);
+                                self.set_raw_hot(r, 2, DEAD);
                                 return Err(self.err(
                                     T::RuntimeError,
                                     "dictionary keys changed during iteration",
                                 ));
                             }
-                            self.set_raw(r, 4, yielded + 1);
-                            self.set_raw(r, 2, (i + 1) as u64);
+                            self.set_raw_hot(r, 4, yielded + 1);
+                            self.set_raw_hot(r, 2, (i + 1) as u64);
                             return Ok(Some(match kind {
                                 it::DICT_KEYS => k,
                                 it::DICT_VALUES => v,
@@ -3038,7 +3040,7 @@ impl Vm {
                     }
                     self.burn((i.saturating_sub(a as usize)) as u64 / 8);
                     // Exhausted iterators stay exhausted.
-                    self.set_raw(r, 2, DEAD);
+                    self.set_raw_hot(r, 2, DEAD);
                     self.iter_drop(r);
                     return Ok(None);
                 }
@@ -3046,9 +3048,9 @@ impl Vm {
                     if a == DEAD {
                         return Ok(None);
                     }
-                    let expect = self.raw(r, 3);
+                    let expect = self.raw_hot(r, 3);
                     if self.set_len(seq) as u64 != expect {
-                        self.set_raw(r, 3, u64::MAX);
+                        self.set_raw_hot(r, 3, u64::MAX);
                         return Err(self.err(T::RuntimeError, "Set changed size during iteration"));
                     }
                     // Empty slots passed over, as byte work, scanned in
@@ -3059,11 +3061,11 @@ impl Vm {
                         if i + 1 - a >= 64 {
                             self.burn((i + 1 - a) / 8);
                         }
-                        self.set_raw(r, 2, i + 1);
+                        self.set_raw_hot(r, 2, i + 1);
                         return Ok(Some(v));
                     }
                     self.burn(i.saturating_sub(a) / 8);
-                    self.set_raw(r, 2, DEAD);
+                    self.set_raw_hot(r, 2, DEAD);
                     self.iter_drop(r);
                     return Ok(None);
                 }
@@ -3074,24 +3076,24 @@ impl Vm {
                 let Some(r) = itv.as_obj() else {
                     return Ok(None);
                 };
-                let inner = self.slot(r, 0);
+                let inner = self.slot_hot(r, 0);
                 if Self::nests(inner) {
                     return self.iter_next_nested(itv);
                 }
                 let Some(x) = self.iter_next(inner)? else {
                     return Ok(None);
                 };
-                let n = self.raw(r, 2).cast_signed();
+                let n = self.raw_hot(r, 2).cast_signed();
                 let iv = if n == i64::MAX {
                     self.enum_big(r)?
                 } else {
-                    self.set_raw(r, 2, (n + 1).cast_unsigned());
+                    self.set_raw_hot(r, 2, (n + 1).cast_unsigned());
                     self.new_int(n)?
                 };
                 Ok(Some(self.alloc_tuple(&[iv, x])?))
             }
             T::zip => {
-                let iters = self.tuple_items(self.vslot(itv, 0));
+                let iters = self.tuple_items(self.vslot_hot(itv, 0));
                 if iters.is_empty() {
                     return Ok(None);
                 }
@@ -3111,19 +3113,19 @@ impl Vm {
                 let Some(r) = itv.as_obj() else {
                     return Ok(None);
                 };
-                let seq = self.slot(r, 0);
-                let i = self.raw(r, 1).cast_signed();
+                let seq = self.slot_hot(r, 0);
+                let i = self.raw_hot(r, 1).cast_signed();
                 let n = self.seq_words(seq).len();
                 if i < 0 || usize::try_from(i).unwrap_or(usize::MAX) >= n {
                     self.iter_drop(r);
                     return Ok(None);
                 }
-                self.set_raw(r, 1, (i - 1).cast_unsigned());
+                self.set_raw_hot(r, 1, (i - 1).cast_unsigned());
                 let k = usize::try_from(i).unwrap_or(0);
                 Ok(Some(if seq.is_obj_kind(ty::LIST as u8) {
                     self.list_get(seq, k)
                 } else {
-                    self.vslot(seq, u32::try_from(k).unwrap_or(0))
+                    self.vslot_hot(seq, u32::try_from(k).unwrap_or(0))
                 }))
             }
             _ => {
@@ -3146,13 +3148,13 @@ impl Vm {
     #[inline(never)]
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn enum_big(&mut self, r: Ref) -> Result<Value, Raised> {
-        let n = match self.slot(r, 1) {
+        let n = match self.slot_hot(r, 1) {
             Value::NONE => self.new_int(i64::MAX)?,
             n => n,
         };
         let b = self.big_of(n).unwrap_or_else(Big::zero);
         let next = self.new_big(&b.add(&Big::from_i64(1)))?;
-        self.set_slot(r, 1, next);
+        self.set_slot_hot(r, 1, next);
         Ok(n)
     }
 
@@ -3257,7 +3259,7 @@ impl Vm {
         };
         if let Some((r, n)) = seq {
             let res = NativeValues::from_heap(&mut self.heap, r, n);
-            let items = self.hx(res)?;
+            let items = self.hx_hot(res)?;
             // One unit per item, as for an iterator: the callers' loops
             // over the items are paid for here (docs/spec.md §5).
             if items.len() >= 8 {
@@ -3303,7 +3305,7 @@ impl Vm {
                 }
             };
             let res = out.push(&mut self.heap, x);
-            self.hx(res)?;
+            self.hx_hot(res)?;
             if out.len().is_multiple_of(CHUNK) {
                 self.burn(CHUNK as u64);
                 if out.len() >= COLLECT_CHUNK {
@@ -3323,10 +3325,10 @@ impl Vm {
                 self.reserve_execution((4 * size_of::<(Value, NativeValues)>()) as u64)?;
                 let res = self.consumed.try_reserve_exact(4 - self.consumed.len());
                 let _ = self.reserve_execution(0);
-                self.hx(res.map_err(|_| mm_core::Error::OutOfMemory))?;
+                self.hx_hot(res.map_err(|_| mm_core::Error::OutOfMemory))?;
             }
             let res = out.try_clone(&mut self.heap);
-            let remembered = self.hx(res)?;
+            let remembered = self.hx_hot(res)?;
             self.consumed.push((v, remembered));
         }
         Ok(out)
@@ -3335,10 +3337,10 @@ impl Vm {
     /// Items left in range iterator `itv` (`None` for other iterators).
     fn range_left(&self, itv: Value) -> Option<u64> {
         let o = itv.as_obj().filter(|_| itv.is_obj_kind(ty::ITER as u8))?;
-        if self.raw(o, 1) != it::RANGE {
+        if self.raw_hot(o, 1) != it::RANGE {
             return None;
         }
-        Some(self.raw(o, 3))
+        Some(self.raw_hot(o, 3))
     }
 
     /// The sum of the items left in range iterator `itv`, in closed form
@@ -3501,7 +3503,7 @@ impl Vm {
             }
             // PEP 562: the module's own `__getattr__(name)`.
             let k = self.dn(Dn::Getattr)?;
-            let d = self.vslot(obj, crate::modules::module_slot::DICT);
+            let d = self.vslot_hot(obj, crate::modules::module_slot::DICT);
             if let Some(f) = self.dict_get_str(d, k)
                 && f.is_obj_kind(ty::FUNC as u8)
             {
@@ -3516,29 +3518,29 @@ impl Vm {
             let msg = format!(
                 "module '{}' has no attribute '{}'",
                 self.module_name(obj),
-                self.str_ref(name)
+                self.str_ref_hot(name)
             );
             let e = self.err(T::AttributeError, &msg);
             self.module_attr_hint(obj, name, false);
             return Err(e);
         }
         if obj.is_obj_kind(ty::FUNC as u8) {
-            let d = self.vslot(obj, fn_slot::DICT);
+            let d = self.vslot_hot(obj, fn_slot::DICT);
             if d != Value::NONE
                 && let Some(v) = self.dict_get(d, name)?
             {
                 return Ok(v);
             }
         }
-        let n_owned = String::from(self.str_ref(name));
+        let n_owned = String::from(self.str_ref_hot(name));
         let n = n_owned.as_str();
         let t = self.type_of(obj);
         let data = match (t, n) {
-            (T::function, "__name__") => Some(self.vslot(obj, fn_slot::NAME)),
-            (T::function, "__qualname__") => Some(self.vslot(obj, fn_slot::QUALNAME)),
-            (T::function, "__defaults__") => Some(self.vslot(obj, fn_slot::DEFAULTS)),
+            (T::function, "__name__") => Some(self.vslot_hot(obj, fn_slot::NAME)),
+            (T::function, "__qualname__") => Some(self.vslot_hot(obj, fn_slot::QUALNAME)),
+            (T::function, "__defaults__") => Some(self.vslot_hot(obj, fn_slot::DEFAULTS)),
             (T::function, "__kwdefaults__") if obj.is_obj_kind(ty::FUNC as u8) => {
-                Some(self.vslot(obj, fn_slot::KWDEFAULTS))
+                Some(self.vslot_hot(obj, fn_slot::KWDEFAULTS))
             }
             (T::function, "__dict__") if obj.is_obj_kind(ty::FUNC as u8) => {
                 Some(self.func_dict(obj)?)
@@ -3555,7 +3557,7 @@ impl Vm {
             }
             (T::function, "__module__") => {
                 let g = if obj.is_obj_kind(ty::FUNC as u8) {
-                    self.vslot(obj, fn_slot::GLOBALS)
+                    self.vslot_hot(obj, fn_slot::GLOBALS)
                 } else {
                     Value::NONE
                 };
@@ -3578,13 +3580,13 @@ impl Vm {
                     None => Value::NONE,
                 })
             }
-            (T::type_, "__name__" | "__qualname__") => Some(self.vslot(obj, 0)),
-            (T::builtin, "__self__") if obj.as_native().is_none() => Some(self.vslot(obj, 0)),
+            (T::type_, "__name__" | "__qualname__") => Some(self.vslot_hot(obj, 0)),
+            (T::builtin, "__self__") if obj.as_native().is_none() => Some(self.vslot_hot(obj, 0)),
             (T::builtin, "__name__" | "__qualname__") => {
                 let f = if obj.as_native().is_some() {
                     obj
                 } else {
-                    self.vslot(obj, 1)
+                    self.vslot_hot(obj, 1)
                 };
                 let nm = f
                     .as_native()
@@ -3603,7 +3605,7 @@ impl Vm {
                     let (a, b, c) = self.range_parts(obj);
                     Some(self.new_int([a, b, c][i])?)
                 } else {
-                    Some(self.vslot(obj, u32::try_from(i).unwrap_or(0)))
+                    Some(self.vslot_hot(obj, u32::try_from(i).unwrap_or(0)))
                 }
             }
             (T::int | T::bool, "real" | "numerator") => {
@@ -3649,7 +3651,7 @@ impl Vm {
                     let res = self
                         .heap
                         .alloc_init(ty::BOUND, 0, &[cls, Value::native(f)], &[]);
-                    self.hx(res)
+                    self.hx_hot(res)
                 }?;
                 return Ok(Value::from_ref(r, ty::BOUND as u8));
             }
@@ -3661,7 +3663,7 @@ impl Vm {
                 let res = self
                     .heap
                     .alloc_init(ty::BOUND, 0, &[obj, Value::native(f)], &[]);
-                self.hx(res)
+                self.hx_hot(res)
             }?;
             return Ok(Value::from_ref(r, ty::BOUND as u8));
         }
@@ -3746,20 +3748,20 @@ impl Vm {
         if obj.is_obj_kind(ty::EXC as u8) {
             return self.inst_set(obj, name, v).map(|_| ());
         }
-        let n = String::from(self.str_ref(name));
+        let n = String::from(self.str_ref_hot(name));
         if obj.is_obj_kind(ty::EXC as u8) {
             match n.as_str() {
                 "__cause__" => {
                     if let Some(r) = obj.as_obj() {
-                        self.set_slot(r, exc_slot::CAUSE, v);
-                        let f = self.raw(r, exc_slot::FLAGS) | 1;
-                        self.set_raw(r, exc_slot::FLAGS, f);
+                        self.set_slot_hot(r, exc_slot::CAUSE, v);
+                        let f = self.raw_hot(r, exc_slot::FLAGS) | 1;
+                        self.set_raw_hot(r, exc_slot::FLAGS, f);
                     }
                     return Ok(());
                 }
                 "__context__" => {
                     if let Some(r) = obj.as_obj() {
-                        self.set_slot(r, exc_slot::CONTEXT, v);
+                        self.set_slot_hot(r, exc_slot::CONTEXT, v);
                     }
                     return Ok(());
                 }

@@ -429,7 +429,7 @@ fn chr_arg(vm: &mut Vm, v: Value, func: &str, pos: &str) -> Result<char, Raised>
         );
         return Err(vm.err(T::TypeError, &msg));
     }
-    let s = vm.str_ref_o(v);
+    let s = vm.str_ref(v);
     let mut cs = s.chars();
     if let (Some(c), None) = (cs.next(), cs.next()) {
         return Ok(c);
@@ -547,7 +547,7 @@ pub(crate) fn name(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 pub(crate) fn lookup(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     let text: String = if Vm::is_str(v) {
-        vm.str_ref_o(v).into()
+        vm.str_ref(v).into()
     } else if Vm::is_bytes(v) {
         vm.bytes_data(v).iter().map(|&b| char::from(b)).collect()
     } else {
@@ -586,7 +586,7 @@ fn form_args(vm: &mut Vm, a: &CallArgs, func: &str) -> Result<u64, Raised> {
             return Err(vm.err(T::TypeError, &msg));
         }
     }
-    Ok(match vm.str_ref_o(vm.arg_o(a, 0)) {
+    Ok(match vm.str_ref(vm.arg_o(a, 0)) {
         "NFC" => COMPOSE,
         "NFKC" => COMPAT | COMPOSE,
         "NFD" => 0,
@@ -603,7 +603,7 @@ fn normalize_charge(vm: &mut Vm, s: &str, compat: bool) -> Result<(usize, Scratc
     let mut chars = 0usize;
     decompose(s, compat, &mut |_| chars += 1);
     let res = vm.heap.reserve_scratch(chars.saturating_mul(16));
-    Ok((chars, vm.hx_o(res)?))
+    Ok((chars, vm.hx(res)?))
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
@@ -761,7 +761,7 @@ fn norm_start(vm: &mut Vm, sv: Value, flags: u64) -> Result<Value, Raised> {
     let mut vals = [sv, Value::NONE, Value::NONE];
     if len <= SLICE {
         vm.burn(len as u64);
-        let s = String::from(vm.str_ref_o(sv));
+        let s = String::from(vm.str_ref(sv));
         let compat = flags & COMPAT != 0;
         let (chars, _native) = normalize_charge(vm, &s, compat)?;
         let out = normalize_str(&s, compat, flags & COMPOSE != 0, chars);
@@ -796,7 +796,7 @@ impl Vm {
         }
         if let Some(r) = state.as_obj() {
             let res = self.heap.set_values(r, 1, &vals[1..3]);
-            self.hx_o(res)?;
+            self.hx(res)?;
         }
         self.nstate_put(state, 1, &wd);
         Ok(Step::More)
@@ -883,7 +883,7 @@ fn norm_go(
                 return Err(long_run(vm));
             };
             let res = vm.heap.reserve_scratch(piece.len());
-            let _piece = vm.hx_o(res)?;
+            let _piece = vm.hx(res)?;
             let (chars, _native) = normalize_charge(vm, &piece, compat)?;
             if chars > MAX_RUN {
                 return Err(long_run(vm));
@@ -910,7 +910,7 @@ fn norm_go(
                 continue;
             }
             let res = vm.heap.reserve_scratch(out.len() + r.len());
-            let _out = vm.hx_o(res)?;
+            let _out = vm.hx(res)?;
             if out.try_reserve(r.len()).is_err() {
                 return Err(vm.err(T::MemoryError, ""));
             }
@@ -944,7 +944,7 @@ fn norm_go(
             }
             vm.burn_result(out.len(), false);
             let res = vm.heap.alloc_bytes(out.as_bytes());
-            let b = vm.hx_o(res)?;
+            let b = vm.hx(res)?;
             vm.list_push(vals[1], Value::from_byte_ref(b))?;
             wd[nw::BYTES] += out.len() as u64;
         }
@@ -955,7 +955,7 @@ fn norm_go(
         let n = usize::try_from(wd[nw::SAME] + wd[nw::BYTES]).unwrap_or(usize::MAX);
         vm.burn_result(n, true);
         let res = vm.heap.alloc_bytes_zeroed(n);
-        vals[2] = Value::from_byte_ref(vm.hx_o(res)?);
+        vals[2] = Value::from_byte_ref(vm.hx(res)?);
         wd[nw::PHASE] = 1;
         return Ok(None);
     }
@@ -994,7 +994,7 @@ fn norm_go(
         let plen = vm.heap.bytes(p).map_or(0, <[u8]>::len);
         let k = plen.saturating_sub(off).min(room);
         let res = vm.heap.copy_bytes(p, off, blk, wd[nw::POS] as usize, k);
-        vm.hx_o(res)?;
+        vm.hx(res)?;
         vm.burn(k as u64 / 16);
         room -= k;
         wd[nw::POS] += k as u64;
@@ -1009,7 +1009,7 @@ fn norm_go(
     }
     let res = vm.heap.str_from_block(blk, wd[nw::CHARS]);
     Ok(Some(Value::from_ref(
-        vm.hx_o(res)?,
+        vm.hx(res)?,
         crate::types::ty::STR as u8,
     )))
 }

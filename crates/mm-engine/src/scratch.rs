@@ -213,7 +213,7 @@ impl NativeText {
                 self.charge = Some(charge);
             }),
         };
-        vm.hx_o(res)?;
+        vm.hx(res)?;
         let res = self
             .text
             .try_reserve_exact(capacity - self.text.len())
@@ -223,7 +223,7 @@ impl NativeText {
         {
             let _ = charge.resize(&vm.heap, old);
         }
-        vm.hx_o(res)
+        vm.hx(res)
     }
 
     pub(crate) fn push(&mut self, vm: &mut Vm, s: &str) -> Result<(), Raised> {
@@ -238,12 +238,12 @@ impl NativeText {
 
     pub(crate) fn push_value(&mut self, vm: &mut Vm, v: Value) -> Result<(), Raised> {
         // Size raw storage first so growing does not validate all of UTF-8 twice.
-        let n = report_len(vm, self.text.len(), vm.str_ref_o(v));
+        let n = report_len(vm, self.text.len(), vm.str_ref(v));
         if n < vm.str_bytes(v).len() {
             vm.report_cut = true;
         }
         self.reserve(vm, n)?;
-        self.text.push_str(&vm.str_ref_o(v)[..n]);
+        self.text.push_str(&vm.str_ref(v)[..n]);
         Ok(())
     }
 }

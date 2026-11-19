@@ -195,24 +195,24 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn module_set(&mut self, m: Value, name: &str, v: Value) -> Result<(), Raised> {
         let k = self.intern(name)?;
-        let d = self.vslot(m, module_slot::DICT);
+        let d = self.vslot_hot(m, module_slot::DICT);
         self.dict_set(d, k, v)
     }
 
     /// The module's name.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn module_name(&self, m: Value) -> String {
-        String::from(self.str_ref(self.vslot(m, module_slot::NAME)))
+        String::from(self.str_ref_hot(self.vslot_hot(m, module_slot::NAME)))
     }
 
     /// `module.name`, if it has it.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn module_attr(&mut self, m: Value, name: Value) -> Result<Option<Value>, Raised> {
-        if self.str_ref(name) == "__name__" {
-            return Ok(Some(self.vslot(m, module_slot::NAME)));
+        if self.str_ref_hot(name) == "__name__" {
+            return Ok(Some(self.vslot_hot(m, module_slot::NAME)));
         }
-        let d = self.vslot(m, module_slot::DICT);
-        if self.str_ref(name) == "__dict__" {
+        let d = self.vslot_hot(m, module_slot::DICT);
+        if self.str_ref_hot(name) == "__dict__" {
             self.module_build_all(d)?;
             return Ok(Some(d));
         }
@@ -516,7 +516,7 @@ impl Vm {
         top: bool,
         user: bool,
     ) -> Result<Value, Raised> {
-        if user && self.str_ref(dotted).split('.').next() == Some("_mm") {
+        if user && self.str_ref_hot(dotted).split('.').next() == Some("_mm") {
             let e = self.err(T::ModuleNotFoundError, "No module named '_mm'");
             self.set_import_names("_mm", Value::UNDEFINED);
             return Err(e);
@@ -527,7 +527,7 @@ impl Vm {
     /// `import dotted`: the leaf module, or the top-level one if `top`.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn import(&mut self, dotted: Value, top: bool) -> Result<Value, Raised> {
-        let name = String::from(self.str_ref(dotted));
+        let name = String::from(self.str_ref_hot(dotted));
         if name.starts_with('.') {
             return Err(self.err(
                 T::ImportError,
@@ -569,14 +569,14 @@ impl Vm {
     /// `from module import name`.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn import_from(&mut self, m: Value, name: Value, g: Value) -> Result<Value, Raised> {
-        if self.str_ref(name) == "*" {
+        if self.str_ref_hot(name) == "*" {
             return self.import_star(m, g);
         }
         if let Some(v) = self.module_attr(m, name)? {
             return Ok(v);
         }
         let mname = self.module_name(m);
-        let n = String::from(self.str_ref(name));
+        let n = String::from(self.str_ref_hot(name));
         if let Some(sub) = self.find_module(&format!("{mname}.{n}"), Value::NONE, false, true)? {
             return Ok(sub);
         }
@@ -593,7 +593,7 @@ impl Vm {
     /// the ones not starting with `_`.
     #[cfg_attr(mm_shipped, optimize(size))]
     fn import_star(&mut self, m: Value, g: Value) -> Result<Value, Raised> {
-        let d = self.vslot(m, module_slot::DICT);
+        let d = self.vslot_hot(m, module_slot::DICT);
         let k = self.intern("__all__")?;
         let names = match self.dict_get(d, k)? {
             Some(all) => {
@@ -620,7 +620,7 @@ impl Vm {
                 .dict_items_vec(d)
                 .into_iter()
                 .map(|(n, _)| n)
-                .filter(|&n| Vm::is_str(n) && !self.str_ref(n).starts_with('_'))
+                .filter(|&n| Vm::is_str(n) && !self.str_ref_hot(n).starts_with('_'))
                 .collect(),
         };
         self.burn(names.len() as u64);
@@ -629,7 +629,7 @@ impl Vm {
                 let msg = format!(
                     "module '{}' has no attribute '{}'",
                     self.module_name(m),
-                    self.str_ref(n)
+                    self.str_ref_hot(n)
                 );
                 return Err(self.err(T::AttributeError, &msg));
             };
@@ -747,7 +747,7 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn imported(&mut self, module: Value) -> Result<(), Raised> {
         let name = self.module_name(module);
-        let k = self.vslot(module, module_slot::NAME);
+        let k = self.vslot_hot(module, module_slot::NAME);
         let mods = self.modules;
         self.dict_set(mods, k, module)?;
         if let Some((parent, leaf)) = name.rsplit_once('.') {

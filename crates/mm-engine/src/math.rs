@@ -970,7 +970,7 @@ impl Vm {
                 o.copy_from_slice(&x.to_le_bytes());
             }
             let res = self.heap.alloc_bytes(&bytes);
-            vals[2] = Value::from_byte_ref(self.hx_o(res)?);
+            vals[2] = Value::from_byte_ref(self.hx(res)?);
             raw[0] = partials.len() as u64;
         }
         let mut words = alloc::vec![kind, i as u64];
@@ -1025,8 +1025,8 @@ impl Vm {
             }
         }
         if let Some(r) = state.as_obj() {
-            self.set_slot_o(r, 1, vals[1]);
-            self.set_slot_o(r, 2, vals[2]);
+            self.set_slot(r, 1, vals[1]);
+            self.set_slot(r, 2, vals[2]);
         }
         let mut words = [i as u64; 9];
         words[1..].copy_from_slice(&raw);

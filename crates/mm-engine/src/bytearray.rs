@@ -61,7 +61,7 @@ impl Vm {
         }
         let b = {
             let res = self.heap.alloc_bytes(data);
-            self.hx_o(res)
+            self.hx(res)
         }?;
         let r = {
             let res = self.heap.alloc_init(
@@ -70,23 +70,23 @@ impl Vm {
                 &[Value::from_byte_ref(b)],
                 &[data.len() as u64],
             );
-            self.hx_o(res)
+            self.hx(res)
         }?;
         Ok(Value::from_ref(r, ty::BYTEARRAY as u8))
     }
 
     /// The capacity block of bytearray `v`.
     fn ba_block(&self, v: Value) -> Option<ByteRef> {
-        self.vslot_o(v, 0).as_byte_ref()
+        self.vslot(v, 0).as_byte_ref()
     }
 
     /// The live bytes of bytearray `v`. A length past the block (only in a
     /// corrupt snapshot) reads as the whole block.
     pub(crate) fn bytearray_data(&self, v: Value) -> &[u8] {
         let Some(r) = v.as_obj() else { return &[] };
-        let n = usize::try_from(self.raw_o(r, 1)).unwrap_or(usize::MAX);
+        let n = usize::try_from(self.raw(r, 1)).unwrap_or(usize::MAX);
         let data = self
-            .slot(r, 0)
+            .slot_hot(r, 0)
             .as_byte_ref()
             .and_then(|b| self.heap.bytes(b).ok())
             .unwrap_or(&[]);
@@ -116,9 +116,9 @@ impl Vm {
             }
             if at < old {
                 let res = self.heap.copy_bytes(b, at, b, at + gap, old - at);
-                self.hx_o(res)?;
+                self.hx(res)?;
             }
-            self.set_raw_o(r, 1, n as u64);
+            self.set_raw(r, 1, n as u64);
             return Ok(());
         }
         let alloc = if shrink { n } else { grown_block(cap, n) };
@@ -129,19 +129,19 @@ impl Vm {
             Ok(nb) => nb,
             // A failed shrink keeps the larger block.
             Err(_) if shrink => {
-                self.set_raw_o(r, 1, n as u64);
+                self.set_raw(r, 1, n as u64);
                 return Ok(());
             }
-            Err(e) => return self.hx_o(Err(e)),
+            Err(e) => return self.hx(Err(e)),
         };
         let res = self.heap.copy_bytes(b, 0, nb, 0, at.min(n));
-        self.hx_o(res)?;
+        self.hx(res)?;
         if at < old.min(n) {
             let res = self.heap.copy_bytes(b, at, nb, at + gap, old - at);
-            self.hx_o(res)?;
+            self.hx(res)?;
         }
-        self.set_slot_o(r, 0, Value::from_byte_ref(nb));
-        self.set_raw_o(r, 1, n as u64);
+        self.set_slot(r, 0, Value::from_byte_ref(nb));
+        self.set_raw(r, 1, n as u64);
         Ok(())
     }
 
@@ -202,7 +202,7 @@ impl Vm {
             }
             self.copy_part(v, o, old, nb, &mut o, room)?;
         }
-        self.set_slot_o(r, 0, j.v[2]);
+        self.set_slot(r, 0, j.v[2]);
         match j.w[W_A] {
             fin::APPEND | fin::INSERT => {
                 let at = if j.w[W_A] == fin::APPEND { old } else { a };
@@ -247,17 +247,17 @@ impl Vm {
         } else if n < gone {
             if let Some(b) = self.ba_block(v) {
                 let res = self.heap.copy_bytes(b, hi, b, lo + n, old - hi);
-                self.hx_o(res)?;
+                self.hx(res)?;
             }
             self.ba_resize(v, old - (gone - n), usize::MAX)?;
         }
         if let (Some(s), Some(b)) = (
-            src.and_then(|s| self.vslot_o(s, 0).as_byte_ref()),
+            src.and_then(|s| self.vslot(s, 0).as_byte_ref()),
             self.ba_block(v),
         ) && n > 0
         {
             let res = self.heap.copy_bytes(s, 0, b, lo, n);
-            self.hx_o(res)?;
+            self.hx(res)?;
         }
         Ok(())
     }
@@ -520,8 +520,8 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn ba_adopt(&mut self, v: Value, b: ByteRef, len: usize) {
         if let Some(r) = v.as_obj().filter(|_| Vm::is_bytearray(v)) {
-            self.set_slot_o(r, 0, Value::from_byte_ref(b));
-            self.set_raw_o(r, 1, len as u64);
+            self.set_slot(r, 0, Value::from_byte_ref(b));
+            self.set_raw(r, 1, len as u64);
         }
     }
 

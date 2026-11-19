@@ -155,7 +155,7 @@ fn format_of(vm: &mut Vm, v: Value) -> Result<Result<Format, Value>, Raised> {
     };
     vm.burn(n as u64 / 8);
     let fmt = if text {
-        vm.str_ref_o(v).as_bytes()
+        vm.str_ref(v).as_bytes()
     } else {
         vm.bytes_data(v)
     };
@@ -516,7 +516,7 @@ pub(crate) fn unpack(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let base = usize::try_from(off).unwrap_or(0);
     let mut values = NativeValues::default();
     let res = values.reserve(&mut vm.heap, f.len as usize);
-    vm.hx_o(res)?;
+    vm.hx(res)?;
     for it in &f.items {
         let at = base + it.offset;
         match it.code {
@@ -525,7 +525,7 @@ pub(crate) fn unpack(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
                 let d = vm.bytes_data(buf)[at..at + it.num].to_vec();
                 let v = vm.new_bytes(&d)?;
                 let res = values.push(&mut vm.heap, v);
-                vm.hx_o(res)?;
+                vm.hx(res)?;
             }
             b'p' => {
                 let d = &vm.bytes_data(buf)[at..at + it.num];
@@ -535,7 +535,7 @@ pub(crate) fn unpack(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
                 let d = d.get(1..=n).unwrap_or(&[]).to_vec();
                 let v = vm.new_bytes(&d)?;
                 let res = values.push(&mut vm.heap, v);
-                vm.hx_o(res)?;
+                vm.hx(res)?;
             }
             code => {
                 for j in 0..it.num {
@@ -571,7 +571,7 @@ pub(crate) fn unpack(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
                         }
                     };
                     let res = values.push(&mut vm.heap, v);
-                    vm.hx_o(res)?;
+                    vm.hx(res)?;
                 }
             }
         }

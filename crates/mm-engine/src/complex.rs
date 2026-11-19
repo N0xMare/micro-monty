@@ -454,7 +454,7 @@ impl Vm {
         let res = self
             .heap
             .alloc_init(ty::COMPLEX, 0, &[], &[re.to_bits(), im.to_bits()]);
-        let r = self.hx_o(res)?;
+        let r = self.hx(res)?;
         Ok(Value::from_ref(r, ty::COMPLEX as u8))
     }
 
@@ -471,8 +471,8 @@ impl Vm {
         }
         let r = v.as_obj()?;
         Some((
-            f64::from_bits(self.raw_o(r, 0)),
-            f64::from_bits(self.raw_o(r, 1)),
+            f64::from_bits(self.raw(r, 0)),
+            f64::from_bits(self.raw(r, 1)),
         ))
     }
 
@@ -687,7 +687,7 @@ impl Vm {
             {
                 let bytes = prec.saturating_mul(6 * finite_parts as usize);
                 let res = self.heap.reserve_scratch(bytes);
-                Some(self.hx_o(res)?)
+                Some(self.hx(res)?)
             } else {
                 None
             };
@@ -1126,7 +1126,7 @@ impl Vm {
         if self.text_part(v, &mut sc, &mut at, &mut buf) {
             let block = {
                 let res = self.heap.alloc_bytes(&buf);
-                self.hx_o(res)
+                self.hx(res)
             }?;
             return self.text_rest(v, 0, Value::from_byte_ref(block), at, sc.words());
         }

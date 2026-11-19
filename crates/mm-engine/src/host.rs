@@ -678,7 +678,7 @@ impl Vm {
         npos: usize,
         kwnames: Value,
     ) -> Result<HostCall, Raised> {
-        let name = String::from(self.str_ref(self.vslot(callee, hostfn_slot::CALL_NAME)));
+        let name = String::from(self.str_ref_hot(self.vslot_hot(callee, hostfn_slot::CALL_NAME)));
         let function =
             u32::try_from(self.vslot_raw_of(callee, hostfn_slot::ID)).unwrap_or(u32::MAX);
         let mut conv = Conversion::new(self.host_args);
@@ -706,7 +706,7 @@ impl Vm {
             for (k, n) in self.tuple_items(kwnames).into_iter().enumerate() {
                 let v = self.stack[args + npos + k];
                 let hv = self.host_arg(v, &name, &mut conv)?;
-                kwargs.push((String::from(self.str_ref(n)), hv));
+                kwargs.push((String::from(self.str_ref_hot(n)), hv));
             }
         }
         let id = self.next_call;
@@ -1348,7 +1348,7 @@ impl Vm {
                     &[get, Value::NONE, Value::NONE, doc],
                     &[],
                 );
-                self.hx_o(res)
+                self.hx(res)
             }?;
             let k = self.intern(f)?;
             self.dict_set(ns, k, Value::from_ref(p, ty::PROPERTY as u8))?;

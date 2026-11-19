@@ -328,7 +328,7 @@ impl Vm {
         if let Some(v) = self.dict_get(self.builtins, name)? {
             return Ok(Some(v));
         }
-        if !AS_BUILTINS.contains(&self.str_ref_o(name)) {
+        if !AS_BUILTINS.contains(&self.str_ref(name)) {
             return Ok(None);
         }
         let Some(f) = self.prelude_get(name)? else {
@@ -342,9 +342,9 @@ impl Vm {
     /// Builds the unit named `name` (interned, not yet bound) and binds it
     /// in the prelude globals; `None` if no unit has that name.
     pub(crate) fn prelude_unit(&mut self, name: Value) -> Result<Option<Value>, Raised> {
-        let Some(&[_, chunk, at, len, kind]) = unit(self.str_ref_o(name)) else {
+        let Some(&[_, chunk, at, len, kind]) = unit(self.str_ref(name)) else {
             // The asyncio types its prelude part names (docs/spec.md §8.5).
-            let t = match self.str_ref_o(name) {
+            let t = match self.str_ref(name) {
                 "CancelledError" => T::CancelledError,
                 "InvalidStateError" => T::InvalidStateError,
                 "Task" => T::Task,
@@ -665,7 +665,7 @@ impl Vm {
                                 &[f, Value::NONE, Value::NONE, doc],
                                 &[],
                             );
-                            self.hx_o(res)
+                            self.hx(res)
                         }?;
                         Value::from_ref(p, ty::PROPERTY as u8)
                     }

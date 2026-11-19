@@ -230,7 +230,7 @@ impl Vm {
         let (k, h) = self.set_table(8)?;
         let r = {
             let res = self.heap.alloc_init(ty::SET, 0, &[k, h], &[0, 0, 0, 0]);
-            self.hx_o(res)
+            self.hx(res)
         }?;
         Ok(Value::from_ref(r, ty::SET as u8))
     }
@@ -255,7 +255,7 @@ impl Vm {
         }
         let n = u32::try_from(size).map_err(|_| self.err(T::MemoryError, ""))?;
         let res = self.heap.alloc(ty::RAW, 0, 0, n);
-        Ok(Value::from_ref(self.hx_o(res)?, ty::RAW as u8))
+        Ok(Value::from_ref(self.hx(res)?, ty::RAW as u8))
     }
 
     pub(crate) fn set_parts(&self, s: Value) -> Option<(Ref, Ref, Ref, usize)> {
@@ -265,15 +265,15 @@ impl Vm {
             return None;
         }
         let r = s.as_obj()?;
-        let k = self.slot_o(r, 0).as_obj()?;
-        let h = self.slot_o(r, 1).as_obj()?;
+        let k = self.slot(r, 0).as_obj()?;
+        let h = self.slot(r, 1).as_obj()?;
         Some((r, k, h, self.obj_len(k) as usize))
     }
 
     /// Number of elements.
     pub(crate) fn set_len(&self, s: Value) -> usize {
         s.as_obj()
-            .map_or(0, |r| usize::try_from(self.raw_o(r, USED)).unwrap_or(0))
+            .map_or(0, |r| usize::try_from(self.raw(r, USED)).unwrap_or(0))
     }
 
     /// [`Vm::set_items`] for a caller that works on every element, charged
@@ -291,7 +291,7 @@ impl Vm {
         let mut out = Vec::new();
         if let Some((_, k, _, size)) = self.set_parts(s) {
             for i in 0..size {
-                let v = self.slot_o(k, u32::try_from(i).unwrap_or(0));
+                let v = self.slot(k, u32::try_from(i).unwrap_or(0));
                 if v != Value::UNDEFINED {
                     out.push(v);
                 }
@@ -381,8 +381,8 @@ impl Vm {
             };
             for j in from..=probes {
                 let idx = u32::try_from(i + j).unwrap_or(0);
-                let ek = self.slot_o(k, idx);
-                let eh = self.raw_o(h, idx);
+                let ek = self.slot(k, idx);
+                let eh = self.raw(h, idx);
                 if ek == Value::UNDEFINED && eh == 0 {
                     return if deferred > 0 {
                         Err(Hard::Py)
@@ -455,7 +455,7 @@ impl Vm {
         let at = *i + keys.get(*i..size)?.iter().position(|&w| w != empty)?;
         *i = at;
         let x = Value::from_bits(*keys.get(at)?)?;
-        Some((x, self.raw_o(h, u32::try_from(at).ok()?)))
+        Some((x, self.raw(h, u32::try_from(at).ok()?)))
     }
 
     fn set_hard(&mut self, h: Hard) -> Raised {
@@ -520,7 +520,7 @@ impl Vm {
     ) -> Result<Value, Raised> {
         let table = self
             .set_parts(s)
-            .map_or(Value::NONE, |(r, ..)| self.slot_o(r, 0));
+            .map_or(Value::NONE, |(r, ..)| self.slot(r, 0));
         let prev = at;
         let place = self.probe_place(at, table).filter(|&(i, k, ..)| {
             i < 0 || usize::try_from(i).is_ok_and(|i| self.set_slot_key(s, i) == k)
@@ -546,7 +546,7 @@ impl Vm {
             );
             let filled = |f: usize| {
                 self.set_parts(s).is_none_or(|(_, _, hs, size)| {
-                    f >= size || self.raw_o(hs, u32::try_from(f).unwrap_or(0)) != DUMMY
+                    f >= size || self.raw(hs, u32::try_from(f).unwrap_or(0)) != DUMMY
                 })
             };
             if add && matches!(found, Ok(None)) && free.is_some_and(filled) {
@@ -607,7 +607,7 @@ impl Vm {
     /// The key in slot `i` of set `s`, `UNDEFINED` if none.
     pub(crate) fn set_slot_key(&self, s: Value, i: usize) -> Value {
         match self.set_parts(s) {
-            Some((_, k, _, size)) if i < size => self.slot_o(k, u32::try_from(i).unwrap_or(0)),
+            Some((_, k, _, size)) if i < size => self.slot(k, u32::try_from(i).unwrap_or(0)),
             _ => Value::UNDEFINED,
         }
     }
@@ -646,7 +646,7 @@ impl Vm {
         ];
         if let Some(r) = prev.as_obj().filter(|_| self.tuple_items(prev).len() == 8) {
             for (j, &v) in (0..).zip(&items) {
-                self.set_slot_o(r, j, v);
+                self.set_slot(r, j, v);
             }
             return Ok(prev);
         }
@@ -667,19 +667,19 @@ impl Vm {
     pub(crate) fn set_clear(&mut self, s: Value) -> Result<(), Raised> {
         if let Some((r, k, h, 8)) = self.set_parts(s) {
             for i in 0..8 {
-                self.set_slot_o(k, i, Value::UNDEFINED);
-                self.set_raw_o(h, i, 0);
+                self.set_slot(k, i, Value::UNDEFINED);
+                self.set_raw(h, i, 0);
             }
-            self.set_raw_o(r, FILL, 0);
-            self.set_raw_o(r, USED, 0);
+            self.set_raw(r, FILL, 0);
+            self.set_raw(r, USED, 0);
             return Ok(());
         }
         let (k, h) = self.set_table(8)?;
         if let Some((r, ..)) = self.set_parts(s) {
-            self.set_slot_o(r, 0, k);
-            self.set_slot_o(r, 1, h);
-            self.set_raw_o(r, FILL, 0);
-            self.set_raw_o(r, USED, 0);
+            self.set_slot(r, 0, k);
+            self.set_slot(r, 1, h);
+            self.set_raw(r, FILL, 0);
+            self.set_raw(r, USED, 0);
         }
         Ok(())
     }
@@ -690,13 +690,13 @@ impl Vm {
             && i < size
         {
             let idx = u32::try_from(i).unwrap_or(0);
-            if self.slot_o(k, idx) == Value::UNDEFINED {
+            if self.slot(k, idx) == Value::UNDEFINED {
                 return;
             }
-            self.set_slot_o(k, idx, Value::UNDEFINED);
-            self.set_raw_o(h, idx, DUMMY);
-            let used = self.raw_o(r, USED).saturating_sub(1);
-            self.set_raw_o(r, USED, used);
+            self.set_slot(k, idx, Value::UNDEFINED);
+            self.set_raw(h, idx, DUMMY);
+            let used = self.raw(r, USED).saturating_sub(1);
+            self.set_raw(r, USED, used);
         }
     }
 
@@ -820,8 +820,8 @@ impl Vm {
             let mut found = None;
             for j in 0..=probes {
                 let idx = u32::try_from(i + j).unwrap_or(0);
-                let ek = self.slot_o(k, idx);
-                let eh = self.raw_o(h, idx);
+                let ek = self.slot(k, idx);
+                let eh = self.raw(h, idx);
                 if ek == Value::UNDEFINED && eh == 0 {
                     found = Some(i + j);
                     break;
@@ -878,19 +878,19 @@ impl Vm {
                     & mask;
             }
         };
-        let used = self.raw_o(r, USED) + 1;
-        self.set_raw_o(r, USED, used);
+        let used = self.raw(r, USED) + 1;
+        self.set_raw(r, USED, used);
         if let Some(f) = freeslot {
             let f = u32::try_from(f).unwrap_or(0);
-            self.set_slot_o(k, f, key);
-            self.set_raw_o(h, f, hash);
+            self.set_slot(k, f, key);
+            self.set_raw(h, f, hash);
             return Ok(None);
         }
         let idx = u32::try_from(slot).unwrap_or(0);
-        self.set_slot_o(k, idx, key);
-        self.set_raw_o(h, idx, hash);
-        let fill = self.raw_o(r, FILL) + 1;
-        self.set_raw_o(r, FILL, fill);
+        self.set_slot(k, idx, key);
+        self.set_raw(h, idx, hash);
+        let fill = self.raw(r, FILL) + 1;
+        self.set_raw(r, FILL, fill);
         if fill * 5 < (mask as u64) * 3 {
             return Ok(None);
         }
@@ -902,11 +902,11 @@ impl Vm {
     fn set_unput(&mut self, s: Value, i: usize) {
         if let Some((r, k, h, _)) = self.set_parts(s) {
             let idx = u32::try_from(i).unwrap_or(0);
-            self.set_slot_o(k, idx, Value::UNDEFINED);
-            self.set_raw_o(h, idx, 0);
-            let (fill, used) = (self.raw_o(r, FILL), self.raw_o(r, USED));
-            self.set_raw_o(r, FILL, fill.saturating_sub(1));
-            self.set_raw_o(r, USED, used.saturating_sub(1));
+            self.set_slot(k, idx, Value::UNDEFINED);
+            self.set_raw(h, idx, 0);
+            let (fill, used) = (self.raw(r, FILL), self.raw(r, USED));
+            self.set_raw(r, FILL, fill.saturating_sub(1));
+            self.set_raw(r, USED, used.saturating_sub(1));
         }
     }
 
@@ -963,11 +963,11 @@ impl Vm {
                 .bulk_with(&[s, src], prog, res::NONE, tables)
                 .map(|_| ());
         }
-        let n = self.raw_o(r, USED);
-        self.set_slot_o(r, 0, kv);
-        self.set_slot_o(r, 1, hv);
-        self.set_raw_o(r, FILL, n);
-        self.set_raw_o(r, USED, n);
+        let n = self.raw(r, USED);
+        self.set_slot(r, 0, kv);
+        self.set_slot(r, 1, hv);
+        self.set_raw(r, FILL, n);
+        self.set_raw(r, USED, n);
         Ok(())
     }
 
@@ -993,9 +993,9 @@ impl Vm {
         let (mut probes, mut free) = (0u64, 0u64);
         for i in from..to {
             let at = u32::try_from(i).unwrap_or(u32::MAX);
-            let key = self.slot_o(ok, at);
+            let key = self.slot(ok, at);
             if key != Value::UNDEFINED {
-                let hash = self.raw_o(oh, at);
+                let hash = self.raw(oh, at);
                 let jumps = self.insert_clean(k, h, mask, key, hash)?;
                 probes += jumps.saturating_sub(u64::from(FREE_RUNS));
                 // Each key may walk its free runs: counted where a slice
@@ -1022,7 +1022,7 @@ impl Vm {
         let mut left = mask.saturating_add(64);
         let mut jumps = 0;
         loop {
-            if self.slot_o(k, u32::try_from(i).unwrap_or(0)) == Value::UNDEFINED {
+            if self.slot(k, u32::try_from(i).unwrap_or(0)) == Value::UNDEFINED {
                 break;
             }
             if left == 0 {
@@ -1032,7 +1032,7 @@ impl Vm {
             let mut hit = None;
             if i + LINEAR_PROBES <= mask {
                 for j in 1..=LINEAR_PROBES {
-                    if self.slot_o(k, u32::try_from(i + j).unwrap_or(0)) == Value::UNDEFINED {
+                    if self.slot(k, u32::try_from(i + j).unwrap_or(0)) == Value::UNDEFINED {
                         hit = Some(i + j);
                         break;
                     }
@@ -1054,8 +1054,8 @@ impl Vm {
             }
         }
         let idx = u32::try_from(i).unwrap_or(0);
-        self.set_slot_o(k, idx, key);
-        self.set_raw_o(h, idx, hash);
+        self.set_slot(k, idx, key);
+        self.set_raw(h, idx, hash);
         Some(jumps)
     }
 
@@ -1067,10 +1067,10 @@ impl Vm {
         };
         if let Some((r, k, h, _)) = self.set_parts(s) {
             let idx = u32::try_from(i).unwrap_or(0);
-            self.set_slot_o(k, idx, Value::UNDEFINED);
-            self.set_raw_o(h, idx, DUMMY);
-            let used = self.raw_o(r, USED).saturating_sub(1);
-            self.set_raw_o(r, USED, used);
+            self.set_slot(k, idx, Value::UNDEFINED);
+            self.set_raw(h, idx, DUMMY);
+            let used = self.raw(r, USED).saturating_sub(1);
+            self.set_raw(r, USED, used);
         }
         Ok(true)
     }
@@ -1085,7 +1085,7 @@ impl Vm {
 
     /// Is set `s` a `frozenset`?
     pub(crate) fn set_frozen(&self, s: Value) -> bool {
-        s.as_obj().is_some_and(|r| self.raw_o(r, FROZEN) != 0)
+        s.as_obj().is_some_and(|r| self.raw(r, FROZEN) != 0)
     }
 
     /// Makes `out` a frozenset if `like` is one (set operators return the
@@ -1099,7 +1099,7 @@ impl Vm {
     /// Makes set `s` a frozenset.
     pub(crate) fn set_freeze(&mut self, s: Value) {
         if let Some(r) = s.as_obj() {
-            self.set_raw_o(r, FROZEN, 1);
+            self.set_raw(r, FROZEN, 1);
         }
     }
 
@@ -1237,7 +1237,7 @@ impl Vm {
             return Err(self.err(T::KeyError, "pop from an empty set"));
         };
         // CPython's `set_pop_impl`: from the finger on, wrapping.
-        let from = usize::try_from(self.raw_o(r, FINGER)).unwrap_or(0) & size.wrapping_sub(1);
+        let from = usize::try_from(self.raw(r, FINGER)).unwrap_or(0) & size.wrapping_sub(1);
         let words = self.heap.slot_words(k).unwrap_or(&[]);
         let empty = Value::UNDEFINED.to_bits();
         let live = |w: &[u64]| w.iter().position(|&w| w != empty);
@@ -1255,11 +1255,11 @@ impl Vm {
             return Err(self.err(T::KeyError, "pop from an empty set"));
         };
         let idx = u32::try_from(i).unwrap_or(0);
-        self.set_slot_o(k, idx, Value::UNDEFINED);
-        self.set_raw_o(h, idx, DUMMY);
-        let used = self.raw_o(r, USED).saturating_sub(1);
-        self.set_raw_o(r, USED, used);
-        self.set_raw_o(r, FINGER, i as u64 + 1);
+        self.set_slot(k, idx, Value::UNDEFINED);
+        self.set_raw(h, idx, DUMMY);
+        let used = self.raw(r, USED).saturating_sub(1);
+        self.set_raw(r, USED, used);
+        self.set_raw(r, FINGER, i as u64 + 1);
         Ok(key)
     }
 }
@@ -1403,8 +1403,8 @@ impl Vm {
             Flow::Py => Ok(Step::Done(self.bulk_py(&b)?)),
             Flow::More => {
                 if let Some(r) = state.as_obj() {
-                    self.set_slot_o(r, 6, b.nk);
-                    self.set_slot_o(r, 7, b.nv);
+                    self.set_slot(r, 6, b.nk);
+                    self.set_slot(r, 7, b.nv);
                 }
                 self.nstate_put(state, 2, &[b.pc, b.i, b.j, b.n]);
                 Ok(Step::More)
@@ -1661,8 +1661,8 @@ impl Vm {
             if one_shot && (matches!(r, Ok(Item::Wait | Item::Yield)) || r.is_err() && self.slow) {
                 for &(o, i, w) in pos.iter().flatten() {
                     match (i, Value::from_bits(w)) {
-                        (u32::MAX, Some(v)) => self.set_slot_o(o, 1, v),
-                        _ => self.set_raw_o(o, i, w),
+                        (u32::MAX, Some(v)) => self.set_slot(o, 1, v),
+                        _ => self.set_raw(o, i, w),
                     }
                 }
             }
@@ -1711,7 +1711,7 @@ impl Vm {
     /// dummies.
     fn set_dummies_minused(&self, s: Value) -> Option<usize> {
         let (r, _, _, size) = self.set_parts(s)?;
-        let (fill, used) = (self.raw_o(r, FILL), self.raw_o(r, USED));
+        let (fill, used) = (self.raw(r, FILL), self.raw(r, USED));
         if fill.saturating_sub(used) <= (size as u64).saturating_sub(1) / 4 {
             return None;
         }
@@ -1727,12 +1727,12 @@ impl Vm {
             && Self::is_set(src)
         {
             for i in 0..2 {
-                let v = self.slot_o(s, i);
-                self.set_slot_o(o, i, v);
+                let v = self.slot(s, i);
+                self.set_slot(o, i, v);
             }
             for i in [FILL, USED] {
-                let w = self.raw_o(s, i);
-                self.set_raw_o(o, i, w);
+                let w = self.raw(s, i);
+                self.set_raw(o, i, w);
             }
         }
     }
@@ -1760,7 +1760,7 @@ impl Vm {
     /// dict, if the table changes.
     fn merge_size(&self, out: Value, n: u64) -> Option<(usize, usize)> {
         let (r, _, _, size) = self.set_parts(out)?;
-        let (fill, used) = (self.raw_o(r, FILL), self.raw_o(r, USED));
+        let (fill, used) = (self.raw(r, FILL), self.raw(r, USED));
         if (fill + n) * 5 < (size as u64 - 1) * 3 {
             return None;
         }
@@ -1846,7 +1846,7 @@ impl Vm {
     /// Whether set `out`'s table takes another element without growing.
     fn set_room(&self, out: Value) -> bool {
         self.set_parts(out).is_some_and(|(r, _, _, size)| {
-            self.raw_o(r, FILL).saturating_add(1).saturating_mul(5)
+            self.raw(r, FILL).saturating_add(1).saturating_mul(5)
                 < (size as u64).saturating_sub(1).saturating_mul(3)
         })
     }
@@ -1864,8 +1864,8 @@ impl Vm {
         else {
             return;
         };
-        if self.raw_o(r, FILL) == 0 {
-            b.pc |= if size == osize && self.raw_o(o, FILL) == self.raw_o(o, USED) {
+        if self.raw(r, FILL) == 0 {
+            b.pc |= if size == osize && self.raw(o, FILL) == self.raw(o, USED) {
                 SLOTS
             } else {
                 CLEAN
@@ -1919,10 +1919,10 @@ impl Vm {
             self.force_check();
             b.j = to as u64;
             if to == osize {
-                let n = self.raw_o(r, USED);
-                self.set_slot_o(r, 0, b.nk);
-                self.set_slot_o(r, 1, b.nv);
-                self.set_raw_o(r, FILL, n);
+                let n = self.raw(r, USED);
+                self.set_slot(r, 0, b.nk);
+                self.set_slot(r, 1, b.nv);
+                self.set_raw(r, FILL, n);
                 b.nk = Value::UNDEFINED;
                 b.nv = Value::UNDEFINED;
                 let src = Self::bulk_src_reg(b);
@@ -2022,7 +2022,7 @@ impl Vm {
             Some(ty::ITER) => (&[2, 3, 4], Value::UNDEFINED),
             Some(ty::REVERSED) => (&[1], Value::UNDEFINED),
             Some(ty::ENUMERATE) => {
-                if self.raw_o(r, 2) == i64::MAX.cast_unsigned() {
+                if self.raw(r, 2) == i64::MAX.cast_unsigned() {
                     // Its count is in slot 1 (`Vm::enum_big`). Each
                     // enumerate here also takes a word below, so the
                     // second half has room.
@@ -2032,18 +2032,18 @@ impl Vm {
                     let Some(p) = free else {
                         return false;
                     };
-                    *p = Some((r, u32::MAX, self.slot_o(r, 1).to_bits()));
+                    *p = Some((r, u32::MAX, self.slot(r, 1).to_bits()));
                 }
-                (&[2], self.slot_o(r, 0))
+                (&[2], self.slot(r, 0))
             }
-            Some(ty::ZIP) => (&[], self.vslot_o(it, 0)),
+            Some(ty::ZIP) => (&[], self.vslot(it, 0)),
             _ => return false,
         };
         for &i in words {
             let Some(p) = pos.get_mut(..8).and_then(|h| h.get_mut(*n)) else {
                 return false;
             };
-            *p = Some((r, i, self.raw_o(r, i)));
+            *p = Some((r, i, self.raw(r, i)));
             *n += 1;
         }
         if inner == Value::UNDEFINED {
@@ -2141,9 +2141,9 @@ impl Vm {
         let done = (at as u64 - b.i) / 8 + 1;
         b.i = at as u64;
         if at >= size {
-            let (fill, used) = (self.raw_o(o, FILL), self.raw_o(o, USED));
-            self.set_raw_o(r, FILL, fill);
-            self.set_raw_o(r, USED, used);
+            let (fill, used) = (self.raw(o, FILL), self.raw(o, USED));
+            self.set_raw(r, FILL, fill);
+            self.set_raw(r, USED, used);
             b.pc = (b.pc & 7) + 1;
         }
         done
@@ -2172,7 +2172,7 @@ impl Vm {
                 return Ok(None);
             };
             let x = keys.get(at).and_then(|&w| Value::from_bits(w));
-            let hash = self.raw_o(h, u32::try_from(at).unwrap_or(u32::MAX));
+            let hash = self.raw(h, u32::try_from(at).unwrap_or(u32::MAX));
             return Ok(x.map(|x| (at, x, Value::NONE, Some(hash))));
         }
         if src.is_obj_kind(ty::DICT as u8) {
@@ -2346,8 +2346,8 @@ impl Vm {
                     // rehash ([`Vm::set_rehash`]).
                     self.burn(probes.saturating_sub(u64::from(FREE_RUNS)));
                     for i in [FILL, USED] {
-                        let n = self.raw_o(r, i) + 1;
-                        self.set_raw_o(r, i, n);
+                        let n = self.raw(r, i) + 1;
+                        self.set_raw(r, i, n);
                     }
                 }
             }

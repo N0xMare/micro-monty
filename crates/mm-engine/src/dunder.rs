@@ -675,7 +675,7 @@ impl Vm {
             let key = self.dn(Dn::ClassGetitem)?;
             if let Some(m) = self.class_lookup(o, key) {
                 let m = if m.is_obj_kind(ty::CLASSMETHOD as u8) {
-                    self.vslot(m, 0)
+                    self.vslot_hot(m, 0)
                 } else {
                     m
                 };

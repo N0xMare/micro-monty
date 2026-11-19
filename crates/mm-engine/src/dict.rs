@@ -430,7 +430,7 @@ impl Vm {
             let res = self
                 .heap
                 .alloc_init(ty::DICT, 0, &empty[..2 * n.max(1)], &[0]);
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::DICT as u8))
     }
@@ -450,7 +450,7 @@ impl Vm {
                 ],
                 &[0],
             );
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::DICT as u8))
     }
@@ -476,7 +476,7 @@ impl Vm {
         }
         let n = u32::try_from(2 * cap + 1).map_err(|_| self.err(T::MemoryError, ""))?;
         let res = self.heap.alloc(ty::RAW, 0, 0, n);
-        self.hx(res)
+        self.hx_hot(res)
     }
 
     /// The storage of dict `r`.
@@ -612,7 +612,7 @@ impl Vm {
         if k == Value::UNDEFINED {
             return None;
         }
-        Some((k, self.slot(e, 2 * i + 1)))
+        Some((k, self.slot_hot(e, 2 * i + 1)))
     }
 
     /// Entry storage and its used slot bound, including deleted pairs.
@@ -786,7 +786,11 @@ impl Vm {
                 };
                 [n, start, step]
             } else {
-                [self.vslot(v, 0), self.vslot(v, 1), self.vslot(v, 2)]
+                [
+                    self.vslot_hot(v, 0),
+                    self.vslot_hot(v, 1),
+                    self.vslot_hot(v, 2),
+                ]
             };
             let mut acc = XX_SEED;
             for p in parts {
@@ -819,7 +823,7 @@ impl Vm {
                     // Big ints spent the budget.
                     return Err(self.need_py());
                 }
-                let x = self.vslot(v, u32::try_from(i).unwrap_or(0));
+                let x = self.vslot_hot(v, u32::try_from(i).unwrap_or(0));
                 acc = xx_lane(acc, self.hash_depth(x, depth + 1, left)?);
             }
             return Ok(xx_finish(acc, Some(n as u64)));
@@ -862,8 +866,8 @@ impl Vm {
             if depth > MAX_DEPTH {
                 return Err(deep(self));
             }
-            let f = self.hash_depth(self.vslot(v, 1), depth + 1, left)?;
-            let h = id_hash(self.vslot(v, 0)) ^ f;
+            let f = self.hash_depth(self.vslot_hot(v, 1), depth + 1, left)?;
+            let h = id_hash(self.vslot_hot(v, 0)) ^ f;
             return Ok(if h == -1 { -2 } else { h });
         }
         Ok(id_hash(v))
@@ -1718,7 +1722,7 @@ impl Vm {
         self.walked(left);
         let (slot, found) = found.map_err(|x| self.hard(x))?;
         if let Some(e) = found {
-            self.set_slot(dv.entries, 2 * e + 1, v);
+            self.set_slot_hot(dv.entries, 2 * e + 1, v);
             return Ok(());
         }
         self.add_entry(d, r, dv, k, h, v, Some(slot), top)
@@ -1765,8 +1769,8 @@ impl Vm {
             }
             let _ = self.heap.set_values(entries, 0, &kvs[..2 * used]);
             let _ = self.heap.set_values(r, 0, &empty[..2 * inline]);
-            self.set_slot(r, 0, Value::from_ref(entries, ty::BUF as u8));
-            self.set_slot(r, 1, Value::NONE);
+            self.set_slot_hot(r, 0, Value::from_ref(entries, ty::BUF as u8));
+            self.set_slot_hot(r, 1, Value::NONE);
             let used = u32::try_from(used).unwrap_or(0);
             self.set_counts(r, live, used);
             return Ok(None);
@@ -1915,8 +1919,8 @@ impl Vm {
             let empty = [Value::UNDEFINED; 2 * LINEAR_MAX];
             let _ = self.heap.set_values(r, 0, &empty[..2 * inline]);
         }
-        self.set_slot(r, 0, Value::from_ref(entries, ty::BUF as u8));
-        self.set_slot(r, 1, Value::from_ref(index, ty::RAW as u8));
+        self.set_slot_hot(r, 0, Value::from_ref(entries, ty::BUF as u8));
+        self.set_slot_hot(r, 1, Value::from_ref(index, ty::RAW as u8));
         self.set_counts(r, n, n);
         self.bump_version(d, r);
     }
@@ -2008,7 +2012,7 @@ impl Vm {
         self.walked(left);
         let (slot, found) = found.map_err(|x| self.hard(x))?;
         if let Some(e) = found {
-            self.set_slot(dv.entries, 2 * e + 1, v);
+            self.set_slot_hot(dv.entries, 2 * e + 1, v);
             return Ok(true);
         }
         if dv.index.is_some() && dv.used >= 1 << 12 && !self.has_room(&dv, k) {
@@ -2094,7 +2098,7 @@ impl Vm {
         let Some(dv) = self.dv(r) else {
             return Ok(None);
         };
-        let v = self.slot(dv.entries, 2 * e + 1);
+        let v = self.slot_hot(dv.entries, 2 * e + 1);
         let _ = self
             .heap
             .set_values(dv.entries, 2 * e, &[Value::UNDEFINED, Value::UNDEFINED]);
@@ -2207,7 +2211,7 @@ impl Vm {
             let res =
                 self.heap
                     .alloc_init(ty::DICT, 0, &kvs[..2 * n.max(1)], &[counts(used32, used32)]);
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::DICT as u8))
     }

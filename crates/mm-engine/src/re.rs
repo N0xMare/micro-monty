@@ -1764,7 +1764,7 @@ pub(crate) fn re_exec(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             .into_iter()
             .enumerate()
         {
-            vm.set_slot_o(buf, i as u32, v);
+            vm.set_slot(buf, i as u32, v);
         }
     }
     Ok(Value::from_bool(saved_out.is_none()))
@@ -1979,7 +1979,7 @@ fn build_match(
     vm.burn(raw.len() as u64 / 8);
     let r = {
         let res = vm.heap.alloc_init(ty::MATCH, 0, &[p, subj], &raw);
-        vm.hx_o(res)
+        vm.hx(res)
     }?;
     Ok(Value::from_ref(r, ty::MATCH as u8))
 }
@@ -2015,13 +2015,13 @@ fn mspan(vm: &Vm, m: Value, g: usize) -> [i64; 4] {
     let at = mt::SPANS as usize + 4 * g;
     core::array::from_fn(|k| {
         let w = u32::try_from(at + k).unwrap_or(u32::MAX);
-        vm.raw_o(r, w).cast_signed()
+        vm.raw(r, w).cast_signed()
     })
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn mword(vm: &Vm, m: Value, i: u32) -> i64 {
-    m.as_obj().map_or(-1, |r| vm.raw_o(r, i).cast_signed())
+    m.as_obj().map_or(-1, |r| vm.raw(r, i).cast_signed())
 }
 
 /// The receiver, a `re.Match`.
@@ -2042,7 +2042,7 @@ fn check_match(vm: &mut Vm, a: &CallArgs) -> Result<Value, Raised> {
 /// The pattern's `groupindex` dict, if it has one.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn groupindex(vm: &mut Vm, m: Value) -> Result<Option<Value>, Raised> {
-    let p = vm.vslot_o(m, mt::RE);
+    let p = vm.vslot(m, mt::RE);
     let k = vm.intern("groupindex")?;
     let gi = if p.is_obj_kind(ty::INST as u8) {
         vm.inst_get(p, k)
@@ -2084,7 +2084,7 @@ fn group_text(vm: &mut Vm, m: Value, g: usize, default: Value) -> Result<Value, 
     let (Ok(bs), Ok(be)) = (usize::try_from(bs), usize::try_from(be)) else {
         return Ok(default);
     };
-    let subj = vm.unbx(vm.vslot_o(m, mt::STRING));
+    let subj = vm.unbx(vm.vslot(m, mt::STRING));
     piece(vm, subj, Vm::is_str(subj), bs, be)
 }
 
@@ -2218,8 +2218,8 @@ pub(crate) fn match_expand(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn match_attr(vm: &mut Vm, m: Value, name: &str) -> Result<Option<Value>, Raised> {
     let word = match name {
-        "re" => return Ok(Some(vm.vslot_o(m, mt::RE))),
-        "string" => return Ok(Some(vm.vslot_o(m, mt::STRING))),
+        "re" => return Ok(Some(vm.vslot(m, mt::RE))),
+        "string" => return Ok(Some(vm.vslot(m, mt::STRING))),
         "pos" => mt::POS,
         "endpos" => mt::ENDPOS,
         "lastindex" => mt::LAST,

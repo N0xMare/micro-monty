@@ -122,7 +122,7 @@ impl Vm {
         let buf = self.alloc_buf(nregs.max(1))?;
         for i in 0..nregs {
             let v = self.stack[top + i];
-            self.set_slot(buf, u32::try_from(i).unwrap_or(0), v);
+            self.set_slot_hot(buf, u32::try_from(i).unwrap_or(0), v);
         }
         // An `async def` with `yield` makes an async generator.
         let kind = if self
@@ -146,7 +146,7 @@ impl Vm {
                 ],
                 &[g::CREATED, 0, u64::from(cidx)],
             );
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         let gn = Value::from_ref(r, kind as u8);
         // Room was reserved before the allocation.
@@ -155,7 +155,7 @@ impl Vm {
     }
 
     fn gen_raw(&self, gn: Value, i: u32) -> u64 {
-        gn.as_obj().map_or(0, |r| self.raw(r, i))
+        gn.as_obj().map_or(0, |r| self.raw_hot(r, i))
     }
 
     fn gen_set_raw(&mut self, gn: Value, i: u32, w: u64) {
@@ -623,7 +623,7 @@ impl Vm {
     pub(crate) fn gen_yield(&mut self, st: &State, pc: usize) {
         let gn = st.coro;
         let nregs = self.codes[st.ci as usize].code.nregs as usize;
-        let regs = self.vslot(gn, g::REGS);
+        let regs = self.vslot_hot(gn, g::REGS);
         if let Some(b) = regs.as_obj()
             && let Some(frame) = self.stack.get(st.base..st.base + nregs)
         {
@@ -701,10 +701,10 @@ impl Vm {
             let _ = self.err(T::RuntimeError, msg);
             let new = self.exc;
             if let Some(r) = new.as_obj() {
-                self.set_slot(r, exc_slot::CAUSE, e);
-                self.set_slot(r, exc_slot::CONTEXT, e);
-                let fl = self.raw(r, exc_slot::FLAGS) | 1;
-                self.set_raw(r, exc_slot::FLAGS, fl);
+                self.set_slot_hot(r, exc_slot::CAUSE, e);
+                self.set_slot_hot(r, exc_slot::CONTEXT, e);
+                let fl = self.raw_hot(r, exc_slot::FLAGS) | 1;
+                self.set_raw_hot(r, exc_slot::FLAGS, fl);
             }
         }
     }
@@ -744,9 +744,9 @@ impl Vm {
     /// async generator, whose yield or return [`Cont::ASend`] or
     /// [`Cont::AClose`] then turns into the result.
     pub(crate) fn agen_await(&mut self, op: Value) -> Result<Option<Value>, Raised> {
-        let (agen, arg) = (self.vslot(op, ag::AGEN), self.vslot(op, ag::ARG));
+        let (agen, arg) = (self.vslot_hot(op, ag::AGEN), self.vslot_hot(op, ag::ARG));
         let (mode, used) = match op.as_obj() {
-            Some(r) => (self.raw(r, ag::MODE), self.raw(r, ag::USED)),
+            Some(r) => (self.raw_hot(r, ag::MODE), self.raw_hot(r, ag::USED)),
             None => (ag::SEND, 1),
         };
         if used != 0 {
@@ -758,7 +758,7 @@ impl Vm {
             return Err(self.err(T::RuntimeError, msg));
         }
         if let Some(r) = op.as_obj() {
-            self.set_raw(r, ag::USED, 1);
+            self.set_raw_hot(r, ag::USED, 1);
         }
         let state = self.gen_state(agen);
         if state == g::RUNNING {

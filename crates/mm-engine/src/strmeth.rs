@@ -23,7 +23,7 @@ fn this(vm: &mut Vm, a: &CallArgs, name: &str) -> Result<String, Raised> {
             ),
         ));
     }
-    let s = String::from(vm.str_ref_o(s));
+    let s = String::from(vm.str_ref(s));
     vm.burn_bytes(s.len());
     Ok(s)
 }
@@ -64,7 +64,7 @@ fn list_of_ranges(
     let res = vm
         .heap
         .reserve_scratch(ranges.len().saturating_mul(size_of::<Value>()));
-    let _items = vm.hx_o(res)?;
+    let _items = vm.hx(res)?;
     let mut items = Vec::with_capacity(ranges.len());
     for &(st, en) in ranges {
         items.push(str_slice(vm, r, st, en)?);
@@ -86,7 +86,7 @@ fn str_slice(vm: &mut Vm, r: Ref, st: usize, en: usize) -> Result<Value, Raised>
         let buf = &mut small[..n];
         buf.copy_from_slice(piece);
         let res = vm.heap.new_str_ascii(buf);
-        let piece = vm.hx_o(res)?;
+        let piece = vm.hx(res)?;
         return Ok(Value::from_ref(piece, ty::STR as u8));
     }
     vm.build_text(n, |vm, buf| buf.push_slice(&vm.heap, r, st, en))
@@ -144,7 +144,7 @@ pub(crate) fn slice_copy(vm: &mut Vm, s: Value, st: usize, en: usize) -> Result<
         .ok_or(mm_core::Error::BadRef)
         .and_then(|d| vm.heap.copy_bytes(src, st, d, 0, n).map(|()| d))
         .and_then(|d| vm.heap.str_from_block(d, chars as u64));
-    let r = vm.hx_o(res)?;
+    let r = vm.hx(res)?;
     Ok(Value::from_ref(r, ty::STR as u8))
 }
 
@@ -298,7 +298,7 @@ fn each_match(hay: &str, pat: &str, max: usize, f: &mut dyn FnMut(usize)) -> usi
 fn str_arg(vm: &mut Vm, v: Value, what: &str) -> Result<String, Raised> {
     let b = if Vm::is_str(v) { v } else { vm.unbx(v) };
     if Vm::is_str(b) {
-        let s = String::from(vm.str_ref_o(b));
+        let s = String::from(vm.str_ref(b));
         vm.burn_bytes(s.len());
         return Ok(s);
     }
@@ -462,7 +462,7 @@ pub(crate) fn split(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if big_text(vm, s, per) {
         return split_big(vm, s, sep.unwrap_or(Value::NONE), max, mode);
     }
-    let (hay, heap) = (vm.str_ref_o(s), &vm.heap);
+    let (hay, heap) = (vm.str_ref(s), &vm.heap);
     let mut out = Ranges::default();
     let mut full = false;
     match sep {
@@ -489,7 +489,7 @@ pub(crate) fn split(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             }
         }
         Some(sep) => {
-            let pat = vm.str_ref_o(sep);
+            let pat = vm.str_ref(sep);
             let mut last = 0;
             each_match(hay, pat, max.min(cap), &mut |i| {
                 full |= out.push_hot(heap, (last, i)).is_err();
@@ -535,7 +535,7 @@ pub(crate) fn rsplit(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if big_text(vm, sv, per) {
         return split_big(vm, sv, sep.unwrap_or(Value::NONE), max, mode);
     }
-    let (s, heap) = (vm.str_ref_o(sv), &vm.heap);
+    let (s, heap) = (vm.str_ref(sv), &vm.heap);
     let mut out = Ranges::default();
     let mut full = false;
     // Pieces from the right, as offsets into `s`.
@@ -567,7 +567,7 @@ pub(crate) fn rsplit(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             }
         }
         Some(sep) => {
-            let sep = vm.str_ref_o(sep);
+            let sep = vm.str_ref(sep);
             if sep.len() > s.len() {
                 // As `find_at`: no room for it, so not searched for.
                 put(s);
@@ -789,7 +789,7 @@ pub(crate) fn replace(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if (len / UNIT) as u64 >= BIG / 2 || vm.str_bytes(old).is_empty() && count.min(len) >= cap {
         return replace_big(vm, s, old, new, count);
     }
-    let (hay, pat, rep) = (vm.str_ref_o(s), vm.str_ref_o(old), vm.str_ref_o(new));
+    let (hay, pat, rep) = (vm.str_ref(s), vm.str_ref(old), vm.str_ref(new));
     let matches = if pat.is_empty() {
         count.min(char_len(hay).saturating_add(1))
     } else {
@@ -807,7 +807,7 @@ pub(crate) fn replace(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         .saturating_sub(pat.len().saturating_mul(matches))
         .saturating_add(rep.len().saturating_mul(matches));
     let result = vm.build_text(bytes, |vm, out| {
-        let (hay, pat, rep) = (vm.str_ref_o(s), vm.str_ref_o(old), vm.str_ref_o(new));
+        let (hay, pat, rep) = (vm.str_ref(s), vm.str_ref(old), vm.str_ref(new));
         if pat.is_empty() {
             let mut k = 0;
             for c in hay.chars() {
@@ -873,7 +873,7 @@ fn case_room(vm: &mut Vm, s: &str, lowered: bool) -> Result<(usize, Scratch), Ra
         most
     };
     let res = vm.heap.reserve_scratch(bytes);
-    Ok((most, vm.hx_o(res)?))
+    Ok((most, vm.hx(res)?))
 }
 
 pub(crate) fn upper(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
@@ -1114,7 +1114,7 @@ pub(crate) fn count(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         if (len / UNIT) as u64 >= BIG / 2 && !vm.str_bytes(sub).is_empty() {
             return scan_big(vm, s, sub, sk::COUNT, 0, len);
         }
-        let (hay, pat) = (vm.str_ref_o(s), vm.str_ref_o(sub));
+        let (hay, pat) = (vm.str_ref(s), vm.str_ref(sub));
         let n = if pat.is_empty() {
             vm.str_len(s) + 1
         } else {
@@ -1138,7 +1138,7 @@ pub(crate) fn count(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if (en.saturating_sub(st) / UNIT) as u64 >= BIG / 2 && !vm.str_bytes(subv).is_empty() {
         return scan_big(vm, s, subv, sk::COUNT, st, en);
     }
-    let sub = String::from(vm.str_ref_o(subv));
+    let sub = String::from(vm.str_ref(subv));
     let hay = vm.str_bytes(s).get(st..en).unwrap_or(&[]);
     let hay = core::str::from_utf8(hay).unwrap_or("");
     let n = if sub.is_empty() {
@@ -1776,7 +1776,7 @@ pub(crate) fn zfill(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         let z = vm.new_str("0")?;
         return fill_parts(vm, &[(sv, 0, sign), (z, 0, w - n), (sv, sign, len)]);
     }
-    let s = String::from(vm.str_ref_o(sv));
+    let s = String::from(vm.str_ref(sv));
     vm.burn_bytes(len);
     let mut out = String::new();
     out.push_str(&s[..sign]);
@@ -1834,7 +1834,7 @@ pub(crate) fn expandtabs(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     // A fill: a unit per 64 bytes written.
     vm.burn((bytes / UNIT) as u64);
     let res = vm.heap.reserve_scratch(bytes);
-    let _native = vm.hx_o(res)?;
+    let _native = vm.hx(res)?;
     let mut out = String::new();
     if out.try_reserve_exact(bytes).is_err() {
         return Err(vm.err(T::MemoryError, ""));
@@ -1927,7 +1927,7 @@ fn pad(vm: &mut Vm, a: &CallArgs, name: &str, align: char) -> Result<Value, Rais
         let fl = fill.len_utf8();
         return fill_parts(vm, &[(f, 0, l * fl), (sv, 0, slen), (f, 0, r * fl)]);
     }
-    let s = String::from(vm.str_ref_o(sv));
+    let s = String::from(vm.str_ref(sv));
     vm.burn_bytes(slen);
     let mut out = String::with_capacity(w);
     out.extend(core::iter::repeat_n(fill, l));
@@ -2258,7 +2258,7 @@ pub(crate) fn translate(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let mut out = NativeText::default();
     // One copy of the text: `str_ref` checks the whole string each call,
     // which made this loop quadratic.
-    let text = String::from(vm.str_ref_o(s));
+    let text = String::from(vm.str_ref(s));
     for c in text.chars() {
         let k = Value::int(i64::from(u32::from(c))).unwrap_or(Value::NONE);
         match vm.dict_get(table, k)? {
@@ -2444,7 +2444,7 @@ impl Vm {
             Ok(Some(x)) => Ok(Step::Done(x)),
             Ok(None) => {
                 for (i, &x) in k.v.iter().enumerate() {
-                    self.set_slot_o(r, i as u32, x);
+                    self.set_slot(r, i as u32, x);
                 }
                 self.nstate_put(state, 1, &k.w);
                 Ok(Step::More)
@@ -2469,7 +2469,7 @@ impl Vm {
 /// A new byte block of `n` bytes for a result built a step at a time.
 fn block(vm: &mut Vm, n: usize) -> Result<Value, Raised> {
     let res = vm.heap.alloc_bytes_zeroed(n);
-    let b = vm.hx_o(res)?;
+    let b = vm.hx(res)?;
     vm.collect_for_result(n);
     Ok(Value::from_byte_ref(b))
 }
@@ -2600,7 +2600,7 @@ fn finish(vm: &mut Vm, out: Value, o: usize, chars: u64) -> Result<Option<Value>
         return Err(vm.bad_step());
     }
     let res = vm.heap.str_from_block(b, chars);
-    let r = vm.hx_o(res)?;
+    let r = vm.hx(res)?;
     Ok(Some(Value::from_ref(r, ty::STR as u8)))
 }
 
@@ -2974,7 +2974,7 @@ pub(crate) fn repeat(
     if top && (bytes / UNIT) as u64 >= FILL {
         return fill_parts(vm, &[(s, 0, bytes)]);
     }
-    let t = vm.str_ref_o(s).repeat(k);
+    let t = vm.str_ref(s).repeat(k);
     vm.new_str(&t)
 }
 
@@ -3657,7 +3657,7 @@ fn map_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
             return Err(vm.bad_step());
         }
         let res = vm.heap.reserve_scratch(text.len() * 5);
-        let _scratch = vm.hx_o(res)?;
+        let _scratch = vm.hx(res)?;
         buf.clear();
         let (mut st, mut part) = (k.w[4], k.at(6));
         let mut done = e - i;
@@ -3842,7 +3842,7 @@ fn slice_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
         }
         let budget = k.left(vm);
         let res = vm.heap.reserve_scratch(budget * 8 * 4);
-        let _scratch = vm.hx_o(res)?;
+        let _scratch = vm.hx(res)?;
         buf.clear();
         let h = text(vm, s);
         let (mut walked, mut taken) = (0usize, 0usize);
@@ -4058,7 +4058,7 @@ fn scan_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 fn strip_run(vm: &mut Vm, k: &mut Walk, room: usize) -> Result<Option<Value>, Raised> {
     let [s, chars, _, _] = k.v;
-    let set: Option<Vec<char>> = Vm::is_str(chars).then(|| vm.str_ref_o(chars).chars().collect());
+    let set: Option<Vec<char>> = Vm::is_str(chars).then(|| vm.str_ref(chars).chars().collect());
     let per = 1 + set.as_ref().map_or(0, Vec::len) / CHAR_UNIT;
     let (at, end, sides) = (k.at(0), k.at(1), k.w[2]);
     let h = text(vm, s);

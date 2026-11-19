@@ -147,7 +147,7 @@ impl Vm {
             return Err(self.bad_step());
         }
         let res = self.heap.alloc_init(ty::NSTATE, 0, vals, raw);
-        let r = self.hx_o(res)?;
+        let r = self.hx(res)?;
         Ok(Value::from_ref(r, ty::NSTATE as u8))
     }
 
@@ -200,7 +200,7 @@ impl Vm {
         {
             let at = h.nvals() + i;
             for (k, &w) in (at..).zip(ws) {
-                self.set_raw_o(r, k, w);
+                self.set_raw(r, k, w);
             }
         }
     }

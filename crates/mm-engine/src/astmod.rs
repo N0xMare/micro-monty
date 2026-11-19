@@ -54,7 +54,7 @@ pub(crate) fn ast_parse(vm: &mut Vm, a: CallArgs) -> R {
         vm.arg_o(&a, 2),
         vm.arg_o(&a, 3),
     );
-    let ns = vm.vslot_o(ns, crate::modules::module_slot::DICT);
+    let ns = vm.vslot(ns, crate::modules::module_slot::DICT);
     if !Vm::is_str(src) || !Vm::is_str(mode) || !ns.is_obj_kind(crate::types::ty::DICT as u8) {
         return Err(vm.err(
             T::TypeError,
@@ -74,9 +74,9 @@ pub(crate) fn ast_parse(vm: &mut Vm, a: CallArgs) -> R {
     let res = vm
         .heap
         .reserve_scratch(vm.str_bytes(src).len().saturating_mul(512));
-    let _native = vm.hx_o(res)?;
-    let text = String::from(vm.str_ref_o(src));
-    let mode = String::from(vm.str_ref_o(mode));
+    let _native = vm.hx(res)?;
+    let text = String::from(vm.str_ref(src));
+    let mode = String::from(vm.str_ref(mode));
     if !matches!(mode.as_str(), "exec" | "eval" | "single") {
         return Err(vm.err(
             T::ValueError,

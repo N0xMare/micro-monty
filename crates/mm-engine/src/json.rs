@@ -66,14 +66,14 @@ impl Out {
                 self.charge = Some(charge);
             }),
         };
-        vm.hx(res)?;
+        vm.hx_hot(res)?;
         let res = self.buf.try_reserve_exact(capacity - self.buf.len());
         if res.is_err()
             && let Some(charge) = &mut self.charge
         {
             let _ = charge.resize(&vm.heap, old);
         }
-        vm.hx(res)
+        vm.hx_hot(res)
     }
 
     fn push(&mut self, vm: &mut Vm, s: &str) -> Result<(), Raised> {
@@ -88,7 +88,7 @@ impl Out {
         let d = digits.get(k..).unwrap_or(&[]);
         self.reserve(vm, d.len())?;
         let res = self.buf.push_ascii(d);
-        vm.hx(res)
+        vm.hx_hot(res)
     }
 
     /// Appends `str` `v` as a JSON string literal, or nothing and `false`
@@ -106,7 +106,7 @@ impl Out {
                     .all(|&c| c >= 0x20 && c != b'"' && c != b'\\' && (!ascii || c < 0x7f));
             (b.len(), ok)
         });
-        let (len, ok) = vm.hx(plain)?;
+        let (len, ok) = vm.hx_hot(plain)?;
         if len > STR_LONG {
             return Ok(false);
         }
@@ -117,7 +117,7 @@ impl Out {
         self.reserve(vm, len.saturating_add(2))?;
         self.buf.push_str("\"");
         let res = self.buf.push_ref(&vm.heap, r);
-        vm.hx(res)?;
+        vm.hx_hot(res)?;
         self.buf.push_str("\"");
         Ok(true)
     }
@@ -143,7 +143,7 @@ impl Out {
         // Escapes can make the literal six times the text: the staging
         // copy is admitted too, at its exact size.
         let res = vm.heap.reserve_scratch(len);
-        let _staged = vm.hx(res)?;
+        let _staged = vm.hx_hot(res)?;
         let mut t = String::new();
         if t.try_reserve_exact(len).is_err() {
             return Err(vm.err(T::MemoryError, ""));
@@ -167,7 +167,7 @@ impl Out {
             vm.burn_result(n, true);
         }
         let res = vm.heap.new_str_from(&self.buf);
-        Ok(Value::from_ref(vm.hx(res)?, ty::STR as u8))
+        Ok(Value::from_ref(vm.hx_hot(res)?, ty::STR as u8))
     }
 }
 
@@ -394,9 +394,9 @@ pub(crate) fn pl_json_encode(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> 
 impl Enc {
     fn read(vm: &Vm, indent: Value, ks: Value, is: Value, flags: u64) -> Enc {
         Enc {
-            indent: Vm::is_str(indent).then(|| String::from(vm.str_ref(indent))),
-            key_sep: String::from(vm.str_ref(ks)),
-            item_sep: String::from(vm.str_ref(is)),
+            indent: Vm::is_str(indent).then(|| String::from(vm.str_ref_hot(indent))),
+            key_sep: String::from(vm.str_ref_hot(ks)),
+            item_sep: String::from(vm.str_ref_hot(is)),
             flags,
         }
     }
@@ -879,7 +879,7 @@ fn encode(
                 if let Some(id) = id {
                     if enc.has(CIRCULAR) {
                         let res = active.insert(&mut vm.heap, id);
-                        if !vm.hx(res)? {
+                        if !vm.hx_hot(res)? {
                             // Raised by the Python encoder, with `__notes__`.
                             end!(Ended::Python);
                         }
@@ -894,7 +894,7 @@ fn encode(
                 out.push(vm, open)?;
                 let seq = matches!(level, Level::Seq { .. });
                 let res = stack.push_hot(&vm.heap, level);
-                vm.hx(res)?;
+                vm.hx_hot(res)?;
                 // An object's first newline waits for its first key:
                 // with `skipkeys` it may have none (`{}`).
                 if let Some(ind) = &enc.indent
@@ -931,7 +931,7 @@ fn encode(
                     if *next > 0 {
                         sep(vm, out)?;
                     }
-                    pending = Some(vm.slot(*items, *next));
+                    pending = Some(vm.slot_hot(*items, *next));
                     *next += 1;
                     None
                 } else {
@@ -1028,7 +1028,7 @@ fn encode(
                     if plain && let Some(r) = r {
                         out.reserve(vm, e - from)?;
                         let res = out.buf.push_slice(&vm.heap, r, from, e);
-                        vm.hx(res)?;
+                        vm.hx_hot(res)?;
                     } else {
                         let s = String::from(
                             core::str::from_utf8(vm.str_bytes(*v).get(from..e).unwrap_or(&[]))
@@ -1049,7 +1049,7 @@ fn encode(
             // A long key opens; its value follows it.
             out.push(vm, "\"")?;
             let res = stack.push(&mut vm.heap, level);
-            vm.hx(res)?;
+            vm.hx_hot(res)?;
         } else if let Some((close, items)) = finished {
             match stack.pop() {
                 Some(Level::Seq { id, .. } | Level::Map { id, .. }) if enc.has(CIRCULAR) => {
@@ -1089,7 +1089,7 @@ enum KeyText {
 fn key_text(vm: &mut Vm, enc: &Enc, k: Value) -> Result<KeyText, Raised> {
     let k = vm.unbx(k);
     Ok(KeyText::Text(if Vm::is_str(k) {
-        String::from(vm.str_ref(k))
+        String::from(vm.str_ref_hot(k))
     } else if let Some(f) = k.as_float() {
         if !f.is_finite() && !enc.has(ALLOW_NAN) {
             return Ok(KeyText::Python);
@@ -1154,12 +1154,12 @@ fn value(vm: &mut Vm, enc: &Enc, v: Value, out: &mut Out, work: &mut u64) -> Res
         let count = vm.dict_len(v).min(slots as usize / 2);
         let mut keys = NativeValues::default();
         let res = keys.reserve(&mut vm.heap, count);
-        vm.hx(res)?;
+        vm.hx_hot(res)?;
         for at in (0..slots).step_by(2) {
-            let key = vm.slot(items, at);
+            let key = vm.slot_hot(items, at);
             if key != Value::UNDEFINED {
                 let res = keys.push(&mut vm.heap, key);
-                vm.hx(res)?;
+                vm.hx_hot(res)?;
             }
         }
         if count > SORT_NATIVE
@@ -1456,15 +1456,15 @@ impl KeyMemo {
             let capacity = (self.keys.len() * 2).max(8);
             let mut keys = NativeValues::default();
             let res = keys.reserve(&mut vm.heap, capacity);
-            vm.hx(res)?;
+            vm.hx_hot(res)?;
             for _ in 0..capacity {
                 let res = keys.push(&mut vm.heap, Value::UNDEFINED);
-                vm.hx(res)?;
+                vm.hx_hot(res)?;
             }
             for &key in &self.keys {
                 if let Some(r) = key.as_obj() {
                     let res = vm.heap.str_hash_mut(r);
-                    let hash = vm.hx(res)?;
+                    let hash = vm.hx_hot(res)?;
                     Self::insert(&mut keys, key, hash);
                 }
             }
@@ -2021,13 +2021,13 @@ fn run(
                             let res = d
                                 .stack
                                 .push(&mut vm.heap, Ctx::Obj(d.vals.len(), Value::NONE));
-                            vm.hx(res)?;
+                            vm.hx_hot(res)?;
                             (st, i) = (at::KEY0, j + 1);
                             continue;
                         }
                         Some(b'[') => {
                             let res = d.stack.push(&mut vm.heap, Ctx::Arr(d.vals.len()));
-                            vm.hx(res)?;
+                            vm.hx_hot(res)?;
                             (st, i) = (at::FIRST, j + 1);
                             continue;
                         }
@@ -2211,14 +2211,14 @@ fn flush(vm: &mut Vm, d: &Dec, n: usize) -> Result<(), Raised> {
                 return Err(vm.bad_step());
             }
             let res = vm.heap.set_values(dst, i as u32, &tmp[..k]);
-            vm.hx(res)?;
+            vm.hx_hot(res)?;
             i += k;
         }
-        vm.set_slot(r, 0, Value::from_ref(dst, ty::BUF as u8));
+        vm.set_slot_hot(r, 0, Value::from_ref(dst, ty::BUF as u8));
     }
     let res = vm.heap.set_values(dst, len as u32, items);
-    vm.hx(res)?;
-    vm.set_raw(r, 1, (len + n) as u64);
+    vm.hx_hot(res)?;
+    vm.set_raw_hot(r, 1, (len + n) as u64);
     Ok(())
 }
 
@@ -2254,9 +2254,9 @@ fn close(vm: &mut Vm, d: &mut Dec) -> Result<Value, Raised> {
     d.vals.truncate(0);
     let n = u32::try_from(vm.list_len(d.ctxs) - 3).unwrap_or(0);
     let res = vm.heap.set_values(buf, n, &[Value::NONE; 3]);
-    vm.hx(res)?;
+    vm.hx_hot(res)?;
     if let Some(r) = d.ctxs.as_obj() {
-        vm.set_raw(r, 1, u64::from(n));
+        vm.set_raw_hot(r, 1, u64::from(n));
     }
     d.load_top(vm);
     if obj && d.raw {
@@ -2422,7 +2422,7 @@ fn alloc_block(vm: &mut Vm, n: u64) -> Result<mm_core::ByteRef, Raised> {
     let n = usize::try_from(n).unwrap_or(usize::MAX);
     vm.burn_result(n, true);
     let res = vm.heap.alloc_bytes_zeroed(n);
-    vm.hx(res)
+    vm.hx_hot(res)
 }
 
 /// Reads string body `b[*r..]` up to about `lim` (an escape is read whole)

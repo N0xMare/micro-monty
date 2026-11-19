@@ -378,8 +378,8 @@ impl Vm {
     pub(crate) fn user_class(&self, v: Value) -> Option<Value> {
         let k = u16::from(v.obj_kind()?);
         let c = match k {
-            ty::INST => self.vslot(v, inst::CLASS),
-            ty::EXC => self.vslot(v, exc_slot::TYPE),
+            ty::INST => self.vslot_hot(v, inst::CLASS),
+            ty::EXC => self.vslot_hot(v, exc_slot::TYPE),
             _ => return None,
         };
         Vm::is_class(c).then_some(c)
@@ -389,7 +389,7 @@ impl Vm {
     #[inline]
     pub(crate) fn uflags(&self, v: Value) -> u64 {
         match self.user_class(v).or_else(|| self.meta_of(v)) {
-            Some(c) => c.as_obj().map_or(0, |r| self.raw(r, cls::FLAGS)),
+            Some(c) => c.as_obj().map_or(0, |r| self.raw_hot(r, cls::FLAGS)),
             None => 0,
         }
     }
@@ -399,7 +399,7 @@ impl Vm {
         if !c.is_obj_kind(ty::CLASS as u8) {
             return None;
         }
-        let m = self.vslot(c, cls::META);
+        let m = self.vslot_hot(c, cls::META);
         Vm::is_class(m).then_some(m)
     }
 
@@ -409,10 +409,10 @@ impl Vm {
             return m;
         }
         if v.is_obj_kind(ty::INST as u8) {
-            return self.vslot(v, inst::CLASS);
+            return self.vslot_hot(v, inst::CLASS);
         }
         if v.is_obj_kind(ty::EXC as u8) {
-            return self.vslot(v, exc_slot::TYPE);
+            return self.vslot_hot(v, exc_slot::TYPE);
         }
         self.type_obj(self.type_of(v))
     }
@@ -421,7 +421,7 @@ impl Vm {
     pub(crate) fn class_base_t(&self, c: Value) -> T {
         match c.as_obj() {
             Some(r) if Vm::is_class(c) => {
-                T::from_index(usize::try_from(self.raw(r, cls::BASE)).unwrap_or(0))
+                T::from_index(usize::try_from(self.raw_hot(r, cls::BASE)).unwrap_or(0))
                     .unwrap_or(T::object)
             }
             _ => self.type_of_typeobj(c).unwrap_or(T::object),
@@ -431,7 +431,7 @@ impl Vm {
     /// A class's `__name__`.
     pub(crate) fn class_name(&self, c: Value) -> &str {
         if Vm::is_class(c) {
-            self.str_ref(self.vslot(c, cls::NAME))
+            self.str_ref_hot(self.vslot_hot(c, cls::NAME))
         } else {
             self.type_of_typeobj(c).map_or("object", T::name)
         }
@@ -441,12 +441,12 @@ impl Vm {
     /// set, else its `__name__`.
     pub(crate) fn class_tpname(&self, c: Value) -> &str {
         if Vm::is_class(c)
-            && c.as_obj().map_or(0, |r| self.raw(r, cls::FLAGS)) & f::TPNAME != 0
+            && c.as_obj().map_or(0, |r| self.raw_hot(r, cls::FLAGS)) & f::TPNAME != 0
             && let Some(k) = self.find_interned("__mm_tpname__")
             && let Some(n) = self.class_lookup(c, k)
             && Vm::is_str(n)
         {
-            return self.str_ref(n);
+            return self.str_ref_hot(n);
         }
         self.class_name(c)
     }
@@ -477,8 +477,8 @@ impl Vm {
         if Vm::is_class(c) {
             // Read in place: `except` with a tuple calls this per item, and
             // a copy of a deep MRO each time was most of a long step.
-            let mro = self.vslot(c, cls::MRO);
-            return (0..self.tuple_len(mro)).any(|k| self.vslot_o(mro, k as u32) == target);
+            let mro = self.vslot_hot(c, cls::MRO);
+            return (0..self.tuple_len(mro)).any(|k| self.vslot(mro, k as u32) == target);
         }
         match (self.type_of_typeobj(c), self.type_of_typeobj(target)) {
             (Some(a), Some(b)) => a.is_subclass(b),
@@ -520,11 +520,11 @@ impl Vm {
         let s = self.str_bytes(name);
         if Vm::is_class(c) {
             // One validation of the MRO and of the name for every entry.
-            let mro = self.vslot(c, cls::MRO).as_obj()?;
+            let mro = self.vslot_hot(c, cls::MRO).as_obj()?;
             for &w in self.heap.slot_words(mro).unwrap_or(&[]) {
                 let k = Value::from_bits(w).unwrap_or(Value::NONE);
                 let v = if Vm::is_class(k) {
-                    self.dict_get_str(self.vslot(k, cls::DICT), name)
+                    self.dict_get_str(self.vslot_hot(k, cls::DICT), name)
                 } else {
                     self.type_of_typeobj(k)
                         .and_then(|t| crate::builtins::method_index(t, s))
@@ -1269,7 +1269,7 @@ impl Vm {
         if !v.is_obj_kind(ty::INST as u8) {
             return None;
         }
-        let b = self.vslot(v, inst::BACK);
+        let b = self.vslot_hot(v, inst::BACK);
         (b != Value::NONE).then_some(b)
     }
 
@@ -1299,10 +1299,10 @@ impl Vm {
 
     /// A new instance of builtin-type subclass `c` extending `value`.
     pub(crate) fn new_bx(&mut self, c: Value, value: Value) -> Result<Value, Raised> {
-        let hint = c.as_obj().map_or(2, |r| self.raw(r, cls::HINT));
+        let hint = c.as_obj().map_or(2, |r| self.raw_hot(r, cls::HINT));
         let o = self.new_instance(c, u32::try_from(hint).unwrap_or(2))?;
         if let Some(r) = o.as_obj() {
-            self.set_slot(r, inst::BACK, self.unbx(value));
+            self.set_slot_hot(r, inst::BACK, self.unbx(value));
         }
         Ok(o)
     }
@@ -1333,7 +1333,7 @@ impl Vm {
         vals[inst::BACK as usize] = Value::NONE;
         let r = {
             let res = self.heap.alloc_init(ty::INST, 0, vals, &[]);
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::INST as u8))
     }
@@ -1349,14 +1349,14 @@ impl Vm {
             let a = self.alloc_tuple(args)?;
             return self.alloc_exc(c, a);
         }
-        let hint = c.as_obj().map_or(2, |r| self.raw(r, cls::HINT));
+        let hint = c.as_obj().map_or(2, |r| self.raw_hot(r, cls::HINT));
         self.new_instance(c, u32::try_from(hint).unwrap_or(2))
     }
 
     /// The shape id of an instance in shape mode.
     #[inline]
     pub(crate) fn shape_of(&self, o: Value) -> Option<u32> {
-        self.vslot(o, inst::SHAPE)
+        self.vslot_hot(o, inst::SHAPE)
             .as_int()
             .and_then(|i| u32::try_from(i).ok())
     }
@@ -1384,19 +1384,19 @@ impl Vm {
     /// An attribute stored on the instance itself.
     pub(crate) fn inst_get(&self, o: Value, name: Value) -> Option<Value> {
         if o.is_obj_kind(ty::EXC as u8) {
-            let d = self.vslot(o, exc_slot::DICT);
+            let d = self.vslot_hot(o, exc_slot::DICT);
             return self.dict_get_str(d, name);
         }
-        let sh = self.vslot(o, inst::SHAPE);
+        let sh = self.vslot_hot(o, inst::SHAPE);
         let Some(s) = sh.as_int() else {
             return self.dict_get_str(sh, name);
         };
         let i = self.shape_index(u32::try_from(s).ok()?, name)?;
         let (inline, k) = self.attr_slot(o, i);
         let v = if inline {
-            self.vslot(o, k)
+            self.vslot_hot(o, k)
         } else {
-            self.vslot(self.vslot(o, inst::OVER), k)
+            self.vslot_hot(self.vslot_hot(o, inst::OVER), k)
         };
         (v != Value::UNDEFINED).then_some(v)
     }
@@ -1666,12 +1666,12 @@ impl Vm {
         match d.obj_kind().map(u16::from) {
             Some(ty::FUNC | ty::HOSTFN) => self.new_method(d, obj),
             Some(ty::CLASSMETHOD) => {
-                let f = self.vslot(d, 0);
+                let f = self.vslot_hot(d, 0);
                 self.new_method(f, c)
             }
-            Some(ty::STATICMETHOD) => Ok(self.vslot(d, 0)),
+            Some(ty::STATICMETHOD) => Ok(self.vslot_hot(d, 0)),
             Some(ty::PROPERTY) => {
-                let g = self.vslot(d, 0);
+                let g = self.vslot_hot(d, 0);
                 if g == Value::NONE {
                     return Err(self.no_accessor(d, obj, "getter"));
                 }
@@ -2064,7 +2064,7 @@ impl Vm {
         let args = self.vslot(e, exc_slot::ARGS);
         Some(match self.tuple_len(args) {
             0 => Value::NONE,
-            1 => self.vslot_o(args, 0),
+            1 => self.vslot(args, 0),
             _ => args,
         })
     }
@@ -2084,7 +2084,7 @@ impl Vm {
             _ => 4,
         };
         if i < n {
-            self.vslot_o(args, i as u32)
+            self.vslot(args, i as u32)
         } else {
             Value::NONE
         }
@@ -2291,7 +2291,7 @@ impl Vm {
         };
         let r = {
             let res = self.heap.alloc_init(ty::SUPER, 0, &[c, obj, start], &[]);
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::SUPER as u8))
     }
@@ -2453,21 +2453,21 @@ impl Vm {
         let Some(r) = e.as_obj() else {
             return Ok(false);
         };
-        match self.str_ref(name) {
+        match self.str_ref_hot(name) {
             "__cause__" => {
-                self.set_slot(r, exc_slot::CAUSE, v);
-                let fl = self.raw(r, exc_slot::FLAGS) | 1;
-                self.set_raw(r, exc_slot::FLAGS, fl);
+                self.set_slot_hot(r, exc_slot::CAUSE, v);
+                let fl = self.raw_hot(r, exc_slot::FLAGS) | 1;
+                self.set_raw_hot(r, exc_slot::FLAGS, fl);
             }
-            "__context__" => self.set_slot(r, exc_slot::CONTEXT, v),
+            "__context__" => self.set_slot_hot(r, exc_slot::CONTEXT, v),
             "__suppress_context__" => {
-                let fl = self.raw(r, exc_slot::FLAGS);
+                let fl = self.raw_hot(r, exc_slot::FLAGS);
                 let fl = if self.truthy(v) { fl | 1 } else { fl & !1 };
-                self.set_raw(r, exc_slot::FLAGS, fl);
+                self.set_raw_hot(r, exc_slot::FLAGS, fl);
             }
             // A tuple is kept as it is, as CPython's `PySequence_Tuple`
             // keeps one: no copy of its items.
-            "args" if v.is_obj_kind(ty::TUPLE as u8) => self.set_slot(r, exc_slot::ARGS, v),
+            "args" if v.is_obj_kind(ty::TUPLE as u8) => self.set_slot_hot(r, exc_slot::ARGS, v),
             "args" => {
                 let items = match self.collect(v) {
                     Ok(items) => items,
@@ -2483,7 +2483,7 @@ impl Vm {
                     Err(err) => return Err(err),
                 };
                 let t = self.alloc_tuple(&items)?;
-                self.set_slot(r, exc_slot::ARGS, t);
+                self.set_slot_hot(r, exc_slot::ARGS, t);
             }
             "__traceback__" => self.set_traceback(e, v)?,
             "name" => return self.set_exc_name_attr(e, "name", v),

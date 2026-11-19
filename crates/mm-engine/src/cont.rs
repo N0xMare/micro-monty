@@ -320,11 +320,11 @@ impl Vm {
 
     /// The `value` of a `StopIteration`.
     pub(crate) fn stop_value(&self, e: Value) -> Value {
-        let args = self.vslot(e, exc_slot::ARGS);
+        let args = self.vslot_hot(e, exc_slot::ARGS);
         if self.tuple_len(args) == 0 {
             Value::NONE
         } else {
-            self.vslot(args, 0)
+            self.vslot_hot(args, 0)
         }
     }
 
@@ -372,7 +372,7 @@ impl Vm {
                         && let Some(r) = v.as_obj()
                     {
                         // `BaseException.__init__` stores the arguments.
-                        self.set_slot(r, exc_slot::ARGS, args);
+                        self.set_slot_hot(r, exc_slot::ARGS, args);
                     }
                     Next::Acc(v)
                 }
@@ -519,7 +519,7 @@ impl Vm {
                 return Err(self.err(T::RuntimeError, "async generator ignored GeneratorExit"));
             }
             (Cont::CallIter { it, exit }, Val(v) | Stop(v)) => {
-                let sentinel = self.vslot(it, 1);
+                let sentinel = self.vslot_hot(it, 1);
                 let mut left = crate::dict::WALK;
                 let eq = if v == sentinel {
                     Ok(true)
@@ -614,7 +614,7 @@ impl Vm {
             Cont::Native { op, state } => self.native_unwind(op, state),
             Cont::Import { module, .. } => {
                 // A module whose body raised leaves `sys.modules`.
-                let k = self.vslot(module, crate::modules::module_slot::NAME);
+                let k = self.vslot_hot(module, crate::modules::module_slot::NAME);
                 let mods = self.modules;
                 if self.dict_get(mods, k)? == Some(module) {
                     self.dict_del(mods, k)?;
@@ -629,7 +629,7 @@ impl Vm {
     /// the loop exits (or `next()` raises `StopIteration`).
     fn calliter_stop(&mut self, it: Value, exit: u32) -> Result<Next, Raised> {
         if let Some(r) = it.as_obj() {
-            self.set_slot(r, 1, Value::UNDEFINED);
+            self.set_slot_hot(r, 1, Value::UNDEFINED);
         }
         if exit == u32::MAX {
             return Err(self.raise_stop(Value::NONE));

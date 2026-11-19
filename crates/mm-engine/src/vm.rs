@@ -1219,12 +1219,12 @@ impl Vm {
         // The builtins and the prelude intern about 720 strings [M]; room
         // for them up front saves five rehashes of the table.
         let room = self.heap.reserve_interned(1024);
-        self.hx(room)?;
+        self.hx_hot(room)?;
         for t in crate::types::ALL {
             let name = self.intern(t.name())?;
             let r = {
                 let res = self.heap.alloc_init(ty::TYPE, 0, &[name], &[t as u64]);
-                self.hx(res)
+                self.hx_hot(res)
             }?;
             self.types.push(Value::from_ref(r, ty::TYPE as u8));
         }
@@ -2344,8 +2344,9 @@ impl Vm {
 
     // ----------------------------------------------------------- errors
 
-    /// Maps a heap error to a pending `MemoryError` or `SystemError`.
-    pub(crate) fn hx<X>(&mut self, r: Result<X, mm_core::Error>) -> Result<X, Raised> {
+    /// [`Vm::hx`] with its error path inline, for the functions the
+    /// dispatch loop inlines or calls (`tests/hot_accessors.rs`).
+    pub(crate) fn hx_hot<X>(&mut self, r: Result<X, mm_core::Error>) -> Result<X, Raised> {
         match r {
             Ok(x) => Ok(x),
             Err(mm_core::Error::OutOfMemory) => {
@@ -2466,98 +2467,71 @@ impl Vm {
                 ],
                 &[0],
             );
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::EXC as u8))
     }
 
     // ------------------------------------------------------ slot access
 
+    // Each accessor comes in two forms. The plain name is out of line:
+    // one call instead of the inlined object validation at every site
+    // saves about 90 KB of `hello.wasm` over inlining them all [M], and it
+    // is what new code gets. The `_hot` form is inline, for the functions
+    // the dispatch loop (`dispatch`, `dispatch_rare`, `execute`) inlines or
+    // calls and the natives with a measurable share of some bench program's
+    // instructions; `tests/hot_accessors.rs` keeps it to the functions
+    // listed in `tests/hot_accessors.txt`. A function that shrinks may be
+    // inlined into dispatch, and any change to what dispatch inlines moves
+    // its register allocation, and with it the hot loop's instruction
+    // count by several percent (fib +8.7% with every accessor out of line
+    // [M]).
+
     /// Value slot `i` of `r` (`UNDEFINED` if out of range).
-    #[inline]
+    #[inline(never)]
     pub(crate) fn slot(&self, r: Ref, i: u32) -> Value {
         self.heap.get(r, i).unwrap_or(Value::UNDEFINED)
     }
 
     /// Value slot `i` of the object `v` refers to.
-    #[inline]
+    #[inline(never)]
     pub(crate) fn vslot(&self, v: Value, i: u32) -> Value {
-        match v.as_obj() {
-            Some(r) => self.slot(r, i),
-            None => Value::UNDEFINED,
-        }
-    }
-
-    /// Raw slot `i` of `r` (0 if out of range).
-    #[inline]
-    pub(crate) fn raw(&self, r: Ref, i: u32) -> u64 {
-        self.heap.get_raw(r, i).unwrap_or(0)
-    }
-
-    #[inline]
-    pub(crate) fn set_slot(&mut self, r: Ref, i: u32, v: Value) {
-        let _ = self.heap.set(r, i, v);
-    }
-
-    #[inline]
-    pub(crate) fn set_raw(&mut self, r: Ref, i: u32, w: u64) {
-        let _ = self.heap.set_raw(r, i, w);
-    }
-
-    // Out-of-line forms of the accessors above. Code that `Vm::dispatch`
-    // does not inline calls these: one call instead of the inlined object
-    // validation saves about 59 KB of `hello.wasm` [M]. Code that dispatch
-    // inlines (interp.rs, ops.rs, this file, class.rs, cont.rs,
-    // generator.rs, aio.rs, modules.rs, host.rs, intops.rs, dunder.rs,
-    // dict.rs, json.rs and the hot natives that keep the inline forms)
-    // keeps the inline forms: any change to what dispatch inlines moves
-    // its register allocation, and with it the hot loop's instruction
-    // count by several percent [M].
-
-    /// [`Vm::slot`], out of line.
-    #[inline(never)]
-    pub(crate) fn slot_o(&self, r: Ref, i: u32) -> Value {
-        self.heap.get(r, i).unwrap_or(Value::UNDEFINED)
-    }
-
-    /// [`Vm::vslot`], out of line.
-    #[inline(never)]
-    pub(crate) fn vslot_o(&self, v: Value, i: u32) -> Value {
         match v.as_obj() {
             Some(r) => self.heap.get(r, i).unwrap_or(Value::UNDEFINED),
             None => Value::UNDEFINED,
         }
     }
 
-    /// [`Vm::raw`], out of line.
+    /// Raw slot `i` of `r` (0 if out of range).
     #[inline(never)]
-    pub(crate) fn raw_o(&self, r: Ref, i: u32) -> u64 {
+    pub(crate) fn raw(&self, r: Ref, i: u32) -> u64 {
         self.heap.get_raw(r, i).unwrap_or(0)
     }
 
-    /// [`Vm::set_slot`], out of line.
+    /// Sets value slot `i` of `r`; nothing if out of range.
     #[inline(never)]
-    pub(crate) fn set_slot_o(&mut self, r: Ref, i: u32, v: Value) {
+    pub(crate) fn set_slot(&mut self, r: Ref, i: u32, v: Value) {
         let _ = self.heap.set(r, i, v);
     }
 
-    /// [`Vm::set_raw`], out of line.
+    /// Sets raw slot `i` of `r`; nothing if out of range.
     #[inline(never)]
-    pub(crate) fn set_raw_o(&mut self, r: Ref, i: u32, w: u64) {
+    pub(crate) fn set_raw(&mut self, r: Ref, i: u32, w: u64) {
         let _ = self.heap.set_raw(r, i, w);
     }
 
-    /// [`Vm::str_ref`], out of line.
+    /// The text of a `str` value (empty for non-strings).
     #[inline(never)]
-    pub(crate) fn str_ref_o(&self, v: Value) -> &str {
+    pub(crate) fn str_ref(&self, v: Value) -> &str {
         v.as_obj()
             .and_then(|r| self.heap.as_str(r).ok())
             .unwrap_or("")
     }
 
-    /// [`Vm::hx`] with its error path out of line.
+    /// Maps a heap error to a pending `MemoryError` or `SystemError`, with
+    /// the error path out of line.
     #[inline]
-    pub(crate) fn hx_o<X>(&mut self, r: Result<X, mm_core::Error>) -> Result<X, Raised> {
+    pub(crate) fn hx<X>(&mut self, r: Result<X, mm_core::Error>) -> Result<X, Raised> {
         match r {
             Ok(x) => Ok(x),
             Err(e) => Err(self.hx_err(e)),
@@ -2574,6 +2548,39 @@ impl Vm {
             T::SystemError,
             "micro-monty internal error: bad heap access",
         )
+    }
+
+    /// [`Vm::slot`], inline.
+    #[inline]
+    pub(crate) fn slot_hot(&self, r: Ref, i: u32) -> Value {
+        self.heap.get(r, i).unwrap_or(Value::UNDEFINED)
+    }
+
+    /// [`Vm::vslot`], inline.
+    #[inline]
+    pub(crate) fn vslot_hot(&self, v: Value, i: u32) -> Value {
+        match v.as_obj() {
+            Some(r) => self.heap.get(r, i).unwrap_or(Value::UNDEFINED),
+            None => Value::UNDEFINED,
+        }
+    }
+
+    /// [`Vm::raw`], inline.
+    #[inline]
+    pub(crate) fn raw_hot(&self, r: Ref, i: u32) -> u64 {
+        self.heap.get_raw(r, i).unwrap_or(0)
+    }
+
+    /// [`Vm::set_slot`], inline.
+    #[inline]
+    pub(crate) fn set_slot_hot(&mut self, r: Ref, i: u32, v: Value) {
+        let _ = self.heap.set(r, i, v);
+    }
+
+    /// [`Vm::set_raw`], inline.
+    #[inline]
+    pub(crate) fn set_raw_hot(&mut self, r: Ref, i: u32, w: u64) {
+        let _ = self.heap.set_raw(r, i, w);
     }
 
     /// [`Vm::int_of`] with everything past a small int out of line.
@@ -2617,7 +2624,7 @@ impl Vm {
     pub(crate) fn intern(&mut self, s: &str) -> Result<Value, Raised> {
         let r = {
             let res = self.heap.intern(s);
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::STR as u8))
     }
@@ -2632,7 +2639,7 @@ impl Vm {
         }
         let r = {
             let res = self.heap.new_str(s);
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::STR as u8))
     }
@@ -2695,9 +2702,9 @@ impl Vm {
                 }
             }
             let res = b.try_reserve_exact(bytes);
-            self.hx(res)?;
+            self.hx_hot(res)?;
             let res = build(self, &mut b);
-            self.hx(res)?;
+            self.hx_hot(res)?;
             self.str_from_buf(b)
         })();
         // This only releases the temporary reservation or transfers it to the
@@ -2737,7 +2744,7 @@ impl Vm {
                 self.burn_result(b.len(), true);
             }
             let res = self.heap.new_str_from(&b);
-            self.hx(res).map(|r| Value::from_ref(r, ty::STR as u8))
+            self.hx_hot(res).map(|r| Value::from_ref(r, ty::STR as u8))
         };
         if b.capacity() <= 1 << 16 {
             self.sbuf = b;
@@ -2755,7 +2762,7 @@ impl Vm {
         }
         let r = {
             let res = self.heap.alloc_init(ty::TUPLE, 0, items, &[]);
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::TUPLE as u8))
     }
@@ -2777,7 +2784,7 @@ impl Vm {
                 &[Value::from_ref(buf, ty::BUF as u8)],
                 &[items.len() as u64],
             );
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::LIST as u8))
     }
@@ -2786,7 +2793,7 @@ impl Vm {
         let n32 = u32::try_from(n).map_err(|_| self.err(T::MemoryError, ""))?;
         {
             let res = self.heap.alloc(ty::BUF, 0, n32, 0);
-            self.hx(res)
+            self.hx_hot(res)
         }
     }
 
@@ -2797,7 +2804,7 @@ impl Vm {
         let n32 = u32::try_from(n).map_err(|_| self.err(T::MemoryError, ""))?;
         {
             let res = self.heap.alloc_unfilled(ty::BUF, 0, n32);
-            self.hx(res)
+            self.hx_hot(res)
         }
     }
 
@@ -2846,7 +2853,7 @@ impl Vm {
             return None;
         }
         let r = v.as_obj()?;
-        T::from_index(usize::try_from(self.raw(r, 1)).ok()?)
+        T::from_index(usize::try_from(self.raw_hot(r, 1)).ok()?)
     }
 
     /// The Python type of `v`.
@@ -2894,7 +2901,7 @@ impl Vm {
             ty::ZIP => T::zip,
             ty::REVERSED => T::list_reverseiterator,
             ty::EXC => {
-                let t = self.vslot(v, exc_slot::TYPE);
+                let t = self.vslot_hot(v, exc_slot::TYPE);
                 self.class_base_t(t)
             }
             ty::METHOD => T::method,
@@ -2904,12 +2911,12 @@ impl Vm {
             ty::CLASSMETHOD => T::classmethod,
             ty::SUPER => T::super_,
             ty::CALLITER => T::callable_iterator,
-            ty::VIEW => match v.as_obj().map_or(0, |r| self.raw(r, 1) & 3) {
+            ty::VIEW => match v.as_obj().map_or(0, |r| self.raw_hot(r, 1) & 3) {
                 0 => T::dict_keys,
                 1 => T::dict_values,
                 _ => T::dict_items,
             },
-            ty::ITER => crate::ops::iter_type(v.as_obj().map_or(0, |r| self.raw(r, 1))),
+            ty::ITER => crate::ops::iter_type(v.as_obj().map_or(0, |r| self.raw_hot(r, 1))),
             ty::MODULE => T::module,
             ty::CORO | ty::SLEEP => T::coroutine,
             ty::TASK => T::Task,
@@ -2920,7 +2927,7 @@ impl Vm {
             ty::AGEN => T::async_generator,
             ty::AGENOP
                 if v.as_obj()
-                    .map_or(0, |r| self.raw(r, crate::generator::ag::MODE))
+                    .map_or(0, |r| self.raw_hot(r, crate::generator::ag::MODE))
                     == crate::generator::ag::SEND =>
             {
                 T::async_generator_asend
@@ -2938,9 +2945,9 @@ impl Vm {
                 && let Some(n) = self.class_lookup(c, k)
                 && Vm::is_str(n)
             {
-                return self.str_ref(n);
+                return self.str_ref_hot(n);
             }
-            return self.str_ref(self.vslot(c, crate::class::cls::NAME));
+            return self.str_ref_hot(self.vslot_hot(c, crate::class::cls::NAME));
         }
         self.type_of(v).name()
     }
@@ -2951,8 +2958,8 @@ impl Vm {
         v.is_obj_kind(ty::STR as u8)
     }
 
-    /// The text of a `str` value (empty for non-strings).
-    pub(crate) fn str_ref(&self, v: Value) -> &str {
+    /// [`Vm::str_ref`], left to the inliner.
+    pub(crate) fn str_ref_hot(&self, v: Value) -> &str {
         v.as_obj()
             .and_then(|r| self.heap.as_str(r).ok())
             .unwrap_or("")
@@ -3024,20 +3031,20 @@ impl Vm {
     #[inline]
     pub(crate) fn list_len(&self, l: Value) -> usize {
         l.as_obj()
-            .map_or(0, |r| usize::try_from(self.raw(r, 1)).unwrap_or(0))
+            .map_or(0, |r| usize::try_from(self.raw_hot(r, 1)).unwrap_or(0))
     }
 
     /// The buffer of a list.
     #[inline]
     pub(crate) fn list_buf(&self, l: Value) -> Option<Ref> {
-        l.as_obj().and_then(|r| self.slot(r, 0).as_obj())
+        l.as_obj().and_then(|r| self.slot_hot(r, 0).as_obj())
     }
 
     /// Item `i` of a list (no bounds check beyond the heap's).
     #[inline]
     pub(crate) fn list_get(&self, l: Value, i: usize) -> Value {
         match self.list_buf(l) {
-            Some(b) => self.slot(b, u32::try_from(i).unwrap_or(u32::MAX)),
+            Some(b) => self.slot_hot(b, u32::try_from(i).unwrap_or(u32::MAX)),
             None => Value::UNDEFINED,
         }
     }
@@ -3149,7 +3156,7 @@ impl Vm {
         // One unit per item, as collecting them charged.
         self.burn(m as u64);
         self.copy_slots(buf, len, sr, from, m);
-        self.set_raw_o(r, 1, (len + m) as u64);
+        self.set_raw(r, 1, (len + m) as u64);
         Ok(())
     }
 
@@ -3159,7 +3166,7 @@ impl Vm {
             return Ok(());
         };
         let _ = self.heap.set_values(buf, len as u32, items);
-        self.set_raw_o(r, 1, (len + items.len()) as u64);
+        self.set_raw(r, 1, (len + items.len()) as u64);
         Ok(())
     }
 
@@ -3208,9 +3215,9 @@ impl Vm {
         let Some(r) = l.as_obj() else { return Ok(l) };
         if cap.max(len) > 4 {
             let buf = self.alloc_items(cap.max(len))?;
-            self.set_slot(r, 0, Value::from_ref(buf, ty::BUF as u8));
+            self.set_slot_hot(r, 0, Value::from_ref(buf, ty::BUF as u8));
         }
-        self.set_raw(r, 1, len as u64);
+        self.set_raw_hot(r, 1, len as u64);
         Ok(l)
     }
 
@@ -3246,7 +3253,7 @@ impl Vm {
                 break;
             }
             let res = self.heap.set_values(dst, i as u32, &tmp[..k]);
-            self.hx(res)?;
+            self.hx_hot(res)?;
             i += k;
         }
         Ok(l)
@@ -3259,11 +3266,11 @@ impl Vm {
         let (Some(t), Some(f)) = (to.as_obj(), from.as_obj()) else {
             return Ok(());
         };
-        let (buf, len) = (self.slot(f, 0), self.raw(f, 1));
-        self.set_slot(t, 0, buf);
-        self.set_raw(t, 1, len);
-        self.set_slot(f, 0, Value::from_ref(fresh, ty::BUF as u8));
-        self.set_raw(f, 1, 0);
+        let (buf, len) = (self.slot_hot(f, 0), self.raw_hot(f, 1));
+        self.set_slot_hot(t, 0, buf);
+        self.set_raw_hot(t, 1, len);
+        self.set_slot_hot(f, 0, Value::from_ref(fresh, ty::BUF as u8));
+        self.set_raw_hot(f, 1, 0);
         Ok(())
     }
 
@@ -3349,7 +3356,7 @@ impl Vm {
                 i += u32::try_from(k).unwrap_or(0);
             }
             let _ = self.heap.set_values(nb, at, &[v]);
-            self.set_slot(r, 0, Value::from_ref(nb, ty::BUF as u8));
+            self.set_slot_hot(r, 0, Value::from_ref(nb, ty::BUF as u8));
         }
         if let Ok([n, ..]) = self.heap.raw_words_mut(r) {
             *n = len + 1;
@@ -3401,7 +3408,7 @@ impl Vm {
     pub(crate) fn new_cell(&mut self, v: Value) -> Result<Value, Raised> {
         let r = {
             let res = self.heap.alloc_init(ty::CELL, 0, &[v], &[]);
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(r, ty::CELL as u8))
     }

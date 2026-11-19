@@ -278,7 +278,7 @@ impl Vm {
             .zip(self.find_interned(group.key()))
             .and_then(|(d, k)| self.dict_get_str(d, k))
             .filter(|v| Vm::is_str(*v))
-            .map(|v| String::from(self.str_ref_o(v)));
+            .map(|v| String::from(self.str_ref(v)));
         let text = over.unwrap_or_else(|| String::from(group.default_text()));
         let mut text = text.replace("{module}", module);
         if text.contains("{names}") {
@@ -350,7 +350,7 @@ impl Vm {
     /// gives it, else the asyncio hint for a missing `asyncio` name.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn module_attr_hint(&mut self, m: Value, name: Value, import: bool) {
-        let wrong = String::from(self.str_ref_o(name));
+        let wrong = String::from(self.str_ref(name));
         // asyncio's streams, sockets, subprocesses and threads stay out of
         // scope: point at the host instead of at a near name.
         if self.module_name(m) == "asyncio" {
@@ -391,8 +391,8 @@ impl Vm {
     /// nearest name, else asyncio's sentence for `asyncio`.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn module_attr_hint_text(&mut self, m: Value, name: Value) -> Option<String> {
-        let wrong = String::from(self.str_ref_o(name));
-        let d = self.vslot_o(m, crate::modules::module_slot::DICT);
+        let wrong = String::from(self.str_ref(name));
+        let d = self.vslot(m, crate::modules::module_slot::DICT);
         let keys: Vec<Value> = self.dict_items_vec(d).into_iter().map(|(k, _)| k).collect();
         let owned = self.hint_names(&keys, &wrong).unwrap_or_default();
         // CPython suggests from `dir(module)`, sorted: the first of equally
@@ -518,18 +518,18 @@ impl Vm {
     /// message past [`AWAIT_HINT_MAX`] bytes is not read.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn forgot_await(&self, e: Value) -> bool {
-        let class = self.vslot_o(e, crate::vm::exc_slot::TYPE);
+        let class = self.vslot(e, crate::vm::exc_slot::TYPE);
         if class != self.types[T::AttributeError as usize]
             && class != self.types[T::TypeError as usize]
         {
             return false;
         }
-        let args = self.tuple_items(self.vslot_o(e, crate::vm::exc_slot::ARGS));
+        let args = self.tuple_items(self.vslot(e, crate::vm::exc_slot::ARGS));
         let [m] = args[..] else { return false };
-        if !Vm::is_str(m) || self.str_ref_o(m).len() > AWAIT_HINT_MAX {
+        if !Vm::is_str(m) || self.str_ref(m).len() > AWAIT_HINT_MAX {
             return false;
         }
-        let msg = self.str_ref_o(m);
+        let msg = self.str_ref(m);
         // `asyncio.wait(coro)`: it wants a list, not the value.
         !msg.starts_with("expect a list of futures") && awaitable_named(msg)
     }
@@ -540,7 +540,7 @@ impl Vm {
 pub(crate) fn mm_hint(vm: &mut Vm, a: crate::vm::CallArgs) -> Result<Value, Raised> {
     let k = vm.arg_o(&a, 0);
     let group = Vm::is_str(k)
-        .then(|| HintGroup::from_key(vm.str_ref_o(k)))
+        .then(|| HintGroup::from_key(vm.str_ref(k)))
         .flatten();
     let Some(group) = group else {
         return Err(vm.err(T::ValueError, "unknown hint group"));

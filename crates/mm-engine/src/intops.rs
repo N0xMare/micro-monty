@@ -189,9 +189,9 @@ impl Vm {
         let Some(r) = v.as_obj() else {
             return (false, &[]);
         };
-        let neg = self.raw(r, 1) == 1;
+        let neg = self.raw_hot(r, 1) == 1;
         let bytes = self
-            .slot(r, 0)
+            .slot_hot(r, 0)
             .as_byte_ref()
             .and_then(|b| self.heap.bytes(b).ok())
             .unwrap_or(&[]);

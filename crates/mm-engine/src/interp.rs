@@ -480,8 +480,8 @@ impl Vm {
                     if self.cur == 0 {
                         match self.post.take() {
                             Some(crate::vm::Post::Complete(orig)) => {
-                                let r = self.vslot(v, 0);
-                                let s = self.vslot(v, 1);
+                                let r = self.vslot_hot(v, 0);
+                                let s = self.vslot_hot(v, 1);
                                 if Vm::is_str(r) && Vm::is_str(s) {
                                     self.completion_text = Some((r, s));
                                 }
@@ -1203,9 +1203,9 @@ impl Vm {
         self.stack[new_base - 1] = lk;
         self.depth += 1;
         if !code.code.freevars.is_empty() {
-            let closure = self.vslot(func, fn_slot::CLOSURE);
+            let closure = self.vslot_hot(func, fn_slot::CLOSURE);
             for (k, &r) in code.code.freevars.iter().enumerate() {
-                let cell = self.vslot(closure, u32::try_from(k).unwrap_or(0));
+                let cell = self.vslot_hot(closure, u32::try_from(k).unwrap_or(0));
                 self.stack[new_base + r as usize] = cell;
             }
         }
@@ -1311,7 +1311,7 @@ impl Vm {
                 }
             } else if simple
                 && npos < argc
-                && let d = self.vslot(callee, fn_slot::DEFAULTS)
+                && let d = self.vslot_hot(callee, fn_slot::DEFAULTS)
                 && d.is_obj_kind(ty::TUPLE as u8)
                 && let Some(k) = self.tuple_len(d).checked_sub(argc - npos)
             {
@@ -1322,7 +1322,7 @@ impl Vm {
                 }
                 for i in npos..argc {
                     let j = u32::try_from(k + i - npos).unwrap_or(u32::MAX);
-                    self.stack[top + i] = self.vslot(d, j);
+                    self.stack[top + i] = self.vslot_hot(d, j);
                 }
             } else {
                 let pos: Vec<Value> = self.stack[args..args + npos].to_vec();
@@ -1367,13 +1367,13 @@ impl Vm {
             return match kind {
                 ty::METHOD => {
                     let mut all = Vec::with_capacity(pos.len() + 1);
-                    all.push(self.vslot(callee, 0));
+                    all.push(self.vslot_hot(callee, 0));
                     all.extend(pos);
-                    let f = self.vslot(callee, 1);
+                    let f = self.vslot_hot(callee, 1);
                     self.call_vec(st, f, &all, &kws, call_pc, ret_pc, cont)
                 }
                 ty::STATICMETHOD => {
-                    let f = self.vslot(callee, 0);
+                    let f = self.vslot_hot(callee, 0);
                     self.call_vec(st, f, &pos, &kws, call_pc, ret_pc, cont)
                 }
                 ty::CLASS => self.call_class(st, callee, &pos, &kws, call_pc, ret_pc, cont),
@@ -1401,8 +1401,8 @@ impl Vm {
             return Ok(Some(Value::UNDEFINED));
         }
         if callee.is_obj_kind(ty::BOUND as u8) {
-            let recv = self.vslot(callee, 0);
-            let f = self.vslot(callee, 1);
+            let recv = self.vslot_hot(callee, 0);
+            let f = self.vslot_hot(callee, 1);
             let n = npos + nkw;
             self.ensure_stack(top + n + 1 + 64)?;
             for i in (0..n).rev() {
@@ -1687,14 +1687,14 @@ impl Vm {
             all.extend_from_slice(pos);
             return self.call_vec(st, call, &all, kws, call_pc, ret_pc, cont);
         }
-        let fl = cls.as_obj().map_or(0, |r| self.raw(r, cls::FLAGS));
+        let fl = cls.as_obj().map_or(0, |r| self.raw_hot(r, cls::FLAGS));
         // A metaclass without `__new__` makes classes with `type.__new__`.
         let meta = self.class_base_t(cls) == T::type_;
         let (func, all, inner) = if fl & f::NEW != 0 || meta {
             let k = self.dn(Dn::New)?;
             let m = self.class_lookup(cls, k).unwrap_or(Value::NONE);
             let m = if m.is_obj_kind(ty::STATICMETHOD as u8) {
-                self.vslot(m, 0)
+                self.vslot_hot(m, 0)
             } else {
                 m
             };
@@ -2289,7 +2289,7 @@ impl Vm {
     }
 
     fn vslot_raw(&self, v: Value, i: u32) -> u64 {
-        v.as_obj().map_or(0, |r| self.raw(r, i))
+        v.as_obj().map_or(0, |r| self.raw_hot(r, i))
     }
 
     fn func_qualname(&self, func: Value) -> String {
@@ -2345,7 +2345,7 @@ impl Vm {
                 None => self.alloc_tuple(extra)?,
             };
         } else if pos.len() > argc {
-            let defaults = self.vslot(func, fn_slot::DEFAULTS);
+            let defaults = self.vslot_hot(func, fn_slot::DEFAULTS);
             let ndef = if defaults.is_obj_kind(ty::TUPLE as u8) {
                 self.tuple_len(defaults)
             } else {
@@ -2354,7 +2354,7 @@ impl Vm {
             let kw_given = kws
                 .iter()
                 .filter(|(k, _)| {
-                    let k = self.str_ref(*k);
+                    let k = self.str_ref_hot(*k);
                     names[argc..].iter().any(|n| n == k)
                 })
                 .count();
@@ -2394,7 +2394,7 @@ impl Vm {
         // Keywords.
         let mut posonly_kw: Vec<String> = Vec::new();
         for &(k, v) in kws {
-            let key = String::from(self.str_ref(k));
+            let key = String::from(self.str_ref_hot(k));
             let found = names.iter().position(|n| *n == key);
             match found {
                 Some(i) if i >= p.posonly as usize => {
@@ -2447,7 +2447,7 @@ impl Vm {
             return Err(self.err(T::TypeError, &msg));
         }
         // Defaults for positional parameters.
-        let defaults = self.vslot(func, fn_slot::DEFAULTS);
+        let defaults = self.vslot_hot(func, fn_slot::DEFAULTS);
         let nd = if defaults.is_obj_kind(ty::TUPLE as u8) {
             self.tuple_len(defaults)
         } else {
@@ -2462,7 +2462,7 @@ impl Vm {
             if self.stack[base + i] == Value::UNDEFINED {
                 if i >= first_default {
                     let k = skip + i - first_default;
-                    self.stack[base + i] = self.vslot_o(defaults, k as u32);
+                    self.stack[base + i] = self.vslot(defaults, k as u32);
                 } else {
                     missing.push(names[i].clone());
                 }
@@ -2472,7 +2472,7 @@ impl Vm {
             return Err(self.missing(&name, &missing, "positional"));
         }
         // Keyword-only defaults.
-        let kwdefaults = self.vslot(func, fn_slot::KWDEFAULTS);
+        let kwdefaults = self.vslot_hot(func, fn_slot::KWDEFAULTS);
         for (i, pname) in names.iter().enumerate().take(argc + nkwonly).skip(argc) {
             if self.stack[base + i] == Value::UNDEFINED {
                 let mut filled = false;
@@ -2572,7 +2572,7 @@ impl Vm {
                 &[name, qual, defaults, kwdefaults, closure, g, Value::NONE],
                 &[u64::from(cidx)],
             );
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         Ok(Value::from_ref(f, ty::FUNC as u8))
     }
@@ -2610,7 +2610,7 @@ impl Vm {
             };
             return Ok(v);
         }
-        let s = String::from(self.str_ref(name));
+        let s = String::from(self.str_ref_hot(name));
         let e = self.err(T::NameError, &format!("name '{s}' is not defined"));
         let locals = self.hint_locals(st, name);
         self.set_name_hint(name, &locals);
@@ -2678,7 +2678,7 @@ impl Vm {
                 .copied()
                 .unwrap_or(Value::UNDEFINED);
             if v.is_obj_kind(ty::CELL as u8) {
-                v = self.vslot(v, 0);
+                v = self.vslot_hot(v, 0);
             }
             if let Some(c) = self.user_class(v)
                 && (self.inst_get(v, name).is_some() || self.class_lookup(c, name).is_some())
@@ -2867,7 +2867,7 @@ impl Vm {
         if mode == 2 {
             if self.dict_get(d, key)?.is_some() {
                 let f = self.callee_name(self.stack[callee_reg]);
-                let k = String::from(self.str_ref(key));
+                let k = String::from(self.str_ref_hot(key));
                 return Err(self.err(
                     T::TypeError,
                     &format!("{f} got multiple values for keyword argument '{k}'"),
@@ -2901,7 +2901,7 @@ impl Vm {
                 }
                 if self.dict_get(d, k)?.is_some() {
                     let f = self.callee_name(self.stack[callee_reg]);
-                    let ks = String::from(self.str_ref(k));
+                    let ks = String::from(self.str_ref_hot(k));
                     return Err(self.err(
                         T::TypeError,
                         &format!("{f} got multiple values for keyword argument '{ks}'"),
@@ -2918,14 +2918,14 @@ impl Vm {
     /// module is `builtins`.
     fn callee_name(&self, f: Value) -> String {
         if f.is_obj_kind(ty::FUNC as u8) {
-            let g = self.vslot(f, fn_slot::GLOBALS);
+            let g = self.vslot_hot(f, fn_slot::GLOBALS);
             let m = self
                 .find_interned("__name__")
                 .filter(|_| g.is_obj_kind(ty::DICT as u8))
                 .and_then(|k| self.dict_get_str(g, k))
-                .filter(|m| Vm::is_str(*m) && self.str_ref(*m) != "builtins");
+                .filter(|m| Vm::is_str(*m) && self.str_ref_hot(*m) != "builtins");
             return match m {
-                Some(m) => format!("{}.{}()", self.str_ref(m), self.func_qualname(f)),
+                Some(m) => format!("{}.{}()", self.str_ref_hot(m), self.func_qualname(f)),
                 None => format!("{}()", self.func_qualname(f)),
             };
         }
@@ -2951,7 +2951,7 @@ impl Vm {
         if let Some(v) = self.builtin_get(name)? {
             return Ok(v);
         }
-        let s = String::from(self.str_ref(name));
+        let s = String::from(self.str_ref_hot(name));
         let e = self.err(T::NameError, &format!("name '{s}' is not defined"));
         let locals = self.hint_locals(st, name);
         self.set_name_hint(name, &locals);
@@ -2986,7 +2986,7 @@ impl Vm {
 
     /// Fills `GET_ATTR`'s cache after `o.name` read an inline attribute.
     fn attr_ic_fill(&mut self, o: Value, name: Value, slot: usize) {
-        let c = self.vslot(o, inst::CLASS);
+        let c = self.vslot_hot(o, inst::CLASS);
         if self
             .class_lookup(c, name)
             .is_some_and(|d| d.is_obj_kind(ty::PROPERTY as u8) || self.uflags(d) & f::DESCR != 0)
@@ -2997,7 +2997,7 @@ impl Vm {
             && let Some(cr) = c.as_obj()
         {
             self.ics[slot] = Ic::Attr {
-                version: self.raw(cr, cls::VERSION),
+                version: self.raw_hot(cr, cls::VERSION),
                 shape: s,
                 idx: k,
             };
@@ -3056,7 +3056,7 @@ impl Vm {
             && let Some(cr) = c.as_obj()
         {
             self.ics[slot] = Ic::UMethod {
-                version: self.raw(cr, cls::VERSION),
+                version: self.raw_hot(cr, cls::VERSION),
                 shape: s,
                 func: d,
             };
@@ -3067,10 +3067,10 @@ impl Vm {
     /// One step of an `iter(callable, sentinel)` iterator: a call request
     /// (nothing when it is exhausted).
     pub(crate) fn calliter_next(&mut self, it: Value, exit: u32) -> Result<Value, Raised> {
-        if self.vslot(it, 1) == Value::UNDEFINED {
+        if self.vslot_hot(it, 1) == Value::UNDEFINED {
             return Ok(Value::NONE);
         }
-        let f = self.vslot(it, 0);
+        let f = self.vslot_hot(it, 0);
         self.next_request(Next::Invoke(
             f,
             Args::of(&[]),
@@ -3539,7 +3539,7 @@ impl Vm {
                     }
                     op::STA_DEREF if rd!(wa!()).is_obj_kind(ty::CELL as u8) => {
                         if let Some(c) = rd!(wa!()).as_obj() {
-                            self.set_slot(c, 0, acc);
+                            self.set_slot_hot(c, 0, acc);
                         }
                         pc += 1;
                     }
@@ -4086,10 +4086,10 @@ impl Vm {
                         if o.is_obj_kind(ty::INST as u8) {
                             match self.inst_setattr(o, name, acc) {
                                 Ok(Some((s0, s1, k))) => {
-                                    let c = self.vslot(o, inst::CLASS);
+                                    let c = self.vslot_hot(o, inst::CLASS);
                                     if let Some(cr) = c.as_obj() {
                                         self.ics[slot] = Ic::SetAttr {
-                                            version: self.raw(cr, cls::VERSION),
+                                            version: self.raw_hot(cr, cls::VERSION),
                                             shape: s0,
                                             to: s1,
                                             idx: k,
@@ -4153,7 +4153,7 @@ impl Vm {
                             let found = if self.type_of(acc) == T::type_ {
                                 None
                             } else {
-                                builtins::find_method(owner, self.str_ref(name))
+                                builtins::find_method(owner, self.str_ref_hot(name))
                             };
                             if let Some(f) = found {
                                 let value = Value::native(f);
@@ -4181,7 +4181,7 @@ impl Vm {
                             && let Some((buf, n)) = self.list_parts(o)
                             && k < n
                         {
-                            acc = self.slot(buf, u32::try_from(k).unwrap_or(u32::MAX));
+                            acc = self.slot_hot(buf, u32::try_from(k).unwrap_or(u32::MAX));
                         } else {
                             op_result!(
                                 self.op_getitem(o, acc),
@@ -4617,7 +4617,7 @@ impl Vm {
                 let name = code.names[opd!(0)];
                 let g = self.globals_of(&code);
                 if tri!(self.dict_del(g, name)).is_none() {
-                    let s = String::from(self.str_ref(name));
+                    let s = String::from(self.str_ref_hot(name));
                     let e = self.err(T::NameError, &format!("name '{s}' is not defined"));
                     let _ = e;
                     fail!(false);
@@ -4632,12 +4632,12 @@ impl Vm {
                     let _ = self.not_a_cell();
                     fail!(false);
                 };
-                if self.slot(c, 0) == Value::UNDEFINED {
+                if self.slot_hot(c, 0) == Value::UNDEFINED {
                     sync!();
                     let _ = self.unbound_local(st, r);
                     fail!(false);
                 }
-                self.set_slot(c, 0, Value::UNDEFINED);
+                self.set_slot_hot(c, 0, Value::UNDEFINED);
                 pc += ilen!();
             }
             op::DEL_LOCAL => {
@@ -4655,7 +4655,7 @@ impl Vm {
                 let parts = [self.stack[r], self.stack[r + 1], self.stack[r + 2]];
                 let s = tri!({
                     let res = self.heap.alloc_init(ty::SLICE, 0, &parts, &[]);
-                    self.hx(res)
+                    self.hx_hot(res)
                 });
                 acc = Value::from_ref(s, ty::SLICE as u8);
                 pc += ilen!();
@@ -5007,7 +5007,7 @@ impl Vm {
                 let name = code.names[opd!(0)];
                 let ns = reg!(0);
                 if tri!(self.dict_del(ns, name)).is_none() {
-                    let s = String::from(self.str_ref(name));
+                    let s = String::from(self.str_ref_hot(name));
                     let _ = self.err(T::NameError, &format!("name '{s}' is not defined"));
                     fail!(false);
                 }
@@ -5093,9 +5093,9 @@ impl Vm {
                             fail!(false);
                         };
                         if let Some(r) = e.as_obj() {
-                            self.set_slot(r, exc_slot::CAUSE, cause);
-                            let fl = self.raw(r, exc_slot::FLAGS) | 1;
-                            self.set_raw(r, exc_slot::FLAGS, fl);
+                            self.set_slot_hot(r, exc_slot::CAUSE, cause);
+                            let fl = self.raw_hot(r, exc_slot::FLAGS) | 1;
+                            self.set_raw_hot(r, exc_slot::FLAGS, fl);
                         }
                         self.exc = e;
                         fail!(false);
@@ -5356,7 +5356,7 @@ impl Vm {
                 Ok(Some(v))
             }
             Some((idx, true)) => {
-                let recv = self.vslot(callee, 0);
+                let recv = self.vslot_hot(callee, 0);
                 let total = npos + nkw;
                 for i in (0..total).rev() {
                     self.stack[free + 1 + i] = self.stack[args + i];

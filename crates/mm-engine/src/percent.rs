@@ -130,7 +130,7 @@ impl Run {
         if let Some((items, len)) = self.pre
             && u64::from(self.used) < len
         {
-            let p = vm.slot_o(items, self.used);
+            let p = vm.slot(items, self.used);
             self.used += 1;
             return Ok(p);
         }
@@ -342,7 +342,7 @@ impl Vm {
                 self.pct_flush(&mut out, &mut parts, r.bytes)?;
                 self.pct_keep(list, &parts)?;
                 if let Some(s) = state.as_obj() {
-                    self.set_slot_o(s, 2, r.args);
+                    self.set_slot(s, 2, r.args);
                 }
                 self.nstate_put(state, 1, &r.words());
                 Ok(Step::More)
@@ -387,12 +387,12 @@ impl Vm {
             let base = r.i;
             let most = (n - base).min(win.saturating_add(3));
             let res = self.heap.reserve_scratch(most);
-            let _input_charge = self.hx_o(res)?;
+            let _input_charge = self.hx(res)?;
             f.clear();
             let res = f
                 .try_reserve_exact(most)
                 .map_err(|_| mm_core::Error::OutOfMemory);
-            self.hx_o(res)?;
+            self.hx(res)?;
             let data = self.pct_data(fmt);
             let mut end = base.saturating_add(win).min(n);
             while data.get(end).is_some_and(|&b| b & 0xC0 == 0x80) {
@@ -414,7 +414,7 @@ impl Vm {
                         pct_piece(parts, fmt, base + i - 1, base + end);
                     } else {
                         let res = out.extend_from_slice(&mut self.heap, &f[i - 1..end]);
-                        self.hx_o(res)?;
+                        self.hx(res)?;
                     }
                     i = end;
                     continue;
@@ -437,7 +437,7 @@ impl Vm {
                     } else {
                         let len = out.len().saturating_add(k);
                         let res = out.resize(&mut self.heap, len, b'%');
-                        self.hx_o(res)?;
+                        self.hx(res)?;
                     }
                     continue;
                 }
@@ -628,7 +628,7 @@ impl Vm {
                 let start = out.len();
                 let needed = start.saturating_add(dl).saturating_add(fill);
                 let res = out.resize(&mut self.heap, needed, pad);
-                self.hx_o(res)?;
+                self.hx(res)?;
                 let text = text.bytes(self);
                 out[start..start + split].copy_from_slice(&text[..split]);
                 out[start + split + fill..].copy_from_slice(&text[split..]);
@@ -800,7 +800,7 @@ impl Vm {
                 return Ok(r.args);
             }
             let k = u32::try_from(r.argidx - 1).unwrap_or(0);
-            return Ok(self.vslot_o(r.args, k));
+            return Ok(self.vslot(r.args, k));
         }
         Err(self.err(T::TypeError, "not enough arguments for format string"))
     }
@@ -1017,7 +1017,7 @@ impl Vm {
             let d = self.bytes_data(v);
             (d.len(), d)
         } else if !bytes && Vm::is_str(v) {
-            let s = self.str_ref_o(v);
+            let s = self.str_ref(v);
             (char_len(s), s.as_bytes())
         } else {
             let tn = self.type_name(original);
@@ -1123,7 +1123,7 @@ impl Vm {
             spec.push('#');
         }
         spec.push(char::from(conv));
-        let neg = self.raw_o(r, 1) == 1;
+        let neg = self.raw(r, 1) == 1;
         let head = usize::from(neg || flags & 6 != 0) + 2 * usize::from(alt);
         Some((spec, head))
     }

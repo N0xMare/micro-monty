@@ -710,7 +710,7 @@ fn load(vm: &mut Vm, v: Value) -> Result<St, Raised> {
 /// Writes `st` back into the state object `v`.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn store(vm: &mut Vm, v: Value, st: &St) {
-    if let Some(b) = vm.vslot_o(v, 0).as_byte_ref()
+    if let Some(b) = vm.vslot(v, 0).as_byte_ref()
         && let Ok(data) = vm.heap.bytes_mut(b)
     {
         st.store(data);

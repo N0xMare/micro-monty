@@ -144,7 +144,7 @@ impl Vm {
                 .saturating_add(self.execution_bytes())
                 .saturating_add(additional),
         );
-        self.hx_o(res)
+        self.hx(res)
     }
 
     /// Reserve before loading; reconcile unused clone/table capacity afterward.
@@ -163,7 +163,7 @@ impl Vm {
         let res = self
             .heap
             .set_external_bytes(bytes.saturating_add(self.execution_bytes()));
-        self.hx_o(res)?;
+        self.hx(res)?;
         self.code_charge = bytes;
         Ok(())
     }
@@ -248,7 +248,7 @@ impl Vm {
         let mut tracebacks = false;
         self.visit_references(|vm, r, i, kind| {
             if kind == Reference::Shape {
-                if let Some(i) = vm.slot_o(r, i).as_int()
+                if let Some(i) = vm.slot(r, i).as_int()
                     && let Some(s) = vm.shapes.get_mut(i as usize)
                 {
                     s.reclaim_index = 0;
@@ -257,9 +257,9 @@ impl Vm {
             }
             let ci = if kind == Reference::Traceback {
                 tracebacks = true;
-                vm.slot_o(r, i).as_int().map(|n| (n >> 28) as u64)
+                vm.slot(r, i).as_int().map(|n| (n >> 28) as u64)
             } else {
-                Some(vm.raw_o(r, i))
+                Some(vm.raw(r, i))
             }
             .and_then(|n| usize::try_from(n).ok());
             if let Some(base) = ci.and_then(|ci| vm.codes.get(ci).map(|c| c.module_base))
@@ -312,11 +312,11 @@ impl Vm {
             self.visit_references(|vm, r, i, kind| {
                 if kind == Reference::Shape {
                     if shapes_moved
-                        && let Some(old) = vm.slot_o(r, i).as_int()
+                        && let Some(old) = vm.slot(r, i).as_int()
                         && let Some(s) = vm.shapes.get(old as usize)
                     {
                         let shape = Value::int(i64::from(s.reclaim_index)).unwrap_or(Value::NONE);
-                        vm.set_slot_o(r, i, shape);
+                        vm.set_slot(r, i, shape);
                     }
                 } else if !codes_moved {
                     // Shape-only reclamation does not touch code references.
@@ -324,27 +324,27 @@ impl Vm {
                     // Shared traceback lists must be remapped only once. Invert
                     // nonnegative packed entries until the following pass; no
                     // allocation, GC, callback or snapshot can observe this tag.
-                    if let Some(n) = vm.slot_o(r, i).as_int()
+                    if let Some(n) = vm.slot(r, i).as_int()
                         && n >= 0
                         && let Some(c) = vm.codes.get((n >> 28) as usize)
                         && let Some(v) =
                             Value::int(!((i64::from(c.reclaim_index) << 28) | (n & 0x0fff_ffff)))
                     {
-                        vm.set_slot_o(r, i, v);
+                        vm.set_slot(r, i, v);
                     }
-                } else if let Some(c) = vm.codes.get(vm.raw_o(r, i) as usize) {
-                    vm.set_raw_o(r, i, u64::from(c.reclaim_index));
+                } else if let Some(c) = vm.codes.get(vm.raw(r, i) as usize) {
+                    vm.set_raw(r, i, u64::from(c.reclaim_index));
                 }
             });
         }
         if codes_moved && tracebacks {
             self.visit_references(|vm, r, i, kind| {
                 if kind == Reference::Traceback
-                    && let Some(n) = vm.slot_o(r, i).as_int()
+                    && let Some(n) = vm.slot(r, i).as_int()
                     && n < 0
                     && let Some(v) = Value::int(!n)
                 {
-                    vm.set_slot_o(r, i, v);
+                    vm.set_slot(r, i, v);
                 }
             });
         }
@@ -436,7 +436,7 @@ impl Vm {
                 ty::GEN | ty::AGEN => visit(self, r, g::CODE, Reference::Code),
                 ty::INST => visit(self, r, inst::SHAPE, Reference::Shape),
                 ty::EXC => {
-                    let tb = self.slot_o(r, exc_slot::TRACEBACK);
+                    let tb = self.slot(r, exc_slot::TRACEBACK);
                     if let Some((buf, n)) = self.list_parts(tb) {
                         for i in 0..u32::try_from(n).unwrap_or(0) {
                             visit(self, buf, i, Reference::Traceback);

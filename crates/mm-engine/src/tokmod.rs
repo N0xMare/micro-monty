@@ -34,8 +34,8 @@ pub(crate) fn tokens(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let res = vm
         .heap
         .reserve_scratch(vm.str_bytes(src).len().saturating_mul(64));
-    let _native = vm.hx_o(res)?;
-    let text = String::from(vm.str_ref_o(src));
+    let _native = vm.hx(res)?;
+    let text = String::from(vm.str_ref(src));
     let (toks, err) = mm_parse::tokens(&text);
     let lines = Lines::new(&text);
     let n = text.len();

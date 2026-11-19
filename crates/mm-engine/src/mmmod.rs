@@ -57,7 +57,7 @@ pub(crate) fn mm_signature(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             if !Vm::is_str(v) {
                 return Err(vm.err(T::TypeError, "parameter names must be str"));
             }
-            names.push(String::from(vm.str_ref_o(v)));
+            names.push(String::from(vm.str_ref(v)));
         }
         kwonly = items.len();
     }
@@ -119,7 +119,7 @@ pub(crate) fn mm_signature(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             ],
             &[u64::from(ci)],
         );
-        vm.hx_o(res)
+        vm.hx(res)
     }?;
     Ok(Value::from_ref(r, ty::FUNC as u8))
 }
@@ -256,7 +256,7 @@ pub(crate) fn mm_caller(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let mut prefixes: Vec<String> = Vec::new();
     for &p in &vm.collect(vm.arg_o(&a, 1))? {
         if Vm::is_str(p) {
-            prefixes.push(String::from(vm.str_ref_o(p)));
+            prefixes.push(String::from(vm.str_ref(p)));
         }
     }
     let frames =
@@ -355,7 +355,7 @@ pub(crate) fn mm_tzif(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if !Vm::is_str(key) {
         return Err(vm.err(T::TypeError, "zone key must be str"));
     }
-    let key = String::from(vm.str_ref_o(key));
+    let key = String::from(vm.str_ref(key));
     let Some(source) = vm.zone_source.as_mut() else {
         return Ok(Value::FALSE);
     };
@@ -405,7 +405,7 @@ pub(crate) fn mm_os_function(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> 
     if !Vm::is_str(name) {
         return Err(vm.err(T::TypeError, "name must be str"));
     }
-    let name = String::from(vm.str_ref_o(name));
+    let name = String::from(vm.str_ref(name));
     if !name.contains('.') {
         return Ok(Value::NONE);
     }
@@ -442,15 +442,15 @@ pub(crate) fn mm_exc_same_meta(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised
         return Ok(Value::FALSE);
     }
     let tb = |vm: &Vm, e: Value| {
-        let t = vm.vslot_o(e, exc_slot::TRACEBACK);
+        let t = vm.vslot(e, exc_slot::TRACEBACK);
         if t.is_obj_kind(ty::LIST as u8) {
             vm.list_items(t)
         } else {
             Vec::new()
         }
     };
-    let same = vm.vslot_o(x, exc_slot::CAUSE) == vm.vslot_o(y, exc_slot::CAUSE)
-        && vm.vslot_o(x, exc_slot::CONTEXT) == vm.vslot_o(y, exc_slot::CONTEXT)
+    let same = vm.vslot(x, exc_slot::CAUSE) == vm.vslot(y, exc_slot::CAUSE)
+        && vm.vslot(x, exc_slot::CONTEXT) == vm.vslot(y, exc_slot::CONTEXT)
         && tb(vm, x) == tb(vm, y);
     Ok(Value::from_bool(same))
 }
@@ -475,7 +475,7 @@ pub(crate) fn mm_exc_tb_here(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> 
     if let (Some(f), Some(r)) = (found.copied(), e.as_obj())
         && e.is_obj_kind(ty::EXC as u8)
     {
-        vm.set_slot_o(r, crate::vm::exc_slot::TRACEBACK, Value::NONE);
+        vm.set_slot(r, crate::vm::exc_slot::TRACEBACK, Value::NONE);
         vm.add_tb(e, f.code, f.call_pc);
     }
     Ok(Value::NONE)

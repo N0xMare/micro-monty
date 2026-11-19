@@ -147,7 +147,7 @@ impl Mt {
 #[cfg_attr(mm_shipped, optimize(size))]
 fn with_state<R>(vm: &mut Vm, st: Value, f: impl FnOnce(&mut Mt) -> R) -> Result<R, Raised> {
     let b = if Vm::is_bytes(st) {
-        vm.vslot_o(st, 0).as_byte_ref()
+        vm.vslot(st, 0).as_byte_ref()
     } else {
         None
     };

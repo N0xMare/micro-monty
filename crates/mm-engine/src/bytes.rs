@@ -403,13 +403,13 @@ impl Vm {
         }
         let b = {
             let res = self.heap.alloc_bytes(data);
-            self.hx_o(res)
+            self.hx(res)
         }?;
         let r = {
             let res = self
                 .heap
                 .alloc_init(ty::BYTES, 0, &[Value::from_byte_ref(b)], &[]);
-            self.hx_o(res)
+            self.hx(res)
         }?;
         Ok(Value::from_ref(r, ty::BYTES as u8))
     }
@@ -541,7 +541,7 @@ impl Vm {
     pub(crate) fn bytes_data(&self, v: Value) -> &[u8] {
         if Vm::is_bytes(v) {
             return self
-                .vslot(v, 0)
+                .vslot_hot(v, 0)
                 .as_byte_ref()
                 .and_then(|b| self.heap.bytes(b).ok())
                 .unwrap_or(&[]);
@@ -705,7 +705,7 @@ impl Vm {
     ) -> Result<Value, Raised> {
         let res = if ba { R_BYTEARRAY } else { R_BYTES };
         let Some(c) = codec(if Self::is_str(enc) {
-            self.str_ref_o(enc)
+            self.str_ref(enc)
         } else {
             "utf-8"
         }) else {
@@ -746,7 +746,7 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     fn errors_word(&self, errors: Value) -> u64 {
         let e = Errors::named(if Self::is_str(errors) {
-            self.str_ref_o(errors)
+            self.str_ref(errors)
         } else {
             "strict"
         });
@@ -762,7 +762,7 @@ impl Vm {
         errors: Value,
     ) -> Result<Value, Raised> {
         let Some(c) = codec(if Self::is_str(enc) {
-            self.str_ref_o(enc)
+            self.str_ref(enc)
         } else {
             "utf-8"
         }) else {
@@ -955,12 +955,12 @@ impl Vm {
     ) -> Result<(mm_core::Scratch, Vec<u8>), Raised> {
         let vm = self;
         let res = vm.heap.reserve_scratch(items.len());
-        let charge = vm.hx_o(res)?;
+        let charge = vm.hx(res)?;
         let mut out = Vec::new();
         let res = out
             .try_reserve_exact(items.len())
             .map_err(|_| mm_core::Error::OutOfMemory);
-        vm.hx_o(res)?;
+        vm.hx(res)?;
         for &x in items {
             out.push(vm.int_byte(x, ba)?);
         }
@@ -1305,11 +1305,7 @@ fn affix(vm: &mut Vm, a: &CallArgs, name: &str, prefix: bool) -> Result<Value, R
     let pats = if tuple { vm.tuple_len(pat) } else { 1 };
     let bytes: usize = (0..pats)
         .filter_map(|i| {
-            let p = if tuple {
-                vm.vslot_o(pat, i as u32)
-            } else {
-                pat
-            };
+            let p = if tuple { vm.vslot(pat, i as u32) } else { pat };
             vm.bytes_like(p).map(<[u8]>::len)
         })
         .sum();
@@ -1317,11 +1313,7 @@ fn affix(vm: &mut Vm, a: &CallArgs, name: &str, prefix: bool) -> Result<Value, R
     let s = vm.bytes_data(s);
     let n = s.len() as i64;
     for i in 0..pats {
-        let p = if tuple {
-            vm.vslot_o(pat, i as u32)
-        } else {
-            pat
-        };
+        let p = if tuple { vm.vslot(pat, i as u32) } else { pat };
         let Some(pb) = vm.bytes_like(p) else {
             let msg = format!(
                 "{name} first arg must be bytes or a tuple of bytes, not {}",
@@ -1450,7 +1442,7 @@ pub(crate) fn join(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         if i > 0 && sl > 0 {
             if let Some(sb) = seps {
                 let res = vm.heap.copy_bytes(sb, 0, out, o, sl);
-                vm.hx_o(res)?;
+                vm.hx(res)?;
             }
             o += sl;
         }
@@ -1459,7 +1451,7 @@ pub(crate) fn join(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             && n > 0
         {
             let res = vm.heap.copy_bytes(xb, 0, out, o, n);
-            vm.hx_o(res)?;
+            vm.hx(res)?;
         }
         o += n;
     }
@@ -1851,7 +1843,7 @@ pub(crate) fn hex(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         None => None,
         Some(v) => {
             let pair = if Vm::is_str(v) {
-                let mut chars = vm.str_ref_o(v).chars();
+                let mut chars = vm.str_ref(v).chars();
                 (chars.next(), chars.next())
             } else if let Some(b) = vm.bytes_like(v) {
                 (
@@ -2571,7 +2563,7 @@ impl Vm {
         self.job_check();
         for (i, (&new, &old)) in j.v.iter().zip(&v).enumerate() {
             if new != old {
-                self.set_slot_o(r, i as u32, new);
+                self.set_slot(r, i as u32, new);
             }
         }
         let mut raw = [0; 1 + JOB_WORDS];
@@ -2636,7 +2628,7 @@ impl Vm {
     /// The byte block of bytes-like `v`.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub(crate) fn data_block(&self, v: Value) -> Option<ByteRef> {
-        self.vslot_o(v, 0).as_byte_ref()
+        self.vslot(v, 0).as_byte_ref()
     }
 
     /// A new output block of `len` bytes, charged as the result it
@@ -2653,7 +2645,7 @@ impl Vm {
             self.burn_result(len, true);
         }
         let res = self.heap.alloc_bytes_zeroed(len);
-        self.hx_o(res)
+        self.hx(res)
     }
 
     /// Job `j`'s filled output block `b` as its result (`W_RES`), holding
@@ -2671,7 +2663,7 @@ impl Vm {
                     return self.intern(&s);
                 }
                 let res = self.heap.str_from_block(b, chars as u64);
-                let r = self.hx_o(res)?;
+                let r = self.hx(res)?;
                 return Ok(Value::from_ref(r, ty::STR as u8));
             }
             R_INTO => {
@@ -2682,7 +2674,7 @@ impl Vm {
             _ => (ty::BYTES, &[][..]),
         };
         let res = self.heap.alloc_init(t, 0, &[Value::from_byte_ref(b)], raw);
-        let r = self.hx_o(res)?;
+        let r = self.hx(res)?;
         Ok(Value::from_ref(r, t as u8))
     }
 }
@@ -3112,7 +3104,7 @@ impl Vm {
                         };
                         match (self.list_buf(j.v[2]), u32::try_from(at)) {
                             (Some(buf), Ok(at)) if at < self.obj_len(buf) => {
-                                self.set_slot_o(buf, at, piece);
+                                self.set_slot(buf, at, piece);
                             }
                             _ => return Err(self.bad_step()),
                         }
@@ -3431,7 +3423,7 @@ impl Vm {
             let r = o % len.max(1);
             let n = (total - o).min(o - r).min(room);
             let res = self.heap.copy_bytes(out, r, out, o, n);
-            self.hx_o(res)?;
+            self.hx(res)?;
             self.burn(n.div_ceil(64) as u64);
             o += n;
         }

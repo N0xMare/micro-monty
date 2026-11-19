@@ -187,7 +187,7 @@ impl Vm {
         let buf = self.alloc_buf(nregs.max(1))?;
         for i in 0..nregs {
             let v = self.stack[top + i];
-            self.set_slot(buf, u32::try_from(i).unwrap_or(0), v);
+            self.set_slot_hot(buf, u32::try_from(i).unwrap_or(0), v);
         }
         let r = {
             let res = self.heap.alloc_init(
@@ -204,7 +204,7 @@ impl Vm {
                 ],
                 &[coro::CREATED, 0, coro::SEND],
             );
-            self.hx(res)
+            self.hx_hot(res)
         }?;
         let c = Value::from_ref(r, ty::CORO as u8);
         self.note_fresh(c)?;
@@ -425,12 +425,12 @@ impl Vm {
     }
 
     fn raw_of(&self, v: Value, i: u32) -> u64 {
-        v.as_obj().map_or(0, |r| self.raw(r, i))
+        v.as_obj().map_or(0, |r| self.raw_hot(r, i))
     }
 
     fn set_raw_of(&mut self, v: Value, i: u32, w: u64) {
         if let Some(r) = v.as_obj() {
-            self.set_raw(r, i, w);
+            self.set_raw_hot(r, i, w);
         }
     }
 
@@ -639,10 +639,10 @@ impl Vm {
         let Some(r) = c.as_obj().filter(|_| c.is_obj_kind(ty::CORO as u8)) else {
             return (Value::NONE, coro::SEND);
         };
-        let v = self.slot(r, coro::SENT);
-        let mode = self.raw(r, coro::MODE);
-        self.set_slot(r, coro::SENT, Value::NONE);
-        self.set_raw(r, coro::MODE, coro::SEND);
+        let v = self.slot_hot(r, coro::SENT);
+        let mode = self.raw_hot(r, coro::MODE);
+        self.set_slot_hot(r, coro::SENT, Value::NONE);
+        self.set_raw_hot(r, coro::MODE, coro::SEND);
         (v, mode)
     }
 
@@ -660,9 +660,9 @@ impl Vm {
         let state = self.raw_of(c, coro::STATE) & 3;
         let resume = state == coro::SUSPENDED
             && if cont == crate::cont::Cont::CoroSend {
-                self.vslot(c, coro::AWAITER) == Value::NONE
+                self.vslot_hot(c, coro::AWAITER) == Value::NONE
             } else {
-                self.vslot(c, coro::AWAITER) == st.coro
+                self.vslot_hot(c, coro::AWAITER) == st.coro
             };
         if state != coro::CREATED && !resume {
             let msg = if state == coro::RUNNING || state == coro::SUSPENDED {
@@ -677,7 +677,7 @@ impl Vm {
             let (v, mode) = self.coro_take_sent(st.coro);
             self.coro_deliver(c, v, mode);
         }
-        let func = self.vslot(c, coro::FUNC);
+        let func = self.vslot_hot(c, coro::FUNC);
         let cidx = u32::try_from(self.vslot_raw_of(func, fn_slot::CODE)).unwrap_or(0);
         let Some(code) = self.codes.get(cidx as usize).cloned() else {
             return Err(self.err(T::SystemError, "bad code index"));
@@ -693,13 +693,13 @@ impl Vm {
         if let Some(r) = c.as_obj() {
             if resume {
                 // Back at its `AWAIT`, which steps what it waits on.
-                st.pc = usize::try_from(self.raw(r, coro::PC)).unwrap_or(0);
-                st.acc = self.slot(r, coro::AWAITED);
+                st.pc = usize::try_from(self.raw_hot(r, coro::PC)).unwrap_or(0);
+                st.acc = self.slot_hot(r, coro::AWAITED);
                 let _ = self
                     .heap
                     .set_values(r, coro::AWAITED, &[Value::NONE, Value::NONE]);
                 if cont == crate::cont::Cont::CoroSend {
-                    let (handled, outer) = (self.slot(r, coro::HANDLED), self.handled);
+                    let (handled, outer) = (self.slot_hot(r, coro::HANDLED), self.handled);
                     let _ = self
                         .heap
                         .set_values(r, coro::HANDLED, &[Value::NONE, outer]);
@@ -708,7 +708,7 @@ impl Vm {
                     }
                 }
             } else if cont == crate::cont::Cont::CoroSend {
-                self.set_slot(r, coro::OUTER, self.handled);
+                self.set_slot_hot(r, coro::OUTER, self.handled);
             }
         }
         Ok(())
@@ -719,7 +719,7 @@ impl Vm {
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn new_delegation(&mut self, it: Value) -> Result<Value, Raised> {
         let b = self.alloc_buf(1)?;
-        self.set_slot(b, 0, it);
+        self.set_slot_hot(b, 0, it);
         Ok(Value::from_ref(b, ty::BUF as u8))
     }
 
@@ -791,7 +791,7 @@ impl Vm {
             let nregs = code.nregs as usize;
             let pcs = crate::generator::suspend_pcs(code, at as u64);
             crate::interp::clear_frame(&mut self.stack, code, st.base, st.base + nregs, &pcs);
-            let mut buf = self.vslot(c, coro::ARGS);
+            let mut buf = self.vslot_hot(c, coro::ARGS);
             let len = buf
                 .as_obj()
                 .filter(|_| buf.is_obj_kind(ty::BUF as u8))
@@ -810,14 +810,14 @@ impl Vm {
                 let _ = self.heap.set_values(b, 0, &regs);
             }
             let _ = self.heap.set_values(r, coro::ARGS, &[buf, awaited]);
-            let keep = self.raw(r, coro::STATE) & coro::RUN_BITS;
-            self.set_raw(r, coro::STATE, coro::SUSPENDED | keep);
-            self.set_raw(r, coro::PC, at as u64);
+            let keep = self.raw_hot(r, coro::STATE) & coro::RUN_BITS;
+            self.set_raw_hot(r, coro::STATE, coro::SUSPENDED | keep);
+            self.set_raw_hot(r, coro::PC, at as u64);
             let Some(fr) = self.pop_frame(st) else {
                 return Err(self.err(T::SystemError, "micro-monty: lost send() frame"));
             };
             if self.cont_take(fr.cont) == Cont::CoroSend {
-                let outer = self.slot(r, coro::OUTER);
+                let outer = self.slot_hot(r, coro::OUTER);
                 // The caller's handled exception is not the coroutine's
                 // own (`Vm::gen_leave` keeps none either).
                 let inner = if self.handled == outer {
@@ -833,14 +833,14 @@ impl Vm {
                 st.pc = fr.ret_pc as usize;
                 return Ok(Landed::Go);
             }
-            self.set_slot(r, coro::AWAITER, st.coro);
+            self.set_slot_hot(r, coro::AWAITER, st.coro);
             awaited = c;
             at = fr.call_pc as usize;
         }
     }
 
     pub(crate) fn vslot_raw_of(&self, v: Value, i: u32) -> u64 {
-        v.as_obj().map_or(0, |r| self.raw(r, i))
+        v.as_obj().map_or(0, |r| self.raw_hot(r, i))
     }
 
     /// Copies bound arguments to `base`; keep the original until frame
@@ -872,7 +872,7 @@ impl Vm {
             }
             // A delegation: step its iterator (send, or throw).
             ty::BUF => {
-                let it = self.vslot(a, 0);
+                let it = self.vslot_hot(a, 0);
                 let (v, mode) = self.coro_take_sent(st.coro);
                 let name = if mode == coro::THROW {
                     "_await_throw"
@@ -903,14 +903,14 @@ impl Vm {
                         self.add_waiter(a, me)?;
                         Ok(Awaited::Block)
                     }
-                    aw::DONE => Ok(Awaited::Value(self.vslot(a, aw::RESULT))),
+                    aw::DONE => Ok(Awaited::Value(self.vslot_hot(a, aw::RESULT))),
                     aw::CANCELLED => {
                         self.exc = self.cancelled_error(a)?;
                         Err(Raised)
                     }
                     _ => {
                         self.retrieved(a);
-                        self.exc = self.vslot(a, aw::RESULT);
+                        self.exc = self.vslot_hot(a, aw::RESULT);
                         Err(Raised)
                     }
                 }
@@ -922,7 +922,7 @@ impl Vm {
                 }
                 aw::ARMED if self.sleep_due(a) => {
                     self.set_raw_of(a, aw::STATE, aw::SPENT);
-                    Ok(Awaited::Value(self.vslot(a, aw::RESULT)))
+                    Ok(Awaited::Value(self.vslot_hot(a, aw::RESULT)))
                 }
                 aw::ARMED => Ok(Awaited::Block),
                 aw::CANCELLED => {
@@ -955,8 +955,8 @@ impl Vm {
     /// Was generator `gn` made by a function `types.coroutine` marked?
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn iterable_coroutine(&mut self, gn: Value) -> bool {
-        let f = self.vslot(gn, crate::generator::g::FUNC);
-        let d = self.vslot(f, fn_slot::DICT);
+        let f = self.vslot_hot(gn, crate::generator::g::FUNC);
+        let d = self.vslot_hot(f, fn_slot::DICT);
         if !d.is_obj_kind(ty::DICT as u8) {
             return false;
         }
@@ -1239,7 +1239,7 @@ impl Vm {
             .and_then(Option::as_ref)
             .map_or(Value::NONE, |t| t.handle);
         if self.must_cancel(h) {
-            let msg = self.vslot(h, aw::RESULT);
+            let msg = self.vslot_hot(h, aw::RESULT);
             let exc = self.exc;
             match self.cancel_tree(a, msg) {
                 Ok(true) => self.set_raw_of(h, aw::MUST_CANCEL, 0),
@@ -1413,14 +1413,14 @@ impl Vm {
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn cancelled_error(&mut self, a: Value) -> Result<Value, Raised> {
         if self.raw_of(a, aw::MUST_CANCEL) == aw::HELD {
-            let e = self.vslot(a, aw::RESULT);
+            let e = self.vslot_hot(a, aw::RESULT);
             self.set_raw_of(a, aw::MUST_CANCEL, 0);
             if let Some(r) = a.as_obj() {
-                self.set_slot(r, aw::RESULT, Value::NONE);
+                self.set_slot_hot(r, aw::RESULT, Value::NONE);
             }
             return Ok(e);
         }
-        let msg = self.vslot(a, aw::RESULT);
+        let msg = self.vslot_hot(a, aw::RESULT);
         self.new_cancelled(msg)
     }
 
@@ -1505,7 +1505,7 @@ impl Vm {
     }
 
     fn arm_sleep(&mut self, a: Value) {
-        let delay = self.vslot(a, aw::EXTRA).as_float().unwrap_or(0.0);
+        let delay = self.vslot_hot(a, aw::EXTRA).as_float().unwrap_or(0.0);
         let wake = self.vclock + delay.max(0.0);
         self.set_raw_of(a, aw::AUX, wake.to_bits());
         self.set_raw_of(a, aw::STATE, aw::ARMED);
@@ -1794,7 +1794,7 @@ impl Vm {
                     if s == aw::CANCELLED
                         || (s == aw::FAILED
                             && self.instance_of(
-                                self.vslot(waited, aw::RESULT),
+                                self.vslot_hot(waited, aw::RESULT),
                                 self.type_obj(T::CancelledError),
                             ))
                     {
@@ -1807,7 +1807,7 @@ impl Vm {
                     }
                 }
                 let exc = if must {
-                    let msg = self.vslot(h, aw::RESULT);
+                    let msg = self.vslot_hot(h, aw::RESULT);
                     self.new_cancelled(msg).unwrap_or(self.exc)
                 } else {
                     Value::NONE
@@ -1816,7 +1816,7 @@ impl Vm {
                     // Thrown into a coroutine that never started, which
                     // closes it unrun.
                     self.cur = i;
-                    let c = self.vslot(h, aw::EXTRA);
+                    let c = self.vslot_hot(h, aw::EXTRA);
                     if c.is_obj_kind(ty::SLEEP as u8) {
                         self.set_raw_of(c, aw::STATE, aw::SPENT);
                     } else {
@@ -2145,7 +2145,7 @@ impl Vm {
     /// awaitable `c`.
     #[inline(never)]
     fn add_waiter(&mut self, c: Value, g: Value) -> Result<(), Raised> {
-        let w = self.vslot(c, aw::WAITERS);
+        let w = self.vslot_hot(c, aw::WAITERS);
         let mut all = if w == Value::NONE {
             Vec::new()
         } else if !w.is_obj_kind(ty::TUPLE as u8) {
@@ -2176,7 +2176,7 @@ impl Vm {
             self.alloc_tuple(&all)?
         };
         if let Some(r) = c.as_obj() {
-            self.set_slot(r, aw::WAITERS, w);
+            self.set_slot_hot(r, aw::WAITERS, w);
         }
         Ok(())
     }
@@ -2794,7 +2794,7 @@ impl Vm {
                 }
                 Some(ty::GATHER) if self.raw_of(v, aw::AUX) == FIRST => {}
                 Some(ty::GATHER) => {
-                    let children = self.vslot(v, aw::EXTRA);
+                    let children = self.vslot_hot(v, aw::EXTRA);
                     let n = self.tuple_len(children);
                     if !grow(&mut nodes, &mut work, &mut order, n) {
                         return Err(self.err(T::MemoryError, "cancel allocation failed"));
@@ -2802,7 +2802,7 @@ impl Vm {
                     // Pushed last first, so they act in order.
                     let base = nodes.len();
                     for i in 0..n {
-                        let c = self.vslot(children, u32::try_from(i).unwrap_or(0));
+                        let c = self.vslot_hot(children, u32::try_from(i).unwrap_or(0));
                         nodes.push((c, k, depth + 1, false));
                     }
                     work.extend((base..nodes.len()).rev());

@@ -291,9 +291,9 @@ pub(crate) fn dt_iso(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if !Vm::is_str(s) {
         return Ok(int(0));
     }
-    let n = vm.str_ref_o(s).len();
+    let n = vm.str_ref(s).len();
     vm.burn(1 + n as u64 / 8);
-    let b = vm.str_ref_o(s).as_bytes();
+    let b = vm.str_ref(s).as_bytes();
     let time_ok = |t: &[i64]| t[0] <= 23 && t[1] <= 59 && t[2] <= 59;
     // The fields, then the offset (`None` for naive) and `ok`.
     let mut f = [0i64; 7];
@@ -815,10 +815,10 @@ pub(crate) fn dt_strptime(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if !Vm::is_str(s) || !Vm::is_str(f) {
         return Ok(Value::NONE);
     }
-    let len = vm.str_ref_o(s).len() + vm.str_ref_o(f).len();
+    let len = vm.str_ref(s).len() + vm.str_ref(f).len();
     let mut steps = 0;
     let r = {
-        let (s, f) = (vm.str_ref_o(s).as_bytes(), vm.str_ref_o(f).as_bytes());
+        let (s, f) = (vm.str_ref(s).as_bytes(), vm.str_ref(f).as_bytes());
         if s.is_ascii() && f.is_ascii() {
             strptime(s, f, &mut steps)
         } else {

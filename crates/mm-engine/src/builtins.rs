@@ -2496,7 +2496,7 @@ impl Vm {
         let mut extra: Option<Value> = None;
         for (k, name) in names.iter().enumerate() {
             let val = self.stack[(base + npos + u32::try_from(k).unwrap_or(0)) as usize];
-            let key = String::from(self.str_ref(*name));
+            let key = String::from(self.str_ref_hot(*name));
             if let Some(i) = n.params().iter().position(|p| !p.is_empty() && p == key) {
                 let i = u32::try_from(i).unwrap_or(0);
                 if i < npos {
@@ -3534,7 +3534,7 @@ fn any_class(
                 break Ok(Value::TRUE);
             }
         } else if c.is_obj_kind(ty::TUPLE as u8) {
-            todo.extend((0..vm.tuple_len(c)).rev().map(|k| vm.vslot_o(c, k as u32)));
+            todo.extend((0..vm.tuple_len(c)).rev().map(|k| vm.vslot(c, k as u32)));
         } else {
             break Err(vm.err(T::TypeError, msg));
         }
@@ -3605,7 +3605,7 @@ impl Vm {
             let n = self.tuple_len(c);
             let mut left = crate::dict::WALK as usize;
             for k in 0..n {
-                let x = self.vslot_o(c, k as u32);
+                let x = self.vslot(c, k as u32);
                 let cost = self.check_cost(x, 0);
                 if n > crate::dict::WALK as usize || cost > left || self.has_check(x, name) {
                     let f = if name == Dn::Instancecheck {
@@ -3650,7 +3650,7 @@ fn mm_exc_match_part(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let hi = n.min(lo + (crate::dict::WALK as usize / cost).max(1));
     let mut next = Value::int(hi as i64).unwrap_or(Value::NONE);
     for k in lo..hi {
-        let t = vm.vslot_o(types, k as u32);
+        let t = vm.vslot(types, k as u32);
         if check {
             let ok = (Vm::is_class(t) && vm.class_base_t(t).is_exception())
                 || vm.type_of_typeobj(t).is_some_and(T::is_exception);
@@ -3732,7 +3732,7 @@ fn pl_cell_set(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if cell.is_obj_kind(ty::CELL as u8)
         && let Some(r) = cell.as_obj()
     {
-        vm.set_slot_o(r, 0, vm.arg_o(&a, 1));
+        vm.set_slot(r, 0, vm.arg_o(&a, 1));
     }
     Ok(Value::NONE)
 }
@@ -3880,7 +3880,7 @@ pub(crate) fn fold_step(vm: &mut Vm, state: Value) -> Result<nstep::Step, Raised
         return Ok(nstep::Step::Done(v));
     }
     if let Some(r) = state.as_obj() {
-        vm.set_slot_o(r, 1, st[0]);
+        vm.set_slot(r, 1, st[0]);
     }
     vm.nstate_put(state, 1, &raw);
     Ok(nstep::Step::More)
@@ -4296,7 +4296,7 @@ pub(crate) fn sort_values(
     let mut left = if capped { SORT_CAP } else { u32::MAX };
     {
         let res = NativeValues::copy(&mut vm.heap, items);
-        let mut buf = vm.hx_o(res)?;
+        let mut buf = vm.hx(res)?;
         let vmr: &Vm = vm;
         let kind = sort_kind(&items.iter().copied());
         let mut lt = |x: &Value, y: &Value| -> bool {
@@ -4404,9 +4404,9 @@ impl Vm {
         let state = [int(pass), int(at[0]), int(at[1]), int(at[2]), int(at[3])];
         if let Some(buf) = self.list_buf(st) {
             let res = self.heap.set_values(buf, 2, &state);
-            self.hx_o(res)?;
+            self.hx(res)?;
             let res = self.heap.set_values(buf, 9, &[Value::TRUE]);
-            self.hx_o(res)?;
+            self.hx(res)?;
         }
         Ok(Sorted::More(st))
     }
@@ -4485,7 +4485,7 @@ impl Vm {
                     ];
                     if let Some(buf) = self.list_buf(st) {
                         let res = self.heap.set_values(buf, 2, &state);
-                        self.hx_o(res)?;
+                        self.hx(res)?;
                     }
                     return Ok(Sorted::More(st));
                 }
@@ -4535,7 +4535,7 @@ impl Vm {
                 }
                 if let Some(buf) = self.list_buf(a) {
                     let res = self.heap.set_values(buf, i as u32, &items);
-                    self.hx_o(res)?;
+                    self.hx(res)?;
                 }
                 i = hi;
             }
@@ -4556,7 +4556,7 @@ impl Vm {
                 let state = [int(pass), int(at[0]), int(at[1]), int(at[2]), int(at[3])];
                 if let Some(buf) = self.list_buf(st) {
                     let res = self.heap.set_values(buf, 2, &state);
-                    self.hx_o(res)?;
+                    self.hx(res)?;
                 }
                 return Ok(Sorted::More(st));
             }
@@ -4570,9 +4570,9 @@ impl Vm {
             };
             if let Some(buf) = self.list_buf(st) {
                 let res = self.heap.set_values(buf, 1, &[b]);
-                self.hx_o(res)?;
+                self.hx(res)?;
                 let res = self.heap.set_values(buf, 9, &[Value::FALSE]);
-                self.hx_o(res)?;
+                self.hx(res)?;
             }
             waited = false;
         }
@@ -4583,7 +4583,7 @@ impl Vm {
             // Room for what a slice writes in the common case, at once.
             let mut out = NativeValues::default();
             let res = out.reserve(&mut self.heap, (n - k0.min(n)).min(SORT_SLICE as usize));
-            if let Err(e) = self.hx_o(res) {
+            if let Err(e) = self.hx(res) {
                 return self.sort_wait(st, waited, e, pass, at, visits);
             }
             let stop = {
@@ -4640,18 +4640,18 @@ impl Vm {
             if let Merge::Oom = stop {
                 // The slice again from where it started, after the wait.
                 let res: Result<(), _> = Err(mm_core::Error::OutOfMemory);
-                if let Err(e) = self.hx_o(res) {
+                if let Err(e) = self.hx(res) {
                     return self.sort_wait(st, waited, e, pass, start, visits);
                 }
             }
             if let Some(dst) = self.list_buf(dst) {
                 let res = self.heap.set_values(dst, k0 as u32, &out);
-                self.hx_o(res)?;
+                self.hx(res)?;
             }
             // The wait, if any, is over: this slice wrote its output.
             if waited && let Some(buf) = self.list_buf(st) {
                 let res = self.heap.set_values(buf, 9, &[Value::FALSE]);
-                self.hx_o(res)?;
+                self.hx(res)?;
                 waited = false;
             }
             match stop {
@@ -4666,7 +4666,7 @@ impl Vm {
                     let state = [int(pass), int(at[0]), int(at[1]), int(at[2]), int(at[3])];
                     if let Some(buf) = self.list_buf(st) {
                         let res = self.heap.set_values(buf, 2, &state);
-                        self.hx_o(res)?;
+                        self.hx(res)?;
                     }
                     return Ok(Sorted::More(st));
                 }
@@ -4696,7 +4696,7 @@ impl Vm {
                 let int = |x: usize| Value::int(x as i64).unwrap_or(Value::NONE);
                 if let Some(buf) = self.list_buf(st) {
                     let res = self.heap.set_values(buf, 2, &[int(pass), int(p)]);
-                    self.hx_o(res)?;
+                    self.hx(res)?;
                 }
                 return Ok(Sorted::More(st));
             }
@@ -4729,10 +4729,10 @@ impl Vm {
             if let Some(buf) = self.list_buf(done) {
                 if rev {
                     let res = self.heap.set_values(buf, (n - p - m) as u32, &back[..m]);
-                    self.hx_o(res)?;
+                    self.hx(res)?;
                 }
                 let res = self.heap.set_values(buf, p as u32, &front[..m]);
-                self.hx_o(res)?;
+                self.hx(res)?;
             }
             visits += (m / 16) as u64;
             p += m;
@@ -5090,7 +5090,7 @@ fn bi_iter(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         }
         let r = {
             let res = vm.heap.alloc_init(ty::CALLITER, 0, &[f, sentinel], &[]);
-            vm.hx_o(res)
+            vm.hx(res)
         }?;
         return Ok(Value::from_ref(r, ty::CALLITER as u8));
     }
@@ -5105,7 +5105,7 @@ fn bi_next(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         return vm.call_request(it, alloc::vec![Value::NONE], Cont::Next(d));
     }
     if it.is_obj_kind(ty::CALLITER as u8) {
-        if vm.vslot_o(it, 1) == Value::UNDEFINED {
+        if vm.vslot(it, 1) == Value::UNDEFINED {
             if d != Value::UNDEFINED {
                 return Ok(d);
             }
@@ -5171,7 +5171,7 @@ fn reversed_of(vm: &mut Vm, v: Value) -> Result<Value, Raised> {
                 let res = vm
                     .heap
                     .alloc_init(ty::REVERSED, 0, &[v], &[start.cast_unsigned()]);
-                vm.hx_o(res)
+                vm.hx(res)
             }?;
             Ok(Value::from_ref(r, ty::REVERSED as u8))
         }
@@ -5488,7 +5488,7 @@ fn bi_ord(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             &format!("ord() expected a character, but string of length {n} found"),
         ));
     }
-    let c = vm.str_ref_o(v).chars().next().map_or(0, |c| c as u32);
+    let c = vm.str_ref(v).chars().next().map_or(0, |c| c as u32);
     vm.new_int(i64::from(c))
 }
 
@@ -5560,7 +5560,7 @@ impl Vm {
         let total = head + digits + sep;
         let block = {
             let res = self.heap.alloc_bytes_zeroed(total);
-            self.hx_o(res)
+            self.hx(res)
         }?;
         self.collect_for_result(total);
         let mut w = [total as u64, 0, 0, 0, conf, width];
@@ -5576,9 +5576,9 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     fn magnitude(&self, v: Value) -> (alloc::borrow::Cow<'_, [u8]>, bool) {
         if let Some(r) = v.as_obj().filter(|_| Vm::is_heap_int(v)) {
-            let d = self.slot_o(r, 0).as_byte_ref();
+            let d = self.slot(r, 0).as_byte_ref();
             let m = d.and_then(|d| self.heap.bytes(d).ok()).unwrap_or(&[]);
-            return (m.into(), self.raw_o(r, 1) == 1);
+            return (m.into(), self.raw(r, 1) == 1);
         }
         let i = self.int_of_o(v).unwrap_or(0);
         (i.unsigned_abs().to_le_bytes().to_vec().into(), i < 0)
@@ -5738,7 +5738,7 @@ impl Vm {
     fn pow2_done(&mut self, block: mm_core::ByteRef, w: &[u64; 6]) -> Result<Value, Raised> {
         let total = self.heap.bytes(block).map_or(0, <[u8]>::len);
         let res = self.heap.str_from_block(block, total as u64);
-        let r = self.hx_o(res)?;
+        let r = self.hx(res)?;
         let s = Value::from_ref(r, ty::STR as u8);
         let conf = w[4];
         let align = (conf >> 32 & 0xff) as u8;
@@ -5909,7 +5909,7 @@ fn bi_property(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
     let r = {
         let res = vm.heap.alloc_init(ty::PROPERTY, 0, &parts, &[]);
-        vm.hx_o(res)
+        vm.hx(res)
     }?;
     Ok(Value::from_ref(r, ty::PROPERTY as u8))
 }
@@ -5942,12 +5942,12 @@ fn prop_copy(vm: &mut Vm, a: &CallArgs, i: u32) -> Result<Value, Raised> {
     let p = vm.arg_o(a, 0);
     let mut parts = [Value::NONE; 4];
     for (k, x) in parts.iter_mut().enumerate() {
-        *x = vm.vslot_o(p, u32::try_from(k).unwrap_or(0));
+        *x = vm.vslot(p, u32::try_from(k).unwrap_or(0));
     }
     parts[i as usize] = vm.arg_o(a, 1);
     let r = {
         let res = vm.heap.alloc_init(ty::PROPERTY, 0, &parts, &[]);
-        vm.hx_o(res)
+        vm.hx(res)
     }?;
     Ok(Value::from_ref(r, ty::PROPERTY as u8))
 }
@@ -5968,7 +5968,7 @@ fn descr_get(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     };
     if obj == Value::NONE && !d.is_obj_kind(ty::CLASSMETHOD as u8) {
         return Ok(if d.is_obj_kind(ty::STATICMETHOD as u8) {
-            vm.vslot_o(d, 0)
+            vm.vslot(d, 0)
         } else {
             d
         });
@@ -6306,7 +6306,7 @@ fn object_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         if excess {
             let fl = c
                 .as_obj()
-                .map_or(0, |r| vm.raw_o(r, crate::class::cls::FLAGS));
+                .map_or(0, |r| vm.raw(r, crate::class::cls::FLAGS));
             let msg = if fl & crate::class::f::NEW != 0 {
                 String::from(
                     "object.__new__() takes exactly one argument (the type to instantiate)",
@@ -6337,10 +6337,10 @@ fn object_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 fn object_repr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.arg_o(&a, 0);
     let s = if v.is_obj_kind(ty::EXC as u8) {
-        let args = vm.vslot_o(v, crate::vm::exc_slot::ARGS);
+        let args = vm.vslot(v, crate::vm::exc_slot::ARGS);
         let n = args.as_obj().map_or(0, |r| vm.obj_len(r));
         for i in 0..n {
-            let x = vm.vslot_o(args, i);
+            let x = vm.vslot(args, i);
             if vm.text_needs_py(x) {
                 return Err(vm.need_py());
             }
@@ -6351,7 +6351,7 @@ fn object_repr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         out.text.push_str(vm.type_name(v));
         if n == 1 {
             out.push(vm, "(")?;
-            let text = vm.repr(vm.vslot_o(args, 0))?;
+            let text = vm.repr(vm.vslot(args, 0))?;
             out.push(vm, &text)?;
             drop(text);
             out.push(vm, ")")?;
@@ -6400,7 +6400,7 @@ fn object_format(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     // `__format__` entry format as `format()` does; an empty spec is
     // `str(v)`, which a subclass may override.
     let fl = vm.uflags(v);
-    let own_str = vm.str_ref_o(spec).is_empty()
+    let own_str = vm.str_ref(spec).is_empty()
         && (fl & crate::class::f::STR != 0
             || fl & crate::class::f::REPR != 0 && !Vm::is_str(vm.unbx(v)));
     if Vm::is_str(spec)
@@ -6418,7 +6418,7 @@ fn object_format(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         };
         return vm.format_str(v, FormatSpec::Value(spec));
     }
-    if Vm::is_str(spec) && !vm.str_ref_o(spec).is_empty() {
+    if Vm::is_str(spec) && !vm.str_ref(spec).is_empty() {
         let msg = format!(
             "unsupported format string passed to {}.__format__",
             vm.type_name(v)
@@ -6566,12 +6566,12 @@ fn bi_dir(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             }
             let v = vm.stack.get(base + i).copied().unwrap_or(Value::UNDEFINED);
             let v = if v.is_obj_kind(ty::CELL as u8) {
-                vm.vslot_o(v, 0)
+                vm.vslot(v, 0)
             } else {
                 v
             };
             // Hidden compiler names (`.0`) are not variables.
-            if v != Value::UNDEFINED && Vm::is_str(n) && !vm.str_ref_o(n).starts_with('.') {
+            if v != Value::UNDEFINED && Vm::is_str(n) && !vm.str_ref(n).starts_with('.') {
                 bound.push(n);
             }
         }
@@ -6605,7 +6605,7 @@ fn exc_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let rest: Vec<Value> = (1..a.n).map(|i| vm.arg_o(&a, i)).collect();
     let t = vm.alloc_tuple(&rest)?;
     if let Some(r) = e.as_obj().filter(|_| e.is_obj_kind(ty::EXC as u8)) {
-        vm.set_slot_o(r, crate::vm::exc_slot::ARGS, t);
+        vm.set_slot(r, crate::vm::exc_slot::ARGS, t);
         // `NameError`, `AttributeError` and `ImportError` take keywords
         // (`super().__init__(msg, name=...)`); the others refuse them,
         // naming the instance's class as CPython does.
@@ -6626,15 +6626,15 @@ fn exc_str_m(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if let Some(s) = vm.syntax_str(e)? {
         return vm.new_str(&s);
     }
-    let args = vm.vslot_o(e, crate::vm::exc_slot::ARGS);
+    let args = vm.vslot(e, crate::vm::exc_slot::ARGS);
     let n = vm.tuple_len(args);
     let os_error = vm.exc_type(e).is_subclass(T::OSError);
     let s = match n {
         0 => NativeText::default(),
         // `[Errno 2] No such file or directory: 'name' -> 'name2'`
         2..=5 if os_error => {
-            let no = vm.vslot_o(args, 0);
-            let msg = vm.vslot_o(args, 1);
+            let no = vm.vslot(args, 0);
+            let msg = vm.vslot(args, 1);
             let mut s = NativeText::default();
             s.push(vm, "[Errno ")?;
             let text = vm.stringify(no)?;
@@ -6644,13 +6644,13 @@ fn exc_str_m(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             let text = vm.stringify(msg)?;
             s.push(vm, &text)?;
             drop(text);
-            let f = vm.vslot_o(args, 2);
+            let f = vm.vslot(args, 2);
             if n > 2 && f != Value::NONE {
                 s.push(vm, ": ")?;
                 let text = vm.repr(f)?;
                 s.push(vm, &text)?;
                 drop(text);
-                let f2 = vm.vslot_o(args, 4);
+                let f2 = vm.vslot(args, 4);
                 if n == 5 && f2 != Value::NONE {
                     s.push(vm, " -> ")?;
                     let text = vm.repr(f2)?;
@@ -6659,9 +6659,9 @@ fn exc_str_m(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             }
             s
         }
-        1 if vm.exc_type(e) == T::KeyError => vm.repr(vm.vslot_o(args, 0))?,
+        1 if vm.exc_type(e) == T::KeyError => vm.repr(vm.vslot(args, 0))?,
         1 => {
-            let x = vm.vslot_o(args, 0);
+            let x = vm.vslot(args, 0);
             if let Some(r) = vm.dunder_call(x, Dn::Str, &[], Cont::Check(check::STR))? {
                 return Ok(r);
             }
@@ -6743,7 +6743,7 @@ fn gen_next(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         };
     }
     if g.is_obj_kind(ty::CALLITER as u8) {
-        if vm.vslot_o(g, 1) == Value::UNDEFINED {
+        if vm.vslot(g, 1) == Value::UNDEFINED {
             return Err(vm.raise_stop(Value::NONE));
         }
         return vm.calliter_next(g, u32::MAX);
@@ -6756,7 +6756,7 @@ fn gen_next(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 fn range_hint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let it = vm.check_self(&a, T::range_iterator, "__length_hint__")?;
-    let left = it.as_obj().map_or(0, |r| vm.raw_o(r, 3));
+    let left = it.as_obj().map_or(0, |r| vm.raw(r, 3));
     vm.new_int128(i128::from(left))
 }
 
@@ -6800,7 +6800,7 @@ fn thrown(vm: &mut Vm, a: &CallArgs) -> Result<Value, Raised> {
             let ex = vm.raisable(t)?;
             if let Some(r) = ex.as_obj() {
                 let args = vm.alloc_tuple(&[v])?;
-                vm.set_slot_o(r, crate::vm::exc_slot::ARGS, args);
+                vm.set_slot(r, crate::vm::exc_slot::ARGS, args);
             }
             ex
         } else if t.is_obj_kind(ty::EXC as u8) || Vm::is_type(t) {
@@ -6863,7 +6863,7 @@ fn coro_close(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         return Err(vm.err(T::ValueError, "coroutine already executing"));
     }
     if vm.coro_state(c) == crate::aio::coro::SUSPENDED
-        && vm.vslot_o(c, crate::aio::coro::AWAITER) == Value::NONE
+        && vm.vslot(c, crate::aio::coro::AWAITER) == Value::NONE
     {
         // `GeneratorExit` thrown in; a yield instead is an error.
         return vm.prelude_request("_coro_close", alloc::vec![c], Cont::None);
@@ -7037,7 +7037,7 @@ fn tb_hint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 fn view_dict(vm: &Vm, d: Value) -> Value {
     match vm.type_of(d) {
-        T::dict_keys | T::dict_items => vm.vslot_o(d, 0),
+        T::dict_keys | T::dict_items => vm.vslot(d, 0),
         _ => d,
     }
 }
@@ -7414,7 +7414,7 @@ fn pl_set_table(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 fn pl_set_exc_str(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (e, s) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if let Some(r) = e.as_obj().filter(|_| e.is_obj_kind(ty::EXC as u8)) {
-        vm.set_slot_o(r, crate::vm::exc_slot::STR, s);
+        vm.set_slot(r, crate::vm::exc_slot::STR, s);
     }
     Ok(Value::NONE)
 }
@@ -7459,7 +7459,7 @@ fn pl_hash_tuple(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         if k + vm.work.wrapping_sub(start) >= nstep::STEP_WORK {
             break;
         }
-        let x = vm.vslot_o(t, u32::try_from(i).unwrap_or(0));
+        let x = vm.vslot(t, u32::try_from(i).unwrap_or(0));
         k += 1;
         match vm.hash(x) {
             Ok(h) => acc = xx_lane(acc, h),
@@ -7551,7 +7551,7 @@ fn pl_cmp_error(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (x, y, sym) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1), vm.arg_o(&a, 2));
     let msg = format!(
         "'{}' not supported between instances of '{}' and '{}'",
-        vm.str_ref_o(sym),
+        vm.str_ref(sym),
         vm.type_name(x),
         vm.type_name(y)
     );
@@ -7586,7 +7586,7 @@ fn bi_import(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             "attempted relative import with no known parent package",
         ));
     }
-    if vm.str_ref_o(name).is_empty() || vm.str_ref_o(name).starts_with('.') {
+    if vm.str_ref(name).is_empty() || vm.str_ref(name).starts_with('.') {
         return Err(vm.err(T::ValueError, "Empty module name"));
     }
     let fromlist = vm.arg_o(&a, 3);
@@ -7598,7 +7598,7 @@ fn bi_import(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if empty {
         return vm.import_checked(name, true, true);
     }
-    let pkg = Value::from_bool(vm.is_package(&String::from(vm.str_ref_o(name))));
+    let pkg = Value::from_bool(vm.is_package(&String::from(vm.str_ref(name))));
     vm.prelude_request(
         "_import_fromlist",
         alloc::vec![name, fromlist, pkg],
@@ -7879,8 +7879,8 @@ pub(crate) fn dict_fill_phase(vm: &mut Vm, src: Value, reg: u64) -> Result<(Valu
             b
         }
         // A dict's items view: its pairs, as the dict's entries.
-        _ if vm.type_of(src) == T::dict_items && vm.vslot_o(src, 0).is_obj_kind(ty::DICT as u8) => {
-            vm.vslot_o(src, 0)
+        _ if vm.type_of(src) == T::dict_items && vm.vslot(src, 0).is_obj_kind(ty::DICT as u8) => {
+            vm.vslot(src, 0)
         }
         _ => src,
     };
@@ -8029,7 +8029,7 @@ fn bi_enumerate(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         let res = vm
             .heap
             .alloc_init(ty::ENUMERATE, 0, &[it, big], &[n.cast_unsigned()]);
-        vm.hx_o(res)
+        vm.hx(res)
     }?;
     Ok(Value::from_ref(r, ty::ENUMERATE as u8))
 }
@@ -8051,7 +8051,7 @@ fn bi_zip(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let t = vm.alloc_tuple(&iters)?;
     let r = {
         let res = vm.heap.alloc_init(ty::ZIP, 0, &[t], &[]);
-        vm.hx_o(res)
+        vm.hx(res)
     }?;
     Ok(Value::from_ref(r, ty::ZIP as u8))
 }
@@ -8073,7 +8073,7 @@ fn bi_slice(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     };
     let r = {
         let res = vm.heap.alloc_init(ty::SLICE, 0, &parts, &[]);
-        vm.hx_o(res)
+        vm.hx(res)
     }?;
     Ok(Value::from_ref(r, ty::SLICE as u8))
 }
@@ -8160,9 +8160,9 @@ fn list_pop(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let v = vm.list_get(l, k);
     if k + 1 == n {
         if let Some(r) = l.as_obj() {
-            vm.set_raw_o(r, 1, (n - 1) as u64);
+            vm.set_raw(r, 1, (n - 1) as u64);
             if let Some(b) = vm.list_buf(l) {
-                vm.set_slot_o(b, u32::try_from(n - 1).unwrap_or(0), Value::UNDEFINED);
+                vm.set_slot(b, u32::try_from(n - 1).unwrap_or(0), Value::UNDEFINED);
             }
         }
         return Ok(v);
@@ -8192,9 +8192,9 @@ fn list_insert(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if let Some((buf, _)) = vm.list_parts(l) {
         let at = |i: usize| u32::try_from(i).unwrap_or(u32::MAX);
         let res = vm.heap.move_values(buf, at(k), at(k + 1), at(len - k));
-        vm.hx_o(res)?;
+        vm.hx(res)?;
         let res = vm.heap.set_values(buf, at(k), &[x]);
-        vm.hx_o(res)?;
+        vm.hx(res)?;
     }
     Ok(Value::NONE)
 }
@@ -8304,7 +8304,7 @@ fn list_sort(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     // Sorting cannot change the length; reuse the list's admitted backing store.
     if let Some(buf) = vm.list_buf(l) {
         let res = vm.heap.set_values(buf, 0, &items);
-        vm.hx_o(res)?;
+        vm.hx(res)?;
     }
     Ok(Value::NONE)
 }
@@ -8386,7 +8386,7 @@ fn view(vm: &mut Vm, a: &CallArgs, kind: u64, name: &str) -> Result<Value, Raise
     let kind = if s == d { kind } else { kind | VIEW_SUB };
     let r = {
         let res = vm.heap.alloc_init(ty::VIEW, 0, &[d], &[kind]);
-        vm.hx_o(res)
+        vm.hx(res)
     }?;
     Ok(Value::from_ref(r, ty::VIEW as u8))
 }

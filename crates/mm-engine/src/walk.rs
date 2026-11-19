@@ -614,7 +614,7 @@ impl Vm {
                     })
                 }
                 (T::dict_keys, T::dict_keys) | (T::dict_items, T::dict_items) => {
-                    let (da, db) = (self.vslot_o(a, 0), self.vslot_o(b, 0));
+                    let (da, db) = (self.vslot(a, 0), self.vslot(b, 0));
                     if self.dict_len(da) != self.dict_len(db) {
                         return leaf(false);
                     }
@@ -634,7 +634,7 @@ impl Vm {
                     // Set-like, as CPython's `all_contained_in` decides:
                     // a keys view's keys found as pairs in the items view,
                     // or the other way round. Rare; the prelude does it.
-                    if self.dict_len(self.vslot_o(a, 0)) != self.dict_len(self.vslot_o(b, 0)) {
+                    if self.dict_len(self.vslot(a, 0)) != self.dict_len(self.vslot(b, 0)) {
                         return leaf(false);
                     }
                     Leaf(Err(OrdErr::Py))
@@ -643,7 +643,7 @@ impl Vm {
                 | (T::set | T::frozenset, T::dict_keys | T::dict_items) => {
                     let (kv, st) = if Vm::is_set(a) { (b, a) } else { (a, b) };
                     let items = self.type_of(kv) == T::dict_items;
-                    let d = self.vslot_o(kv, 0);
+                    let d = self.vslot(kv, 0);
                     if self.dict_len(d) != self.set_len(st) {
                         return leaf(false);
                     }
@@ -659,16 +659,15 @@ impl Vm {
                     })
                 }
                 (T::method, T::method) => leaf(
-                    self.vslot_o(a, 0) == self.vslot_o(b, 0)
-                        && self.vslot_o(a, 1) == self.vslot_o(b, 1),
+                    self.vslot(a, 0) == self.vslot(b, 0) && self.vslot(a, 1) == self.vslot(b, 1),
                 ),
                 // Builtin methods (`xs.append`): the same receiver and method.
                 (T::builtin, T::builtin)
                     if a.is_obj_kind(ty::BOUND as u8) && b.is_obj_kind(ty::BOUND as u8) =>
                 {
                     leaf(
-                        self.vslot_o(a, 0) == self.vslot_o(b, 0)
-                            && self.vslot_o(a, 1) == self.vslot_o(b, 1),
+                        self.vslot(a, 0) == self.vslot(b, 0)
+                            && self.vslot(a, 1) == self.vslot(b, 1),
                     )
                 }
                 _ => leaf(false),
@@ -1000,7 +999,7 @@ impl Vm {
         let n = if *slice { 3 } else { xa.len().min(xb.len()) };
         while (*i as usize) < n {
             let (x, y) = if *slice {
-                (self.vslot_o(*a, *i), self.vslot_o(*b, *i))
+                (self.vslot(*a, *i), self.vslot(*b, *i))
             } else {
                 let at = *i as usize;
                 let v = |w: &[u64]| {
@@ -1071,14 +1070,14 @@ impl Vm {
                     return Done(no);
                 };
                 while *e < da.used {
-                    let k = self.slot_o(da.entries, 2 * *e);
+                    let k = self.slot(da.entries, 2 * *e);
                     if k != Value::UNDEFINED {
                         // One visit per entry, found by identity or not.
                         let Some(rest) = left.checked_sub(1) else {
                             return Done(Err(OrdErr::Py));
                         };
                         *left = rest;
-                        *v = self.slot_o(da.entries, 2 * *e + 1);
+                        *v = self.slot(da.entries, 2 * *e + 1);
                         let h = match da.index {
                             Some(index) => {
                                 let words = self.heap.raw_words(index).unwrap_or(&[]);
@@ -1146,14 +1145,14 @@ impl Vm {
                     return Done(yes);
                 };
                 while *e < dv.used {
-                    let k = self.slot_o(dv.entries, 2 * *e);
+                    let k = self.slot(dv.entries, 2 * *e);
                     if k != Value::UNDEFINED {
                         // One visit per entry, found by identity or not.
                         let Some(rest) = left.checked_sub(1) else {
                             return Done(Err(OrdErr::Py));
                         };
                         *left = rest;
-                        *v = self.slot_o(dv.entries, 2 * *e + 1);
+                        *v = self.slot(dv.entries, 2 * *e + 1);
                         match self.start_lookup(*db, k, *depth) {
                             Start::Leaf(Ok(Res::Found(Some(w)))) => {
                                 if *items && w != *v {
@@ -1211,7 +1210,7 @@ impl Vm {
                     return Done(yes);
                 };
                 while (*i as usize) < size {
-                    let k = self.slot_o(keys, *i);
+                    let k = self.slot(keys, *i);
                     if k != Value::UNDEFINED {
                         // One visit per entry, found by identity or not.
                         let Some(rest) = left.checked_sub(1) else {
@@ -1222,8 +1221,8 @@ impl Vm {
                         let key = if !*items {
                             k
                         } else if self.type_of(k) == T::tuple && self.tuple_len(k) == 2 {
-                            *want = self.vslot_o(k, 1);
-                            self.vslot_o(k, 0)
+                            *want = self.vslot(k, 1);
+                            self.vslot(k, 0)
                         } else {
                             return Done(no);
                         };
@@ -1263,14 +1262,14 @@ impl Vm {
                     return Done(yes);
                 };
                 while (*i as usize) < size {
-                    let k = self.slot_o(keys, *i);
+                    let k = self.slot(keys, *i);
                     if k != Value::UNDEFINED {
                         // One visit per entry, found by identity or not.
                         let Some(rest) = left.checked_sub(1) else {
                             return Done(Err(OrdErr::Py));
                         };
                         *left = rest;
-                        let h = self.raw_o(hashes, *i);
+                        let h = self.raw(hashes, *i);
                         match self.start_set_find(*b, k, h, *depth) {
                             Start::Leaf(Ok(Res::Found(Some(_)))) => {}
                             Start::Leaf(Ok(_)) => return Done(no),
@@ -1417,7 +1416,7 @@ impl Vm {
                     *wait = false;
                     match input {
                         Some(Ok(Res::Bool(true))) => {
-                            return found(Some(self.slot_o(dv.entries, 2 * *e + 1)));
+                            return found(Some(self.slot(dv.entries, 2 * *e + 1)));
                         }
                         Some(Ok(_)) | None => {}
                         Some(r) => return Done(r),
@@ -1425,11 +1424,11 @@ impl Vm {
                     *e += 1;
                 }
                 while *e < dv.used {
-                    let k2 = self.slot_o(dv.entries, 2 * *e);
+                    let k2 = self.slot(dv.entries, 2 * *e);
                     if k2 != Value::UNDEFINED {
                         match self.start_eq(*k, k2, depth.saturating_add(1), left) {
                             Start::Leaf(Ok(Res::Bool(true))) => {
-                                return found(Some(self.slot_o(dv.entries, 2 * *e + 1)));
+                                return found(Some(self.slot(dv.entries, 2 * *e + 1)));
                             }
                             Start::Leaf(Ok(_)) => {}
                             Start::Leaf(r) => return Done(r),
@@ -1474,8 +1473,8 @@ impl Vm {
                     };
                     while *j <= probes {
                         let idx = i.wrapping_add(*j);
-                        let ek = self.slot_o(*keys, idx);
-                        let eh = self.raw_o(*hashes, idx);
+                        let ek = self.slot(*keys, idx);
+                        let eh = self.raw(*hashes, idx);
                         if ek == Value::UNDEFINED && eh == 0 {
                             if *deferred {
                                 return Done(Err(OrdErr::Py));
