@@ -56,6 +56,11 @@ step "toolchain from rust-toolchain.toml"
 time rustup toolchain install --no-self-update
 rustup component add rust-src --toolchain 1.100.0
 
+step "musl target (cargo xtask check's musl stage)"
+if [ "$(uname -s)" = Linux ]; then
+  rustup target add --toolchain 1.100.0 "$(uname -m)-unknown-linux-musl"
+fi
+
 step "cargo fetch"
 time cargo fetch --locked
 

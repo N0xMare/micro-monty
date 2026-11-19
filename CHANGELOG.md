@@ -22,6 +22,11 @@ hashes are pre-release history, kept in the private archive
   costs one fuel unit more for a `TypeError` without the hint and three
   more for one with it, two more for an `AttributeError` with it, and
   nothing more for any other exception.
+- `x86_64-unknown-linux-musl` is a tested platform: `cargo xtask check`'s
+  `musl` stage builds `mm` there as shipped (static-pie), runs the own
+  cases and Monty's corpus on it, and runs the worker's tests there. The
+  workspace tests, durability and the recorded sessions (in memory and
+  durable, and on the seccomp-filtered worker binary) also pass on it [M].
 
 ### Changed
 
@@ -258,6 +263,22 @@ hashes are pre-release history, kept in the private archive
 
 ### Known issues
 
+- On musl, recorded agent sessions take 54% more engine time in memory
+  and 82% more with a snapshot and restore on a fresh `Engine` at every
+  host call (snapshot 2.8×, restore 1.7×) than on glibc on the same
+  machine: musl's `malloc` maps and unmaps every allocation of 128 KiB or
+  more (644 K `mmap` calls against 2.5 K), and its `memcpy` and `memcmp`
+  are slow on the small copies the snapshot codecs make. mimalloc as the
+  global allocator leaves +14% and +42% [M].
+- The step bound is not met on musl: 15 bounded rows of the step-time
+  oracle take 51 to 200 ms between safepoints against the 44 ms limit it
+  set on the measuring machine (0 rows over on glibc there). They are
+  bigint `*`, `/`, `%`, `//`, `divmod`, `pow`, `math.gcd` and `math.lcm` on
+  64 to 67 M-bit operands (`a / c` 200 ms), `==` on two 60 MB strings
+  (131 ms) and `json.loads` of a 45 MB string (51 ms), and their time is
+  in musl's `memcpy`, `memmove` and `memcmp` and in page faults on freshly
+  mapped memory. Outcomes and fuel are those of glibc; `cargo xtask check`
+  does not run the timed oracle on musl [M].
 - A start at the wall reclaims dead code, and with it the names only
   that code held; a later cell that uses such a name again (the fill's
   `append`, a loop's `pop`) can be refused at the wall where 0.0.2,

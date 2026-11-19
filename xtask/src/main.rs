@@ -669,8 +669,59 @@ fn check(args: &[String]) -> Result<(), String> {
             ir.env("MM", &shipped_mm);
             ir
         }));
+        let musl = host.replace("-linux-gnu", "-linux-musl");
+        let musl_mm = root.join(format!("target/{musl}/release/mm"));
+        // musl, the main embedder's Linux target (README "Platforms"):
+        // `malloc` and the string functions are musl's, the binaries link
+        // static-pie, and the worker's seccomp filter meets musl's system
+        // calls. `mm` built there as shipped runs the own cases and the
+        // corpus, and the worker's tests run there. The engine brings its
+        // own libm, so durability and the other engine tests would repeat
+        // the glibc stages. The step-time oracle is not run: musl's
+        // `memcpy`, `memcmp` and `malloc` put 15 of its rows over the bound
+        // (README "Platforms").
+        stages.push(
+            Stage::new("musl")
+                .after(&["shipped-mm", "test"])
+                .run({
+                    let mut build = shipped_build(&musl);
+                    build.args(["--package", "mm-cli", "--bin", "mm"]);
+                    build
+                })
+                .run({
+                    let mut test = debug_cargo(&[
+                        "test",
+                        "--locked",
+                        "--profile",
+                        "gate-test",
+                        "--package",
+                        "mm-cli",
+                        "--test",
+                        "conformance_own",
+                    ]);
+                    test.env("MM", &musl_mm);
+                    test
+                })
+                .run({
+                    let mut corpus = task(&["conformance", "--engine", "micro-monty", "--check"]);
+                    corpus.env("MM", &musl_mm);
+                    corpus
+                })
+                .run(debug_cargo(&[
+                    "test",
+                    "--locked",
+                    "--profile",
+                    "gate-test",
+                    "--target",
+                    &musl,
+                    "--package",
+                    "mm-cell-worker",
+                ])),
+        );
     } else {
-        println!("check: wasm-ir and native-ir skipped: valgrind runs on Linux only");
+        println!(
+            "check: wasm-ir and native-ir skipped (valgrind runs on Linux only), and musl (a Linux target)"
+        );
     }
     if cfg!(target_os = "linux") {
         // V8's instructions on the guests the size-head stage built.

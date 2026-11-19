@@ -66,7 +66,9 @@ Ir measures).
 `--cfg mm_shipped`, which turns on `#[optimize(size)]` through
 `cfg_attr(mm_shipped, …)`. `size`, `wasm`, `wasm-ir`, `v8-ir`,
 `wasm-host`, `native-ir`, `replay-ir` and `shipped-mm` build that way, `shipped-cases`
-runs the own cases and Monty's corpus on the shipped `mm`, and the
+runs the own cases and Monty's corpus on the shipped `mm`, `musl` does the
+same on `mm` shipped for `<arch>-unknown-linux-musl` and runs the worker's
+tests there (Linux), and the
 step-time oracle is built fully as shipped (std and libtest rebuilt, each
 test in its own process; a row over the limit prints `OVER`).
 
