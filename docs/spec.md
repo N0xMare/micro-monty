@@ -2920,7 +2920,11 @@ below the head's. `--write-floors` writes the file. A floor whose key is
 not the run's is stale and is recounted on its build, found on the
 first-parent line since the tag. With `--base` at a tag (`just pretag`)
 the head is compared with the tag, and every floor is checked against the
-tag's count and the head's. When two landings both move a floor, the
+tag's count and the head's; `--write-floors` there seeds the file from the
+tag, each floor at the tag's count with the tag's build (the head's where
+the head counts less), whatever the file held. That is how each release
+starts its floors: `just seed-floors` is the first commit after a tag, so
+the floors since the tag begin at the tag's counts. When two landings both move a floor, the
 raise wins if one side is an accepted raise, else the lower count; the
 gate on the combined tree then sets it. What is lost against counting
 every commit is which commit moved a count.

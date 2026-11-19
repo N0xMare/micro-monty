@@ -26,7 +26,11 @@
 //! `--write-floors` writes that file. Against a `v*` tag as the base
 //! (`just pretag`), the head's floors are checked against the tag's counts
 //! and the head's instead: none above the tag's count without a line since
-//! the tag, none above the head's.
+//! the tag, none above the head's. There `--write-floors` seeds the file
+//! from the tag ([`seed`]): each floor is the tag's count with the tag's
+//! build, or the head's where the head counts less, whatever the file held
+//! before, so a release starts its floors at its own counts (`just
+//! seed-floors`, the first commit after a tag).
 //!
 //! Two landings that both change a floor conflict on its line. Take the
 //! raise when one side is an accepted raise, else the lower count; the
@@ -234,14 +238,20 @@ pub(crate) fn find_build(root: &Path, base: &str, build: &str) -> Result<Option<
 
 /// The floors `gate` starts from (the base's, or at a tag the working
 /// tree's) whose key is not `keys`' (stale): the commit of each one's
-/// build, which the gate recounts, and the names it recounts.
+/// build, which the gate recounts, and the names it recounts. None when
+/// `write` seeds the floors at a tag.
 pub(crate) fn stale(
     root: &Path,
     gate: &str,
     base: &str,
     tag: bool,
+    write: bool,
     keys: &BTreeMap<String, String>,
 ) -> Result<Vec<(String, Vec<String>)>, String> {
+    // Seeding at a tag replaces every floor it counts; none is recounted.
+    if tag && write {
+        return Ok(Vec::new());
+    }
     let floors = if tag {
         here(root, gate)?
     } else {
@@ -314,7 +324,8 @@ pub(crate) struct Sides<'a> {
 /// The floors the head is measured against, and what is wrong with the
 /// head's floor file (empty when nothing). `raised(name, ratio)`: an
 /// accept line since the base names `name` with a ceiling at or above
-/// `ratio`. With `write`, writes the file the head must have first.
+/// `ratio`. With `write`, writes the file the head must have first (at a
+/// tag, the file [`seed`] makes).
 #[allow(clippy::too_many_lines, reason = "the pre-tag check, then a landing's")]
 pub(crate) fn judge(
     root: &Path,
@@ -323,6 +334,9 @@ pub(crate) fn judge(
     raised: &dyn Fn(&str, f64) -> bool,
     write: bool,
 ) -> Result<(Counts, Vec<String>), String> {
+    if sides.tag && write {
+        seed(root, gate, sides)?;
+    }
     let source = if sides.tag {
         here(root, gate)?
     } else {
@@ -464,6 +478,36 @@ pub(crate) fn judge(
         ));
     }
     Ok((against, errors))
+}
+
+/// At a tag, `--write-floors`: each counted name's floor is the tag's
+/// count with the tag's build (a tie goes to the tag, the earlier build),
+/// or the head's count with the head's build where the head counts less
+/// or the tag has no count; names not counted this run keep their lines.
+fn seed(root: &Path, gate: &str, sides: &Sides<'_>) -> Result<(), String> {
+    let tag_build = build_id(root, Some(sides.base))?;
+    let mut want = Floors::new();
+    for (name, &h) in sides.head {
+        let Some(key) = sides.keys.get(name) else {
+            continue;
+        };
+        let (count, build) = match sides.base_counts.get(name) {
+            Some(&t) if t <= h => (t, tag_build.as_str()),
+            _ => (h, sides.head_build),
+        };
+        want.insert(
+            name.clone(),
+            Floor {
+                count,
+                build: build.to_owned(),
+                key: key.clone(),
+            },
+        );
+    }
+    let mut have = here(root, gate)?;
+    write_merged(root, gate, &mut have, &want)?;
+    println!("{gate}: seeded {} from the tag", file(gate));
+    Ok(())
 }
 
 /// Writes `want` over `have`, keeping the names it does not hold.
@@ -622,6 +666,89 @@ mod tests {
         assert!(
             errors.len() == 1 && errors[0].contains("fib is 999"),
             "{errors:?}"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn at_a_tag_write_floors_seeds_the_tag_s_counts_whatever_the_file_held() {
+        let (dir, sha) = repo("seed", &Floors::new());
+        // The last cycle's floors: fib's build is in no commit here and its
+        // key is another method's, so only seeding can replace it; loop is
+        // not counted this run.
+        let old = Floor {
+            count: 900,
+            build: "b-gone".to_owned(),
+            key: "k-old".to_owned(),
+        };
+        let mut before = Floors::from([
+            ("fib".to_owned(), old),
+            ("dict".to_owned(), floor(1_990, "b-1")),
+            ("loop".to_owned(), floor(3_000, "b-1")),
+        ]);
+        write(&dir, "native-ir", &before).unwrap();
+        let keys: BTreeMap<String, String> = ["fib", "dict", "str", "aio"]
+            .into_iter()
+            .map(|n| (n.to_owned(), "k".to_owned()))
+            .collect();
+        assert!(stale(&dir, "native-ir", &sha, true, false, &keys).is_err());
+        let none_stale: Vec<(String, Vec<String>)> = Vec::new();
+        assert_eq!(
+            stale(&dir, "native-ir", &sha, true, true, &keys).unwrap(),
+            none_stale
+        );
+        // The head counts less than the tag on fib, more on dict, the same
+        // on str; aio is new since the tag.
+        let tag = Counts::from([
+            ("fib".to_owned(), 1_002),
+            ("dict".to_owned(), 2_000),
+            ("str".to_owned(), 700),
+        ]);
+        let head = Counts::from([
+            ("fib".to_owned(), 999),
+            ("dict".to_owned(), 2_010),
+            ("str".to_owned(), 700),
+            ("aio".to_owned(), 500),
+        ]);
+        let none = Counts::new();
+        let sides = Sides {
+            base: &sha,
+            tag: true,
+            head: &head,
+            base_counts: &tag,
+            keys: &keys,
+            head_build: "b-head",
+            recounted: &none,
+        };
+        let (against, errors) = judge(&dir, "native-ir", &sides, &|_, _| false, true).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        let tag_build = build_id(&dir, Some(&sha)).unwrap();
+        let seeded = here(&dir, "native-ir").unwrap();
+        assert_eq!(seeded["fib"], floor(999, "b-head"));
+        assert_eq!(seeded["dict"], floor(2_000, &tag_build));
+        assert_eq!(seeded["str"], floor(700, &tag_build));
+        assert_eq!(seeded["aio"], floor(500, "b-head"));
+        assert_eq!(seeded["loop"], floor(3_000, "b-1"));
+        assert_eq!(against["dict"], 2_000);
+        // Seeding again changes nothing, and the pre-tag check passes it.
+        let text = fs::read_to_string(dir.join(file("native-ir"))).unwrap();
+        let (_, errors) = judge(&dir, "native-ir", &sides, &|_, _| false, true).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(
+            fs::read_to_string(dir.join(file("native-ir"))).unwrap(),
+            text
+        );
+        let (_, errors) = judge(&dir, "native-ir", &sides, &|_, _| false, false).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        // Without `write` the old file is only checked: dict's 1,990 is
+        // below the head's 2,010 and stays.
+        before.remove("fib");
+        write(&dir, "native-ir", &before).unwrap();
+        let (_, errors) = judge(&dir, "native-ir", &sides, &|_, _| false, false).unwrap();
+        assert!(errors.iter().any(|e| e.contains("fib")), "{errors:?}");
+        assert_eq!(
+            here(&dir, "native-ir").unwrap()["dict"],
+            floor(1_990, "b-1")
         );
         fs::remove_dir_all(&dir).unwrap();
     }

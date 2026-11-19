@@ -234,7 +234,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             keys.insert(format!("{}/{name}", label(guest)), k);
         }
     }
-    let stale = floors::stale(&root, "v8-ir", &base_sha, tag, &keys)?;
+    let stale = floors::stale(&root, "v8-ir", &base_sha, tag, write, &keys)?;
     let floor_commits: Vec<String> = stale.iter().map(|(s, _)| s.clone()).collect();
     let sides = sides(&root, &base, &base_sha, &floor_commits)?;
     for side in &sides {

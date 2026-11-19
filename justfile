@@ -53,7 +53,8 @@ bench *args:
 
 # The pre-tag checklist on the tree to tag, against the previous tag: each
 # Ir gate compares the head with the tag and checks its floors against both.
-# Then, with the owner's approval (it runs on GitHub), `just release-dry-run`.
+# Then, with the owner's approval (it runs on GitHub), `just release-dry-run`;
+# once the tag is pushed, `just seed-floors` is the first commit after it.
 pretag base=prev_tag:
     cargo xtask check --release-gate
     cargo check --manifest-path fuzz/Cargo.toml --features memory-probes --bins
@@ -65,6 +66,13 @@ pretag base=prev_tag:
     {{ if base == "none" { "true" } else { "cargo xtask replay-ir --base " + base } }}
     cargo xtask native-ir --plain
     {{ if base == "none" { "true" } else { "cargo xtask v8-ir --base " + base } }}
+
+# Each Ir gate's floors at the tag's counts (the head's where lower), whatever
+# the files held: the first commit after a tag seeds the Ir floors from it.
+seed-floors tag=prev_tag:
+    cargo xtask native-ir --base {{tag}} --write-floors
+    cargo xtask wasm-ir --base {{tag}} --write-floors
+    cargo xtask v8-ir --base {{tag}} --write-floors
 
 # release.yml as a dry run on GitHub (a manual dispatch builds every artifact
 # and uploads the bundle as a workflow artifact, with no release), on `ref`

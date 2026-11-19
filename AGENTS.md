@@ -44,6 +44,8 @@ just wasm                the facade on both wasm targets, round trip under wasmt
 just size                the shipped builds against the base, the release and its budget
 just bench [args]        bench checksums on CPython and mm (`--reps N` for timings)
 just pretag [base]       the pre-tag checklist against the previous `v*` tag
+just seed-floors [tag]   the Ir floors seeded from the tag's counts: the first
+                         commit after a tag
 just release-dry-run     release.yml dispatched on GitHub, no release (after
                          pretag; it runs on GitHub, so only with the owner's go)
 ```
@@ -188,7 +190,11 @@ to `target/check/logs/<stage>.log`.
   ceiling ratio, and raises only their floors. `MM_IR_ACCEPT`, `MM_WASM_IR_ACCEPT` and
   `MM_V8_IR_ACCEPT` with the same text stand for the line in an
   uncommitted tree only. `just pretag` runs each against the previous tag
-  and checks the floors against the tag's counts. Report the
+  and checks the floors against the tag's counts. A tag starts new
+  floors: the first commit after it is `just seed-floors`, which runs each
+  gate with `--base <tag> --write-floors` and so writes every floor at the
+  tag's count and build (the head's where lower), whatever the file held,
+  stale keys included. Report the
   whole-process count `bench/callgrind.py` prints second too.
 - Snapshots: keep code that writes or reads an image in the codec files
   (`micro-monty/src/image.rs`, `mm-engine/src/snapshot.rs`,

@@ -190,7 +190,8 @@ tasks:
       --base <rev>           the revision to compare with (default
                              origin/main; at a v* tag the floors are checked
                              against it)
-      --write-floors         write the floor file the head must have
+      --write-floors         write the floor file the head must have (at a
+                             v* tag: seeded from the tag's counts)
       --plain                advisory: shipped against a plain release build
   replay-ir [options]        the 160 recorded real sessions' callgrind Ir on
                              the replay worker (shipped, --cfg mm_size_wasm)
@@ -211,7 +212,8 @@ tasks:
       --base <rev>           the revision to compare with (default origin/main)
       --programs <a,b>       only these programs
       --head-built           the head's guests from target/size/head.tsv
-      --write-floors         write the floor file the head must have
+      --write-floors         write the floor file the head must have (at a
+                             v* tag: seeded from the tag's counts)
   wasm-ir [options]          wasmtime guest instructions of bench/*.py against
                              a base revision and the floors under callgrind
                              (in check): fails on a program rising past 1.0%,
@@ -223,7 +225,8 @@ tasks:
       --programs <a,b,..>    only these programs (default all)
       --baselines <file>     only the head, against the counts stored in
                              <file> (bench/baselines-0.0.2.txt); advisory
-      --write-floors         write the floor file the head must have
+      --write-floors         write the floor file the head must have (at a
+                             v* tag: seeded from the tag's counts)
   wasm-opt <target> <in> <out> [arg..]
                              binaryen's wasm-opt with <target>'s shipped
                              arguments (wasip1: -Oz and the inline cap;

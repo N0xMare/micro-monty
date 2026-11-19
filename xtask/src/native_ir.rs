@@ -134,7 +134,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         }
     );
     // (label, commit): the base, then the build of each stale floor.
-    let stale = floors::stale(&root, "native-ir", &base, tag, &keys)?;
+    let stale = floors::stale(&root, "native-ir", &base, tag, write, &keys)?;
     let mut sides = vec![("base".to_owned(), base.clone())];
     sides.extend(
         stale

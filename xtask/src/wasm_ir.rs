@@ -201,7 +201,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             floors::key(&tools.full_key(), &source_hash(&source)),
         );
     }
-    let stale = floors::stale(&root, "wasm-ir", &base_sha, tag, &keys)?;
+    let stale = floors::stale(&root, "wasm-ir", &base_sha, tag, write, &keys)?;
     for (s, _) in &stale {
         sides.push(Side {
             label: format!("floor-{}", short(s)),
