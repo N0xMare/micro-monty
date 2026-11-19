@@ -142,7 +142,9 @@ pub(crate) fn signature_code(names: &[String], argc: usize) -> Code {
     // `CALL r n ic`: the IC operand is the second word.
     bc.extend_from_slice(&[word([op::CALL, reg(n + 1), reg(n), 0]), 0]);
     bc.push(u32::from(op::RETURN));
-    let mut varnames: Vec<Arc<str>> = names.iter().map(|s| Arc::from(s.as_str())).collect();
+    // Exact capacities, as a restore decodes them: code is charged by them.
+    let mut varnames: Vec<Arc<str>> = Vec::with_capacity(n + 1);
+    varnames.extend(names.iter().map(|s| Arc::from(s.as_str())));
     varnames.push(Arc::from("impl"));
     Code {
         name: Arc::from("<signature>"),
@@ -586,6 +588,24 @@ mod tests {
         let code = &vm.codes[vm.synth[0] as usize].code;
         assert_eq!(code.params.argcount, 1);
         assert_eq!(&*code.varnames[1], "b");
+    }
+
+    /// Signature code is charged by its buffers' capacities, which must be
+    /// what a restore's decode of it allocates.
+    #[test]
+    fn signature_code_keeps_the_capacities_its_decode_has() {
+        for names in [
+            &[][..],
+            &[String::from("a")][..],
+            &[String::from("a"), String::from("b"), String::from("c")][..],
+        ] {
+            let code = signature_code(names, names.len());
+            let mut bytes = Vec::new();
+            code.encode_into(&mut bytes);
+            let decoded = Code::decode(&mut bytes.as_slice()).expect("decodes");
+            assert_eq!(decoded, code);
+            assert_eq!(decoded.buffer_bytes(), code.buffer_bytes(), "{names:?}");
+        }
     }
 
     /// Only a host function under a dotted name: never another builtin.

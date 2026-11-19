@@ -79,6 +79,12 @@ hashes are pre-release history, kept in the private archive
   session shares. It gets CPython's `AttributeError` for a builtin
   function or `TypeError` for an immutable type; instances, subclasses
   and module attributes stay writable.
+- Host signature code keeps exact buffer capacities, as a restore decodes
+  it. Compiled code still keeps the growth slack of its buffers, which a
+  restore decodes without: code is charged by capacity, so a restored
+  session is charged less for the same code than the one it came from
+  (46,820 against 39,056 bytes in a 2 MiB session [M]) until restores are
+  made exact.
 - Growing the mark stack during an incremental mark reserves the
   capacity it charges: it reserved that many slots beyond the entries on
   the stack, up to 4 bytes per object uncharged, and a restored session
