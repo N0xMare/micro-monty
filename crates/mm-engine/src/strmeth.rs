@@ -2538,6 +2538,25 @@ fn seam_ok(vm: &Vm, out: ByteRef, o: usize, src: ByteRef, from: usize) -> bool {
     need.is_some() && need == have
 }
 
+/// Appends one char's bytes. On musl as a copy of a fixed size: a copy of
+/// a run-time length is a `memcpy` call per char there, which made a
+/// stepped slice of two-byte chars 7 times slower \[M\]. Elsewhere the
+/// libc's `memcpy` (or the guest's) beats the fixed copies in
+/// `slice_run`'s size-optimised code: by 20% on glibc \[M\].
+#[inline]
+fn push_char(out: &mut Vec<u8>, ch: &[u8]) {
+    #[cfg(target_env = "musl")]
+    match *ch {
+        [a] => out.push(a),
+        [a, b] => out.extend_from_slice(&[a, b]),
+        [a, b, c] => out.extend_from_slice(&[a, b, c]),
+        [a, b, c, d] => out.extend_from_slice(&[a, b, c, d]),
+        _ => out.extend_from_slice(ch),
+    }
+    #[cfg(not(target_env = "musl"))]
+    out.extend_from_slice(ch);
+}
+
 /// Writes `text` into block `out` at `to`.
 fn put_text(vm: &mut Vm, out: Value, to: usize, text: &[u8]) -> Result<(), Raised> {
     let dst = out
@@ -3864,7 +3883,7 @@ fn slice_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
                 }
                 walked += at.abs_diff(from);
             }
-            buf.extend_from_slice(h.get(at..ceil_char(h, at + 1)).unwrap_or(&[]));
+            push_char(&mut buf, h.get(at..ceil_char(h, at + 1)).unwrap_or(&[]));
             taken += 1;
         }
         k.owed += (walked / UNIT + taken / 8) as u64 + 1;
@@ -3914,7 +3933,7 @@ pub(crate) fn ext_slice(
                 };
                 n -= u64::from(b.get(at).is_none_or(|x| x & 0xC0 != 0x80));
             }
-            out.extend_from_slice(b.get(at..ceil_char(b, at + 1)).unwrap_or(&[]));
+            push_char(&mut out, b.get(at..ceil_char(b, at + 1)).unwrap_or(&[]));
         }
         vm.burn(at.abs_diff(first) as u64 / 64);
         return vm.new_str(core::str::from_utf8(&out).unwrap_or(""));
