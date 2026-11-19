@@ -4,3 +4,7 @@
 # holds, and none means 0. Append only, never edit; only the owner adds
 # lines. Growth past the base needs a `Size:` line in its commit message
 # whatever the budget.
+v0.0.2 hello +34000 owner, 2026-11-19: 0.0.3's correctness fixes (dead registers, asyncio entries kept near the limit, exception fields, the generator registry) measure about +32 KB; no artifact passes v0.0.1's size
+v0.0.2 hello.wasm +34000 owner, 2026-11-19: as hello
+v0.0.2 mm_wasm_guest.wasm +34000 owner, 2026-11-19: as hello
+v0.0.2 mm_wasm_guest_bundle.wasm +34000 owner, 2026-11-19: as hello; the tightest artifact, 34,745 B under v0.0.1 at v0.0.2
