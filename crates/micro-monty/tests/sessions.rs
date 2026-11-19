@@ -374,6 +374,64 @@ fn a_reset_over_a_heap_full_of_live_globals_resets_the_session() {
     assert_eq!(wall_cell(&engine, &mut session, check), "ok");
 }
 
+/// A generator that outlives a `reset` on a typed host function's attribute
+/// keeps the dead temporary its yield saved no longer than without the
+/// reset: the reset's collections clear it from the generator registry,
+/// which the in-place reset leaves whole. Before the registry, 40 MB more
+/// at 64 MiB raised `MemoryError` [M]. The same with a snapshot and restore
+/// on each side of the reset.
+#[test]
+fn a_generator_kept_through_the_host_across_a_reset_keeps_no_dead_temporary() {
+    let kept = "\
+def load():
+    return [bytearray(1_000_000) for _ in range(40)]
+def gen():
+    n = len(load())
+    yield n
+    yield 7
+g = gen()
+next(g)
+h.g = g";
+    let after = "x = [bytearray(1_000_000) for _ in range(40)]\n[len(x), next(h.g)]";
+    for restore in [false, true] {
+        let engine = wall_engine(64);
+        let mut session = Session::new(&engine).expect("session");
+        session
+            .define(&HostModule {
+                name: String::new(),
+                functions: vec![HostSignature {
+                    name: "h".to_owned(),
+                    params: Vec::new(),
+                    returns: "None".to_owned(),
+                    doc: String::new(),
+                    dict_as_kwargs: false,
+                }],
+                classes: Vec::new(),
+                constants: Vec::new(),
+                exceptions: Vec::new(),
+            })
+            .expect("defined");
+        let hop = |session: Session| {
+            if !restore {
+                return session;
+            }
+            let mut session = session;
+            let image = session.snapshot().expect("snapshot");
+            engine.restore(&image).expect("restore")
+        };
+        assert_eq!(wall_cell(&engine, &mut session, kept), "ok");
+        let mut session = hop(session);
+        session.reset().expect("reset");
+        let mut session = hop(session);
+        assert_eq!(wall_cell(&engine, &mut session, "g"), "NameError");
+        let code = engine.compile(after, "after.py").expect("compiles");
+        let Progress::Complete(Some(value)) = session.start(&code) else {
+            panic!("the cell after the reset completes (restore: {restore})")
+        };
+        assert_eq!(value.repr, "[40, 7]");
+    }
+}
+
 fn wall_cell(engine: &Engine, session: &mut Session, src: &str) -> String {
     let code = engine.compile(src, "cell.py").expect("compiles");
     match session.start(&code) {
