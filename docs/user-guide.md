@@ -1446,6 +1446,13 @@ differs:
   behind `call_later` and `wait_for` included, are cancelled in creation
   order, "Task exception was never retrieved" is reported when it ends, and
   task reprs and reports have no `coro=<...>` or source locations.
+- Near the memory limit the loop drops nothing it accepted. A done
+  callback, a `call_soon` or timer callback, or a task's first step that
+  has no room to start waits for one collection and is tried again; if it
+  still does not fit it stays queued and `MemoryError` is raised at the
+  main task's `await` (inside `asyncio.run`, at its main coroutine's
+  `await`, or from `asyncio.run` itself once that coroutine has returned).
+  Free memory and await again, and it runs. CPython would complete there.
 - An unfinished async generator is never finalized; use
   `contextlib.aclosing`. Coroutines have no `cr_frame`, `cr_await` or
   `cr_code`.

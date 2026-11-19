@@ -3682,7 +3682,7 @@ fn stale_done_callbacks_settled_near_the_memory_limit_raise_memory_error() {
              n = 0\ntry:\n    for f in fs:\n        f.set_result(1)\n        n += 1\n\
              except MemoryError:\n    pass\n\
              try:\n    h.set_result(1)\nexcept MemoryError:\n    pass\n\
-             pad = None\ngc.collect()\nawait asyncio.sleep(0)\nprint(n, h.done())\n",
+             pad = None\ngc.collect()\ntry:\n    await asyncio.sleep(0)\nexcept MemoryError:\n    pass\nprint(n, h.done())\n",
             "import asyncio\nran = live = 0\nleft = [f for f in fs + [h] if not f.done()]\n\
              for f in left:\n    f.set_result(1)\n\
              await asyncio.sleep(0)\nprint(len(left) - (h in left), h in left, ran, live)\n",
@@ -3706,4 +3706,500 @@ fn stale_done_callbacks_settled_near_the_memory_limit_raise_memory_error() {
     let stale: u64 = stale.parse().expect("int");
     assert_eq!(ran, (stale * 200).to_string(), "{out}");
     assert_eq!(live, if h_left == "True" { "300" } else { "0" }, "{out}");
+}
+
+/// The loop's queue entries with no room to start: done callbacks reserved
+/// as they were queued, `call_soon` entries, a timer and tasks not yet
+/// started, behind a heap filled and the scheduler's slack eaten. Each
+/// `await` meanwhile raises `MemoryError` (the scheduler's start rule:
+/// requeue, collect once, raise at the main task), and once memory is
+/// freed every entry runs. On fe8b1c2 and f2ff43c the awaits returned
+/// normally and every entry was dropped [M].
+const START_RULE_CELL: &str = "\
+import asyncio
+await asyncio.sleep(0)
+loop = asyncio.get_running_loop()
+ran = soon = timer = started = 0
+def cb(*a):
+    global ran
+    ran += 1
+def on_soon():
+    global soon
+    soon += 1
+def on_timer():
+    global timer
+    timer += 1
+async def work():
+    global started
+    started += 1
+d = loop.create_future()
+d.set_result(0)
+pad = []
+try:
+    while True:
+        pad.append(bytearray(4096))
+except MemoryError:
+    del pad[-2:]
+for _ in range(20):
+    loop.call_soon(on_soon)
+loop.call_later(0.01, on_timer)
+tasks = [asyncio.create_task(work()) for _ in range(20)]
+# Nothing below allocates until `pad = None`: the sleeps are made first.
+sleeps = [asyncio.sleep(0) for _ in range({spins})]
+queued = 0
+errors = 0
+k = 0
+try:
+    while queued < 300000:
+        d.add_done_callback(cb)
+        queued += 1
+except MemoryError:
+    pass
+while k < {spins}:
+    try:
+        await sleeps[k]
+    except MemoryError:
+        errors += 1
+    k += 1
+pad = None
+await asyncio.sleep(0.05)
+for _ in range(3):
+    await asyncio.sleep(0)
+print(queued, ran, soon, timer, started, errors)
+";
+
+fn start_rule_outcome(out: &str) -> (u64, u64, u64, u64, u64, u64) {
+    let n: Vec<u64> = out
+        .split_whitespace()
+        .map(|w| w.parse().expect("int"))
+        .collect();
+    let [queued, ran, soon, timer, started, errors] = n[..] else {
+        panic!("{out}")
+    };
+    (queued, ran, soon, timer, started, errors)
+}
+
+#[test]
+fn queue_entries_with_no_room_to_start_raise_at_the_await_and_run_later() {
+    let src = START_RULE_CELL.replace("{spins}", "4");
+    for mib in [4, 6, 8] {
+        let (p, out) = run_with(Limits::new().with_memory(mib << 20), &src);
+        assert!(matches!(p, Progress::Complete(_)), "{mib} MiB: {p:?} {out}");
+        let (queued, ran, soon, timer, started, errors) = start_rule_outcome(&out);
+        // Every entry accepted ran: ran plus still queued is what was queued.
+        assert_eq!(
+            (ran, soon, timer, started),
+            (queued, 20, 1, 20),
+            "{mib} MiB: {out}"
+        );
+        assert!(
+            queued > 0 && errors > 0,
+            "{mib} MiB: no start failed: {out}"
+        );
+    }
+}
+
+/// A guest that catches the `MemoryError` and awaits again without freeing
+/// memory loops; each turn is charged (the collection a failed start waits
+/// for costs fuel) and ends at the next start's failure, so a fuel budget
+/// stops it.
+#[test]
+fn awaiting_again_without_freeing_memory_is_charged_each_turn() {
+    let few = START_RULE_CELL.replace("{spins}", "4");
+    let many = START_RULE_CELL.replace("{spins}", "40");
+    let fuel = |src: &str| {
+        let engine =
+            Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(6 << 20)));
+        let mut session = Session::new(&engine).expect("session");
+        session.set_fuel_total(Some(u64::MAX / 2));
+        let p = session.start(&engine.compile(src, "t.py").expect("compiles"));
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        u64::MAX / 2 - session.fuel_total().expect("a total")
+    };
+    let (a, b) = (fuel(&few), fuel(&many));
+    // 36 more failed turns, each paying at least a collection's charge
+    // (a unit per 64 bytes of the limit).
+    assert!(b - a >= 36 * ((6 << 20) / 64), "{a} {b}");
+}
+
+/// The start rule parked at every fuel slice, and snapshotted and restored
+/// at every park, also while the scheduler waits for a start's collection
+/// (`LOOP_START_WAIT`): the same outcome, every accepted entry run.
+#[test]
+fn the_start_rule_survives_a_restore_at_every_park() {
+    let src = START_RULE_CELL.replace("{spins}", "4");
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(6 << 20)));
+    let code = engine.compile(&src, "t.py").expect("compiles");
+    for restore in [false, true] {
+        let out = Arc::new(Mutex::new(String::new()));
+        let attach = |s: &mut Session| {
+            let sink = Arc::clone(&out);
+            s.set_output(Box::new(move |t: &str| {
+                sink.lock().expect("lock").push_str(t);
+            }));
+        };
+        let mut session = Session::new(&engine).expect("session");
+        attach(&mut session);
+        session.set_fuel(Some(997));
+        let mut p = session.start(&code);
+        let mut parks = 0;
+        while p
+            == (Progress::Parked {
+                reason: ParkReason::Fuel,
+            })
+        {
+            parks += 1;
+            if restore {
+                let image = session.snapshot().expect("snapshot");
+                drop(session);
+                session = engine.restore(&image).expect("restore");
+                attach(&mut session);
+            }
+            session.set_fuel(Some(997));
+            p = session.resume(Resume::Continue).expect("resumes");
+        }
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        assert!(parks > 100, "{parks}");
+        let out = out.lock().expect("lock").clone();
+        let (queued, ran, soon, timer, started, errors) = start_rule_outcome(&out);
+        assert_eq!(
+            (ran, soon, timer, started),
+            (queued, 20, 1, 20),
+            "restore {restore}: {out}"
+        );
+        assert!(errors > 0, "restore {restore}: {out}");
+    }
+}
+
+/// `SystemExit` raised by a callback of a top-level-await cell (no limit)
+/// leaves `_aio_callback` uncaught: it reaches the cell at its `await`, as
+/// it ends python3.14's loop. It was lost before [M, reviewer].
+#[test]
+fn system_exit_from_a_callback_reaches_a_top_level_cell() {
+    let (p, out) = run_with(
+        Limits::new(),
+        "import asyncio\nloop = asyncio.get_running_loop()\n\
+         def stop():\n    raise SystemExit(3)\n\
+         loop.call_soon(stop)\ntry:\n    await asyncio.sleep(0)\n\
+         except SystemExit as e:\n    print('cell got SystemExit', e.code)\n",
+    );
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    assert_eq!(out, "cell got SystemExit 3\n");
+}
+
+/// Memory sized by a probe at 64 KiB, leaving about `free` bytes: margins
+/// far above the accounting's own drift between runs.
+const LEAVE_FREE: &str = "\
+lo, hi = 0, 16 << 20
+while hi - lo > 65536:
+    mid = (lo + hi) // 2
+    try:
+        b = bytearray(mid)
+        lo = mid
+    except MemoryError:
+        hi = mid
+    b = None
+gc.collect()
+pad = bytearray(lo - {free})
+";
+
+/// A callable that is not a Python function or a method of one (a
+/// `functools.partial`, an object with a Python `__call__`) is called by
+/// `_aio_callback` when its slot runs, so that call is its run: no room
+/// for its 100,000 arguments there is the callback's error, reported,
+/// never an entry used up unseen. Ran plus reported plus still queued is
+/// what was registered.
+#[test]
+fn a_callable_with_no_room_at_its_call_is_reported() {
+    let src = format!(
+        "\
+import asyncio
+import contextlib
+import functools
+import gc
+import io
+ran = []
+def f(*a):
+    ran.append(len(a))
+class C:
+    def __call__(self, *a):
+        ran.append(len(a))
+loop = asyncio.get_running_loop()
+loop.call_soon(functools.partial(f), *range(100_000))
+loop.call_soon(C(), *range(100_000))
+{}err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    await asyncio.sleep(0)
+pad = None
+gc.collect()
+await asyncio.sleep(0)
+text = err.getvalue()
+print(len(ran), text.count('Exception in callback'), text.count('\\nMemoryError'))
+",
+        LEAVE_FREE.replace("{free}", "300_000")
+    );
+    let (p, out) = run_with(Limits::new().with_memory(8 << 20), &src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?} {out}");
+    assert_eq!(out, "0 2 2\n");
+}
+
+/// A handle the program changed: its callback's error is reported and the
+/// loop goes on. `_args` replaced by a non-sequence is a `TypeError`, and a
+/// deleted `_cancelled` an `AttributeError` (python3.14's loop raises it
+/// out of `run_once`), as 462adb7 reported both; neither is skipped unseen.
+#[test]
+fn a_changed_handle_reports_its_error() {
+    let src = "\
+import asyncio
+import contextlib
+import io
+loop = asyncio.get_running_loop()
+def f(*a):
+    print('f', a)
+h = loop.call_soon(f, 1); h._args = 5
+h2 = loop.call_soon(f, 1); h2._args = [7, 8]
+h3 = loop.call_soon(f, 1); del h3._cancelled
+h4 = loop.call_soon(f, 1); h4._ctx = 5
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    await asyncio.sleep(0)
+text = err.getvalue()
+print(text.count('Exception in callback'), text.count('TypeError: '), 'AttributeError: ' in text,
+      'TypeError: a context dict is required' in text)
+";
+    let (p, out) = run_with(Limits::new(), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?} {out}");
+    assert_eq!(out, "f (7, 8)\n3 2 True True\n");
+}
+
+/// A callback that raises while its report fails (`sys.stderr.write`
+/// raising, `sys.stderr` set to `None`): the report's own exception is
+/// dropped, as python3.14's `call_exception_handler` drops it, and the await
+/// returns (no limit). Only `MemoryError`, `SystemExit` and
+/// `KeyboardInterrupt` leave a callback's slot for the main task's await;
+/// ee7edb6 raised the report's `OSError` or `AttributeError` there [M,
+/// reviewer].
+#[test]
+fn a_callback_whose_report_fails_leaves_the_await_alone() {
+    let src = "\
+import asyncio
+import sys
+class Bad:
+    def write(self, s):
+        raise OSError('no stderr')
+def boom():
+    raise ValueError('cb')
+loop = asyncio.get_running_loop()
+for mode in ('raise', 'none', 'done'):
+    old = sys.stderr
+    sys.stderr = None if mode == 'none' else Bad()
+    if mode == 'done':
+        f = loop.create_future()
+        f.add_done_callback(lambda f: boom())
+        f.set_result(1)
+    else:
+        loop.call_soon(boom)
+    try:
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        r = 'returned'
+    except BaseException as e:
+        r = type(e).__name__
+    sys.stderr = old
+    print(mode, r)
+";
+    let (p, out) = run_with(Limits::new(), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?} {out}");
+    assert_eq!(out, "raise returned\nnone returned\ndone returned\n");
+}
+
+/// A callback that raises, whose callable's name cannot be read (a
+/// `__getattr__` that raises, a `repr` that raises): its report names the
+/// callable's type and is written, where f6c4745 wrote nothing and main
+/// reported the failure of `Handle._run` [M, reviewer].
+#[test]
+fn a_callback_whose_name_cannot_be_read_is_reported() {
+    let src = "\
+import asyncio
+import contextlib
+import io
+class Q:
+    def __getattr__(self, k):
+        raise RuntimeError(k)
+    def __call__(self):
+        raise ValueError('cb')
+class R:
+    def __repr__(self):
+        raise RuntimeError('repr')
+    def __call__(self):
+        raise ValueError('cb')
+loop = asyncio.get_running_loop()
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    loop.call_soon(Q())
+    loop.call_soon(R())
+    await asyncio.sleep(0)
+text = err.getvalue()
+print(text.count('Exception in callback Q()'), text.count('Exception in callback R()'),
+      text.count('ValueError: cb'))
+";
+    let (p, out) = run_with(Limits::new(), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?} {out}");
+    assert_eq!(out, "1 1 2\n");
+}
+
+/// Timers accepted before memory fills: their internal tasks take their
+/// first step with the heap full. That step allocates nothing (the
+/// deadline is made as the timer is accepted), so every timer stays
+/// queued and fires once memory is freed. On ee7edb6 the step computed
+/// the delay and made the deadline, failed, and the timer was lost with a
+/// `MemoryError` at an await (here 1 to 4 of 50 at each slack [M]).
+#[test]
+fn timers_accepted_before_memory_fills_fire_after_it_is_freed() {
+    let cell = "\
+import asyncio
+await asyncio.sleep(0)
+loop = asyncio.get_running_loop()
+fired = 0
+def on_timer():
+    global fired
+    fired += 1
+for _ in range(50):
+    loop.call_later(0.01, on_timer)
+sleeps = [asyncio.sleep(0) for _ in range(6)]
+errors = 0
+k = 0
+pad = []
+try:
+    while True:
+        pad.append([k])
+except MemoryError:
+    pass
+while k < {slack}:
+    pad.pop()
+    k += 1
+k = 0
+while k < 6:
+    try:
+        await sleeps[k]
+    except MemoryError:
+        errors += 1
+    k += 1
+pad = None
+for _ in range(3):
+    try:
+        await asyncio.sleep(1)
+    except MemoryError:
+        errors += 1
+print(fired, errors)
+";
+    // At slack 0 one `MemoryError` comes after every timer fired: the
+    // call `asyncio.sleep(1)` allocates its awaitable beside garbage not
+    // yet collected, as on 2921712 [M]. It is caught; what is checked is
+    // that no timer is lost.
+    for slack in [0, 8, 64, 256] {
+        let src = cell.replace("{slack}", &slack.to_string());
+        let (p, out) = run_with(Limits::new().with_memory(4 << 20), &src);
+        assert!(
+            matches!(p, Progress::Complete(_)),
+            "slack {slack}: {p:?} {out}"
+        );
+        assert!(out.starts_with("50 "), "slack {slack}: {out}");
+    }
+}
+
+/// `MemoryError` raised at the main task's `await` inside a primitive just
+/// after it was handed what it waited for (the start rule's raise at main:
+/// a `call_soon` of 100,000 arguments queued ahead of its wakeup, with no
+/// room to start): the item, notification, permit or lock goes to the next
+/// waiter, as python3.14's code passes them on after a cancellation.
+#[test]
+fn memory_error_at_a_primitives_await_passes_its_wakeup_on() {
+    let src = format!(
+        "\
+import asyncio
+import gc
+class O:
+    def m(self, *a):
+        log.append('big ran')
+o = O()
+log = []
+q = asyncio.Queue()
+cond = asyncio.Condition()
+sem = asyncio.Semaphore(0)
+lock = asyncio.Lock()
+async def second(kind):
+    if kind == 'queue':
+        log.append(('second got', await q.get()))
+    elif kind == 'condition':
+        async with cond:
+            await cond.wait()
+            log.append('second notified')
+    elif kind == 'semaphore':
+        await sem.acquire()
+        log.append('second acquired')
+    else:
+        async with lock:
+            log.append('second locked')
+async def hand(kind):
+    if kind == 'queue':
+        q.put_nowait(1)
+    elif kind == 'condition':
+        async with cond:
+            cond.notify(1)
+    elif kind == 'semaphore':
+        sem.release()
+    else:
+        lock.release()
+async def first(kind):
+    if kind == 'queue':
+        log.append(('main got', await q.get()))
+    elif kind == 'condition':
+        async with cond:
+            await cond.wait()
+            log.append('main notified')
+    elif kind == 'semaphore':
+        await sem.acquire()
+        log.append('main acquired')
+    else:
+        await lock.acquire()
+        log.append('main locked')
+loop = asyncio.get_running_loop()
+async def one(kind):
+    if kind == 'lock':
+        await lock.acquire()
+    tasks = [asyncio.create_task(second(kind)), asyncio.create_task(hand(kind))]
+    loop.call_soon(o.m, *range(100_000))
+{}    try:
+        await first(kind)
+    except MemoryError:
+        log.append('MemoryError at main')
+    pad = None
+    gc.collect()
+    for _ in range(4):
+        await asyncio.sleep(0)
+    print(kind, log, q.qsize(), cond.locked(), sem._value, lock.locked())
+    log.clear()
+for kind in ['queue', 'condition', 'semaphore', 'lock']:
+    await one(kind)
+",
+        LEAVE_FREE
+            .replace("{free}", "300_000")
+            .lines()
+            .fold(String::new(), |mut s, l| {
+                s.push_str("    ");
+                s.push_str(l);
+                s.push('\n');
+                s
+            })
+    );
+    let (p, out) = run_with(Limits::new().with_memory(8 << 20), &src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?} {out}");
+    assert_eq!(
+        out,
+        "queue ['MemoryError at main', 'big ran', ('second got', 1)] 0 False 0 False\n\
+         condition ['MemoryError at main', 'big ran', 'second notified'] 0 False 0 False\n\
+         semaphore ['MemoryError at main', 'big ran', 'second acquired'] 0 False 0 False\n\
+         lock ['MemoryError at main', 'big ran', 'second locked'] 0 False 0 False\n"
+    );
 }

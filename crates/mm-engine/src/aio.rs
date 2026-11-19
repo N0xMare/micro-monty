@@ -14,7 +14,7 @@
 //! `Exit::Waiting`.
 
 use crate::types::{T, ty};
-use crate::vm::{Exit, HDR, Raised, Ready, State, Task, Vm, fn_slot};
+use crate::vm::{Exit, HDR, ParkReason, Raised, Ready, State, Task, Vm, fn_slot};
 use alloc::{format, string::String, vec::Vec};
 use mm_core::Value;
 
@@ -138,6 +138,8 @@ pub(crate) enum Next {
     /// Run this task by raising the pending exception at its pc.
     Raise(State),
     Wait(Vec<u64>),
+    /// Park while the scheduler waits for a collection (`LOOP_START_WAIT`).
+    Park(ParkReason, State),
 }
 
 /// The state of a host future, for checking a batch.
@@ -969,7 +971,7 @@ impl Vm {
         let queued = self
             .ready
             .iter()
-            .filter(|r| matches!(r, Ready::Gather(_) | Ready::Call(..)))
+            .filter(|r| !matches!(r, Ready::Task(_)))
             .count()
             .saturating_add(self.cb_slots);
         self.gathers.iter().fold(queued, |n, &g| {
@@ -1198,9 +1200,27 @@ impl Vm {
             .map_or(Value::NONE, |t| t.handle);
         if self.must_cancel(h) {
             let msg = self.vslot(h, aw::RESULT);
-            if matches!(self.cancel_tree(a, msg), Ok(true)) {
-                self.set_raw_of(h, aw::MUST_CANCEL, 0);
+            let exc = self.exc;
+            match self.cancel_tree(a, msg) {
+                Ok(true) => self.set_raw_of(h, aw::MUST_CANCEL, 0),
+                Ok(false) => {}
+                // No room to cancel what it waits on (nothing changed): it
+                // raises `CancelledError` at its `await` at once instead.
+                Err(Raised) => {
+                    self.heap.take_refused();
+                    self.exc = exc;
+                    self.wake_blocked(i);
+                }
             }
+        }
+    }
+
+    /// Moves blocked task `i` to the run queue (whose room its blocked slot
+    /// holds): a cancel it must raise could not go to what it waits on.
+    fn wake_blocked(&mut self, i: usize) {
+        if let Some(k) = self.blocked.iter().position(|&t| t == i) {
+            self.blocked.remove(k);
+            self.ready.push_back(Ready::Task(i));
         }
     }
 
@@ -1243,7 +1263,13 @@ impl Vm {
             {
                 let h = t.handle;
                 let saved = self.exc;
-                let _ = self.cancel_tree(h, Value::NONE);
+                if self.cancel_tree(h, Value::NONE).is_err() {
+                    // No room: the main task raises `CancelledError` at its
+                    // `await` at once, and the run raises the escape after.
+                    self.heap.take_refused();
+                    self.set_must_cancel(h, Value::NONE);
+                    self.wake_blocked(0);
+                }
                 self.exc = saved;
             }
         }
@@ -1656,18 +1682,52 @@ impl Vm {
             }
             if let Some(entry) = self.ready.pop_front() {
                 self.iter_left = self.iter_left.saturating_sub(1);
+                // Whether this entry is the retry after a start that waited
+                // for a collection (`Vm::start_failed`).
+                let retry = self.loop_flags & crate::vm::LOOP_START_WAIT != 0;
+                self.loop_flags &= !crate::vm::LOOP_START_WAIT;
                 let i = match entry {
                     Ready::Task(i) => i,
                     Ready::Gather(g) => {
                         self.check_gather(g);
                         continue;
                     }
-                    Ready::Call(f, arg) => {
-                        if let Ok(st) = self.start_callback(f, arg) {
-                            return Next::Run(st);
+                    Ready::Call(..) | Ready::Handle(_) => {
+                        match self.start_callback(entry) {
+                            // The start is the tick `_aio_callback`'s
+                            // `CALL_EX` charged: a callback with no call or
+                            // loop in its body passes a safepoint too, so a
+                            // queue of them is no single step.
+                            Ok(Some(st)) => {
+                                self.ticks -= 1;
+                                if self.ticks <= 0
+                                    && let Some(r) = self.safepoint(&st)
+                                {
+                                    return Next::Park(r, st);
+                                }
+                                return Next::Run(st);
+                            }
+                            // A cancelled handle runs nothing, but its start
+                            // charges the same tick, at the trampoline's
+                            // safepoint (`Vm::idle_state`), as on 0.0.2,
+                            // where `Handle._run` returned: a queue of them
+                            // is no single step either.
+                            Ok(None) => {
+                                self.ticks -= 1;
+                                if self.ticks <= 0 {
+                                    let st = self.idle_state();
+                                    if let Some(r) = self.safepoint(&st) {
+                                        self.loop_flags |= crate::vm::LOOP_SKIP_PARK;
+                                        return Next::Park(r, st);
+                                    }
+                                }
+                            }
+                            Err(Raised) => {
+                                if let Some(n) = self.start_failed(entry, retry) {
+                                    return n;
+                                }
+                            }
                         }
-                        // No room to run it: CPython would report the
-                        // callback's failure and go on.
                         continue;
                     }
                 };
@@ -1735,6 +1795,16 @@ impl Vm {
                     }
                     Ok(Some(st)) => return Next::Run(st),
                     Ok(None) => continue,
+                    // A first start with no room for its stack: as a
+                    // callback's start (the task is still unstarted).
+                    Err(Raised)
+                        if i != 0 && !started && self.exc_type(self.exc) == T::MemoryError =>
+                    {
+                        if let Some(n) = self.start_failed(entry, retry) {
+                            return n;
+                        }
+                        continue;
+                    }
                     Err(Raised) => {
                         let e = self.exc;
                         self.finish_task(false, e);
@@ -1909,6 +1979,10 @@ impl Vm {
             Next::Run(st) => self.execute(st, false),
             Next::Raise(st) => self.execute(st, true),
             Next::Wait(ids) => self.wait_on(ids),
+            Next::Park(r, st) => {
+                self.saved = Some(st);
+                Exit::Parked(r)
+            }
         }
     }
 
@@ -2124,20 +2198,143 @@ impl Vm {
         Ok(n)
     }
 
-    /// `loop.call_soon(fn)`: `fn()` runs at its turn in the run queue.
+    /// `loop.call_soon(...)`: `asyncio.Handle` `h` runs at its turn in the
+    /// run queue.
     #[cfg(feature = "asyncio")]
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
-    pub(crate) fn call_soon(&mut self, f: Value) -> Result<(), Raised> {
+    pub(crate) fn call_soon(&mut self, h: Value) -> Result<(), Raised> {
         self.reserve_scheduler(self.tasks.len(), self.gathers.len(), 1)?;
-        self.ready.push_back(Ready::Call(f, Value::UNDEFINED));
+        self.ready.push_back(Ready::Handle(h));
         Ok(())
     }
 
-    /// Runs `f(arg)` (or `f()`) as a callback of the loop: in a task slot
-    /// of its own with no handle, through the prelude's `_aio_callback`
-    /// (which reports what it raises).
+    /// A timer's handle `h` is due: it runs next, in this iteration, at the
+    /// place of the internal task that waited for it (`_aio_later`), as
+    /// CPython moves a due timer to the ready queue.
+    #[cfg(feature = "asyncio")]
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
-    fn start_callback(&mut self, f: Value, arg: Value) -> Result<State, Raised> {
+    pub(crate) fn fire_timer(&mut self, h: Value) -> Result<(), Raised> {
+        // The timer's task calls this as it ends, and a running task holds
+        // a queue entry it does not use (the queue's room covers every task
+        // slot): the handle takes it, so a due timer always fires. Only a
+        // direct call of `_mm.aio_fire` can find the queue full.
+        if self.ready.len() >= self.ready.capacity() {
+            return Err(self.err(T::MemoryError, "scheduler allocation failed"));
+        }
+        self.ready.push_front(Ready::Handle(h));
+        self.iter_left += 1;
+        Ok(())
+    }
+
+    /// Starts queue entry `entry`, a done callback `f(fut)` or a handle's
+    /// `_callback(*_args)`, as a callback of the loop: in a task slot of its
+    /// own with no handle, through the prelude's `_aio_callback` (which
+    /// reports what it raises). `Ok(None)`: a cancelled handle, which runs
+    /// nothing.
+    ///
+    /// The start is everything up to the callback running: its arguments,
+    /// its context, its slot, `_aio_callback`'s frame and, for a Python
+    /// function (or a method of one), the function's frame entered from
+    /// `_aio_callback`'s `CALL_EX`, as that instruction would. So nothing
+    /// that can fail for room runs as guest code before the callback: a
+    /// failure is the start's, and the entry stays queued
+    /// (`Vm::start_failed`). A native callback, or another callable, is
+    /// called by that `CALL_EX` when the slot runs: the call is its run.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    fn start_callback(&mut self, entry: Ready) -> Result<Option<State>, Raised> {
+        // What can fail comes first, so a failure leaves no slot taken.
+        let (f, args, h, context) = match entry {
+            Ready::Call(f, fut) => (
+                f,
+                self.alloc_tuple(&[fut])?,
+                Value::NONE,
+                self.context_copy()?,
+            ),
+            Ready::Handle(h) => {
+                let get = |vm: &mut Vm, name: &str| -> Result<Value, Raised> {
+                    let k = vm.intern(name)?;
+                    Ok(vm.inst_get(h, k).unwrap_or(Value::UNDEFINED))
+                };
+                match get(self, "_cancelled")? {
+                    Value::FALSE => {}
+                    // Deleted: the callback is `getattr(h, '_cancelled')`,
+                    // so its `AttributeError` is reported, as when
+                    // `Handle._run` read it (with a handle of its own: `h`'s
+                    // repr reads `_cancelled` too).
+                    Value::UNDEFINED => {
+                        let k = self.intern("getattr")?;
+                        let g = self.dict_get(self.builtins, k)?.unwrap_or(Value::NONE);
+                        let name = self.intern("_cancelled")?;
+                        let args = self.alloc_tuple(&[h, name])?;
+                        let context = self.context_copy()?;
+                        return self
+                            .start_in_slot(g, args, Value::NONE, context, g, args)
+                            .map(Some);
+                    }
+                    _ => return Ok(None),
+                }
+                // As CPython's `Handle._run`: in the handle's own context.
+                let none = |v: Value| {
+                    if v == Value::UNDEFINED {
+                        Value::NONE
+                    } else {
+                        v
+                    }
+                };
+                let f = none(get(self, "_callback")?);
+                let args = none(get(self, "_args")?);
+                let context = none(get(self, "_ctx")?);
+                // A context the program replaced with a non-dict: the call
+                // is `_mm.ctx_swap(context)`, whose `TypeError` is reported
+                // as the callback's, as `Handle._run`'s swap raised it.
+                if context != Value::NONE && !context.is_obj_kind(ty::DICT as u8) {
+                    let k = self.intern("_mm")?;
+                    let m = self.import(k, false)?;
+                    let k = self.intern("ctx_swap")?;
+                    let swap = self.module_attr(m, k)?.unwrap_or(Value::NONE);
+                    let call_args = self.alloc_tuple(&[context])?;
+                    return self
+                        .start_in_slot(f, args, h, Value::NONE, swap, call_args)
+                        .map(Some);
+                }
+                (f, args, h, context)
+            }
+            Ready::Task(_) | Ready::Gather(_) => return Ok(None),
+        };
+        // A method of a Python function: its function, called with the
+        // receiver first.
+        let (callee, call_args) = if f.is_obj_kind(ty::METHOD as u8)
+            && self.vslot(f, 1).is_obj_kind(ty::FUNC as u8)
+            && let Some((r, n)) = self.seq_slots(args)
+        {
+            let mut items = Vec::new();
+            if items.try_reserve_exact(n + 1).is_err() {
+                return Err(self.err(T::MemoryError, "callback arguments allocation failed"));
+            }
+            items.push(self.vslot(f, 0));
+            items.extend(self.values_of(r, n));
+            (self.vslot(f, 1), self.alloc_tuple(&items)?)
+        } else {
+            (f, args)
+        };
+        self.start_in_slot(f, args, h, context, callee, call_args)
+            .map(Some)
+    }
+
+    /// [`Vm::start_callback`]'s callback `f(*args)` of handle `h` (or
+    /// `None`) started in a task slot of its own, in `context`, with
+    /// `callee(*call_args)` the call `_aio_callback` makes.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    fn start_in_slot(
+        &mut self,
+        f: Value,
+        args: Value,
+        h: Value,
+        context: Value,
+        callee: Value,
+        call_args: Value,
+    ) -> Result<State, Raised> {
+        let func = self.prelude_fn("_aio_callback")?;
         let from = self.task_hint.min(self.tasks.len());
         let i = self.tasks[from..]
             .iter()
@@ -2169,18 +2366,70 @@ impl Vm {
         self.depth = 0;
         self.specials.clear();
         self.handled = Value::NONE;
-        self.context = self.context_copy()?;
-        let func = self.prelude_fn("_aio_callback")?;
-        let st = if arg == Value::UNDEFINED {
-            self.bottom_call(func, &[f])
-        } else {
-            self.bottom_call(func, &[f, arg])
-        };
+        self.context = context;
+        let st = self.enter_callback(func, [f, args, h], callee, call_args);
         if st.is_err() {
             self.tasks[i] = None;
             self.task_hint = self.task_hint.min(i);
         }
         st
+    }
+
+    /// `_aio_callback(f, args, h)`'s frame at its `CALL_EX` of `f(*args)`,
+    /// with `callee(*call_args)` in the call's registers (what the
+    /// instructions before it compute); a Python function's frame entered
+    /// above it ([`Vm::start_callback`]).
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    fn enter_callback(
+        &mut self,
+        func: Value,
+        params: [Value; 3],
+        callee: Value,
+        call_args: Value,
+    ) -> Result<State, Raised> {
+        use mm_compile::bytecode::{instr_len, op, operand};
+        let mut st = self.bottom_call(func, &params)?;
+        // Arguments that are not a list or tuple (a handle's `_args` the
+        // program replaced): `_aio_callback` runs from its start, and its
+        // `f(*args)` raises the `TypeError`, reported as the callback's.
+        if self.seq_slots(call_args).is_none() {
+            return Ok(st);
+        }
+        let bc = &self.codes[st.ci as usize].code.bytecode;
+        let mut pc = 0;
+        while let Some(&w) = bc.get(pc) {
+            if crate::interp::op_of(w) == op::CALL_EX {
+                break;
+            }
+            pc += instr_len(crate::interp::op_of(w));
+        }
+        if pc >= bc.len() {
+            return Err(self.err(T::SystemError, "micro-monty: _aio_callback has no call"));
+        }
+        let r = st.base + operand(bc, pc, 0);
+        self.stack[r..r + 3].copy_from_slice(&[callee, call_args, Value::NONE]);
+        st.pc = pc;
+        if callee.is_obj_kind(ty::FUNC as u8) {
+            let ret_pc = pc + instr_len(op::CALL_EX);
+            let mut at = st.clone();
+            match self.call_ex(&mut at, r, pc, ret_pc) {
+                Ok(None) => return Ok(at),
+                // A generator or coroutine function returns its object at
+                // once.
+                Ok(Some(v)) => {
+                    st.acc = v;
+                    st.pc = ret_pc;
+                }
+                // No room: the start's failure.
+                Err(Raised) if self.exc_type(self.exc) == T::MemoryError => return Err(Raised),
+                // A call that does not bind (`TypeError`) or recurses too
+                // deep is the callback's own error: the `CALL_EX` raises it
+                // again when the slot runs, in `_aio_callback`'s `try`,
+                // which reports it.
+                Err(Raised) => self.exc = Value::NONE,
+            }
+        }
+        Ok(st)
     }
 
     /// `asyncio.sleep(delay, result=None)`.
@@ -2703,6 +2952,173 @@ impl Vm {
         self.blocked.remove(k);
         self.set_raw_of(a, aw::STATE, aw::DONE);
         self.activate(0).ok().flatten()
+    }
+
+    /// Queue entry `entry` could not start: no room for its task slot,
+    /// stack or context (`MemoryError` pending). It goes back first in its
+    /// iteration, so no accepted callback or task is dropped. The first time,
+    /// the scheduler waits for a full collection, as an instruction that
+    /// ran out of memory does (`Vm::oom_retry`), held at a safepoint with
+    /// no guest code (`LOOP_START_WAIT`, in the image), and the start is
+    /// tried once more; `None` then. A second failure (`waited`) raises the
+    /// error in the main task at its `await` ([`Vm::raise_at_main`]).
+    fn start_failed(&mut self, entry: Ready, waited: bool) -> Option<Next> {
+        self.ready.push_front(entry);
+        self.iter_left += 1;
+        if !waited && self.exc_type(self.exc) == T::MemoryError && self.room_may_help() {
+            self.exc = Value::NONE;
+            self.loop_flags |= crate::vm::LOOP_START_WAIT;
+            self.collect_for_retry();
+            return self.hold_for_start().map(|(r, st)| Next::Park(r, st));
+        }
+        self.heap.take_refused();
+        let e = self.exc;
+        self.raise_at_main(e, true)
+    }
+
+    /// The running task ended with the pending exception. A callback's slot
+    /// (no handle) has no one to retrieve it: what leaves `_aio_callback`
+    /// is what it could not report (`MemoryError` in the report itself) or
+    /// does not catch (`SystemExit`, `KeyboardInterrupt`), and it goes to
+    /// the main task's `await` ([`Vm::raise_at_main`]) unless it ended an
+    /// `asyncio.run` already (`Vm::escape`). `None`: go on scheduling.
+    pub(crate) fn task_failed(&mut self) -> Option<Next> {
+        let e = self.exc;
+        // Anything else leaving `_aio_callback` came from its report (an
+        // exception handler or `sys.stderr` that raises), which CPython's
+        // `call_exception_handler` swallows: dropped, as there.
+        let callback = self.cur != 0
+            && self
+                .tasks
+                .get(self.cur)
+                .and_then(Option::as_ref)
+                .is_some_and(|t| t.handle == Value::NONE)
+            && [T::MemoryError, T::SystemExit, T::KeyboardInterrupt]
+                .into_iter()
+                .any(|t| self.instance_of(e, self.type_obj(t)));
+        // The scheduler's own tasks (a timer's wait, `_aio_later`) fail
+        // only for room, or when their timer is cancelled.
+        #[cfg(not(feature = "asyncio"))]
+        let internal = false;
+        #[cfg(feature = "asyncio")]
+        let internal = !callback
+            && self.cur != 0
+            && self
+                .tasks
+                .get(self.cur)
+                .and_then(Option::as_ref)
+                .is_some_and(|t| {
+                    t.handle.is_obj_kind(ty::TASK as u8)
+                        && self.raw_of(t.handle, aw::CANCELS) & aw::INTERNAL != 0
+                })
+            && !self.instance_of(e, self.type_obj(T::CancelledError));
+        self.finish_task(false, e);
+        if !(callback || internal) || self.escape == e {
+            return None;
+        }
+        self.heap.take_refused();
+        self.raise_at_main(e, false)
+    }
+
+    /// Runs the collection a failed start waits for, a step per safepoint
+    /// with no guest code between steps; a park leaves the rest owed. The
+    /// state the safepoints see is the trampoline's, with no registers:
+    /// every task is suspended, so their saved states are the roots.
+    pub(crate) fn hold_for_start(&mut self) -> Option<(ParkReason, State)> {
+        let st = self.idle_state();
+        while self.gc_waiting() {
+            if let Some(r) = self.safepoint(&st) {
+                return Some((r, st));
+            }
+        }
+        None
+    }
+
+    /// The registers of the scheduler between tasks: the trampoline's, with
+    /// no frame of a task's.
+    fn idle_state(&mut self) -> State {
+        self.cur = 0;
+        // What the last task left in the VM stack is dead.
+        self.stack.fill(Value::UNDEFINED);
+        State {
+            pc: 0,
+            base: 0,
+            ci: self.tramp,
+            acc: Value::NONE,
+            func: Value::NONE,
+            coro: Value::NONE,
+        }
+    }
+
+    /// A parked session resumes the collection a failed start waits for
+    /// ([`Vm::start_failed`]), then the scheduler tries the start again;
+    /// after a skipped handle's park (`LOOP_SKIP_PARK`) no collection is
+    /// held, and the scheduler goes on.
+    pub(crate) fn resume_start_wait(&mut self) -> Exit {
+        self.loop_flags &= !crate::vm::LOOP_SKIP_PARK;
+        if let Some((r, st)) = self.hold_for_start() {
+            self.saved = Some(st);
+            return Exit::Parked(r);
+        }
+        self.run_next()
+    }
+
+    /// Error `e` came from the loop itself (a queue entry that cannot start,
+    /// an exception leaving a callback): it is raised in the main task at
+    /// its `await`, where the guest can catch it. In `asyncio.run` after
+    /// the run's coroutine has ended (its teardown), nothing awaits for the
+    /// guest: the run raises it when it ends (`Vm::escape`) and the entry
+    /// waiting first (`requeued`) goes, as the run ends with the error.
+    /// `None`: go on scheduling.
+    fn raise_at_main(&mut self, e: Value, requeued: bool) -> Option<Next> {
+        let teardown = self.loop_flags & crate::vm::LOOP_IN_RUN != 0
+            && self
+                .tasks
+                .first()
+                .and_then(Option::as_ref)
+                .is_some_and(|t| t.handle == Value::NONE);
+        if teardown {
+            if self.escape == Value::NONE {
+                self.escape = e;
+            }
+            if requeued {
+                self.ready.pop_front();
+                self.iter_left = self.iter_left.saturating_sub(1);
+            }
+            return None;
+        }
+        let Some(st) = self.wake_main() else {
+            // Every task but the running one is in `ready` or `blocked`.
+            debug_assert!(false, "the loop failed with no main task");
+            return Some(Next::Wait(Vec::new()));
+        };
+        self.exc = e;
+        Some(Next::Raise(st))
+    }
+
+    /// Takes the main task out of the run queue or the blocked list and
+    /// activates it, to raise the pending error at its `await` (a step that
+    /// cannot go on without room). `None` if it is in neither: it runs, or
+    /// has ended, so no task could have been waiting on the scheduler.
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    fn wake_main(&mut self) -> Option<State> {
+        if let Some(k) = self.blocked.iter().position(|&t| t == 0) {
+            self.blocked.remove(k);
+        } else {
+            let k = self
+                .ready
+                .iter()
+                .position(|r| matches!(r, Ready::Task(0)))?;
+            self.burn(k as u64);
+            self.ready.remove(k);
+            if k < self.iter_left {
+                self.iter_left -= 1;
+            }
+        }
+        let exc = self.exc;
+        let st = self.activate(0).ok().flatten();
+        self.exc = exc;
+        st
     }
 
     /// The index of the task running task handle `h`.

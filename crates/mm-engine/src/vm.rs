@@ -567,6 +567,12 @@ pub(crate) struct State {
 /// [`Vm::loop_flags`] bits.
 pub(crate) const LOOP_TOP_AWAIT: u8 = 1;
 pub(crate) const LOOP_IN_RUN: u8 = 2;
+/// The scheduler waits for a collection before it tries again to start a
+/// queue entry that had no room (`Vm::start_failed`).
+pub(crate) const LOOP_START_WAIT: u8 = 4;
+/// Parked at the safepoint of a cancelled handle the scheduler skipped,
+/// between queue entries (`Vm::next_task`); the scheduler goes on.
+pub(crate) const LOOP_SKIP_PARK: u8 = 8;
 
 pub(crate) struct Task {
     /// The `TASK` object it settles, or `None` for the cell's main task.
@@ -609,9 +615,10 @@ pub(crate) enum Ready {
     Task(usize),
     /// A child of this gather settled: check it (gather's done callback).
     Gather(Value),
-    /// Call this function with this argument (`Value::UNDEFINED`: none):
-    /// a done callback or `loop.call_soon`.
+    /// Call this function with this argument: a done callback.
     Call(Value, Value),
+    /// Run this `asyncio.Handle` (`loop.call_soon`, a timer that is due).
+    Handle(Value),
 }
 
 /// What a builtin asked the dispatch loop to do by returning `UNDEFINED`.
@@ -1861,7 +1868,7 @@ impl Vm {
     /// room for: one larger, or a size cap refused before the heap was
     /// asked (`list(range(10**9))`), raises at once, without a collection
     /// or its charge.
-    fn room_may_help(&self) -> bool {
+    pub(crate) fn room_may_help(&self) -> bool {
         let refused = self.heap.take_refused();
         refused != 0 && refused <= self.heap.memory_limit()
     }
@@ -1898,7 +1905,7 @@ impl Vm {
     /// snapshots, whose own collection can leave a retry nothing to wait
     /// for (-4.2M to +5.0M units on the correctness review's programs
     /// [M, reviewer]), until snapshots stop collecting (lane D step 5).
-    fn collect_for_retry(&mut self) {
+    pub(crate) fn collect_for_retry(&mut self) {
         // A collection already asked for (a result's, `collect_for_result`)
         // and not ended is paid for: one charge per collection.
         if self.gc_wait <= self.heap.stats().collections {

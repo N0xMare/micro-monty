@@ -2608,6 +2608,33 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "junk = [str(i) * 20 for i in range(8000)]",
         60,
     ),
+    // Loop callbacks with no call or loop in their body: the scheduler
+    // starts each one, and the start is a safepoint, as `_aio_callback`'s
+    // `CALL_EX` was. Entered without one, 300,000 done callbacks were one
+    // step of 203 ms, and 300,000 `call_soon` callbacks one of 240 ms
+    // [M, reviewer, af35804].
+    (
+        Row::Bounded,
+        "import asyncio\nawait asyncio.sleep(0)\nloop = asyncio.get_running_loop()\nran = 0\ndef cb(x):\n    global ran\n    ran += 1\nfs = [loop.create_future() for _ in range(6000)]\nfor f in fs:\n    for _ in range(50):\n        f.add_done_callback(cb)",
+        "for f in fs:\n    f.set_result(1)\nawait asyncio.sleep(0)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "import asyncio\nawait asyncio.sleep(0)\nloop = asyncio.get_running_loop()\nran = 0\ndef cb():\n    global ran\n    ran += 1",
+        "for _ in range(300_000):\n    loop.call_soon(cb)\nawait asyncio.sleep(0)",
+        1,
+    ),
+    // Cancelled handles: the scheduler skips each one at a safepoint of its
+    // own. Skipped with none, 1,000,000 were one step of 63-66 ms
+    // [M, reviewer, shipped ee7edb6]; the row's worst step is now the
+    // loop that builds the queue, and a skip is about 0.05 ms.
+    (
+        Row::Bounded,
+        "import asyncio\nawait asyncio.sleep(0)\nloop = asyncio.get_running_loop()\ndef cb():\n    pass",
+        "for _ in range(1_000_000):\n    loop.call_soon(cb).cancel()\nawait asyncio.sleep(0)",
+        1,
+    ),
 ];
 
 /// How many more times a bounded row over the limit runs. This host has

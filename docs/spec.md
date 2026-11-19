@@ -1529,10 +1529,47 @@ release and callback order. A callback (`add_done_callback`,
 `call_soon`, a timer's) runs in a task slot of its own, with no `Task`
 handle, through the prelude's `_aio_callback` from the bottom of the slot's
 stack, so a callback that raises goes to the loop's exception handler and a
-cell parks inside one like anywhere else. `call_later`/`call_at` timers are
-scheduler-internal tasks sleeping on the virtual clock, left out of
-`all_tasks()`. Task numbers, names, callback slots and the loop flags are
-VM state in the snapshot.
+cell parks inside one like anywhere else. `call_soon` queues its
+`asyncio.Handle`; the scheduler skips one cancelled by then, charging the
+tick and passing the safepoint its start would, and runs the callback in
+the handle's own context, as CPython's `Handle._run` does.
+`call_later`/`call_at` timers are scheduler-internal tasks sleeping on the
+virtual clock, left out of `all_tasks()`; a due timer queues its handle
+first in the iteration, where its task stood. A timer's task, and those of
+`wait_for` and `as_completed(timeout=)`, is given its deadline when the
+timer is made, so its first step allocates nothing.
+
+A callback's start is everything before the callback itself runs: its
+arguments, its context, its slot, `_aio_callback`'s frame stopped at its
+call of the callback and, for a Python function or a method of one, the
+function's frame entered by that call's own code (`Vm::call_ex`), so no
+guest code that can fail for room runs first. A call that does not bind
+(`TypeError`) is the callback's error, raised by that call when the slot
+runs and reported; any other callable (a native, a `functools.partial`, an
+object with `__call__`) is called when the slot runs, and that call is its
+run.
+
+The scheduler never discards what it accepted for lack of room. A queue
+entry (a callback, or a task's first step) that cannot get its task slot,
+stack or context copy goes back first in its iteration. The first time,
+the scheduler waits for a full collection, held at safepoints with no
+guest code between them as an instruction's retry after `MemoryError` is
+(`Vm::start_failed`; the wait is the `LOOP_START_WAIT` loop flag, in the
+image, so a park or a restore inside it resumes it), and tries once more.
+A second failure raises `MemoryError` in the main task at its `await`,
+where the guest can catch it, free memory and await again; the entry then
+runs. An exception that leaves `_aio_callback` (`SystemExit`,
+`KeyboardInterrupt`, or a `MemoryError` its report could not get past)
+goes to the same `await`; anything else its report raises (a
+`sys.stderr` that fails) is dropped, as CPython's
+`call_exception_handler` drops it. In `asyncio.run` after the run's coroutine has
+ended, `asyncio.run` raises it once its teardown is done (`Vm::escape`).
+A cancel that cannot pass to what a task waits on for lack of room makes
+the task raise `CancelledError` at its `await` instead. `Semaphore` and
+`Lock` give a permit handed to a waiter back on any exception at its
+`await`, not only `CancelledError`. Task numbers, names, callback slots,
+the run queue (with its handles) and the loop flags are VM state in the
+snapshot.
 
 The running `contextvars` context is a dict in `Vm::context`; each task
 keeps its own (`Task.context`, a copy of its creator's at spawn, or the

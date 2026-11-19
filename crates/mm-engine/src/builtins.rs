@@ -1156,6 +1156,8 @@ const DEFS: &[Def] = &[
     #[cfg(feature = "asyncio")]
     m!("_mm", "aio_soon", 1, 1, NO, NO, aio_soon),
     #[cfg(feature = "asyncio")]
+    m!("_mm", "aio_fire", 1, 1, NO, NO, aio_fire),
+    #[cfg(feature = "asyncio")]
     m!("_mm", "aio_time", 0, 0, NO, NO, aio_time),
     #[cfg(feature = "asyncio")]
     m!("_mm", "aio_running", 0, 0, NO, NO, aio_running),
@@ -3257,6 +3259,13 @@ fn aio_set_exc(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 fn aio_soon(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.call_soon(vm.arg_o(&a, 0))?;
+    Ok(Value::NONE)
+}
+
+#[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
+fn aio_fire(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    vm.fire_timer(vm.arg_o(&a, 0))?;
     Ok(Value::NONE)
 }
 

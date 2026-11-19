@@ -79,7 +79,7 @@ const STACK_SLACK: usize = 1 << 16;
 ///   set tables;
 /// - what an opcode's operands mean, with the same format;
 /// - how frames, generators or coroutines keep their state.
-pub(crate) const SNAPSHOT_EPOCH: u32 = 11;
+pub(crate) const SNAPSHOT_EPOCH: u32 = 12;
 
 /// This build's engine fingerprint for snapshot build ids: what an image
 /// written by this engine means. The layout epoch; the codecs and every
@@ -772,6 +772,10 @@ impl Vm {
                     put_u8(out, 2);
                     put_value(out, f);
                     put_value(out, a);
+                }
+                Ready::Handle(h) => {
+                    put_u8(out, 3);
+                    put_value(out, h);
                 }
             }
         }
@@ -1982,6 +1986,7 @@ impl Vm {
                 }
                 1 => Ready::Gather(need(r.value(), "run queue")?),
                 2 => Ready::Call(need(r.value(), "run queue")?, need(r.value(), "run queue")?),
+                3 => Ready::Handle(need(r.value(), "run queue")?),
                 _ => return Err(SnapError::Corrupt("run queue")),
             });
         }
@@ -2172,7 +2177,7 @@ impl Vm {
             || !blocked.iter().all(|&i| task_ok(i))
             || !ready.iter().all(|e| match e {
                 Ready::Task(i) => task_ok(*i),
-                Ready::Gather(_) | Ready::Call(..) => true,
+                Ready::Gather(_) | Ready::Call(..) | Ready::Handle(_) => true,
             })
         {
             return Err(SnapError::Corrupt("tasks"));

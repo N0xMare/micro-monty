@@ -367,6 +367,13 @@ impl Vm {
 
     /// Continues after a park.
     pub fn resume(&mut self) -> Exit {
+        // Parked between tasks: the scheduler waited for a collection, or
+        // skipped a cancelled handle.
+        if self.loop_flags & (crate::vm::LOOP_START_WAIT | crate::vm::LOOP_SKIP_PARK) != 0
+            && self.saved.take().is_some()
+        {
+            return self.resume_start_wait();
+        }
         match self.take_saved() {
             Some(st) => {
                 // A collection step the park went ahead of runs first, and
@@ -602,8 +609,15 @@ impl Vm {
                         self.finish_cell();
                         return Exit::Error;
                     }
-                    let e = self.exc;
-                    self.finish_task(false, e);
+                    match self.task_failed() {
+                        Some(crate::aio::Next::Raise(s)) => {
+                            st = s;
+                            fault = true;
+                            continue;
+                        }
+                        Some(crate::aio::Next::Wait(ids)) => return self.wait_on(ids),
+                        _ => {}
+                    }
                 }
             }
             match self.next_task() {
@@ -613,6 +627,10 @@ impl Vm {
                     fault = true;
                 }
                 crate::aio::Next::Wait(ids) => return self.wait_on(ids),
+                crate::aio::Next::Park(r, s) => {
+                    self.saved = Some(s);
+                    return Exit::Parked(r);
+                }
             }
         }
     }
@@ -734,7 +752,7 @@ impl Vm {
     /// The cold half of a safepoint: fuel, deadline and GC.
     #[cold]
     #[inline(never)]
-    fn safepoint(&mut self, st: &State) -> Option<ParkReason> {
+    pub(crate) fn safepoint(&mut self, st: &State) -> Option<ParkReason> {
         let regular = self.regular_check();
         self.charge_ticks();
         self.afford = false;
@@ -967,7 +985,7 @@ impl Vm {
             t.values(&self.unretrieved);
             for r in &self.ready {
                 match *r {
-                    Ready::Gather(g) => t.value(g),
+                    Ready::Gather(g) | Ready::Handle(g) => t.value(g),
                     Ready::Call(f, a) => t.values(&[f, a]),
                     Ready::Task(_) => {}
                 }
@@ -5195,7 +5213,7 @@ impl Vm {
     /// function's `*args` is copied from that sequence slot to slot; other
     /// callees take the arguments laid out above this frame.
     #[inline(never)]
-    fn call_ex(
+    pub(crate) fn call_ex(
         &mut self,
         st: &mut State,
         f: usize,

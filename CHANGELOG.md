@@ -108,6 +108,29 @@ hashes are pre-release history, kept in the private archive
   exception no longer stays alive (a 180 MiB one ended in `MemoryError`
   where CPython completes). This is the second half of 0.0.2's `send()`
   known issue, except what Known issues keeps [M, own case 570].
+- asyncio near the memory limit no longer drops what the loop accepted.
+  A done callback, a `call_soon` entry, a timer or a task's first step
+  that has no room to start stays queued: the scheduler waits for one
+  full collection and tries again, and a second failure raises
+  `MemoryError` at the main task's `await`, where the guest can free
+  memory and await again. Before, such entries were dropped and the
+  awaits returned normally. An exception that leaves a callback unreported
+  (`SystemExit`, `KeyboardInterrupt`, or `MemoryError` in its own report)
+  reaches the same `await`, also in a top-level-await cell, where
+  `SystemExit` from a callback was lost with no limit set. `Semaphore` and
+  `Lock` hand a permit or the lock on when a waiter gets any exception at
+  its `await`, not only `CancelledError`. A callback's frame is entered by
+  the scheduler, and its start is a safepoint charged one unit, so a
+  `call_soon` round trip (the call and its callback) charges 8 fuel units
+  instead of 12 and a done callback what it did before [M]. The snapshot
+  epoch and the build id move.
+- `call_later`, `call_at`, `wait_for` and `as_completed(timeout=)` make
+  their deadline at the call, so a NaN delay (`ValueError: Invalid delay:
+  NaN`) or a delay of the wrong type (`call_at('x')`,
+  `as_completed(timeout='x')`: `TypeError`) raises there. Before, the call
+  returned and the timer's task failed unseen: the timer never fired,
+  `wait_for(x, nan)` returned or ended in `RuntimeError`, and
+  `as_completed` raised `TimeoutError` at once.
 
 ### Known issues
 
@@ -143,6 +166,15 @@ hashes are pre-release history, kept in the private archive
   as the one being handled, until it next returns, raises or is closed
   (`sys.exc_info()` in its body, a bare `raise`, the `__context__` of
   what it raises); a generator does the same. Older than 0.0.1.
+- `Semaphore.release()` that raises `MemoryError` (its waiter's callbacks
+  have no room) has already added its permit and woken no one; a guest
+  that retries the call releases twice. A second `release()` reaches
+  CPython's end state.
+- A gather passed to `add_done_callback` as the callback is accepted, and
+  each settle counts as one of its children finishing: registered on two
+  futures, a gather of two pending futures ends done with `[None, None]`.
+  python3.14 reports `TypeError: '_GatheringFuture' object is not
+  callable` for each and the gather waits for its children.
 
 ## 0.0.2 (2026-11-18)
 

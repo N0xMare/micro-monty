@@ -3617,7 +3617,10 @@ class Semaphore:
                 await fut
             finally:
                 self._waiters.remove(fut)
-        except CancelledError:
+        except BaseException:
+            # CPython's catches CancelledError, the only error raised there;
+            # the loop's own MemoryError (a callback with no room) is raised
+            # here too, and must not lose the permit handed over.
             if fut.done() and not fut.cancelled():
                 self._value += 1
             raise
@@ -3637,8 +3640,10 @@ class Semaphore:
             return False
         for fut in self._waiters:
             if not fut.done():
-                self._value -= 1
+                # Settled first: `aio_set` can raise MemoryError with
+                # nothing changed.
                 _mm.aio_set(fut, True)
+                self._value -= 1
                 return True
         return False
 
@@ -3708,7 +3713,8 @@ class Lock:
                 await fut
             finally:
                 self._waiters.remove(fut)
-        except CancelledError:
+        except BaseException:
+            # As `Semaphore.acquire`: the loop's MemoryError too.
             if not self._locked:
                 self._wake_up_first()
             raise
@@ -4109,15 +4115,17 @@ def _aio_ensure(aw):
     return _mm.aio_spawn(aw)
 
 
-async def _aio_wait(delay):
-    import _mm
-    await _mm.aio_deadline(delay)
+# The scheduler's timer tasks are given their deadline, made where the
+# timer is accepted, and `fired` holds its slot: their first step allocates
+# nothing, so a timer that is accepted waits and fires (`Vm::start_failed`
+# covers the step's own start).
+async def _aio_wait(deadline):
+    await deadline
 
 
-async def _aio_timer(delay, task, fired):
-    import _mm
-    await _mm.aio_deadline(delay)
-    fired.append(True)
+async def _aio_timer(deadline, task, fired):
+    await deadline
+    fired[0] = True
     task.cancel()
 
 
@@ -4150,19 +4158,19 @@ async def wait_for(fut, timeout):
         return await fut
     task = _mm.aio_current_task()
     cancelling = task.cancelling()
-    fired = []
-    timer = _mm.aio_spawn_internal(_aio_timer(timeout, task, fired))
+    fired = [False]
+    timer = _mm.aio_spawn_internal(_aio_timer(_mm.aio_deadline(timeout), task, fired))
     try:
         r = await fut
     except BaseException as exc:
         timer.cancel()
-        if fired and task.uncancel() <= cancelling:
+        if fired[0] and task.uncancel() <= cancelling:
             if isinstance(exc, CancelledError):
                 raise TimeoutError from exc
             _aio_insert_timeout(exc)
         raise
     timer.cancel()
-    if fired:
+    if fired[0]:
         task.uncancel()
     return r
 
@@ -4180,7 +4188,7 @@ class _AsCompletedIterator:
         self._todo_left = len(self._todo)
         self._timer = None
         if self._todo and timeout is not None:
-            self._timer = _mm.aio_spawn_internal(_aio_wait(timeout))
+            self._timer = _mm.aio_spawn_internal(_aio_wait(_mm.aio_deadline(timeout)))
 
     def __aiter__(self):
         return self
@@ -4450,14 +4458,8 @@ class Handle:
     def cancelled(self):
         return self._cancelled
 
-    def _run(self):
-        import _mm
-        if not self._cancelled:
-            old = _mm.ctx_swap(self._ctx)
-            try:
-                _aio_callback(self._callback, *self._args, _aio_h=self)
-            finally:
-                _mm.ctx_swap(old)
+    # The scheduler runs it (`Vm::start_callback`): `_callback(*_args)` in
+    # `_ctx`, skipped once cancelled.
 
 
 class TimerHandle(Handle):
@@ -4483,20 +4485,28 @@ class TimerHandle(Handle):
 
 
 def _aio_cb_name(f):
-    # CPython 3.14 shows no arguments outside debug mode.
-    name = getattr(f, '__qualname__', None) or getattr(f, '__name__', None) or repr(f)
+    # CPython 3.14 shows no arguments outside debug mode. A name or repr
+    # that raises gives the type's name, so the report is still written.
+    try:
+        name = getattr(f, '__qualname__', None) or getattr(f, '__name__', None) or repr(f)
+    except Exception:
+        name = type(f).__name__
     return name + '()'
 
 
-def _aio_callback(f, *args, _aio_h=None):
-    # A loop callback: what it raises goes to the exception handler.
+def _aio_callback(f, args, h):
+    # A loop callback, `h` its handle or `None`: what it raises goes to the
+    # exception handler. The scheduler starts it at the call of `f`, with
+    # the call's arguments in place and a Python function's frame entered
+    # (`Vm::start_callback`): no room for them fails the start, which
+    # leaves the entry queued, not this `try`.
     try:
         f(*args)
     except (SystemExit, KeyboardInterrupt):
         raise
     except BaseException as e:
         _aio_exc_handler({'message': f'Exception in callback {_aio_cb_name(f)}', 'exception': e,
-                          'handle': _aio_h or Handle(f, (), None)})
+                          'handle': h or Handle(f, (), None)})
 
 
 def _aio_exc_handler(context):
@@ -4513,11 +4523,14 @@ def _aio_exc_handler(context):
     sys.stderr.write(text)
 
 
-async def _aio_later(h):
+async def _aio_later(h, deadline):
+    # As `_aio_timer`: the deadline is made as the timer is accepted.
+    await deadline
     import _mm
-    await _mm.aio_deadline(h._when - _mm.aio_time())
     h._task = None
-    h._run()
+    # First in the run queue, so it runs in this iteration, as a timer's
+    # handle CPython moves to the ready queue when it is due.
+    _mm.aio_fire(h)
 
 
 def _aio_call_at(when, callback, args, kwargs):
@@ -4526,7 +4539,7 @@ def _aio_call_at(when, callback, args, kwargs):
         if k != 'context':
             raise TypeError(f"call_at() got an unexpected keyword argument '{k}'")
     h = TimerHandle(when, callback, args, kwargs.get('context'))
-    h._task = _mm.aio_spawn_internal(_aio_later(h))
+    h._task = _mm.aio_spawn_internal(_aio_later(h, _mm.aio_deadline(when - _mm.aio_time())))
     return h
 
 
@@ -4565,7 +4578,7 @@ class _UnixSelectorEventLoop:
             if k != 'context':
                 raise TypeError(f"call_soon() got an unexpected keyword argument '{k}'")
         h = Handle(callback, args, kwargs.get('context'))
-        _mm.aio_soon(h._run)
+        _mm.aio_soon(h)
         return h
 
     def call_later(self, delay, callback, *args, **kwargs):

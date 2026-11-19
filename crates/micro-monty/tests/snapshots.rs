@@ -2318,3 +2318,224 @@ fn fuel_checks_fall_where_they_would_unparked() {
         }
     }
 }
+
+/// A `call_soon` whose start cannot fit: a method of a Python function with
+/// 100,000 arguments, whose start builds the ~800 KB tuple of them, beside
+/// about 300 KB free (memory sized by a probe at 64 KiB, so the margins are
+/// far above the accounting's own drift). `garbage` leaves 2 MB the start's
+/// collection frees, so the held start succeeds; without it the retry fails
+/// too and `MemoryError` is raised at the cell's `await`. The arguments go
+/// on the handle, not through `call_soon(o.m, *args)`: a spread's register
+/// peak stays in the VM stack's capacity, which a restore trims, so a run
+/// restored only inside the hold would have that much more room.
+fn held_start_cell(garbage: bool) -> String {
+    format!(
+        "\
+import asyncio
+import gc
+class O:
+    def m(self, *a):
+        print('ran', len(a))
+o = O()
+junk = bytearray(2_000_000) if {garbage} else None
+loop = asyncio.get_running_loop()
+h = loop.call_soon(o.m)
+h._args = tuple(range(100_000))
+lo, hi = 0, 16 << 20
+while hi - lo > 65536:
+    mid = (lo + hi) // 2
+    try:
+        b = bytearray(mid)
+        lo = mid
+    except MemoryError:
+        hi = mid
+    b = None
+gc.collect()
+pad = bytearray(lo - 300_000)
+junk = None
+print('armed')
+try:
+    await asyncio.sleep(0)
+    print('await returned')
+except MemoryError:
+    print('MemoryError at the await')
+pad = None
+gc.collect()
+await asyncio.sleep(0)
+print('end')
+",
+        garbage = if garbage { "True" } else { "False" }
+    )
+}
+
+fn held_start_engine() -> Engine {
+    Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(8 << 20)))
+}
+
+const HELD_TOTAL: u64 = 1 << 40;
+
+fn with_sink(s: &mut Session) -> Arc<Mutex<String>> {
+    let out = Arc::new(Mutex::new(String::new()));
+    let sink = Arc::clone(&out);
+    s.set_output(Box::new(move |t: &str| {
+        sink.lock().expect("lock").push_str(t);
+    }));
+    out
+}
+
+/// A snapshot taken while the scheduler holds a failed start for its
+/// collection (`LOOP_START_WAIT`) and restored in a new process: the held
+/// start then succeeds, or fails again and raises at the cell's `await`,
+/// each with the output and fuel of the run that never parked.
+#[test]
+fn a_start_held_for_its_collection_restores_in_a_new_process() {
+    let e = held_start_engine();
+    for garbage in [true, false] {
+        let code = e
+            .compile(&held_start_cell(garbage), "held.py")
+            .expect("compiles");
+        let mut s = Session::new(&e).expect("session");
+        let out = with_sink(&mut s);
+        s.set_fuel_total(Some(HELD_TOTAL));
+        let p = s.start(&code);
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        let plain = (
+            out.lock().expect("lock").clone(),
+            HELD_TOTAL - s.fuel_total().expect("total"),
+        );
+        let want = if garbage {
+            "armed\nran 100000\nawait returned\nend\n"
+        } else {
+            "armed\nMemoryError at the await\nran 100000\nend\n"
+        };
+        assert_eq!(plain.0, want);
+
+        // Parked every 997 units; the park inside the hold is the first
+        // after `armed` whose slice paid a collection (`collect_for_retry`).
+        let mut s = Session::new(&e).expect("session");
+        let out = with_sink(&mut s);
+        s.set_fuel_total(Some(HELD_TOTAL));
+        s.set_fuel(Some(997));
+        let mut p = s.start(&code);
+        let mut last = HELD_TOTAL;
+        let image = loop {
+            assert!(
+                matches!(p, Progress::Parked { .. }),
+                "garbage {garbage}: no hold: {p:?}"
+            );
+            let left = s.fuel_total().expect("total");
+            if out.lock().expect("lock").contains("armed") && last - left > 50_000 {
+                break s.snapshot().expect("snapshot");
+            }
+            last = left;
+            s.set_fuel(Some(997));
+            p = s.resume(Resume::Continue).expect("resumes");
+        };
+        let before = out.lock().expect("lock").clone();
+        assert_eq!(before, "armed\n");
+        let path =
+            std::env::temp_dir().join(format!("mm-held-{}-{garbage}.img", std::process::id()));
+        std::fs::write(&path, &image).expect("write");
+        let child = std::process::Command::new(std::env::current_exe().expect("this test"))
+            .args(["held_start_in_a_child", "--exact", "--nocapture"])
+            .env("MM_HELD_IMAGE", &path)
+            .output()
+            .expect("runs");
+        let _ = std::fs::remove_file(&path);
+        assert!(child.status.success(), "{child:?}");
+        let stdout = String::from_utf8_lossy(&child.stdout);
+        let rest = stdout
+            .split("held output: <<")
+            .nth(1)
+            .and_then(|t| t.split(">>").next())
+            .expect("the child's output");
+        let left: u64 = stdout
+            .split("held fuel left: ")
+            .nth(1)
+            .and_then(|t| t.split_whitespace().next())
+            .and_then(|t| t.parse().ok())
+            .expect("the child's fuel");
+        assert_eq!(
+            (before + rest, HELD_TOTAL - left),
+            plain,
+            "garbage {garbage}"
+        );
+    }
+}
+
+/// The new process of the test above: restores `MM_HELD_IMAGE`, runs it to
+/// its end in slices of 997 units and prints its output and fuel left.
+#[test]
+fn held_start_in_a_child() {
+    let Some(path) = std::env::var_os("MM_HELD_IMAGE") else {
+        return;
+    };
+    let e = held_start_engine();
+    let mut s = e
+        .restore(&std::fs::read(path).expect("read"))
+        .expect("restores");
+    let out = with_sink(&mut s);
+    let mut p = Progress::Parked {
+        reason: micro_monty::ParkReason::Fuel,
+    };
+    while matches!(p, Progress::Parked { .. }) {
+        s.set_fuel(Some(997));
+        p = s.resume(Resume::Continue).expect("resumes");
+    }
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    let text = out.lock().expect("lock").clone();
+    println!("held output: <<{text}>>");
+    println!("held fuel left: {}", s.fuel_total().expect("total"));
+}
+
+/// Live and cancelled `call_soon` handles interleaved, then a run of
+/// cancelled ones, parked at every unit and restored from a new image at
+/// every park: the parks that fall at a skipped handle hold
+/// `LOOP_SKIP_PARK` in their image, and the run ends with the output and
+/// fuel of the run that never parked.
+#[test]
+fn a_park_at_a_skipped_handle_restores() {
+    let e = Engine::new(EngineConfig::default());
+    let code = e
+        .compile(
+            "import asyncio\nawait asyncio.sleep(0)\nloop = asyncio.get_running_loop()\n\
+             ran = []\ndef cb(i):\n    ran.append(i)\n\
+             for i in range(150):\n    h = loop.call_soon(cb, i)\n    if i % 3:\n        h.cancel()\n\
+             for i in range(100):\n    loop.call_soon(cb, -1).cancel()\n\
+             loop.call_soon(cb, 1000)\nawait asyncio.sleep(0)\nprint(len(ran), sum(ran))\n",
+            "skips.py",
+        )
+        .expect("compiles");
+    let mut s = Session::new(&e).expect("session");
+    let out = with_sink(&mut s);
+    s.set_fuel_total(Some(HELD_TOTAL));
+    let p = s.start(&code);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    let plain = (
+        out.lock().expect("lock").clone(),
+        HELD_TOTAL - s.fuel_total().expect("total"),
+    );
+    assert_eq!(plain.0, "51 4675\n");
+
+    let mut s = Session::new(&e).expect("session");
+    let mut out = with_sink(&mut s);
+    let mut text = String::new();
+    s.set_fuel_total(Some(HELD_TOTAL));
+    s.set_fuel(Some(1));
+    let mut p = s.start(&code);
+    let mut parks = 0;
+    while matches!(p, Progress::Parked { .. }) {
+        parks += 1;
+        text.push_str(&core::mem::take(&mut *out.lock().expect("lock")));
+        let image = s.snapshot().expect("snapshot");
+        drop(s);
+        s = e.restore(&image).expect("restores");
+        out = with_sink(&mut s);
+        s.set_fuel(Some(1));
+        p = s.resume(Resume::Continue).expect("resumes");
+    }
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    text.push_str(&out.lock().expect("lock"));
+    assert!(parks > 250, "{parks}");
+    assert_eq!((text, HELD_TOTAL - s.fuel_total().expect("total")), plain);
+}
