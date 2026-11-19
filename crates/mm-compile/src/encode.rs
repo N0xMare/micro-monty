@@ -839,7 +839,11 @@ impl Code {
     /// Appends the binary form of one code object ([`Code::decode`] reads
     /// it), for snapshots.
     pub fn encode_into(&self, out: &mut Vec<u8>) {
-        self.encode_to(&mut |b| out.extend_from_slice(b));
+        // Most pieces are one byte: pushed, not copied by a `memcpy` call.
+        self.encode_to(&mut |b| match b {
+            [x] => out.push(*x),
+            _ => out.extend_from_slice(b),
+        });
     }
 
     /// Streams the same binary form without allocating an output buffer.

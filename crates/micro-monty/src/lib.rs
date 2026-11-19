@@ -893,7 +893,7 @@ pub fn build_id() -> &'static [u8; 32] {
     static ID: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
     ID.get_or_init(|| {
         let mut ingredients = Vec::new();
-        let mut out = |b: &[u8]| ingredients.extend_from_slice(b);
+        let mut out = mm_core::Sink::Buf(&mut ingredients);
         mm_core::put_u32(&mut out, u32::from(SNAPSHOT_FORMAT));
         mm_core::put_u64(&mut out, LAYOUT_HASH);
         mm_core::put_u64(&mut out, mm_stdlib::FEATURES);

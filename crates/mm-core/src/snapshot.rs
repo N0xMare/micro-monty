@@ -22,38 +22,56 @@ use crate::space::{FIRST_UNITS, LARGE_UNITS, SEG_UNITS, Space, Store, header_len
 use crate::value::Value;
 use alloc::{boxed::Box, vec::Vec};
 
+/// Where an image goes: counted, to size its buffer first, or appended to
+/// that buffer. A concrete writer, so a fixed-size field is stored inline
+/// rather than copied by a `memcpy` call through a closure.
+pub enum Sink<'a> {
+    /// Counts the bytes that would be written.
+    Count(usize),
+    /// Appends them.
+    Buf(&'a mut Vec<u8>),
+}
+
+impl Sink<'_> {
+    /// Appends `b`.
+    #[inline]
+    pub fn put(&mut self, b: &[u8]) {
+        match self {
+            Sink::Count(n) => *n = n.saturating_add(b.len()),
+            Sink::Buf(v) => v.extend_from_slice(b),
+        }
+    }
+}
+
 /// Appends `v`.
 #[inline(never)]
-#[cfg_attr(mm_shipped, optimize(size))]
-pub fn put_u8(out: &mut dyn FnMut(&[u8]), v: u8) {
-    out(&[v]);
+pub fn put_u8(out: &mut Sink<'_>, v: u8) {
+    out.put(&[v]);
 }
 
 /// Appends `v`, little-endian.
 #[inline(never)]
-#[cfg_attr(mm_shipped, optimize(size))]
-pub fn put_u32(out: &mut dyn FnMut(&[u8]), v: u32) {
-    out(&v.to_le_bytes());
+pub fn put_u32(out: &mut Sink<'_>, v: u32) {
+    out.put(&v.to_le_bytes());
 }
 
 /// Appends `v`, little-endian.
 #[inline(never)]
-#[cfg_attr(mm_shipped, optimize(size))]
-pub fn put_u64(out: &mut dyn FnMut(&[u8]), v: u64) {
-    out(&v.to_le_bytes());
+pub fn put_u64(out: &mut Sink<'_>, v: u64) {
+    out.put(&v.to_le_bytes());
 }
 
 /// Appends a length (as `u32`; longer is cut, which the reader rejects).
-#[cfg_attr(mm_shipped, optimize(size))]
-pub fn put_len(out: &mut dyn FnMut(&[u8]), n: usize) {
+#[inline(never)]
+pub fn put_len(out: &mut Sink<'_>, n: usize) {
     put_u32(out, u32::try_from(n).unwrap_or(u32::MAX));
 }
 
-/// Appends length-prefixed bytes.
+/// Appends a length-prefixed byte string.
 #[cfg_attr(mm_shipped, optimize(size))]
-pub fn put_bytes(out: &mut dyn FnMut(&[u8]), b: &[u8]) {
+pub fn put_bytes(out: &mut Sink<'_>, b: &[u8]) {
     put_len(out, b.len());
-    out(b);
+    out.put(b);
 }
 
 /// Reads what the `put_*` functions wrote. Every read checks the remaining
@@ -241,13 +259,13 @@ impl Heap {
     /// written as live because they have a start bit.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub fn write_snapshot(&self, out: &mut Vec<u8>) {
-        self.write_snapshot_to(&mut |b| out.extend_from_slice(b));
+        self.write_snapshot_to(&mut Sink::Buf(out));
     }
 
     /// Streams [`Heap::write_snapshot`]'s form without allocating scratch
     /// or an output buffer.
     #[cfg_attr(mm_shipped, optimize(size))]
-    pub fn write_snapshot_to(&self, out: &mut dyn FnMut(&[u8])) {
+    pub fn write_snapshot_to(&self, out: &mut Sink<'_>) {
         let c = self.config;
         put_u64(out, c.memory_limit);
         put_u32(out, c.gc_ratio_percent);
@@ -454,7 +472,7 @@ impl Heap {
 
 impl<S: Store> Space<S> {
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn write_snapshot(&self, out: &mut dyn FnMut(&[u8])) {
+    fn write_snapshot(&self, out: &mut Sink<'_>) {
         put_len(out, self.segs.len().max(1));
         put_len(out, self.bump);
         put_len(out, self.vacant.len());

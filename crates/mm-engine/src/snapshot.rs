@@ -39,7 +39,7 @@ use crate::vm::{CodeObj, Frame, HDR, Post, Ready, Source, State, Task, Vm};
 use alloc::{collections::VecDeque, string::String, sync::Arc, vec, vec::Vec};
 use core::sync::atomic::AtomicBool;
 use mm_compile::bytecode::{Code, Konst, op};
-use mm_core::{Heap, Reader, Value, put_bytes, put_len, put_u8, put_u32, put_u64};
+use mm_core::{Heap, Reader, Sink, Value, put_bytes, put_len, put_u8, put_u32, put_u64};
 
 /// Why a snapshot cannot be read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,7 +92,7 @@ pub(crate) const SNAPSHOT_EPOCH: u32 = 18;
 #[cfg_attr(mm_shipped, optimize(size))]
 pub fn build_fingerprint() -> Vec<u8> {
     let mut bytes = Vec::new();
-    let mut out = |b: &[u8]| bytes.extend_from_slice(b);
+    let mut out = Sink::Buf(&mut bytes);
     put_u32(&mut out, SNAPSHOT_EPOCH);
     put_u64(&mut out, crate::LAYOUT_HASH);
     put_u64(&mut out, mm_core::LAYOUT_HASH);
@@ -168,12 +168,12 @@ impl crate::HostProgram {
 // ------------------------------------------------------------- writing
 
 #[cfg_attr(mm_shipped, optimize(size))]
-fn put_value(out: &mut dyn FnMut(&[u8]), v: Value) {
+fn put_value(out: &mut Sink<'_>, v: Value) {
     put_u64(out, v.to_bits());
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
-fn put_values(out: &mut dyn FnMut(&[u8]), vs: &[Value]) {
+fn put_values(out: &mut Sink<'_>, vs: &[Value]) {
     put_len(out, vs.len());
     for &v in vs {
         put_value(out, v);
@@ -181,23 +181,23 @@ fn put_values(out: &mut dyn FnMut(&[u8]), vs: &[Value]) {
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
-fn put_str(out: &mut dyn FnMut(&[u8]), s: &str) {
+fn put_str(out: &mut Sink<'_>, s: &str) {
     put_bytes(out, s.as_bytes());
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
-fn put_bool(out: &mut dyn FnMut(&[u8]), b: bool) {
+fn put_bool(out: &mut Sink<'_>, b: bool) {
     put_u8(out, u8::from(b));
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
-fn put_opt_u64(out: &mut dyn FnMut(&[u8]), v: Option<u64>) {
+fn put_opt_u64(out: &mut Sink<'_>, v: Option<u64>) {
     put_bool(out, v.is_some());
     put_u64(out, v.unwrap_or(0));
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
-fn put_state(out: &mut dyn FnMut(&[u8]), st: &State) {
+fn put_state(out: &mut Sink<'_>, st: &State) {
     put_len(out, st.pc);
     put_len(out, st.base);
     put_u32(out, st.ci);
@@ -207,7 +207,7 @@ fn put_state(out: &mut dyn FnMut(&[u8]), st: &State) {
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
-fn put_opt_state(out: &mut dyn FnMut(&[u8]), st: Option<&State>) {
+fn put_opt_state(out: &mut Sink<'_>, st: Option<&State>) {
     put_bool(out, st.is_some());
     if let Some(st) = st {
         put_state(out, st);
@@ -215,7 +215,7 @@ fn put_opt_state(out: &mut dyn FnMut(&[u8]), st: Option<&State>) {
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
-fn put_frames(out: &mut dyn FnMut(&[u8]), frames: &[Frame]) {
+fn put_frames(out: &mut Sink<'_>, frames: &[Frame]) {
     put_len(out, frames.len());
     for f in frames {
         put_u32(out, f.code);
@@ -230,7 +230,7 @@ fn put_frames(out: &mut dyn FnMut(&[u8]), frames: &[Frame]) {
 
 /// A stack: its length, then the live registers below `live`.
 #[cfg_attr(mm_shipped, optimize(size))]
-fn put_stack(out: &mut dyn FnMut(&[u8]), stack: &[Value], live: usize) {
+fn put_stack(out: &mut Sink<'_>, stack: &[Value], live: usize) {
     // Capped as `read_stack` caps it, so a restored session saves the same
     // length (a deep call's stack keeps its length after it returns).
     put_len(out, stack.len().min(live + STACK_SLACK));
@@ -238,7 +238,7 @@ fn put_stack(out: &mut dyn FnMut(&[u8]), stack: &[Value], live: usize) {
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
-fn put_cont(out: &mut dyn FnMut(&[u8]), c: &Cont) {
+fn put_cont(out: &mut Sink<'_>, c: &Cont) {
     let (tag, vals, words): (u8, [Value; 3], [u32; 4]) = match *c {
         Cont::None => (0, [Value::NONE; 3], [0; 4]),
         Cont::Discard => (1, [Value::NONE; 3], [0; 4]),
@@ -431,13 +431,13 @@ impl Vm {
     /// the case when the session has returned to the host).
     #[cfg_attr(mm_shipped, optimize(size))]
     pub fn write_snapshot(&mut self, out: &mut Vec<u8>) -> Result<(), NotAtSafepoint> {
-        self.write_snapshot_to(&mut |b| out.extend_from_slice(b))
+        self.write_snapshot_to(&mut Sink::Buf(out))
     }
 
     /// Streams [`Vm::write_snapshot`]'s form without owning an output buffer.
     /// Returns the same safepoint error as that method.
     #[cfg_attr(mm_shipped, optimize(size))]
-    pub fn write_snapshot_to(&mut self, out: &mut dyn FnMut(&[u8])) -> Result<(), NotAtSafepoint> {
+    pub fn write_snapshot_to(&mut self, out: &mut Sink<'_>) -> Result<(), NotAtSafepoint> {
         self.prepare_snapshot()?;
         self.emit_snapshot(out);
         self.place_gathers(true);
@@ -461,26 +461,16 @@ impl Vm {
         limit: usize,
     ) -> Result<Option<Vec<u8>>, NotAtSafepoint> {
         self.prepare_snapshot()?;
-        let mut len = header.len().saturating_add(trailer);
-        self.emit_snapshot(&mut |b| len = len.saturating_add(b.len()));
+        let mut count = Sink::Count(header.len().saturating_add(trailer));
+        self.emit_snapshot(&mut count);
+        let Sink::Count(len) = count else {
+            return Ok(None);
+        };
         let mut out = Vec::new();
         let fits = len <= limit && out.try_reserve_exact(len).is_ok();
         if fits {
             out.extend_from_slice(header);
-            self.emit_snapshot(&mut |bytes| {
-                // Scalar fields are cheaper as fixed-size stores than a call to musl's memcpy.
-                #[cfg(target_env = "musl")]
-                match bytes {
-                    [a] => return out.push(*a),
-                    [a, b] => return out.extend_from_slice(&[*a, *b]),
-                    [a, b, c, d] => return out.extend_from_slice(&[*a, *b, *c, *d]),
-                    [a, b, c, d, e, f, g, h] => {
-                        return out.extend_from_slice(&[*a, *b, *c, *d, *e, *f, *g, *h]);
-                    }
-                    _ => {}
-                }
-                out.extend_from_slice(bytes);
-            });
+            self.emit_snapshot(&mut Sink::Buf(&mut out));
         }
         self.place_gathers(true);
         Ok(fits.then_some(out))
@@ -563,7 +553,7 @@ impl Vm {
     /// Writes the image of a prepared session ([`Vm::prepare_snapshot`]);
     /// it reads the session only, so two calls write the same bytes.
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn emit_snapshot(&self, out: &mut dyn FnMut(&[u8])) {
+    fn emit_snapshot(&self, out: &mut Sink<'_>) {
         self.heap.write_snapshot_to(out);
 
         put_len(out, self.sources.len());
@@ -601,14 +591,14 @@ impl Vm {
                 put_str(out, k);
                 host.clear();
                 put_host(&mut host, v);
-                out(&host);
+                out.put(&host);
             }
             host.clear();
             put_host(&mut host, &m.spec);
-            out(&host);
+            out.put(&host);
             put_bool(out, program.is_some());
             if let Some(p) = program {
-                out(&p.key);
+                out.put(&p.key);
                 put_u64(out, p.code);
                 put_len(out, p.recipe.len());
                 for r in &p.recipe {
@@ -629,6 +619,9 @@ impl Vm {
             put_value(out, self.std_globals.get(k).copied().unwrap_or(Value::NONE));
         }
         put_len(out, self.codes.len());
+        // One buffer for every encoded code: a new one per code grew from
+        // empty each time, several allocator calls a code.
+        let mut encoded = Vec::new();
         for (i, c) in self.codes.iter().enumerate() {
             let i = u32::try_from(i).unwrap_or(u32::MAX);
             let std = self
@@ -673,7 +666,9 @@ impl Vm {
                 put_u32(out, i - c.module_base);
             } else {
                 put_u8(out, CODE_ENCODED);
-                c.code.encode_to(out);
+                encoded.clear();
+                c.code.encode_into(&mut encoded);
+                out.put(&encoded);
             }
             put_u32(out, c.module_base);
             put_u32(out, c.source);

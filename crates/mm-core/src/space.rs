@@ -122,7 +122,7 @@ pub(crate) trait Store {
     /// Header length field of a free block of `units` units.
     fn free_len(units: usize) -> u32;
     /// Appends units `off..off + n` to `out` as little-endian bytes.
-    fn append_units(&self, off: usize, n: usize, out: &mut dyn FnMut(&[u8]));
+    fn append_units(&self, off: usize, n: usize, out: &mut crate::snapshot::Sink<'_>);
     /// Copies little-endian bytes (whole units) in at unit `off`, zero-filling
     /// up to `off` first if the storage holds fewer units.
     fn load_units(&mut self, off: usize, bytes: &[u8]);
@@ -176,7 +176,7 @@ impl Store for Vec<u64> {
     fn free_len(units: usize) -> u32 {
         u32::try_from(units - 1).unwrap_or(0)
     }
-    fn append_units(&self, off: usize, n: usize, out: &mut dyn FnMut(&[u8])) {
+    fn append_units(&self, off: usize, n: usize, out: &mut crate::snapshot::Sink<'_>) {
         if let Some(words) = self.get(off..off + n) {
             // A fixed-size endian-conversion buffer avoids one sink call per
             // word without restoring scratch proportional to the live heap.
@@ -185,7 +185,7 @@ impl Store for Vec<u64> {
                 for (w, b) in chunk.iter().zip(bytes.as_chunks_mut::<8>().0) {
                     b.copy_from_slice(&w.to_le_bytes());
                 }
-                out(&bytes[..chunk.len() * 8]);
+                out.put(&bytes[..chunk.len() * 8]);
             }
         }
     }
@@ -251,9 +251,9 @@ impl Store for Vec<u8> {
     fn free_len(units: usize) -> u32 {
         u32::try_from((units - 1) * 8).unwrap_or(0)
     }
-    fn append_units(&self, off: usize, n: usize, out: &mut dyn FnMut(&[u8])) {
+    fn append_units(&self, off: usize, n: usize, out: &mut crate::snapshot::Sink<'_>) {
         if let Some(b) = self.get(off * 8..(off + n) * 8) {
-            out(b);
+            out.put(b);
         }
     }
     fn load_units(&mut self, off: usize, bytes: &[u8]) {

@@ -2094,7 +2094,7 @@ fn an_image_holds_no_gather_place_and_both_sessions_keep_theirs() {
     assert!(placed(&vm), "the session that goes on lost a place");
     vm.place_gathers(false);
     let mut bare = Vec::new();
-    vm.emit_snapshot(&mut |b| bare.extend_from_slice(b));
+    vm.emit_snapshot(&mut mm_core::Sink::Buf(&mut bare));
     vm.place_gathers(true);
     assert!(image == bare, "the image holds a place");
     let mut restored = restore_image(&image);
