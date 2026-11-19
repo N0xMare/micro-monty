@@ -1709,7 +1709,13 @@ is not a str. It returns `Err(Raised)` with `check_before` set;
 and dispatches the same instruction again, or parks before it, as an int
 operator short of fuel does (that check comes first, so its park still
 reports `fuel_wanted`). Its state is unchanged until then, so a park or
-snapshot there needs nothing new. The hooks sit in out-of-line entry
+snapshot there needs nothing new. The resume after such a park makes that
+regular check first, at the same instruction, as the unparked run does; a
+`CALL` parked before its builtin (`Vm::native_short`) makes none, since
+no `CALL` stops before it starts (`Vm::at_call`): the check ran a due
+collection the unparked run did not, and a call that failed and was
+retried unparked fit, one retry charge apart (65,537 units at 4 MiB
+[S, collector study]). The hooks sit in out-of-line entry
 functions that only the dispatch loop calls, so a stop never cuts a native
 in half, and the loop's own code is unchanged (a hook in the inlined
 `op_unary` cost `loop` 10% Ir [M]). Between two safepoints straight-line

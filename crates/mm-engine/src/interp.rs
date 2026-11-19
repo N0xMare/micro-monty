@@ -372,6 +372,20 @@ impl Vm {
         st
     }
 
+    /// Whether `st` stopped at one of the `CALL` instructions that may park
+    /// before their builtin starts (`Vm::native_short`).
+    fn at_call(&self, st: &State) -> bool {
+        self.codes
+            .get(st.ci as usize)
+            .and_then(|c| c.code.bytecode.get(st.pc))
+            .is_some_and(|&w| {
+                matches!(
+                    op_of(w),
+                    op::CALL | op::CALL_METHOD | op::CALL_KW | op::CALL_METHOD_KW
+                )
+            })
+    }
+
     /// Continues after a park.
     pub fn resume(&mut self) -> Exit {
         // Parked between tasks: the scheduler waited for a collection, or
@@ -389,8 +403,12 @@ impl Vm {
                 // native work (`long_work`), would stop before starting
                 // for a regular check (`Vm::stop_before`), and that check
                 // would take the run it may now have: it comes here, at
-                // the same instruction, as an unparked run makes it.
-                if (self.gc_owed || (self.fuel_wanted != 0 && self.long_work))
+                // the same instruction, as an unparked run makes it. A
+                // `CALL` that parked before its builtin (`Vm::native_short`)
+                // makes no such check unparked, so it makes none here: the
+                // check ran a due collection the unparked run did not, and
+                // the call then fit where it had failed and been retried.
+                if (self.gc_owed || (self.fuel_wanted != 0 && self.long_work && !self.at_call(&st)))
                     && let Some(r) = self.safepoint(&st)
                 {
                     self.saved = Some(st);

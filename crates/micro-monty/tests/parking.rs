@@ -1805,3 +1805,47 @@ fn a_retry_after_memory_error_pays_whatever_collection_was_asked_for() {
     assert!(fuel[0] >= limit / 64, "{fuel:?}");
     assert_eq!(fuel, [fuel[0]; 3]);
 }
+
+#[test]
+fn a_call_parked_before_its_builtin_resumes_as_the_unparked_run() {
+    // A `CALL` that parked before a costly builtin ran a safepoint check at
+    // the resume that the unparked run does not make, so a due collection
+    // ran first and the call fit where the unparked run failed and
+    // retried: 3,917,468 units unparked, 10,406,031 parked (reduced).
+    near_limit_parks_agree(
+        (2 << 20) - (8 << 10),
+        &[r#"
+def fill(cap):
+    xs = []
+    try:
+        while len(xs) < cap:
+            xs.append((len(xs), 0))
+    except MemoryError:
+        pass
+    return xs
+log = []
+H = {}
+x = list(range(10546))
+x.append(1)
+try:
+    H["k5"] = fill(1000000000)
+except MemoryError:
+    log.append(4)
+try:
+    z = x * 2
+except MemoryError:
+    log.append(7)
+try:
+    H.pop("k5", None)
+except MemoryError:
+    log.append(10)
+try:
+    n = 10 ** 34687
+    H["k4"] = n * n
+    m = pow(n, 3)
+    q, w = divmod(m, n + 7)
+except MemoryError:
+    log.append(14)
+"#],
+    );
+}

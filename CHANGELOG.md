@@ -282,6 +282,19 @@ hashes are pre-release history, kept in the private archive
   while another collection was asked for and not ended: the charge no
   longer depends on whether a mark or a result's collection was in
   progress, which the GC mode and the host's fuel slices decide.
+- A `CALL` that parked before a costly builtin (`sorted`, `sum`, a big-int
+  builtin short of fuel) resumes without a safepoint check the unparked
+  run does not make. That check could run a due collection first, so the
+  call fit where the unparked run failed and retried, and fuel differed
+  by a retry's charge.
+- A park inside the wait of a retry after `MemoryError` no longer leaves
+  that wait set once its collection has ended. Left set, it made the next
+  request for a collection a step that found nothing due where the
+  unparked run collected in full, so outcomes and fuel moved with the
+  host's fuel slices under incremental marking. Programs that differ
+  between a plain run and parks alone, under the default GC and
+  incremental marks in slices of 4,096: 4 of 1,200 random near-limit runs
+  and 4 of 600 asyncio runs before, none after [M].
 
 ### Added
 
