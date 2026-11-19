@@ -323,6 +323,12 @@ class TracebackException:
             hint = _hint(exc_value, exc_traceback is not None)
             if hint:
                 self._str += hint
+        elif exc_type is TypeError:
+            # micro-monty's "Did you forget 'await'?" (exc.rs), only on the
+            # engine's own TypeError, so no other exception costs a call.
+            hint = _hint(exc_value, False)
+            if hint:
+                self._str += hint
         self.__suppress_context__ = \
             exc_value.__suppress_context__ if exc_value is not None else False
 

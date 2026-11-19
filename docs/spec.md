@@ -235,7 +235,8 @@ evaluated, matching deferred annotations).
   code most often imports: `contextlib` (no `chdir`), `traceback`
   (CPython's `TracebackException`, `StackSummary` and `FrameSummary` over
   the engine's frames, with CPython's "Did you mean" rules: a `NameError`
-  hint needs a traceback, `AttributeError` and `ImportError` hints do not;
+  hint needs a traceback, `AttributeError` and `ImportError` hints do not,
+  and neither does micro-monty's `. Did you forget 'await'?` (§8.4);
   no colors, no stack-walking functions (`extract_stack`, `format_stack`,
   `print_stack`, `walk_stack`), no keyword-typo hints for SyntaxErrors), a
   slim `logging` (no `logging.handlers`/`config`, files or frame data:
@@ -1472,6 +1473,15 @@ model turn:
   training.
 - **Hints:** CPython's "Did you mean ...?" suggestions for `NameError`,
   `AttributeError`, `ImportError` names and unexpected keyword arguments.
+  One departs from CPython: a `TypeError` or `AttributeError` (the
+  engine's, not a subclass) whose message is one of CPython's templates
+  with a `coroutine`, `Future` (a host future) or `_GatheringFuture` as
+  the value of the wrong type ends its report with `. Did you forget
+  'await'?` (`hints::forgot_await` and its `AWAIT_TEMPLATES`, read from
+  the message when the report is rendered, so a raise does no more work;
+  a message past 256 bytes is not read, which keeps rendering within a
+  step, even for a chain of 64;
+  `str(e)` and `args` stay CPython's; `conformance/own/576`).
 - **Host functions** declare signatures, so a bad call fails with a CPython-style
   `TypeError` before any host round trip.
 

@@ -2702,6 +2702,27 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "b = issubclass(Big, t) and isinstance(Big(), t)",
         1,
     ),
+    // A long TypeError formatted through `traceback`: the "Did you forget
+    // 'await'?" check reads no message past 256 bytes. Unbounded, it scanned
+    // all 32 MB twice in one step: 177-184 ms past a 50 ms bound, shipped
+    // `mm run` [M]. (At 60 MB the formatting itself passes the bound, as
+    // it did before the hint [M].)
+    (
+        Row::Bounded,
+        "import traceback\ne = TypeError('x' * 32_000_000)",
+        "l = traceback.format_exception_only(e)",
+        1,
+    ),
+    // A chain of 64 TypeErrors at the check's 256-byte cap, each the
+    // costliest for it: the report renders 64 exceptions before it looks
+    // at the deadline. At a 1 KiB cap, 64 of them ran 53.6-57.7 ms past a
+    // 50 ms bound, shipped `mm run` [S, reviewer, 931c23c].
+    (
+        Row::Bounded,
+        "import traceback\nm = 'descriptor ' + ' Future' * 35\ne = None\nfor i in range(64):\n    try:\n        raise TypeError(m) from e\n    except TypeError as x:\n        e = x",
+        "l = traceback.format_exception(e)",
+        1,
+    ),
 ];
 
 /// How many more times a bounded row over the limit runs. This host has

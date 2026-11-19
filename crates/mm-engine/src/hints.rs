@@ -412,6 +412,129 @@ impl Vm {
     }
 }
 
+/// The sentence a `TypeError` or `AttributeError` report ends with when
+/// its message names a coroutine or a future as the value of the wrong
+/// type ([`Vm::forgot_await`]).
+pub(crate) const AWAIT_HINT: &str = ". Did you forget 'await'?";
+
+/// The longest message [`Vm::forgot_await`] reads: CPython's messages of
+/// the shapes below are at most about 105 bytes plus the names in them,
+/// and a longer one (a program's own) is not scanned at all: the worst
+/// 256 bytes cost about 0.09 ms, so even the 64 exceptions a report
+/// renders before it looks at the deadline stay within a step.
+const AWAIT_HINT_MAX: usize = 256;
+
+/// The type names of values whose use unawaited is the mistake, as
+/// messages name them.
+const AWAITABLES: [&str; 3] = ["coroutine", "Future", "_GatheringFuture"];
+
+/// CPython 3.14's messages in which the type of a value of the wrong type
+/// appears, as `before` and `after` the type name; `*` stands for any text.
+/// A message is matched whole, so a parameter, keyword or attribute named
+/// `coroutine`, or a type wanted (`a coroutine was expected`), is not.
+const AWAIT_TEMPLATES: [(&str, &str); 22] = [
+    // is not subscriptable / iterable / callable, has no attribute 'x',
+    // cannot be interpreted as an integer, ...
+    ("'", "' object *"),
+    ("object of type '", "' has no len()"),
+    ("argument of type '", "' is not *"),
+    ("cannot unpack non-iterable ", " object"),
+    ("Object of type ", " is not JSON serializable"),
+    ("type ", " doesn't define *"),
+    ("can't concat ", " to *"),
+    // unsupported operand type(s) for +: 'A' and 'B', bad operand type
+    // for unary -: 'A'
+    ("* operand type* '", "'"),
+    ("* operand type* '", "' and *"),
+    ("* not supported between instances of '", "' and *"),
+    ("* not supported between instances of * and '", "'"),
+    ("can only concatenate * (not \"", "\") to *"),
+    // sequence item 0: expected str instance, T found
+    ("*, ", " found"),
+    ("unsupported format string passed to ", ".__format__"),
+    ("descriptor * doesn't apply to a '", "' object"),
+    // int() argument must be ..., not 'T'; ... must be str, not T
+    ("* not '", "'"),
+    ("* not ", ""),
+    // re.search(p, T): expected string or bytes-like object, got 'T';
+    // 'async for' requires an object with __aiter__ method, got T
+    ("* got '", "'"),
+    ("* got ", ""),
+    // can't multiply sequence by non-int of type 'T'
+    ("* of type '", "'"),
+    ("cannot convert '", "' object to *"),
+    // micro-monty's own, for a host call's argument (one tool's result
+    // passed to the next)
+    ("* a '", "' object cannot be passed to the host"),
+];
+
+/// Whether `s` matches `pat`, where `*` matches any text (the classic
+/// wildcard match with one backtracking point: O(len(s) * len(pat))).
+#[inline(never)]
+#[cfg_attr(mm_shipped, optimize(size))]
+fn glob(pat: &[u8], s: &[u8]) -> bool {
+    let (mut p, mut i) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while i < s.len() {
+        if p < pat.len() && pat[p] == b'*' {
+            star = Some((p, i));
+            p += 1;
+        } else if p < pat.len() && pat[p] == s[i] {
+            p += 1;
+            i += 1;
+        } else if let Some((sp, si)) = star {
+            p = sp + 1;
+            i = si + 1;
+            star = Some((sp, si + 1));
+        } else {
+            return false;
+        }
+    }
+    pat[p..].iter().all(|&c| c == b'*')
+}
+
+/// Whether `msg` names an awaitable as a wrong value's type
+/// ([`AWAIT_TEMPLATES`]).
+#[cfg_attr(mm_shipped, optimize(size))]
+fn awaitable_named(msg: &str) -> bool {
+    let m = msg.as_bytes();
+    AWAITABLES.iter().any(|name| {
+        m.windows(name.len()).enumerate().any(|(i, w)| {
+            w == name.as_bytes()
+                && AWAIT_TEMPLATES.iter().any(|(before, after)| {
+                    glob(before.as_bytes(), &m[..i]) && glob(after.as_bytes(), &m[i + name.len()..])
+                })
+        })
+    })
+}
+
+impl Vm {
+    /// Whether `e`'s report gets [`AWAIT_HINT`]: a `TypeError` or an
+    /// `AttributeError`, as the engine raises them (not a subclass, whose
+    /// message may be its own `__str__`), whose message names a coroutine
+    /// or a future as the wrong value, the usual sign of a call not
+    /// awaited. Read from the message when the report is
+    /// rendered, so a raise costs nothing and allocates nothing more; a
+    /// message past [`AWAIT_HINT_MAX`] bytes is not read.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub(crate) fn forgot_await(&self, e: Value) -> bool {
+        let class = self.vslot_o(e, crate::vm::exc_slot::TYPE);
+        if class != self.types[T::AttributeError as usize]
+            && class != self.types[T::TypeError as usize]
+        {
+            return false;
+        }
+        let args = self.tuple_items(self.vslot_o(e, crate::vm::exc_slot::ARGS));
+        let [m] = args[..] else { return false };
+        if !Vm::is_str(m) || self.str_ref_o(m).len() > AWAIT_HINT_MAX {
+            return false;
+        }
+        let msg = self.str_ref_o(m);
+        // `asyncio.wait(coro)`: it wants a list, not the value.
+        !msg.starts_with("expect a list of futures") && awaitable_named(msg)
+    }
+}
+
 /// `_mm.hint(group)`: group `group`'s sentence, or `''` when blanked.
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn mm_hint(vm: &mut Vm, a: crate::vm::CallArgs) -> Result<Value, Raised> {

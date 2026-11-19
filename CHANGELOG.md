@@ -12,6 +12,17 @@ hashes are pre-release history, kept in the private archive
 
 ## 0.0.3 (unreleased)
 
+### Added
+
+- A `TypeError` or `AttributeError` over a coroutine, a host future or a
+  gather used where a value was expected (`json.loads(fetch())`,
+  `len(coro)`, `coro['k']`, `'n: ' + fetch()`, `json.dumps(fetch())`,
+  `a, b = fetch()`) ends its report with `. Did you forget 'await'?`;
+  `str(e)` and `e.args` stay CPython's. Formatting through `traceback`
+  costs one fuel unit more for a `TypeError` without the hint and three
+  more for one with it, two more for an `AttributeError` with it, and
+  nothing more for any other exception.
+
 ### Fixed
 
 - A session whose heap is at its wall no longer keeps failing cell starts

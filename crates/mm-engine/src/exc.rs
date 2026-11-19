@@ -958,6 +958,8 @@ impl Vm {
             };
             if Vm::is_str(hint) {
                 line.push_str(self.str_ref_o(hint));
+            } else if self.forgot_await(exc) {
+                line.push_str(crate::hints::AWAIT_HINT);
             }
             line
         };

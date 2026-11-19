@@ -629,6 +629,55 @@ suggestion (`AttributeError: module 'json' has no attribute 'lods'. Did
 you mean: 'loads'?`), for bundled and host modules alike, and so does
 `from json import lods`.
 
+**Did you forget 'await'.** A `TypeError` or `AttributeError` raised
+because a coroutine, a host future or an `asyncio.gather` was used where a
+value was expected keeps CPython's message and adds `. Did you forget
+'await'?` to the report's last line, as the redirect sentences are added:
+`PyException::traceback` and `traceback.format_exception*` show it;
+`str(e)`, `e.args` and `PyException::message` are CPython's. The engine
+decides when the report is rendered, from the message of a `TypeError` or
+`AttributeError` itself (not a subclass's): the message must be one of
+CPython's in which `coroutine`, `Future` or `_GatheringFuture` is the
+wrong value's type, and at most 256 bytes long (decided before the
+message is read, so a long message costs nothing).
+
+| CPython's message | Raised by, for example |
+|---|---|
+| `'T' object is not subscriptable` (iterable, callable, has no attribute 'x', ...) | `coro['k']`, `for x in coro`, `coro()`, `coro.get('k')` |
+| `object of type 'T' has no len()` | `len(coro)` |
+| `argument of type 'T' is not a container or iterable` | `1 in coro` |
+| `cannot unpack non-iterable T object` | `a, b = coro` |
+| `Object of type T is not JSON serializable` | `json.dumps(coro)` |
+| `type T doesn't define __round__ method` | `round(coro)` |
+| `can't concat T to bytes` | `b'a' + coro` |
+| `unsupported operand type(s) for +: 'T' and 'int'` (either side), `bad operand type for unary -: 'T'` | `coro + 1`, `-coro`, `abs(coro)` |
+| `'<' not supported between instances of 'T' and 'int'` (either side) | `coro < 1` |
+| `can only concatenate str (not "T") to str` (list, tuple) | `'n: ' + coro` |
+| `sequence item 0: expected str instance, T found` | `','.join([coro])` |
+| `unsupported format string passed to T.__format__` | `format(coro, '>3')` |
+| `descriptor 'upper' for 'str' objects doesn't apply to a 'T' object` | `str.upper(coro)` |
+| `..., not 'T'` or `..., not T` | `int(coro)`, `json.loads(coro)`, `'ab'[coro]` |
+| `..., got 'T'` or `..., got T` | `re.search('a', coro)`, `async for x in coro` |
+| `... of type 'T'` | `'x' * coro`, `iter()` of a class whose `__iter__` returns a coroutine |
+| `cannot convert 'T' object to ...` | `bytes(coro)`, `bytearray(coro)` |
+| `...: a 'T' object cannot be passed to the host` | `tool(tool())` |
+
+A `Task`, an async generator (which `async for` iterates), a type wanted
+(`a coroutine was expected`, `asyncio.wait(coro)`'s `expect a list of
+futures, not coroutine`), a parameter, keyword or attribute named
+`coroutine`, a class whose name merely contains one of the three names
+(`MyFuture`) and a subclass's message get none. Messages that name the
+wrong value without one of these templates get none either:
+`ord(coro)`, `datetime.timedelta(seconds=coro)` and three-argument
+`pow(coro, 2, 3)`. Three false positives remain: a typo of an awaitable's
+own method (`fut.set_resul`, where CPython's "Did you mean" is not shown
+either), an instance of a user class named `Future`, and a program's own
+`raise TypeError("'coroutine' object ...")`. Using a coroutine where
+any object will do raises nothing, so it cannot be hinted: an f-string
+(`f"{coro}"`), `str(coro)` and `print(coro)` show `<coroutine object ...>`
+(and the cell ends with the "never awaited" warning below). The sentence
+cannot be replaced or blanked.
+
 **Coroutines never awaited.** When a cell completes or raises, the engine
 writes `<sys>:0: RuntimeWarning: coroutine 'fetch' was never awaited` to
 stderr for each coroutine or host future of the cell that was never
@@ -1532,6 +1581,10 @@ differs:
   whose table mm keeps in another form, and a table that grows at other
   sizes than CPython's (mm grows a small table fourfold), so an insert by
   `__eq__` replaces it at other points \[M\].
+- **Did you forget 'await'.** A `TypeError` or `AttributeError` over a
+  coroutine, a host future or a gather ends its report with `. Did you forget
+  'await'?`, which CPython does not print; `str(e)` and `e.args` are
+  CPython's ("Did you forget 'await'" above).
 - **Smaller ones.** `io.StringIO.seek` accepts a float; a set display of
   constants whose hashes collide can iterate in another order; a
   dataclass's `__doc__` is `None`; `re`'s ignore-case matching misses a

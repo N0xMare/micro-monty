@@ -1876,6 +1876,134 @@ impl Cells {
 
 #[test]
 #[allow(clippy::too_many_lines, reason = "one scenario, step by step")]
+fn a_coroutine_or_host_future_used_as_a_value_gets_an_await_hint() {
+    let mut c = Cells::new();
+    c.session
+        .define(&HostModule::untyped("", &["tool"]))
+        .expect("defined");
+    let hint = ". Did you forget 'await'?";
+    assert_eq!(
+        c.report("import json\nasync def get():\n    return '{}'\njson.loads(get())"),
+        format!("TypeError: the JSON object must be str, bytes or bytearray, not coroutine{hint}")
+    );
+    // `PyException::traceback`, the report a host shows, carries it at top
+    // level, inside `asyncio.run` and inside a task alike.
+    for src in [
+        "len(get())",
+        "import asyncio\nasync def main():\n    return len(get())\nasyncio.run(main())",
+        "import asyncio\nasync def work():\n    return len(get())\n\
+         async def main():\n    return await asyncio.create_task(work())\nasyncio.run(main())",
+        "async def work():\n    return len(get())\nawait work()",
+    ] {
+        let Progress::Error(e) = c.start(src) else {
+            panic!("{src}")
+        };
+        assert_eq!(
+            e.message, "object of type 'coroutine' has no len()",
+            "{src}"
+        );
+        assert!(
+            e.traceback.ends_with(&format!(
+                "TypeError: object of type 'coroutine' has no len(){hint}\n"
+            )),
+            "{src}: {}",
+            e.traceback
+        );
+    }
+    // The message and the args stay CPython's; the hint is only in the report.
+    assert_eq!(
+        c.value("try:\n    len(get())\nexcept TypeError as e:\n    r = (str(e), e.args)\nr"),
+        "(\"object of type 'coroutine' has no len()\", (\"object of type 'coroutine' has no len()\",))"
+    );
+    // An async host call is a host future: not awaited, it is the value.
+    let host = |c: &mut Cells, src: &str| {
+        let Progress::HostCall { call, .. } = c.start(src) else {
+            panic!("no host call")
+        };
+        let mut p = c.session.resume(Resume::Future).expect("resumes");
+        if let Progress::Waiting { .. } = p {
+            let answer = Resume::Batch(vec![(call, Ok(HostValue::Int(1)))]);
+            p = c.session.resume(answer).expect("resumes");
+        }
+        match p {
+            Progress::Error(e) => e.traceback.lines().last().unwrap_or("").to_owned(),
+            other => panic!("{other:?}"),
+        }
+    };
+    for (src, line) in [
+        (
+            "tool()['k']",
+            "TypeError: 'Future' object is not subscriptable",
+        ),
+        (
+            "'n: ' + tool()",
+            "TypeError: can only concatenate str (not \"Future\") to str",
+        ),
+        (
+            "json.dumps(tool())",
+            "TypeError: Object of type Future is not JSON serializable",
+        ),
+        (
+            "a, b = tool()",
+            "TypeError: cannot unpack non-iterable Future object",
+        ),
+        // One tool's result passed to the next tool.
+        (
+            "tool(tool())",
+            "TypeError: tool() argument: a 'Future' object cannot be passed to the host",
+        ),
+    ] {
+        assert_eq!(host(&mut c, src), format!("{line}{hint}"), "{src}");
+    }
+    // Awaited, the value's own error has no hint.
+    assert_eq!(
+        host(&mut c, "(await tool())['k']"),
+        "TypeError: 'int' object is not subscriptable"
+    );
+    assert_eq!(
+        c.report("async def one():\n    return 1\nlen(await one())"),
+        "TypeError: object of type 'int' has no len()"
+    );
+    // An async generator is not awaited but iterated: no hint.
+    assert_eq!(
+        c.report("async def agen():\n    yield 1\nlen(agen())"),
+        "TypeError: object of type 'async_generator' has no len()"
+    );
+    // A type wanted, not given, is no sign of a missing `await`.
+    assert_eq!(
+        c.report("import asyncio\nasyncio.ensure_future(1)"),
+        "TypeError: An asyncio.Future, a coroutine or an awaitable is required"
+    );
+    // Nor is a list of futures wanted and a coroutine given.
+    assert_eq!(
+        c.report(
+            "import asyncio\nasync def main():\n    await asyncio.wait(get())\nasyncio.run(main())"
+        ),
+        "TypeError: expect a list of futures, not coroutine"
+    );
+    // A typo of a future's own method reads as a missing `await`, the one
+    // documented false positive of an attribute.
+    assert_eq!(
+        c.report(
+            "import asyncio\nasync def main():\n    \
+             asyncio.get_running_loop().create_future().set_resul(1)\nasyncio.run(main())"
+        ),
+        format!("AttributeError: 'Future' object has no attribute 'set_resul'{hint}")
+    );
+    assert_eq!(
+        c.report("import re\nre.search('a', get())"),
+        format!("TypeError: expected string or bytes-like object, got 'coroutine'{hint}")
+    );
+    // A message past 256 bytes is not read.
+    let long = format!("'coroutine' object is not subscriptable{}", "!".repeat(300));
+    assert_eq!(
+        c.report(&format!("raise TypeError(\"{long}\")")),
+        format!("TypeError: {long}")
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines, reason = "one scenario, step by step")]
 fn unsupported_imports_keep_cpython_text_and_add_a_replaceable_hint() {
     let mut c = Cells::new();
     let numpy = "ModuleNotFoundError: No module named 'numpy'. micro-monty runs a Python subset \

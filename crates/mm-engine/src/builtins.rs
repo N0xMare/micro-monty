@@ -7018,7 +7018,6 @@ fn tb_extract(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 /// `_hint(exc, with_tb)`: the "Did you mean" (or micro-monty note) CPython's
 /// `TracebackException` appends to `str(exc)`, or `None`.
-#[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
 #[cfg_attr(mm_shipped, optimize(size))]
 fn tb_hint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let e = vm.arg_o(&a, 0);
@@ -7026,7 +7025,11 @@ fn tb_hint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         return Ok(Value::NONE);
     }
     let with_tb = vm.truthy(vm.arg_o(&a, 1));
-    Ok(vm.hint_of(e, with_tb))
+    let hint = vm.hint_of(e, with_tb);
+    if hint == Value::NONE && vm.forgot_await(e) {
+        return vm.new_str(crate::hints::AWAIT_HINT);
+    }
+    Ok(hint)
 }
 
 /// The dict `d` is, or the one a `dict_keys`/`dict_items` view reads (the
