@@ -1482,6 +1482,31 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "b += c",
         1,
     ),
+    // A bytearray with spare capacity opening a gap at its start: the
+    // tail moves up over itself in place, one step (`Heap::copy_bytes`),
+    // over pages never written. musl's `memmove` copies it backwards
+    // (71 ms [M]); there it moves in pieces, 32 bytes at a time for a
+    // narrow gap and the gap's length at a time for a wide one. What is
+    // left is writing 64 MiB of new pages: 95 to 97% of the limit with
+    // glibc and with musl's `malloc` [M].
+    (
+        Row::Bounded,
+        "b = bytearray(67_108_864)\nb.pop()",
+        "b.insert(0, 1)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "b = bytearray(67_108_864)\nb.pop()",
+        "b[0:0] = b'x'",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "b = bytearray(67_108_864)\ndel b[-8192:]",
+        "b[0:0] = b'x' * 8192",
+        1,
+    ),
     // The overdraft sweep's bytes sites (60 MB, or the most the 64 MiB cap
     // allows the result).
     (

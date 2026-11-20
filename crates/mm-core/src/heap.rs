@@ -1046,7 +1046,47 @@ impl Heap {
             if s.data.len() < a.max(b) + len {
                 return Err(Error::BadRef);
             }
-            s.data.copy_within(a..a + len, b);
+            if cfg!(target_env = "musl") && a < b && b - a < len {
+                // On musl, an overlapping move up (a bytearray's tail
+                // shifting for an insert) goes from the top down in
+                // pieces that each copy forward: musl's `memmove` copies
+                // such a move backwards with `std; rep movsb`, 71 ms for
+                // 64 MiB against 48 ms on glibc [M], past the step bound.
+                // Each piece is read whole before its destination is
+                // written, and that write only reaches bytes of this
+                // piece or of the pieces above it, already moved. A piece
+                // no longer than the gap does not overlap its
+                // destination, so a wide gap moves in pieces of its own
+                // length, each a forward `memcpy`; a narrow one moves 32
+                // bytes at a time, loads and stores of a fixed size.
+                let gap = b - a;
+                let data = &mut s.data[a..b + len];
+                let mut end = len;
+                if gap >= 4096 {
+                    while end > 0 {
+                        let at = end - end.min(gap);
+                        data.copy_within(at..end, gap + at);
+                        end = at;
+                    }
+                } else {
+                    while end >= 32 {
+                        let at = end - 32;
+                        let mut piece = [0u8; 32];
+                        piece.copy_from_slice(&data[at..end]);
+                        // Kept: without it LLVM may fuse the loop back
+                        // into the one overlapping `memmove`.
+                        let piece = core::hint::black_box(piece);
+                        data[gap + at..gap + end].copy_from_slice(&piece);
+                        end = at;
+                    }
+                    // The first bytes, fewer than 32.
+                    let mut piece = [0u8; 32];
+                    piece[..end].copy_from_slice(&data[..end]);
+                    data[gap..gap + end].copy_from_slice(&piece[..end]);
+                }
+            } else {
+                s.data.copy_within(a..a + len, b);
+            }
             return Ok(());
         }
         let (lo, hi) = segs.split_at_mut(si.max(di));
