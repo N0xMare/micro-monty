@@ -5,11 +5,15 @@
 //!
 //! Allowed (measured with strace over the protocol host's worker suites):
 //!
-//! - `read` on stdin; `write` on stdout and stderr (and a test hook's file);
-//!   `pread64` on the `/proc/self/status` descriptor opened before the
-//!   filter, for the resource report;
+//! - `read` on stdin; `write` and `writev` on stdout and stderr (and a test
+//!   hook's file): musl's stdio, through which mimalloc prints its
+//!   messages, writes with `writev`; `pread64` on the `/proc/self/status`
+//!   descriptor opened before the filter, for the resource report;
 //! - memory: `brk`, `mmap` and `mprotect` without `PROT_EXEC`, `munmap`,
-//!   `mremap`, `madvise`;
+//!   `mremap`, `madvise`; `getcpu`, which mimalloc (the binary's allocator
+//!   on musl) calls at a thread's first allocation on a machine with two
+//!   or more NUMA nodes, and which returns two numbers and takes no
+//!   descriptor;
 //! - threads (the stdin reader and the cancel repeater): `clone` with
 //!   `CLONE_THREAD` only (`clone3` fails with `ENOSYS`, so glibc falls back
 //!   to `clone`, whose flags a filter can read), `set_robust_list`, `rseq`,
@@ -29,6 +33,12 @@
 //! `/proc/sys/vm/overcommit_memory` the first time it shrinks a thread
 //! arena, at any point of a run, and takes a failed open as "do not
 //! unmap". No call that creates a descriptor succeeds.
+//!
+//! On musl the confined worker obeys every `MIMALLOC_*` variable of its
+//! parent's environment. The tests cover `MIMALLOC_USE_NUMA_NODES`,
+//! `MIMALLOC_SHOW_ERRORS` and `MIMALLOC_VERBOSE`; an option that makes
+//! mimalloc reach another call (`mbind`, with huge OS pages) kills the
+//! worker, so a host that sets one should clear it for the worker.
 //!
 //! Anything else kills the whole process (`SECCOMP_RET_KILL_PROCESS`) rather
 //! than failing with an errno: nothing in the worker is meant to reach
@@ -110,7 +120,9 @@ fn rules(out_fds: &[u32], status_fd: u32, tid: u32) -> Vec<(u32, Check)> {
     vec![
         (nr(libc::SYS_futex), Allow),
         (nr(libc::SYS_read), ArgIn(0, vec![0])),
-        (nr(libc::SYS_write), ArgIn(0, writable)),
+        (nr(libc::SYS_write), ArgIn(0, writable.clone())),
+        (nr(libc::SYS_writev), ArgIn(0, writable)),
+        (nr(libc::SYS_getcpu), Allow),
         (nr(libc::SYS_mmap), ArgClear(2, PROT_EXEC)),
         (nr(libc::SYS_mprotect), ArgClear(2, PROT_EXEC)),
         (nr(libc::SYS_munmap), Allow),
@@ -410,11 +422,27 @@ mod tests {
     /// musl's and mimalloc (the binary's allocator on musl) alike.
     #[test]
     fn an_allocation_past_the_address_space_limit_aborts() {
+        exhausts_memory_and_aborts(&[]);
+    }
+
+    /// The same with mimalloc told to print: its warnings and statistics
+    /// go through musl's stdio, a `writev` on stderr, before the abort and
+    /// during the run. On glibc the variables name nothing.
+    #[test]
+    fn an_allocator_that_prints_its_messages_still_aborts() {
+        exhausts_memory_and_aborts(&[("MIMALLOC_SHOW_ERRORS", "1")]);
+        exhausts_memory_and_aborts(&[("MIMALLOC_VERBOSE", "1")]);
+    }
+
+    /// Runs the memory-exhausting child under a 1 GiB address space limit
+    /// with `env` set, and expects `SIGABRT`.
+    fn exhausts_memory_and_aborts(env: &[(&str, &str)]) {
         use std::os::unix::process::ExitStatusExt;
         let mut limited = Command::new("sh");
         limited
             .args(["-c", "ulimit -v 1048576 && exec \"$0\" \"$@\""])
-            .arg(std::env::current_exe().expect("test binary"));
+            .arg(std::env::current_exe().expect("test binary"))
+            .envs(env.iter().copied());
         let output = child_with(
             "seccomp::tests::child_exhausts_memory_under_filter",
             limited,
@@ -424,8 +452,26 @@ mod tests {
 
     #[test]
     fn a_forbidden_call_kills_the_process() {
+        allowed_work_runs_and_a_socket_kills(&[]);
+    }
+
+    /// With two or more NUMA nodes mimalloc asks which node a thread runs
+    /// on (`getcpu`) at the thread's first allocation, which for the
+    /// child's thread, as for the worker's reader thread, comes after the
+    /// filter. `MIMALLOC_USE_NUMA_NODES` stands for the second node, so a
+    /// one-node machine runs the path. On glibc the variable names nothing.
+    #[test]
+    fn allowed_work_runs_on_a_machine_with_two_numa_nodes() {
+        allowed_work_runs_and_a_socket_kills(&[("MIMALLOC_USE_NUMA_NODES", "2")]);
+    }
+
+    /// Runs [`child_under_filter`] with `env` set: its allowed work runs,
+    /// opening a file fails, and creating a socket kills it.
+    fn allowed_work_runs_and_a_socket_kills(env: &[(&str, &str)]) {
         use std::os::unix::process::ExitStatusExt;
-        let output = child("seccomp::tests::child_under_filter");
+        let mut command = Command::new(std::env::current_exe().expect("test binary"));
+        command.envs(env.iter().copied());
+        let output = child_with("seccomp::tests::child_under_filter", command);
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             stdout.contains("SURVIVED 469762048 Some(") && stdout.contains(") Some("),
