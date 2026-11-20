@@ -2745,11 +2745,14 @@ const SITES: &[(Row, &str, &str, usize)] = &[
     // A long TypeError formatted through `traceback`: the "Did you forget
     // 'await'?" check reads no message past 256 bytes. Unbounded, it scanned
     // all 32 MB twice in one step: 177-184 ms past a 50 ms bound, shipped
-    // `mm run` [M]. (At 60 MB the formatting itself passes the bound, as
-    // it did before the hint [M].)
+    // `mm run` [M]. The row's 16 MB keeps an unbounded scan past the bound
+    // while the formatting itself stays well under it: at 32 MB the
+    // formatting alone read 49.7-55.1 ms against 50.5-56.0 ms limits, on
+    // main as with the check [M]; at 60 MB it passes the bound, as it did
+    // before the hint [M].
     (
         Row::Bounded,
-        "import traceback\ne = TypeError('x' * 32_000_000)",
+        "import traceback\ne = TypeError('x' * 16_000_000)",
         "l = traceback.format_exception_only(e)",
         1,
     ),
