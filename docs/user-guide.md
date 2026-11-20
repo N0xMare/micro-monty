@@ -753,7 +753,7 @@ setup.define(&HostModule::untyped("fs", &["read"]))?;
 // Load the modules, then delete the names: instances see clean globals.
 setup.start(&engine.compile("import json, zoneinfo\ndel json, zoneinfo\n", "setup.py")?);
 let template = SessionTemplate::capture(&engine, &mut setup)?;   // between cells
-let mut session = template.instantiate()?;   // a restore (checked the first time), not a re-run
+let mut session = template.instantiate()?;   // a restore, not a re-run
 session.set_fuel(Some(budget));               // the first cell's budget; then the list below
 # let probe = engine.compile("'json' in globals()", "probe.py")?;
 # let Progress::Complete(Some(c)) = session.start(&probe) else { panic!() };

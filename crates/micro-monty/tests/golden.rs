@@ -370,9 +370,10 @@ for _k in sorted(k for k in globals() if not k.startswith('_')):
     print(_k, type(_v).__name__, _r)
 ";
 
-/// TPL-1's acceptance: for each own case's end state, a template's
-/// trusted instantiation (its second) gives the image a checked restore
-/// gives, and both continue with the same output and fuel.
+/// TPL-1's acceptance: for each own case's end state, the image a
+/// template captured restores checked, the template's trusted
+/// instantiation gives the image that checked restore gives, and both
+/// continue with the same output and fuel.
 #[test]
 #[cfg_attr(
     debug_assertions,
@@ -421,16 +422,10 @@ fn trusted_matches_checked(path: &std::path::Path) -> bool {
         return false;
     };
     drop(s);
-    let first = template
-        .instantiate()
-        .expect("the first instantiation, checked");
     let mut sessions = [
         e.restore(template.image()).expect("restores checked"),
-        template
-            .instantiate()
-            .expect("a later instantiation, trusted"),
+        template.instantiate().expect("instantiates trusted"),
     ];
-    drop(first);
     let [checked, trusted] = &mut sessions;
     assert!(
         checked.snapshot().expect("snapshot") == trusted.snapshot().expect("snapshot"),
@@ -474,10 +469,11 @@ fn a_golden_image_under_another_build_id_is_incompatible() {
     );
 }
 
-/// A template [`SessionTemplate::capture`] made has never been restored:
-/// its first instantiation runs checked, so a change the checksum does not
-/// see (resealed here) is still refused, and the checksum refuses one at
-/// every instantiation, trusted ones included.
+/// A template's image is read trusted, [`SessionTemplate::capture`]'s
+/// from its first instantiation: the checksum refuses a changed byte at
+/// every instantiation. A change the checksum does not see (resealed
+/// here) is what a checked read refuses, [`Engine::restore`]'s and
+/// [`SessionTemplate::from_image`]'s.
 #[test]
 fn a_corrupted_captured_template_is_refused() {
     let reseal = |image: &mut Vec<u8>| {
@@ -495,24 +491,30 @@ fn a_corrupted_captured_template_is_refused() {
     ));
     let template = SessionTemplate::capture(&e, &mut s).expect("captured");
 
-    // Invalid UTF-8 in a str, under a valid checksum: only the checked
+    // Invalid UTF-8 in a str, under a valid checksum: only a checked
     // read's walk of the heap sees it.
-    let mut bad = template.clone();
-    let image = micro_monty::test_hooks::template_image(&mut bad);
+    let mut image = template.image().to_vec();
     let at = image
         .windows(14)
         .position(|w| w == b"qzqzmarkerqzqz")
         .expect("the str's bytes");
     image[at] = 0xff;
-    reseal(image);
+    reseal(&mut image);
     assert!(
-        matches!(bad.instantiate(), Err(SnapshotError::Corrupt { .. })),
-        "the first instantiation is checked"
+        matches!(e.restore(&image), Err(SnapshotError::Corrupt { .. })),
+        "a checked restore walks the heap"
+    );
+    assert!(
+        matches!(
+            SessionTemplate::from_image(&e, image),
+            Err(SnapshotError::Corrupt { .. })
+        ),
+        "a template from an image is checked"
     );
 
-    // Any changed byte, after a checked instantiation: the checksum.
+    // Any changed byte: the checksum.
     let mut bad = template.clone();
-    bad.instantiate().expect("checked, then trusted");
+    bad.instantiate().expect("instantiates");
     let image = micro_monty::test_hooks::template_image(&mut bad);
     let n = image.len();
     image[n / 2] ^= 1;

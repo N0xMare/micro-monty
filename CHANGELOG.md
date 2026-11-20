@@ -243,6 +243,13 @@ hashes are pre-release history, kept in the private archive
   uses it for py-sdk cells: a `Reset` waits for
   the next `StartCell`, and a bootstrap equal to the one whose state the
   worker kept is not compiled or run again.
+- A template from `SessionTemplate::capture` is read without the
+  validation walks from its first instantiation or `reset_to`, where
+  0.0.2 walked it once: this build wrote its image from a live session,
+  and the checksum is still compared each time. `from_image` still
+  restores its image checked, as `Engine::restore` always does. A
+  two-cell py-sdk session's reset to its bootstrap takes about 1.87 M
+  fewer instructions [M].
 
 ### Known issues
 

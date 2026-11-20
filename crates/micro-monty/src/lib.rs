@@ -752,13 +752,13 @@ impl std::error::Error for SnapshotError {}
 #[derive(Clone, Debug)]
 pub struct SessionTemplate {
     engine: Engine,
+    /// Read without the validation walks (the checksum is still
+    /// compared): this build wrote it from a live session
+    /// ([`SessionTemplate::capture`]) or restored it checked
+    /// ([`SessionTemplate::from_image`]). It is private and never changes,
+    /// and what an image's host code resolves against in the engine's
+    /// cache only grows, so the walks would find what they found then.
     image: Vec<u8>,
-    /// Set once this engine has restored `image` checked: later
-    /// instantiations skip the validation walks (the checksum is still
-    /// compared). The image is private and never changes, and what an
-    /// image's host code resolves against in the engine's cache only
-    /// grows, so the walks would find what they found then.
-    checked: std::sync::OnceLock<()>,
     /// The captured session's counters at its last reset and at the
     /// capture: how far its setup moved them ([`Session::reset_to`]).
     setup: (mm_engine::Counters, mm_engine::Counters),
@@ -782,11 +782,9 @@ impl SessionTemplate {
         if session.phase() != Phase::Idle {
             return Err(SnapshotError::Busy);
         }
-        // Never restored yet: the first instantiation reads it checked.
         Ok(SessionTemplate {
             engine: engine.clone(),
             image: session.snapshot()?,
-            checked: std::sync::OnceLock::new(),
             setup: (session.reset_mark, session.vm.counters()),
             limits: Some(session.limits()),
         })
@@ -806,16 +804,16 @@ impl SessionTemplate {
         Ok(SessionTemplate {
             engine: engine.clone(),
             image,
-            checked: std::sync::OnceLock::from(()),
             setup: Default::default(),
             limits: None,
         })
     }
 
-    /// A new session in the saved state. The first restore of the image
-    /// (here, or in [`SessionTemplate::from_image`]) is checked as
-    /// [`Engine::restore`] checks; later ones compare its checksum but
-    /// skip the walks that validate what it holds.
+    /// A new session in the saved state. The restore compares the image's
+    /// checksum but skips the walks by which [`Engine::restore`] validates
+    /// what an image holds: [`SessionTemplate::capture`] wrote it from a
+    /// live session, and [`SessionTemplate::from_image`] restored it
+    /// checked.
     ///
     /// # Errors
     ///
@@ -832,12 +830,7 @@ impl SessionTemplate {
     ///
     /// The errors of [`Engine::restore`].
     pub fn instantiate_with(&self, settings: SessionSettings) -> Result<Session, SnapshotError> {
-        let trusted = self.checked.get().is_some();
-        let session = self
-            .engine
-            .restore_contained(&self.image, settings, trusted)?;
-        let _ = self.checked.set(());
-        Ok(session)
+        self.engine.restore_contained(&self.image, settings, true)
     }
 
     /// The saved image (a snapshot), e.g. to store it.
@@ -1356,7 +1349,7 @@ impl Engine {
     }
 
     /// [`Engine::restore_with`]; `trusted` skips the validation walks, for
-    /// a [`SessionTemplate`]'s image this engine restored checked.
+    /// a [`SessionTemplate`]'s image.
     fn restore_contained(
         &self,
         bytes: &[u8],
@@ -2408,18 +2401,15 @@ impl Session {
             return Err(SnapshotError::Mismatch);
         }
         let engine = template.engine.with_limits(limits);
-        let trusted = template.checked.get().is_some();
-        let image = contain(|| image::read(&engine, &template.image, trusted)).unwrap_or_else(
-            |payload| {
+        let image =
+            contain(|| image::read(&engine, &template.image, true)).unwrap_or_else(|payload| {
                 Err(SnapshotError::Internal {
                     message: internal_error_message(payload.as_ref(), "the session is unchanged"),
                 })
-            },
-        )?;
+            })?;
         if !image.stop.is_empty() {
             return Err(SnapshotError::Busy);
         }
-        let _ = template.checked.set(());
         if !image.vm.adoptable(&self.vm) {
             return Err(SnapshotError::Mismatch);
         }

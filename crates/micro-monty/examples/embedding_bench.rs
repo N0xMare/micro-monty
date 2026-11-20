@@ -232,8 +232,8 @@ fn expect_ints(progress: &Progress, expected: &[i64]) -> Result<(), String> {
 }
 
 /// A tools template: eight typed host functions, `json` and `asyncio`
-/// imported. Its first instantiation restores it checked, as
-/// `Engine::restore` always does; later ones skip the validation walks.
+/// imported. Instantiating it skips the validation walks of
+/// `Engine::restore`.
 fn templates(engine: &Engine, m: &mut Measurements) -> Result<(), String> {
     let mut session = Session::new(engine).map_err(|e| e.traceback)?;
     let functions = (0..8)

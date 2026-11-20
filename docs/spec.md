@@ -2376,7 +2376,10 @@ ride in snapshots, and the host-call path gains only a `_host_defs` lookup
 when a host function is built. Binding uses `_mm.signature`; annotation
 checks raise `TypeError` at the call; there is no static checker (§1).
 `Session::stubs()` renders `.pyi` text. `SessionTemplate` is a snapshot
-taken after setup that instantiates by restore. `Session::reset_to`
+taken after setup that instantiates by restore. Its image is read without
+the validation walks (the checksum is still compared): `capture` wrote it
+from a live session in this process, and `from_image` restores it checked
+first, as `Engine::restore` always does. `Session::reset_to`
 restores it into an existing session in place of `reset` and a re-run of
 the setup: the session keeps its host-side settings, park handle, limits,
 fuel state, host arguments and hint overrides, takes the setup's recursion

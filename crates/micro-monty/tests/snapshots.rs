@@ -2683,7 +2683,7 @@ fn a_trusted_restore_collects_around_a_suspended_bundled_generator() {
     let p = s.start(&e.compile(setup, "s.py").expect("compiles"));
     assert!(matches!(p, Progress::Complete(_)), "{p:?}");
     let template = SessionTemplate::capture(&e, &mut s).expect("template");
-    // The first instantiation is checked, the second trusted.
+    // Each instantiation decodes for itself.
     for _ in 0..2 {
         let mut t = template.instantiate().expect("instantiates");
         let cell = "import gc\ngc.collect()\n[first, *it]";
@@ -3266,11 +3266,8 @@ fn reset_to_keeps_the_sessions_gc_settings() {
         assert!(matches!(p, Progress::Complete(_)), "{p:?}");
         (parks, marking, s.gc_collections() - before)
     };
-    let template = SessionTemplate::capture(
-        &engine,
-        &mut Session::new(&engine).expect("session"),
-    )
-    .expect("captures");
+    let template = SessionTemplate::capture(&engine, &mut Session::new(&engine).expect("session"))
+        .expect("captures");
     let plain = |n| run(&mut Session::new(&engine).expect("session"), n);
     // The stress modes collect at every safepoint: a shorter run.
     let settings: [(Setting, u32); 5] = [
