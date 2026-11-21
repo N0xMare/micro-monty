@@ -244,7 +244,9 @@ each stage logs to
   gate with `--base <tag> --write-floors` and writes every floor at the
   tag's count and build, or the head's where it is lower or an accepted
   rise, whatever the file held, stale keys included; `--programs` cannot
-  seed. A seed that lands late is judged with `--base <tag>`. `just
+  seed. A seed that lands late is judged with `cargo xtask check
+  --release-gate --ir-base <tag>`: the four Ir gates measure from the
+  tag, size and the tier's paths from the base as for any push. `just
   pretag` runs each gate against the previous tag and fails a floor whose
   build is not on the tag's first-parent line up to HEAD, a floor on the
   tag's or the head's build that does not hold its count, and an accepted

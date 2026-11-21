@@ -3048,7 +3048,8 @@ each floor at the tag's count with the tag's build (the head's where the
 head counts less or rises with an accept line), whatever the file held;
 `--programs` cannot seed. That is how each release starts its floors:
 `just seed-floors` is the first commit after a tag (one that lands later
-is judged with `--base <tag>`). A floor is the lowest its count has been
+is judged with `cargo xtask check --release-gate --ir-base <tag>`, the
+Ir gates from the tag and the rest from the base). A floor is the lowest its count has been
 since the tag only because the pre-tag check forces that seed. When two
 landings both move a floor, the raise wins if one side is an accepted
 raise, else the lower count; the gate on the combined tree then sets it.

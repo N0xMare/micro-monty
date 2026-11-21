@@ -289,7 +289,7 @@ pub(crate) fn stale(
                  program source) and no commit since {since} has their build {build}, so they \
                  cannot be recounted. A tag starts new floors: seed them from it with `just \
                  seed-floors {since}` as the first commit after it, and judge that commit with \
-                 `cargo xtask check --base {since}`",
+                 `cargo xtask check --release-gate --ir-base {since}`",
                 some(&names)
             ));
         };

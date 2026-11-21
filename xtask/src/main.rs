@@ -118,6 +118,10 @@ tasks:
                              tier's paths, size and the Ir gates (default
                              origin/main; a stack's parent while the parent
                              is gated or waits to be pushed)
+      --ir-base <tag>        the revision the four Ir gates measure from,
+                             where it is not --base's: a `v*` tag, for the
+                             commit that seeds the floors late (size and
+                             the tier's paths stay on --base)
   size [--base <rev>]        build `hello` and the mm-wasm guests as shipped
                              (wasm-opt on wasm), and the base's (default
                              origin/main) and the release's, each with its
@@ -327,13 +331,16 @@ fn main() -> ExitCode {
 #[allow(clippy::too_many_lines, reason = "one flat list of stages")]
 fn check(args: &[String]) -> Result<(), String> {
     let (mut serial, mut release_gate) = (false, false);
-    let mut base = None;
+    let (mut base, mut ir_base) = (None, None);
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--serial" => serial = true,
             "--release-gate" => release_gate = true,
             "--base" => base = Some(args.next().ok_or("check: --base needs a revision")?),
+            "--ir-base" => {
+                ir_base = Some(args.next().ok_or("check: --ir-base needs a revision")?);
+            }
             other => return Err(format!("check: unknown option `{other}`\n{USAGE}")),
         }
     }
@@ -356,6 +363,14 @@ fn check(args: &[String]) -> Result<(), String> {
         "check: measured from {base} (merge base {}), head {head}",
         merge_base.as_deref().unwrap_or("none")
     );
+    // A seed that lands late: the Ir gates judge the floors against the
+    // tag they are seeded from, which the base's floors cannot stand for
+    // (stale ones name builds no commit has), while size and the tier's
+    // paths judge the change since the base, as for any push.
+    let ir_base = ir_base.map_or(base, String::as_str);
+    if ir_base != base {
+        println!("check: the Ir gates measure from {ir_base}");
+    }
     // The files the change touches, for the stages its paths add.
     let changed = merge_base
         .as_deref()
@@ -663,11 +678,11 @@ fn check(args: &[String]) -> Result<(), String> {
     // wasmtime's guest instructions against the base and the floors
     // (its own worktrees and target directories, `shipped::refs_dir`).
     if cfg!(target_os = "linux") {
-        stages.push(Stage::new("wasm-ir").run(task(&["wasm-ir", "--base", base])));
+        stages.push(Stage::new("wasm-ir").run(task(&["wasm-ir", "--base", ir_base])));
         // The bench programs' gated Ir on the shipped native `mm` against
         // the base's and the floors (AGENTS.md's Ir rule).
         stages.push(Stage::new("native-ir").after(&["shipped-mm"]).run({
-            let mut ir = task(&["native-ir", "--base", base]);
+            let mut ir = task(&["native-ir", "--base", ir_base]);
             ir.env("MM", &shipped_mm);
             ir
         }));
@@ -764,7 +779,7 @@ fn check(args: &[String]) -> Result<(), String> {
             "v8-ir",
             "--head-built",
             "--base",
-            base,
+            ir_base,
         ])));
         // The recorded real sessions' Ir on the shipped replay worker,
         // built beside shipped-mm's mm (the same target directory). Its
@@ -774,7 +789,7 @@ fn check(args: &[String]) -> Result<(), String> {
         stages.push(
             Stage::new("replay-ir")
                 .after(&["shipped-mm", "durability", "durability-cross", "wasm-host"])
-                .run(task(&["replay-ir", "--base", base])),
+                .run(task(&["replay-ir", "--base", ir_base])),
         );
     }
     {
