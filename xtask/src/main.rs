@@ -104,15 +104,16 @@ tasks:
                              wasm-ir (Linux); at the same time where they can, the step-time oracle
                              last and alone; logs in target/check/logs/
       --serial               one stage at a time, output on the terminal
-      --release-gate         the full gate: release builds, durability at
-                             1:1000, also wasm-host, overflow-wasip1, v8-ir,
-                             replay-ir and the codemode check
-                             (default: the landing tier, or the release gate
-                             when the change touches parking, snapshots, the
-                             GC, the wasm crates, the shipped recipe, the
-                             toolchain, Cargo.lock, .cargo/ or a profile;
-                             AGENTS.md)
-      --landing-tier         the landing tier whatever the change touches
+      --release-gate         every stage, release builds, durability at
+                             1:1000: on main's tip after pushes and before
+                             a tag (default: the dev tier, which runs fmt,
+                             clippy, docs, test, features, conformance
+                             natively, durability at 1:100, golden, size and
+                             native-ir, plus the stages that guard what the
+                             change touches; or the release gate when it
+                             touches the shipped recipe, the release-gate
+                             Ir gates, the toolchain, Cargo.lock, .cargo/,
+                             a profile or an optimize mark; AGENTS.md)
       --base <rev>           the revision the change is measured from: the
                              tier's paths, size and the Ir gates (default
                              origin/main; a stack's parent while the parent
@@ -304,9 +305,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// Every local gate, as stages that run at the same time where they can
-/// (`check.rs`); `--release-gate` adds `wasm-host`, `overflow-wasip1` and the
-/// codemode check.
+/// The local gates, as stages that run at the same time where they can
+/// (`check.rs`): the dev tier ([`DEV_STAGES`] and what the change's paths
+/// add, [`DEV_ADDS`]), or with `--release-gate` every stage.
 ///
 /// Three things order the stages. Builds in one target directory take
 /// turns on cargo's lock, so the debug gates build in `target/check/debug`
@@ -325,14 +326,13 @@ fn main() -> ExitCode {
 /// oracle measures wall time, so it runs last, alone.
 #[allow(clippy::too_many_lines, reason = "one flat list of stages")]
 fn check(args: &[String]) -> Result<(), String> {
-    let (mut serial, mut release_gate, mut landing_tier) = (false, false, false);
+    let (mut serial, mut release_gate) = (false, false);
     let mut base = None;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--serial" => serial = true,
             "--release-gate" => release_gate = true,
-            "--landing-tier" => landing_tier = true,
             "--base" => base = Some(args.next().ok_or("check: --base needs a revision")?),
             other => return Err(format!("check: unknown option `{other}`\n{USAGE}")),
         }
@@ -356,13 +356,32 @@ fn check(args: &[String]) -> Result<(), String> {
         "check: measured from {base} (merge base {}), head {head}",
         merge_base.as_deref().unwrap_or("none")
     );
-    if !release_gate
-        && !landing_tier
-        && let Some(why) = release_gate_reason(&root, base)
-    {
-        println!("check: the release gate, as the change touches {why} (AGENTS.md)");
-        release_gate = true;
+    // The files the change touches, for the stages its paths add.
+    let changed = merge_base
+        .as_deref()
+        .map_or_default(|base| changed_files(&root, base));
+    let mut adds = Vec::new();
+    if !release_gate {
+        if let Some(why) = release_gate_reason(&root, base) {
+            println!("check: the release gate, as the change touches {why} (AGENTS.md)");
+            release_gate = true;
+        } else {
+            adds = dev_adds(&changed);
+            println!("check: the dev tier (AGENTS.md); --release-gate runs every stage");
+            for (stages, path) in &adds {
+                println!(
+                    "check: also {}, as the change touches {path}",
+                    stages.join(" and ")
+                );
+            }
+        }
     }
+    // Durability's fine setting with the cross-target run: in the release
+    // gate, and in the dev tier for a change to what an image holds.
+    let fine = release_gate
+        || adds
+            .iter()
+            .any(|(stages, _)| stages.contains(&"durability-cross"));
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     // Stages run a copy of this binary, which no stage's build replaces.
     let xtask = root.join("target/check/xtask");
@@ -372,7 +391,7 @@ fn check(args: &[String]) -> Result<(), String> {
     }
     fs::copy(&exe, &xtask).map_err(|e| format!("cannot copy {}: {e}", exe.display()))?;
     let debug = root.join("target/check/debug");
-    // The landing tier builds what it only runs (no size or time measured)
+    // The dev tier builds what it only runs (no size or time measured)
     // with thin LTO (`gate`); the release gate builds it as the release
     // profile does. Both tiers run the tests at opt 1 with debug assertions
     // (`gate-test`, Cargo.toml); `just test` keeps the opt-0 run.
@@ -450,16 +469,16 @@ fn check(args: &[String]) -> Result<(), String> {
             "--package",
             "mm-cli",
         ])),
-        // The landing tier parks the own cases and the corpus subset at
-        // most about 100 times each beyond `5:50`, still at every host
-        // call; the release gate, about 1,000 (xtask/src/durability.rs).
+        // The dev tier parks the own cases and the corpus subset at most
+        // about 100 times each beyond `5:50`, still at every host call;
+        // the fine setting, about 1,000 (xtask/src/durability.rs).
         Stage::new("durability")
             .after(&["mm"])
             .urgent()
-            .run(mm_task(if release_gate {
+            .run(mm_task(if fine {
                 &["durability"]
             } else {
-                &["durability", "--fine", durability::LANDING_FINE]
+                &["durability", "--fine", durability::DEV_FINE]
             })),
         Stage::new("conformance").run(task(&["conformance", "--check"])),
         Stage::new("conformance-mm").after(&["mm"]).run(mm_task(&[
@@ -653,7 +672,7 @@ fn check(args: &[String]) -> Result<(), String> {
     } else {
         println!("check: wasm-ir and native-ir skipped: valgrind runs on Linux only");
     }
-    if release_gate && cfg!(target_os = "linux") {
+    if cfg!(target_os = "linux") {
         // V8's instructions on the guests the size-head stage built.
         stages.push(Stage::new("v8-ir").after(&["size-head"]).run(task(&[
             "v8-ir",
@@ -672,7 +691,7 @@ fn check(args: &[String]) -> Result<(), String> {
                 .run(task(&["replay-ir", "--base", base])),
         );
     }
-    if release_gate {
+    {
         // Next to the other wasip1 stage, but off the critical path: it
         // needs no `mm`, builds in its own target directory and runs at
         // `nice` 10.
@@ -716,28 +735,101 @@ fn check(args: &[String]) -> Result<(), String> {
                 .concat(),
             )),
     );
+    if !release_gate {
+        let mut kept = DEV_STAGES.to_vec();
+        kept.extend(adds.iter().flat_map(|(stages, _)| stages.iter().copied()));
+        // The Ir gates count under valgrind: Linux only.
+        kept.retain(|name| cfg!(target_os = "linux") || *name != "native-ir");
+        stages = check::keep(stages, &kept)?;
+    }
     check::run(stages, &root, serial)
 }
 
+/// The dev tier's stages (`cargo xtask check` before a push): what failed
+/// lanes most and needs no machine to itself. The release gate, on main's
+/// tip after pushes and before a tag, runs every stage (AGENTS.md).
+const DEV_STAGES: &[&str] = &[
+    "fmt",
+    "mm",
+    "durability",
+    "conformance",
+    "conformance-mm",
+    "test",
+    "clippy",
+    "features",
+    "docs",
+    "handoffs",
+    "size-references",
+    "size-head",
+    "size",
+    "shipped-mm",
+    "golden",
+    "native-ir",
+];
+
+/// Paths (prefixes) and the stages a change to one adds to the dev tier,
+/// the ones that guard it: what an image holds (durability at its fine
+/// setting too, `check`), the dispatch loop and the park state (the step
+/// oracle's fuel half; its timed half needs the machine alone), and the
+/// wasm crates.
+const DEV_ADDS: &[(&[&str], &[&str])] = &[
+    (
+        &[
+            "crates/mm-engine/src/snapshot.rs",
+            "crates/mm-core/src/gc",
+            "crates/mm-core/src/snapshot.rs",
+            "crates/micro-monty/src/image.rs",
+            "crates/micro-monty/tests/golden/",
+            "crates/mm-compile/src/encode.rs",
+        ],
+        &["durability-cross"],
+    ),
+    (
+        &[
+            "crates/mm-engine/src/interp.rs",
+            "crates/mm-engine/src/nstep.rs",
+            "crates/mm-engine/src/cont.rs",
+            "crates/mm-engine/src/vm.rs",
+            "crates/mm-engine/src/generator.rs",
+            "crates/mm-engine/src/aio.rs",
+        ],
+        &["steps-build", "steps-fuel"],
+    ),
+    (&["crates/mm-wasm-"], &["wasm", "wasm-host"]),
+];
+
+/// The stages [`DEV_ADDS`] adds for `changed` (a path a line), each group
+/// with the first path that asked for it.
+fn dev_adds(changed: &str) -> Vec<(&'static [&'static str], &str)> {
+    DEV_ADDS
+        .iter()
+        .filter_map(|(paths, stages)| {
+            changed
+                .lines()
+                .find(|path| paths.iter().any(|p| path.starts_with(p)))
+                .map(|path| (*stages, path))
+        })
+        .collect()
+}
+
+/// The files that differ from commit `base`, committed or not, new
+/// untracked ones included, a path a line. `--no-renames`: a moved file
+/// counts under its old and its new path, so `git mv interp.rs run.rs`
+/// still names interp.rs.
+fn changed_files(root: &Path, base: &str) -> String {
+    let git = |args: &[&str]| wasm_wall::git(root, args).unwrap_or_default();
+    git(&["diff", "--name-only", "--no-renames", base])
+        + "\n"
+        + &git(&["ls-files", "--others", "--exclude-standard"])
+}
+
 /// Paths (prefixes) whose change makes plain `check` the release gate:
-/// parking and the park state (`Cont`, the VM's frames, generators and
-/// tasks), snapshots and the golden images, the GC, the wasm crates, how
-/// shipped builds are made (`v8-ir` gates the guests), and the toolchain,
-/// the lockfile and cargo's configuration, which every build reads.
+/// what no dev-tier stage judges and every build or count depends on. How
+/// shipped builds are made (`v8-ir` gates the guests), the gates that run
+/// in the release gate only, and the toolchain, the lockfile and cargo's
+/// configuration, which every build reads. Engine paths add their own
+/// stages to the dev tier instead ([`DEV_ADDS`]).
 const RELEASE_GATE_PATHS: &[&str] = &[
-    "crates/mm-engine/src/interp.rs",
-    "crates/mm-engine/src/snapshot.rs",
-    "crates/mm-engine/src/nstep.rs",
-    "crates/mm-engine/src/cont.rs",
-    "crates/mm-engine/src/vm.rs",
-    "crates/mm-engine/src/generator.rs",
-    "crates/mm-engine/src/aio.rs",
-    "crates/mm-core/src/gc",
-    "crates/mm-core/src/snapshot.rs",
-    "crates/micro-monty/src/image.rs",
-    "crates/micro-monty/tests/golden/",
-    "crates/mm-compile/src/encode.rs",
-    "crates/mm-wasm-",
     "xtask/src/wasm.rs",
     "xtask/src/shipped.rs",
     // The code of the gates that run in the release gate only, and what
@@ -785,10 +877,7 @@ fn release_gate_reason(root: &Path, base_rev: &str) -> Option<String> {
         ));
     };
     let base = base.trim();
-    // `--no-renames`: a moved file counts under its old and its new path,
-    // so `git mv interp.rs run.rs` still names interp.rs.
-    let changed = git(&["diff", "--name-only", "--no-renames", base]).unwrap_or_default()
-        + &git(&["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
+    let changed = changed_files(root, base);
     if let Some(path) = changed
         .lines()
         .find(|path| RELEASE_GATE_PATHS.iter().any(|p| path.starts_with(p)))
@@ -1120,7 +1209,39 @@ fn cpython_oracle_version(python: &Path) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{names_optimize, optimize_attrs};
+    use super::{dev_adds, names_optimize, optimize_attrs};
+
+    #[test]
+    fn a_change_adds_the_stages_that_guard_its_paths_to_the_dev_tier() {
+        let stages = |changed: &str| -> Vec<&str> {
+            dev_adds(changed)
+                .iter()
+                .flat_map(|(stages, _)| stages.iter().copied())
+                .collect()
+        };
+        assert_eq!(
+            stages("docs/spec.md\ncrates/mm-engine/src/ops.rs\n"),
+            [] as [&str; 0]
+        );
+        assert_eq!(
+            stages("crates/mm-engine/src/interp.rs\n"),
+            ["steps-build", "steps-fuel"]
+        );
+        // `gc` is a prefix (gc.rs, gc_inc.rs); snapshot.rs of mm-engine is
+        // an image path, not a dispatch one.
+        assert_eq!(
+            stages("crates/mm-core/src/gc_inc.rs\ncrates/mm-engine/src/snapshot.rs\n"),
+            ["durability-cross"]
+        );
+        assert_eq!(
+            stages("README.md\ncrates/mm-wasm-host/src/lib.rs\ncrates/mm-engine/src/vm.rs\n"),
+            ["steps-build", "steps-fuel", "wasm", "wasm-host"]
+        );
+        assert_eq!(
+            dev_adds("a\ncrates/mm-wasm-abi/x.rs\ncrates/mm-wasm-host/y.rs\n")[0].1,
+            "crates/mm-wasm-abi/x.rs"
+        );
+    }
 
     #[test]
     fn a_mark_change_is_seen_by_the_attribute_scan() {

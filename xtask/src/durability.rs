@@ -26,7 +26,7 @@
 //! - every own case and every `FINE_STRIDE`-th corpus case in name order
 //!   (a fixed subset) also at `FINE` (1:1000): a small case parks at every
 //!   call and loop iteration. `--fine N:M` sets another cap for the subset
-//!   (`cargo xtask check`'s landing tier runs 1:100; `--release-gate`, 1:1000).
+//!   (`cargo xtask check`'s dev tier runs 1:100; `--release-gate`, 1:1000).
 //!
 //! `--cross-target` instead runs the own cases at `COARSE` with every
 //! snapshot restored on the other target: the parked chain alternates
@@ -71,8 +71,8 @@ const COARSE: &str = "5:50";
 /// Parks for the subset: every unit, at most about 1,000 parks (the
 /// release gate's policy).
 const FINE: &str = "1:1000";
-/// The landing tier's policy for the subset (`cargo xtask check`).
-pub(crate) const LANDING_FINE: &str = "1:100";
+/// The dev tier's policy for the subset (`cargo xtask check`).
+pub(crate) const DEV_FINE: &str = "1:100";
 /// Every this many corpus cases (in name order) is in the subset.
 const FINE_STRIDE: usize = 3;
 /// CPU seconds one `mm` process may take (the oracle's `--timeout`;
@@ -245,7 +245,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             // differs depends on the policy (463's `parks` digest differs at
             // 1:1000 only), so an entry goes only when no gate would see it.
             let specs = if record {
-                &[LANDING_FINE, FINE][..]
+                &[DEV_FINE, FINE][..]
             } else {
                 &[fine.as_str()][..]
             };
@@ -302,7 +302,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             "at {COARSE} (N:M = every N fuel units, at most ~M parks), and at {} for the \
              own cases and one corpus case in {FINE_STRIDE}",
             if record {
-                format!("{LANDING_FINE} and {FINE}")
+                format!("{DEV_FINE} and {FINE}")
             } else {
                 fine.clone()
             }

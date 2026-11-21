@@ -3140,7 +3140,7 @@ Each session has two floors (**Floors** above), in
 `xtask/ir-floors/replay-ir.txt`: `sessions/<id>`, the judged count, and
 `sessions-calls/<id>`, the allocator's calls; the total is not floored.
 The gate runs in the release gate only, so a rise that lands on the
-landing tier is judged at the next release-gate run against the floor,
+dev tier is judged at the next release-gate run against the floor,
 and rises under the limit cannot add up between two runs. The judged
 count is not exact: one worker's reads of a session differ by up to
 0.106% [M] (the race above). A floor moves only on a count past a band
@@ -3159,9 +3159,11 @@ worker beside the head's and the base's.
 
 ## 13. Tests and conformance
 
-Every gate is local: GitHub runs none. `cargo xtask check` (the landing
-tier) and `cargo xtask check --release-gate` run them; `AGENTS.md` says
-which tier a change needs and lists the commands. A `v*` tag runs only
+Every gate is local: GitHub runs none. `cargo xtask check` (the dev tier:
+a subset before each push, plus the stages that guard what the change
+touches) and `cargo xtask check --release-gate` (every stage, on main's
+tip after pushes and before a tag) run them; `AGENTS.md` says which tier
+a change needs and lists the commands. A `v*` tag runs only
 `.github/workflows/release.yml`, which builds the release artifacts and
 opens a draft release.
 
@@ -3205,7 +3207,7 @@ opens a draft release.
   same snapshots and went on (§5.1 clause 4); a difference
   `conformance/durability-results.txt` does not record fails. Every case
   parks at `5:50` (every 5 units, or every ⌈fuel / 50⌉ for a long case); the
-  own cases and every third corpus case also park at `1:100` in the landing
+  own cases and every third corpus case also park at `1:100` in the dev
   tier and `1:1000` in the release gate.
   `--cross-target` runs the own cases with every snapshot restored on the
   other target: the chain alternates between the native `mm` and `mm` for

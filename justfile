@@ -21,11 +21,12 @@ lint:
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --locked -- -D warnings
 
-# The landing tier: every gate, before a push to main.
+# The dev tier: before a push to main (AGENTS.md).
 check:
     cargo xtask check
 
-# The release gate: before a tag, and for the changes AGENTS.md names.
+# The release gate, every stage: on main's tip after pushes, before a tag,
+# and for the changes AGENTS.md names.
 release-gate:
     cargo xtask check --release-gate
 

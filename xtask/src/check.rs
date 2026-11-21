@@ -69,6 +69,24 @@ impl Stage {
     }
 }
 
+/// Only the stages named in `kept`, in their order; they no longer wait
+/// for the others. Dropping a stage drops the order it imposed, so a kept
+/// stage must not share a file with one that waited only through a
+/// dropped stage.
+pub(crate) fn keep(stages: Vec<Stage>, kept: &[&str]) -> Result<Vec<Stage>, String> {
+    if let Some(unknown) = kept.iter().find(|k| !stages.iter().any(|s| s.name == **k)) {
+        return Err(format!("check: no stage is named {unknown}"));
+    }
+    Ok(stages
+        .into_iter()
+        .filter(|s| kept.contains(&s.name))
+        .map(|mut s| {
+            s.after.retain(|a| kept.contains(a));
+            s
+        })
+        .collect())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
     Waiting,

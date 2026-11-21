@@ -35,8 +35,8 @@ just build               cargo build of the workspace
 just test [args]         the workspace's tests (debug)
 just fmt                 format every crate
 just lint                rustfmt --check and clippy with warnings denied
-just check               the landing tier: every gate (logs in target/check/logs/)
-just release-gate        the release gate (`cargo xtask check --release-gate`)
+just check               the dev tier, before a push (logs in target/check/logs/)
+just release-gate        every stage: main's tip after pushes, and before a tag
 just conformance [args]  Monty's corpus on mm vs conformance/results (`--filter X`)
 just durability [args]   every passing case parked, snapshotted, restored: reports, fuel and
                          final-state digests vs conformance/durability-results.txt
@@ -112,21 +112,39 @@ to `target/check/logs/<stage>.log`.
   long runs (`gc-stress`, fuzzing) close a phase.
 - No credentials, auth headers, private session data or unsanitized
   recordings in the tree, logs or tests. The workspace forbids `unsafe`.
-- Tiers: `cargo xtask check` before every push to main, rebased onto the
-  latest main. It runs the release gate by itself (and says why) before a
-  tag and for any change whose files since `origin/main`, committed or not,
-  old and new names of a rename both counted, include a path of
-  `RELEASE_GATE_PATHS` in `xtask/src/main.rs`: in `crates/mm-engine/src/`
-  `interp.rs`, `snapshot.rs`, `nstep.rs`, `cont.rs`, `vm.rs`,
-  `generator.rs` or `aio.rs`; `crates/mm-core/src/gc*` or `snapshot.rs`;
-  `crates/micro-monty/src/image.rs` or `tests/golden/`;
-  `crates/mm-compile/src/encode.rs`; a `crates/mm-wasm-*` crate;
-  `xtask/src/wasm.rs` or `shipped.rs`; the release-gate-only Ir gates'
-  code (`xtask/src/v8_ir.rs`, `replay_ir.rs`, `accept.rs`, `floors.rs`),
-  `xtask/ir-floors/v8-ir.txt` and what only they read
-  (`conformance/codemode/real/gate.py`, `carry.py` and `traces.tar.xz`;
-  `hosts/js/src/`, `hosts/js/bench/count.ts`, `hosts/js/package.json`);
-  `rust-toolchain.toml`,
+- Tiers (owner, 2026-11-21): three, so the loop before a push is short.
+  **Dev tier**: `cargo xtask check` before every push to main, rebased
+  onto the latest main: fmt, clippy, docs, the workspace tests, the
+  feature builds, conformance natively, durability at `1:100`, the golden
+  images, size and native-ir (`DEV_STAGES` in `xtask/src/main.rs`). A
+  change adds the stages that guard its paths (`DEV_ADDS`, printed with
+  the path): what an image holds (`crates/mm-engine/src/snapshot.rs`,
+  `crates/mm-core/src/gc*` or `snapshot.rs`,
+  `crates/micro-monty/src/image.rs` or `tests/golden/`,
+  `crates/mm-compile/src/encode.rs`) adds durability at `1:1000` and
+  cross-target; the dispatch loop and park state (in
+  `crates/mm-engine/src/` `interp.rs`, `nstep.rs`, `cont.rs`, `vm.rs`,
+  `generator.rs` or `aio.rs`) adds the step oracle's fuel half; a
+  `crates/mm-wasm-*` crate adds `wasm` and `wasm-host`. **Release gate**:
+  `cargo xtask check --release-gate`, every stage (the timed step oracle,
+  memory probes, package, wasm-ir, v8-ir, replay-ir, the wasip1 runs,
+  wasm-host, codemode, the real replay). It runs on main's tip after
+  each push, in the background, and always before a tag; main may be
+  pushed on the dev tier, and a release-gate failure on main is fixed or
+  reverted in the next push, before anything else lands. A commit that
+  expects a wasm-ir, v8-ir or replay-ir rise runs that gate by hand
+  first, for its accept line and floor. **Before a tag**: `just pretag`
+  and the long runs (`gc-stress`, `difffuzz`, the fuzz targets, the
+  correctness sweeps). Plain `check` runs the release gate by itself (and
+  says why) for any change whose files since `origin/main`, committed or
+  not, old and new names of a rename both counted, include a path of
+  `RELEASE_GATE_PATHS` in `xtask/src/main.rs`, which no dev-tier stage
+  judges: `xtask/src/wasm.rs` or `shipped.rs`; the release-gate-only Ir
+  gates' code (`xtask/src/v8_ir.rs`, `replay_ir.rs`, `accept.rs`,
+  `floors.rs`), `xtask/ir-floors/v8-ir.txt` and `replay-ir.txt` and what
+  only they read (`conformance/codemode/real/gate.py`, `carry.py` and
+  `traces.tar.xz`; `hosts/js/src/`, `hosts/js/bench/count.ts`,
+  `hosts/js/package.json`); `rust-toolchain.toml`,
   `Cargo.lock`, `.cargo/` or `.agents/setup`. A line of a `[profile.*]`
   table, an `optimize` mark (`size`, `speed` or `none`, bare or in
   `cfg_attr`) added, removed, edited or moved to another function (a
@@ -140,8 +158,7 @@ to `target/check/logs/<stage>.log`.
   multi-line condition edited and a mark moved to another function (one
   added on one line of a tracked file is seen); and a change around a
   mark on a closure or an async block, which is paired with the next
-  function of the file. `--landing-tier` forces the landing tier; say why
-  in the commit if you use it. `--base <rev>` measures a stack from its
+  function of the file. `--base <rev>` measures a stack from its
   parent instead of `origin/main` (the tier's paths, size, the Ir gates),
   so a stack can be gated while its parent is gated or waits to be
   pushed; it is pushed once the parent is main. `check` prints the base
@@ -177,7 +194,7 @@ to `target/check/logs/<stage>.log`.
     path. Fails on a program past +0.5% or `startup` past +300
     instructions. The base builds with its own toolchain and, when its
     xtask has `shipped-mm`, its own recipe.
-  - `cargo xtask wasm-ir` (both tiers): the shipped wasip1 `mm`'s guest
+  - `cargo xtask wasm-ir` (release gate): the shipped wasip1 `mm`'s guest
     instructions under wasmtime. Fails on a program past +1.0%, the
     geomean past +0.5% or `startup` past +300 instructions. Other revisions
     build with their own toolchain and, when their xtask has `shipped-mm
