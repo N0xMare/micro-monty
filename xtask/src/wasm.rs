@@ -258,6 +258,85 @@ pub(crate) fn host() -> Result<(), String> {
     Ok(())
 }
 
+/// `cargo xtask js-host`: `hosts/js`' tests (`node --test`, no `npm ci`:
+/// they import only node's own modules) on the guests the gate already
+/// built, once on the default guest and once with `MM_GUEST=bundle`. It
+/// builds nothing: the default and bundle guests are `cargo xtask size
+/// --head`'s, and the second build one test loads beside them, which only
+/// needs another build id, is `cargo xtask wasm-host`'s guest with
+/// `mod-uuid` (`MM_GUEST_OLD`; `npm run guests` builds `core35` for it,
+/// most of a 5-minute build). `check` runs it after both stages.
+pub(crate) fn js_host() -> Result<(), String> {
+    const UU: &str = "wasm32-unknown-unknown";
+    let root = workspace_root();
+    let node = tool("NODE", "node").ok_or("js-host needs node ($NODE, PATH)")?;
+    let version = Command::new(&node)
+        .arg("--version")
+        .output()
+        .map_or_default(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned());
+    // Node runs the TypeScript sources as they are from 23.6
+    // (hosts/js/package.json's `engines`).
+    let mut parts = version
+        .trim_start_matches('v')
+        .split('.')
+        .map(|p| p.parse::<u32>().unwrap_or(0));
+    let (major, minor) = (parts.next().unwrap_or(0), parts.next().unwrap_or(0));
+    if (major, minor) < (23, 6) {
+        return Err(format!(
+            "js-host needs node 23.6 or later; {} is `{version}`",
+            node.display()
+        ));
+    }
+    let guests = [
+        (
+            "default",
+            root.join(format!("target/{UU}/shipped/mm_wasm_guest.wasm")),
+            "cargo xtask size --head",
+        ),
+        (
+            "bundle",
+            root.join(format!(
+                "target/mm-wasm-bundle/{UU}/shipped/mm_wasm_guest_bundle.wasm"
+            )),
+            "cargo xtask size --head",
+        ),
+        (
+            "old",
+            root.join(format!(
+                "target/mm-wasm-alt/{UU}/shipped/mm_wasm_guest.wasm"
+            )),
+            "cargo xtask wasm-host",
+        ),
+    ];
+    // The tests read `<name>.wasm` in one directory.
+    let dir = root.join("target/js-host/guests");
+    fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    for (name, path, built_by) in &guests {
+        let to = dir.join(format!("{name}.wasm"));
+        fs::copy(path, &to).map_err(|e| {
+            format!(
+                "js-host: cannot copy {} ({e}); `{built_by}` builds it",
+                path.display()
+            )
+        })?;
+    }
+    for guest in ["default", "bundle"] {
+        let status = Command::new(&node)
+            .args(["--test", "--expose-gc", "test/*.test.ts"])
+            .current_dir(root.join("hosts/js"))
+            .env("MM_GUEST_DIR", &dir)
+            .env("MM_GUEST", guest)
+            .env("MM_GUEST_OLD", "old")
+            .status()
+            .map_err(|e| format!("cannot run {}: {e}", node.display()))?;
+        if !status.success() {
+            return Err(format!("hosts/js' tests on the {guest} guest failed"));
+        }
+        println!("js-host: the {guest} guest passes hosts/js' tests");
+    }
+    Ok(())
+}
+
 /// Builds the bundle guest (`crates/mm-wasm-guest` with `host-bundle`) as
 /// shipped for `target`, in its own target directory so the default
 /// guest's build stays cached, optimizes it, then appends the bytecode it

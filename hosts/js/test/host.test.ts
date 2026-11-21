@@ -5,7 +5,10 @@
 //
 // Needs the guests: `npm run guests` (MM_GUEST_DIR overrides hosts/js/guests).
 // MM_GUEST names the guest the scenarios run on: `default`, or `bundle` for the
-// bundle guest (its bytecode served from its custom sections).
+// bundle guest (its bytecode served from its custom sections). MM_GUEST_OLD
+// names a guest of another build (another build id) for the upgrade test:
+// `core35` by default; `cargo xtask js-host` gives the reference host's
+// `mod-uuid` build.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -504,7 +507,7 @@ test("builds: restores pick the module that wrote the image; unknown builds are 
 	const s = up.session();
 	s.start("x = 41");
 	const image = s.snapshot();
-	const fresh = await up.load(guest("core35"));
+	const fresh = await up.load(guest(process.env.MM_GUEST_OLD ?? "core35"));
 	assert.notDeepEqual(fresh, old);
 	assert.equal(up.builds().length, 2);
 	const r = up.restore(image);

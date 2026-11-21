@@ -56,7 +56,10 @@ commands: `wasm-ir`, `v8-ir` (V8's instructions on both
 wasm32-unknown-unknown guests vs base and floors; release gate, Linux),
 `native-ir` (the gated bench Ir on the shipped native `mm` vs base and
 floors; in `check`, Linux), `replay-ir` (the recorded real sessions' Ir on
-the replay worker vs base and floors; release gate, Linux), `wasm-host`, `wasm-wall`, `gc-stress`,
+the replay worker vs base and floors; release gate, Linux), `wasm-host`,
+`js-host` (`hosts/js`' tests on the default and bundle guests `size --head`
+built, with `wasm-host`'s `mod-uuid` guest as the second build; node 23.6 or
+later, no `npm ci`; release gate, after both), `wasm-wall`, `gc-stress`,
 `parse-diff`, `docs`, `difffuzz`, `handoffs` (writes
 `xtask/handoff-sites.txt`, the `need_py()` hand-off sites; `--check` is in
 `check`) and `shipped-mm` (`mm` built natively as shipped, the binary bench
@@ -140,7 +143,7 @@ each stage logs to
   musl-only seccomp rules are built and tested. **Release gate**:
   `cargo xtask check --release-gate`, every stage (the timed step oracle,
   memory probes, package, wasm-ir, v8-ir, replay-ir, the wasip1 runs,
-  wasm-host, codemode, the real replay). It runs on main's tip after
+  wasm-host, js-host, codemode, the real replay). It runs on main's tip after
   each push, in the background, and always before a tag; main may be
   pushed on the dev tier, and a release-gate failure on main is fixed or
   reverted in the next push, before anything else lands. A commit that
@@ -156,7 +159,7 @@ each stage logs to
   `floors.rs`), `xtask/ir-floors/v8-ir.txt` and `replay-ir.txt` and what
   only they read (`conformance/codemode/real/gate.py`, `carry.py` and
   `traces.tar.xz`; `hosts/js/src/`, `hosts/js/bench/count.ts`,
-  `hosts/js/package.json`); `rust-toolchain.toml`,
+  `hosts/js/package.json`; `hosts/js/test/`, which only `js-host` runs); `rust-toolchain.toml`,
   `Cargo.lock`, `.cargo/` or `.agents/setup`. A line of a `[profile.*]`
   table, an `optimize` mark (`size`, `speed` or `none`, bare or in
   `cfg_attr`) added, removed, edited or moved to another function (a

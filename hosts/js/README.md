@@ -146,6 +146,10 @@ workerd [M]. A host without `mm_host.bundle_read` must use the default guest:
 the bundle guest fails to instantiate there. Snapshots cross between the two
 (same build id). `npm run guests` writes both to `guests/` (`default.wasm`,
 `bundle.wasm`); `MM_GUEST=bundle npm test` runs the tests on the bundle guest.
+`cargo xtask js-host` (in the release gate) runs the tests on both without
+`npm run guests`: on the guests `cargo xtask size --head` built, with
+`cargo xtask wasm-host`'s `mod-uuid` guest (`MM_GUEST_OLD`) in place of
+`core35` as the upgrade test's second build.
 
 ### Differences from the wasmtime host
 

@@ -3450,8 +3450,9 @@ opens a draft release.
   (park, snapshot, restore, finish) on both wasm targets under wasmtime;
   `cargo xtask wasm-host` (release gate) runs `crates/mm-wasm-host`'s
   tests against the shipped guests: parity with the native facade on every
-  `mm-wasm` export, and images crossing native and wasm. `hosts/js` has its
-  own tests (`npm test`), outside cargo.
+  `mm-wasm` export, and images crossing native and wasm. `cargo xtask
+  js-host` (release gate) runs `hosts/js`' tests (`node --test`, node 23.6
+  or later) on the shipped default and bundle guests.
 
 ## 14. Sources
 

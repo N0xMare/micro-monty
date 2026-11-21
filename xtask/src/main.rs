@@ -171,6 +171,11 @@ tasks:
                              wasm32-wasip1 and wasm32-unknown-unknown, report
                              hello.wasm sizes, run a snapshot round trip under
                              wasmtime
+  js-host                    hosts/js' tests (node 23.6 or later, no npm ci)
+                             on the default and the bundle guest, as built
+                             by `size --head`, with `wasm-host`'s mod-uuid
+                             guest as the upgrade test's second build (in
+                             the release gate)
   wasm-host                  the shipped mm-wasm guest (both targets) against
                              crates/mm-wasm-host's release tests, in that
                              separate workspace (not in check)
@@ -285,6 +290,7 @@ fn main() -> ExitCode {
         Some("shipped-build") => shipped::shipped_build_cli(&rest),
         Some("wasm") => wasm::run(&rest),
         Some("wasm-host") if rest.is_empty() => wasm::host(),
+        Some("js-host") if rest.is_empty() => wasm::js_host(),
         Some("wasm-wall") => wasm_wall::run(&rest),
         Some("wasm-ir") => wasm_ir::run(&rest),
         Some("native-ir") => native_ir::run(&rest),
@@ -788,7 +794,13 @@ fn check(args: &[String]) -> Result<(), String> {
         // runs.
         stages.push(
             Stage::new("replay-ir")
-                .after(&["shipped-mm", "durability", "durability-cross", "wasm-host"])
+                .after(&[
+                    "shipped-mm",
+                    "durability",
+                    "durability-cross",
+                    "wasm-host",
+                    "js-host",
+                ])
                 .run(task(&["replay-ir", "--base", ir_base])),
         );
     }
@@ -808,6 +820,15 @@ fn check(args: &[String]) -> Result<(), String> {
             Stage::new("wasm-host")
                 .after(&["size"])
                 .run(task(&["wasm-host"])),
+        );
+        // The JS host's tests on the guests `size-head` built, with the
+        // second build `wasm-host` made for its own upgrade test: no build
+        // of its own. Some of its tests bound wall time (a deadline, a
+        // park from another thread), so replay-ir waits for it.
+        stages.push(
+            Stage::new("js-host")
+                .after(&["size-head", "wasm-host"])
+                .run(task(&["js-host"])),
         );
         stages.push(Stage::new("codemode").run(command(
             &python(),
@@ -1004,6 +1025,8 @@ const RELEASE_GATE_PATHS: &[&str] = &[
     "conformance/codemode/real/traces.tar.xz",
     "hosts/js/src/",
     "hosts/js/bench/count.ts",
+    // The JS host's tests, which only the release gate's `js-host` runs.
+    "hosts/js/test/",
     "hosts/js/package.json",
     "rust-toolchain.toml",
     "Cargo.lock",
