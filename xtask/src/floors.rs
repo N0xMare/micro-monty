@@ -639,8 +639,11 @@ fn pre_tag(
                 ));
             }
         }
+        // A floor an accepted geomean swept up is the head's count, past
+        // its own limit or not, with no line that names it.
         if let Some(t) = t
             && f > t
+            && !(rules.swept)(name)
             && !(rules.accepted)(name, ratio(f, t))
         {
             errors.push(format!(
@@ -1203,6 +1206,60 @@ mod tests {
         assert!(
             errors[0].contains("fib\t1000\tb-1\tk-old")
                 && errors[0].contains("a stale floor is recounted"),
+            "{errors:?}"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// At a tag, what an accepted geomean sweeps: the seed writes each
+    /// risen count's floor at the head's, and the check passes the file
+    /// the seed wrote (it asked for a line naming each program).
+    #[test]
+    fn at_a_tag_a_seed_s_swept_floors_pass_the_check() {
+        let (dir, sha) = repo("tag-swept", &Floors::new());
+        git(&dir, &["tag", "v0.0.9"]).unwrap();
+        let tb = build_id(&dir, Some(&sha)).unwrap();
+        let keys = keys(&["a", "b", "c"], "k");
+        // a and b rose 0.2%, under the program limit; c is the tag's.
+        let tag = counts(&[("a", 10_000), ("b", 10_000), ("c", 10_000)]);
+        let head = counts(&[("a", 10_020), ("b", 10_020), ("c", 10_000)]);
+        let none = Counts::new();
+        let sides = Sides {
+            base: &sha,
+            tag: true,
+            head: &head,
+            base_counts: &tag,
+            keys: &keys,
+            head_build: "b-head",
+            recounted: &none,
+        };
+        let never = |_: &str, _: f64| false;
+        let rules = Rules {
+            accepted: &never,
+            past: &past,
+            swept: &|_| true,
+            band: exact,
+        };
+        judge(&dir, "native-ir", &sides, &rules, true).unwrap();
+        let written = here(&dir, "native-ir").unwrap();
+        assert_eq!(written["a"], floor(10_020, "b-head"));
+        assert_eq!(written["c"], floor(10_000, &tb), "c did not rise");
+        let (_, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        // Not swept, the same file is two floors above the tag's counts.
+        let not_swept = Rules {
+            accepted: &never,
+            past: &past,
+            swept: &|_| false,
+            band: exact,
+        };
+        let (_, errors) = judge(&dir, "native-ir", &sides, &not_swept, false).unwrap();
+        assert_eq!(
+            errors
+                .iter()
+                .filter(|e| e.contains("above the tag's count"))
+                .count(),
+            2,
             "{errors:?}"
         );
         fs::remove_dir_all(&dir).unwrap();
