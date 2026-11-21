@@ -125,13 +125,13 @@ macro_rules! types {
         impl T {
             /// The type's `__name__`.
             #[must_use]
-            pub fn name(self) -> &'static str {
+            pub const fn name(self) -> &'static str {
                 match self { $(T::$id => $name,)* }
             }
             /// The type's `__module__`.
             #[must_use]
             #[cfg_attr(mm_shipped, optimize(size))]
-            pub fn module(self) -> &'static str {
+            pub const fn module(self) -> &'static str {
                 match self {
                     T::TextIOWrapper => "_io",
                     T::Task | T::Future => "_asyncio",
@@ -278,7 +278,7 @@ impl T {
     /// Is this a `BaseException` subclass?
     #[must_use]
     #[cfg_attr(mm_shipped, optimize(size))]
-    pub fn is_exception(self) -> bool {
+    pub const fn is_exception(self) -> bool {
         self as u8 >= T::BaseException as u8
     }
 
@@ -301,7 +301,7 @@ impl T {
     /// Is the type exposed as a builtin name?
     #[must_use]
     #[cfg_attr(mm_shipped, optimize(size))]
-    pub fn is_builtin_name(self) -> bool {
+    pub const fn is_builtin_name(self) -> bool {
         matches!(
             self,
             T::object
@@ -326,6 +326,22 @@ impl T {
                 | T::staticmethod
                 | T::classmethod
                 | T::super_
-        ) || self.is_exception() && self.module() == "builtins"
+        ) || self.is_exception() && str_eq(self.module(), "builtins")
     }
+}
+
+/// `a == b`, for compile-time code (`str`'s `==` is not `const`).
+pub(crate) const fn str_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }

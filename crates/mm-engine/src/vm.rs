@@ -1400,8 +1400,12 @@ impl Vm {
     }
 
     fn init(&mut self) -> Result<(), Raised> {
-        // The builtins and the prelude intern about 720 strings [M]; room
-        // for them up front saves five rehashes of the table.
+        // The builtins and the prelude intern 199 strings [M]. The room is
+        // for what follows them without a rehash: a setup's or a first
+        // cell's names (the recorded py-sdk bootstraps reach 954 [M]). Room
+        // for 512 starts 8,127 instructions sooner and costs a session
+        // that passes 512 strings 67,000 for the rehash, which 92 of the
+        // 160 recorded sessions do [M].
         let room = self.heap.reserve_interned(1024);
         self.hx_hot(room)?;
         for t in crate::types::ALL {

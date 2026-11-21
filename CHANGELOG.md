@@ -45,6 +45,15 @@ hashes are pre-release history, kept in the private archive
 
 ### Changed
 
+- A new session starts in fewer instructions: `Vm::new` binds the builtin
+  functions and the prelude's natives from two lists made at compile time
+  with the natives table, instead of comparing every native's name with
+  every type's and every native's module with the prelude's at each
+  start. `mm run` of an empty program takes 18.1% fewer instructions
+  natively (535,676 to 438,494) and 21.1% fewer on wasm32-wasip1 under
+  wasmtime (855,689 to 675,128) [M]. The
+  builtins, the prelude's globals and a new session's image are the same,
+  byte for byte, and the build id does not move.
 - The Huffman decoder tables of the bundled modules and the prelude are
   built once per `Engine` and kept in its module cache (about 90 KB),
   instead of once per prelude chunk part and per cell or restore. A

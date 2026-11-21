@@ -18,7 +18,7 @@
 //! The floors are `xtask/ir-floors/native-ir.txt` ([`crate::floors`]): no
 //! history is built. A drop passes and leaves the floor file alone
 //! (`--write-floors` lowers it). Against the base and against the floor, a program rising more
-//! than 0.5%, or `startup` (about 0.58M) by more than 300 ([`LIMITS`])
+//! than 0.5%, or `startup` (about 0.44M) by more than 300 ([`LIMITS`])
 //! instructions, fails unless an accept line covers it
 //! ([`crate::accept`]): `Native-IR-Accepted: <programs> <ceiling>
 //! <reason>` in a commit since the base passes those programs up to the

@@ -32,7 +32,7 @@
 //! `xtask/ir-floors/wasm-ir.txt` ([`crate::floors`]). Against the base and
 //! the floor, the gate fails when a program's count rises past 1.0%
 //! (`PROGRAM_LIMIT`), the geometric mean of the ratios past 0.5%
-//! (`GEOMEAN_LIMIT`), or `startup`'s count, about 0.9M, by more than 300
+//! (`GEOMEAN_LIMIT`), or `startup`'s count, about 0.67M, by more than 300
 //! instructions ([`LIMITS`]); `startup` is left out of the geomean.
 //! Unrelated commits move the run loop's register allocation by up to
 //! about 1% either way; the floor bounds a creep of commits each under the
@@ -67,7 +67,7 @@ use crate::{
     workspace_root,
 };
 
-/// The limits: a program +1.0%; `startup` (about 0.9M) a few hundred
+/// The limits: a program +1.0%; `startup` (about 0.67M) a few hundred
 /// instructions, since startup drift is not accepted (owner) and the
 /// guest's count is exact (head and base of one commit +0 [M]), so an
 /// intended rise takes a `startup` accept line (size review of A+B).

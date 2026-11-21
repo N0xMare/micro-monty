@@ -347,12 +347,9 @@ impl Vm {
         let k = self.intern_hot("_MISSING")?;
         let m = self.missing;
         self.dict_set(ns, k, m)?;
-        for (i, n) in crate::builtins::NATIVES.iter().enumerate() {
-            if n.module() == Some("_prelude") {
-                let k = self.intern_hot(n.name())?;
-                let f = Value::native(u32::try_from(i).unwrap_or(0));
-                self.dict_set(ns, k, f)?;
-            }
+        for &i in &crate::builtins::PRELUDE_FNS {
+            let k = self.intern_hot(crate::builtins::NATIVES[usize::from(i)].name())?;
+            self.dict_set(ns, k, Value::native(u32::from(i)))?;
         }
         let k = self.intern_hot("__name__")?;
         let v = self.intern_hot(PRELUDE_NAME)?;

@@ -3307,7 +3307,7 @@ opens a draft release.
   loop or closure), so a loop turned into a
   bulk copy does not read as a gain. Limits, against the base and the
   floor (§12) alike: a program rising past 1.0%, the geomean of the ratios
-  (without `startup`) past 0.5%, or `startup` (about 0.9M instructions)
+  (without `startup`) past 0.5%, or `startup` (about 0.67M instructions)
   rising by more than 300 instructions; decreases always pass. An intended
   rise carries the table and a `Wasm-IR-Accepted: <names> <ceiling>
   <reason>` line in its commit message (`MM_WASM_IR_ACCEPT` with the same

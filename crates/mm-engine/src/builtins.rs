@@ -7,7 +7,7 @@ use crate::generator::ag;
 use crate::nstep;
 use crate::scratch::{NativeText, NativeValues};
 use crate::text::FormatSpec;
-use crate::types::{T, ty};
+use crate::types::{T, str_eq, ty};
 use crate::vm::{CallArgs, Raised, Request, Stream, Vm};
 use alloc::{format, string::String, vec::Vec};
 use core::cmp::Ordering;
@@ -1835,6 +1835,18 @@ const FIRST_METHOD: u32 = PACKED.owner_start[0] as u32;
 /// (method, its unbound twin) pairs ([`unbound`]).
 static TWIN_PAIRS: [(u16, u16); TWINS] = PACKED.twins;
 
+/// The functions a new session binds as builtin names ([`install`]), in
+/// table order: no module, and not named as a type that is a builtin name
+/// (the type is bound there instead). [`pack`] makes this list and
+/// [`PRELUDE_FNS`] from [`DEFS`] as it makes [`NATIVES`], so a session
+/// start reads two short lists instead of testing every native, and a
+/// native added to the table is in the right one or in neither.
+static BUILTIN_FNS: [u16; PACKED.builtin_fns_len] = prefix(&PACKED.builtin_fns);
+
+/// The functions of module `_prelude`, which a new session binds in the
+/// prelude's globals (`Vm::init_prelude`), in table order.
+pub(crate) static PRELUDE_FNS: [u16; PACKED.prelude_fns_len] = prefix(&PACKED.prelude_fns);
+
 const COUNT: usize = DEFS.len();
 const STR_CAP: usize = str_cap();
 const LIST_CAP: usize = list_cap();
@@ -1887,6 +1899,10 @@ struct Packed {
     strs_len: usize,
     owner_start: [u16; crate::types::NTYPES + 1],
     twins: [(u16, u16); TWINS],
+    builtin_fns: [u16; COUNT],
+    builtin_fns_len: usize,
+    prelude_fns: [u16; COUNT],
+    prelude_fns_len: usize,
 }
 
 /// How many methods have an unbound twin ([`UNBOUND`]).
@@ -1907,6 +1923,20 @@ const fn prefix<E: Copy, const N: usize, const M: usize>(a: &[E; M]) -> [E; N] {
         i += 1;
     }
     out
+}
+
+/// Is `name` a type's that is a builtin name ([`T::is_builtin_name`])?
+/// Compile-time only ([`pack`]).
+const fn names_builtin_type(name: &str) -> bool {
+    let mut i = 0;
+    while i < crate::types::NTYPES {
+        let t = crate::types::ALL[i];
+        if t.is_builtin_name() && str_eq(t.name(), name) {
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 /// Is `d` a method's unbound twin ([`UNBOUND`])?
@@ -2069,6 +2099,10 @@ const fn pack() -> Packed {
         strs_len: 0,
         owner_start: [0; crate::types::NTYPES + 1],
         twins: [(0, 0); TWINS],
+        builtin_fns: [0; COUNT],
+        builtin_fns_len: 0,
+        prelude_fns: [0; COUNT],
+        prelude_fns_len: 0,
     };
     // The order: functions as written, then methods (insertion sort).
     let mut order = [0u16; COUNT];
@@ -2120,6 +2154,19 @@ const fn pack() -> Packed {
             nkwonly: d.kwonly.len() as u8,
             f: d.f,
         };
+        // What a session start binds ([`BUILTIN_FNS`], [`PRELUDE_FNS`]).
+        match (d.owner, d.module) {
+            (None, None) if !names_builtin_type(d.name) => {
+                p.builtin_fns[p.builtin_fns_len] = k as u16;
+                p.builtin_fns_len += 1;
+            }
+            (None, Some(m)) if str_eq(m, "_prelude") => {
+                p.prelude_fns[p.prelude_fns_len] = k as u16;
+                p.prelude_fns_len += 1;
+            }
+            (Some(_), Some(m)) => assert!(!str_eq(m, "_prelude"), "a method in module _prelude"),
+            _ => {}
+        }
         k += 1;
     }
     // Each type's run of methods.
@@ -2331,19 +2378,9 @@ pub fn method_names(owner: T) -> Vec<&'static str> {
 /// Installs builtin names and type constructors.
 pub(crate) fn install(vm: &mut Vm) -> Result<(), Raised> {
     let b = vm.builtins;
-    for (i, n) in NATIVES.iter().enumerate() {
-        if n.owner.is_some() || n.module != 0 {
-            continue;
-        }
-        let name = n.name();
-        let is_type = crate::types::ALL
-            .iter()
-            .any(|t| t.name() == name && t.is_builtin_name());
-        if is_type {
-            continue;
-        }
-        let k = vm.intern_hot(name)?;
-        vm.dict_set(b, k, Value::native(u32::try_from(i).unwrap_or(0)))?;
+    for &i in &BUILTIN_FNS {
+        let k = vm.intern_hot(NATIVES[usize::from(i)].name())?;
+        vm.dict_set(b, k, Value::native(u32::from(i)))?;
     }
     for t in crate::types::ALL {
         if t.is_builtin_name() {
@@ -9114,4 +9151,31 @@ fn set_clear(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = vm.check_self(&a, T::set, "clear")?;
     vm.set_clear(s)?;
     Ok(Value::NONE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The lists a session start reads hold the natives the rule names,
+    /// in table order, stated here over the whole table.
+    #[test]
+    fn the_start_lists_hold_the_natives_a_session_binds() {
+        let indices = |keep: &dyn Fn(&Native) -> bool| -> Vec<usize> {
+            (0..NATIVES.len()).filter(|&i| keep(&NATIVES[i])).collect()
+        };
+        let builtins = indices(&|n| {
+            n.owner.is_none()
+                && n.module().is_none()
+                && !crate::types::ALL
+                    .iter()
+                    .any(|t| t.name() == n.name() && t.is_builtin_name())
+        });
+        let prelude = indices(&|n| n.module() == Some("_prelude"));
+        let listed =
+            |list: &[u16]| -> Vec<usize> { list.iter().map(|&i| usize::from(i)).collect() };
+        assert_eq!(listed(&BUILTIN_FNS), builtins);
+        assert_eq!(listed(&PRELUDE_FNS), prelude);
+        assert!(!builtins.is_empty() && !prelude.is_empty());
+    }
 }
