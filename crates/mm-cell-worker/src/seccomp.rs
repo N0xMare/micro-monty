@@ -5,15 +5,16 @@
 //!
 //! Allowed (measured with strace over the protocol host's worker suites):
 //!
-//! - `read` on stdin; `write` and `writev` on stdout and stderr (and a test
-//!   hook's file): musl's stdio, through which mimalloc prints its
-//!   messages, writes with `writev`; `pread64` on the `/proc/self/status`
-//!   descriptor opened before the filter, for the resource report;
+//! - `read` on stdin; `write` on stdout and stderr (and a test hook's
+//!   file), and on musl only `writev` on the same: musl's stdio, through
+//!   which mimalloc prints its messages, writes with `writev`; `pread64`
+//!   on the `/proc/self/status` descriptor opened before the filter, for
+//!   the resource report;
 //! - memory: `brk`, `mmap` and `mprotect` without `PROT_EXEC`, `munmap`,
-//!   `mremap`, `madvise`; `getcpu`, which mimalloc (the binary's allocator
-//!   on musl) calls at a thread's first allocation on a machine with two
-//!   or more NUMA nodes, and which returns two numbers and takes no
-//!   descriptor;
+//!   `mremap`, `madvise`; on musl only `getcpu`, which mimalloc (the
+//!   binary's allocator there) calls at a thread's first allocation on a
+//!   machine with two or more NUMA nodes, and which returns two numbers
+//!   and takes no descriptor;
 //! - threads (the stdin reader and the cancel repeater): `clone` with
 //!   `CLONE_THREAD` only (`clone3` fails with `ENOSYS`, so glibc falls back
 //!   to `clone`, whose flags a filter can read), `set_robust_list`, `rseq`,
@@ -24,9 +25,9 @@
 //!   engine's default entropy for `random`/`os.urandom`/`uuid`);
 //! - the end: `getrusage` (resource report), `exit_group`, and what
 //!   `abort` needs to raise `SIGABRT` on itself (`getpid`, `gettid`,
-//!   `rt_sigaction`, and glibc's `tgkill` aimed at this process or musl's
-//!   `tkill` aimed at the main thread or the thread that installed the
-//!   filter, the worker's: a filter cannot tell another thread of this
+//!   `rt_sigaction`, and glibc's `tgkill` aimed at this process or, on
+//!   musl only, musl's `tkill` aimed at the main thread or the thread
+//!   that installed the filter, the worker's: a filter cannot tell another thread of this
 //!   process from one of another process).
 //!
 //! `openat` (and `open`) fail with `EACCES`: glibc's malloc reads
@@ -111,18 +112,18 @@ fn nr(n: libc::c_long) -> u32 {
     n as u32
 }
 
-/// The allowlist; `out_fds` may be written, `status_fd` read with `pread64`,
-/// and `tid`, the installing thread, signalled with `tkill`.
-fn rules(out_fds: &[u32], status_fd: u32, tid: u32) -> Vec<(u32, Check)> {
+/// The allowlist; `out_fds` may be written and `status_fd` read with
+/// `pread64`. The rules only musl and mimalloc need ([`musl_rules`]) are
+/// compiled for musl alone: a glibc worker passes its tests without them,
+/// so it does not get them.
+fn rules(out_fds: &[u32], status_fd: u32) -> Vec<(u32, Check)> {
     use Check::{Allow, ArgClear, ArgIn, ArgSet, Errno};
     let mut writable = vec![1, 2];
     writable.extend_from_slice(out_fds);
     vec![
         (nr(libc::SYS_futex), Allow),
         (nr(libc::SYS_read), ArgIn(0, vec![0])),
-        (nr(libc::SYS_write), ArgIn(0, writable.clone())),
-        (nr(libc::SYS_writev), ArgIn(0, writable)),
-        (nr(libc::SYS_getcpu), Allow),
+        (nr(libc::SYS_write), ArgIn(0, writable)),
         (nr(libc::SYS_mmap), ArgClear(2, PROT_EXEC)),
         (nr(libc::SYS_mprotect), ArgClear(2, PROT_EXEC)),
         (nr(libc::SYS_munmap), Allow),
@@ -150,11 +151,29 @@ fn rules(out_fds: &[u32], status_fd: u32, tid: u32) -> Vec<(u32, Check)> {
         (nr(libc::SYS_getpid), Allow),
         (nr(libc::SYS_rt_sigaction), Allow),
         (nr(libc::SYS_tgkill), ArgIn(0, vec![std::process::id()])),
-        (nr(libc::SYS_tkill), ArgIn(0, vec![std::process::id(), tid])),
         (nr(libc::SYS_pread64), ArgIn(0, vec![status_fd])),
         (nr(libc::SYS_getrusage), Allow),
         (nr(libc::SYS_exit), Allow),
         (nr(libc::SYS_exit_group), Allow),
+    ]
+}
+
+/// What musl and mimalloc call that glibc's worker does not: `writev`
+/// (musl's stdio, through which mimalloc prints) on the descriptors
+/// `write` is allowed on, `getcpu` (mimalloc, with two or more NUMA
+/// nodes), and `tkill` (musl's `abort`) aimed at the main thread or at the
+/// thread that installs the filter.
+#[cfg(target_env = "musl")]
+fn musl_rules(out_fds: &[u32]) -> Vec<(u32, Check)> {
+    use Check::{Allow, ArgIn};
+    let mut writable = vec![1, 2];
+    writable.extend_from_slice(out_fds);
+    // SAFETY: no arguments; returns the calling thread's id.
+    let tid = u32::try_from(unsafe { libc::gettid() }).unwrap_or(u32::MAX);
+    vec![
+        (nr(libc::SYS_writev), ArgIn(0, writable)),
+        (nr(libc::SYS_getcpu), Allow),
+        (nr(libc::SYS_tkill), ArgIn(0, vec![std::process::id(), tid])),
     ]
 }
 
@@ -289,9 +308,14 @@ pub(crate) fn install(report: &Report, out_fds: &[u32]) -> Result<(), String> {
     if std::env::var(OPT_OUT).as_deref() == Ok("1") {
         return Ok(());
     }
-    // SAFETY: no arguments; returns the calling thread's id.
-    let tid = u32::try_from(unsafe { libc::gettid() }).unwrap_or(u32::MAX);
-    let mut code = program(&rules(out_fds, report.status_fd(), tid));
+    #[cfg_attr(
+        not(target_env = "musl"),
+        allow(unused_mut, reason = "musl adds rules")
+    )]
+    let mut rules = rules(out_fds, report.status_fd());
+    #[cfg(target_env = "musl")]
+    rules.extend(musl_rules(out_fds));
+    let mut code = program(&rules);
     let prog = libc::sock_fprog {
         len: u16::try_from(code.len()).map_err(|_| "seccomp filter too long")?,
         filter: code.as_mut_ptr(),
@@ -428,7 +452,9 @@ mod tests {
 
     /// The same with mimalloc told to print: its warnings and statistics
     /// go through musl's stdio, a `writev` on stderr, before the abort and
-    /// during the run. On glibc the variables name nothing.
+    /// during the run. musl only: glibc's worker has no mimalloc, and its
+    /// filter no `writev`.
+    #[cfg(target_env = "musl")]
     #[test]
     fn an_allocator_that_prints_its_messages_still_aborts() {
         exhausts_memory_and_aborts(&[("MIMALLOC_SHOW_ERRORS", "1")]);
@@ -460,7 +486,9 @@ mod tests {
     /// on (`getcpu`) at the thread's first allocation, which for the
     /// child's thread, as for the worker's reader thread, comes after the
     /// filter. `MIMALLOC_USE_NUMA_NODES` stands for the second node, so a
-    /// one-node machine runs the path. On glibc the variable names nothing.
+    /// one-node machine runs the path. musl only: glibc's worker has no
+    /// mimalloc, and its filter no `getcpu`.
+    #[cfg(target_env = "musl")]
     #[test]
     fn allowed_work_runs_on_a_machine_with_two_numa_nodes() {
         allowed_work_runs_and_a_socket_kills(&[("MIMALLOC_USE_NUMA_NODES", "2")]);

@@ -33,7 +33,7 @@ hashes are pre-release history, kept in the private archive
 - `mm` and `mm-cell-worker` built for musl register mimalloc (MIT, C
   compiled with `musl-gcc`, which `.agents/setup` installs) as their
   global allocator; the engine crates and the facade take no new
-  dependency. The worker's seccomp filter allows what mimalloc calls,
+  dependency. On musl only, the worker's seccomp filter allows what mimalloc calls,
   out of memory included: `getcpu`, which it calls on a machine with two
   or more NUMA nodes, and `writev`, with which it prints when
   `MIMALLOC_SHOW_ERRORS` or `MIMALLOC_VERBOSE` is set. The confined
@@ -275,8 +275,8 @@ hashes are pre-release history, kept in the private archive
   allocation) killed the worker with the seccomp filter's `SIGSYS`
   instead of `SIGABRT`, as musl's `abort` signals with `tkill` where
   glibc's uses `tgkill`. (A panic in a shipped build is an illegal
-  instruction, `SIGILL`, and makes no system call.) The filter allows
-  `tkill` aimed at the main thread or the thread that installed it; an
+  instruction, `SIGILL`, and makes no system call.) On musl the filter
+  allows `tkill` aimed at the main thread or the thread that installed it; an
   abort on the reader thread still ends in `SIGSYS` there.
 
 ### Added
