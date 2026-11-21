@@ -694,6 +694,16 @@ export class Session {
 	}
 
 	/**
+	 * `Session::setup_done`: the code loaded so far (definitions, a bootstrap cell) is the
+	 * session's setup and does not count toward reclaiming unreachable code when a cell
+	 * starts. Call it after the setup and before the first cell, after a setup run again
+	 * following `reset()`, and after restoring a setup's image: the mark is not in an image.
+	 */
+	setupDone(): void {
+		this.call(() => this.f.mm_setup_done(this.sid as never));
+	}
+
+	/**
 	 * `Session::snapshot` (`maxBytes` omitted: capped at the memory limit). A copy of the image.
 	 * It cannot park: it collects in full first, about 1.4 ms per MiB of image [M], so no host
 	 * timeout should cover it (README, "Differences from the wasmtime host").

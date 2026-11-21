@@ -49,9 +49,26 @@ session does (the limits, the clock, entropy and zone switches, `textCut`,
 `intBitsText`, `gcStress`): pass the options the parked session had. The
 text limit, `lastExprValue` and `hostArgs` travel in the image.
 
+**After a session's setup, call `session.setupDone()`.** When a cell starts,
+the guest frees code no function refers to any more, with a full collection,
+once enough code was loaded since it last did (docs/user-guide.md, "Driving a
+session"). The definitions and the bootstrap cell's helpers are in use for
+the whole session, so counted, they make that collection run during the
+first cells and free nothing. Call it:
+
+- after the `define` calls and the bootstrap cell have finished, before the
+  first cell;
+- again after `reset()` once the setup has run again;
+- after `rt.restore(image)` when the image was taken right after a setup (a
+  template): the mark is not in an image. After restoring a parked session's
+  image it is optional; its cells' dead code is then freed later.
+
+It changes no result, output or fuel, and the setup's code stays charged to
+the memory limit.
+
 The low-level API is the reference host's: `define`, `start`, `resume`
 (`{ kind: "value" | "error" | "future" | "batch" | "continue" }`), `cancel`,
-`reset`, `snapshot`, `pending`, `phase`, fuel (`setFuel`, `fuelWanted`,
+`reset`, `setupDone`, `snapshot`, `pending`, `phase`, fuel (`setFuel`, `fuelWanted`,
 `setFuelTotal`), `setDeadline`, `requestPark`, hints, text cut, time zones,
 call log, stubs, host modules, module dunders and the rest. Errors are
 `MmError` with `kind` `trap` (the instance is gone: restore the last image),

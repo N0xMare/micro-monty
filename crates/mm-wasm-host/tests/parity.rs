@@ -824,3 +824,112 @@ fn the_precompiled_cache_follows_the_module_content_not_its_mtime() {
         "a new cache for the new content: {second:?}"
     );
 }
+
+/// `mm_setup_done` is `Session::setup_done`: after it, a setup's code does
+/// not count toward code reclamation, so the cell that follows the setup
+/// does not reclaim. Seen in the image, which neither side can count
+/// collections through: the setup dropped one of its compilation units
+/// (`extra`, 8 KiB of docstring), and that unit is still in the image
+/// after a cell when the setup was marked done, and gone when it was not.
+/// The same after a restore of the setup's image, where the mark is the
+/// host's to repeat.
+#[test]
+fn setup_done_matches_the_native_facade() {
+    use std::fmt::Write as _;
+    let extra = format!(
+        "def extra(x):\n    '''{}'''\n    return x\n",
+        "x".repeat(8192)
+    );
+    // Past the 16 KiB of new code after which a cell's start reclaims.
+    let mut tools = String::new();
+    for i in 0..64 {
+        write!(
+            tools,
+            "def tool_{i}(first, second=None, *rest, **options):\n    \
+             '''Tool {i}: gathers its arguments.'''\n    \
+             gathered = [first, second, len(rest), sorted(options), 'tool_{i}']\n    \
+             for item in rest:\n        gathered.append((item, 'tool_{i}'))\n    \
+             return gathered\n"
+        )
+        .unwrap();
+    }
+    tools.push_str("del extra\n");
+    const CELL: &str = "tool_3(1, 2, 3)[0]";
+
+    let engine = Engine::new(EngineConfig::new().with_limits(LIMITS));
+    let rt = Runtime::new(&guest(), RuntimeConfig::default()).unwrap();
+    let options = SessionOptions::new().with_limits(LIMITS);
+
+    // (the cell's result, the setup's image, the image after the cell)
+    let native = |mark: bool, from: Option<&[u8]>| {
+        let mut s = match from {
+            Some(image) => engine.restore(image).unwrap(),
+            None => {
+                let mut s = micro_monty::Session::new(&engine).unwrap();
+                for src in [&extra, &tools] {
+                    let p = s.start(&engine.compile(src, "setup.py").unwrap());
+                    assert_eq!(p, Progress::Complete(None));
+                }
+                s
+            }
+        };
+        let setup = s.snapshot().unwrap();
+        if mark {
+            s.setup_done();
+        }
+        let p = s.start(&engine.compile(CELL, "c.py").unwrap());
+        (format!("{p:?}"), setup, s.snapshot().unwrap().len())
+    };
+    let wasm = |mark: bool, from: Option<&[u8]>| {
+        let mut s = match from {
+            Some(image) => rt.restore(image, &options).unwrap(),
+            None => {
+                let mut s = rt.session(&options).unwrap();
+                for src in [&extra, &tools] {
+                    assert_eq!(s.start(src, "setup.py").unwrap(), Progress::Complete(None));
+                }
+                s
+            }
+        };
+        let setup = s.snapshot(None).unwrap();
+        if mark {
+            s.setup_done().unwrap();
+        }
+        let p = s.start(CELL, "c.py").unwrap();
+        (format!("{p:?}"), setup, s.snapshot(None).unwrap().len())
+    };
+
+    let (n_plain, n_marked) = (native(false, None), native(true, None));
+    let (w_plain, w_marked) = (wasm(false, None), wasm(true, None));
+    // The mark changes no result, and the guest does as the facade does.
+    assert!(n_plain.0.contains("repr: \"1\""), "{}", n_plain.0);
+    for run in [&n_marked, &w_plain, &w_marked] {
+        assert_eq!(run.0, n_plain.0);
+    }
+    assert_eq!((w_plain.2, w_marked.2), (n_plain.2, n_marked.2));
+    // Absolute: unmarked, the cell's start reclaimed `extra`'s unit.
+    assert!(
+        n_marked.2 > n_plain.2 + 8192,
+        "{} and {}",
+        n_marked.2,
+        n_plain.2
+    );
+    assert!(n_plain.1.len() > n_plain.2 + 8192);
+
+    // After a restore of the setup's image (each side the other's), the
+    // mark is not there: the host says so again.
+    let (n_setup, w_setup) = (&n_plain.1, &w_plain.1);
+    let restored = [
+        native(false, Some(w_setup)),
+        native(true, Some(w_setup)),
+        wasm(false, Some(n_setup)),
+        wasm(true, Some(n_setup)),
+    ];
+    for (run, len) in restored
+        .iter()
+        .zip([n_plain.2, n_marked.2, n_plain.2, n_marked.2])
+    {
+        assert_eq!(run.0, n_plain.0);
+        assert_eq!(run.2, len);
+    }
+}

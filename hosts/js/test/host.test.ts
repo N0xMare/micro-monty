@@ -194,6 +194,44 @@ test("host modules, module dunders, int bits text and GC stress, before and afte
 	assert.deepEqual(r.start(BIG, "c.py"), big);
 });
 
+// `setupDone` is `Session::setup_done` (crates/mm-wasm-host/tests/parity.rs,
+// setup_done_matches_the_native_facade): seen in the image, where the unit the setup
+// dropped stays through the next cell when the setup was marked done.
+test("setupDone: the cell after a setup marked done does not reclaim code, also after a restore", () => {
+	const extra = `def extra(x):\n    '''${"x".repeat(8192)}'''\n    return x\n`;
+	let tools = "";
+	for (let i = 0; i < 64; i++) {
+		tools +=
+			`def tool_${i}(first, second=None, *rest, **options):\n    '''Tool ${i}: gathers its arguments.'''\n` +
+			`    gathered = [first, second, len(rest), sorted(options), 'tool_${i}']\n` +
+			`    for item in rest:\n        gathered.append((item, 'tool_${i}'))\n    return gathered\n`;
+	}
+	tools += "del extra\n";
+	const scenario = (mark: boolean, from?: Uint8Array) => {
+		let s: Session;
+		if (from) {
+			s = rt.restore(from, options);
+		} else {
+			s = rt.session(options);
+			for (const src of [extra, tools]) assert.deepEqual(s.start(src, "setup.py"), { kind: "complete", completion: null });
+		}
+		const setup = s.snapshot();
+		if (mark) s.setupDone();
+		const p = s.start("tool_3(1, 2, 3)[0]", "c.py");
+		assert.ok(p.kind === "complete" && p.completion?.repr === "1", JSON.stringify(p));
+		return { setup, after: s.snapshot().length };
+	};
+	const plain = scenario(false);
+	const marked = scenario(true);
+	// Unmarked, the cell's start reclaimed `extra`'s unit (8 KiB of docstring).
+	assert.ok(marked.after > plain.after + 8192, `${marked.after} and ${plain.after}`);
+	assert.ok(plain.setup.length > plain.after + 8192);
+	// The mark is not in an image: after a restore the host says so again.
+	assert.equal(scenario(false, plain.setup).after, plain.after);
+	assert.equal(scenario(true, plain.setup).after, marked.after);
+	assert.equal(scenario(false, marked.setup).after, plain.after);
+});
+
 test("the options record: each option reaches a new session; a restore takes the host-side ones", () => {
 	// Only what differs from the defaults is written: tag, u32 length, payload.
 	const bytes = (o: SessionOptions) => {

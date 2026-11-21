@@ -464,6 +464,15 @@ pub mod exports {
         with_slot(s, |slot| py_status(slot.session.reset()))
     }
 
+    /// `Session::setup_done`.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn mm_setup_done(s: u32) -> u32 {
+        with_slot(s, |slot| {
+            slot.session.setup_done();
+            status::OK
+        })
+    }
+
     /// The session's image in the output; `max_bytes` `u64::MAX` is the
     /// default cap (the memory limit).
     #[unsafe(no_mangle)]

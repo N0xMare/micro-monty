@@ -49,7 +49,7 @@ use micro_monty::{
 };
 
 /// What [`export::ABI_VERSION`] returns. A host refuses other versions.
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 
 /// The tag an encoder writes for a variant this version has no code for;
 /// every decoder refuses it.
@@ -94,6 +94,11 @@ pub mod export {
     pub const CANCEL: &str = "mm_cancel";
     /// `(s) -> u32`: `Session::reset`; a `PyException` on failure.
     pub const RESET: &str = "mm_reset";
+    /// `(s) -> u32`: `Session::setup_done`: the code loaded so far is the
+    /// session's setup and does not count toward reclaiming unreachable
+    /// code. Not in an image: a host calls it again after
+    /// [`SESSION_RESTORE`] of a setup's image.
+    pub const SETUP_DONE: &str = "mm_setup_done";
     /// `(s, max_bytes: u64) -> u32`: the image in the output, or a
     /// `SnapshotError`; `u64::MAX` keeps the default cap.
     pub const SNAPSHOT: &str = "mm_snapshot";
@@ -158,7 +163,7 @@ pub mod export {
 
     /// Every export a host may rely on (all but [`SET_GC_YIELD`] and
     /// [`TEST_PANIC`]).
-    pub const REQUIRED: [&str; 32] = [
+    pub const REQUIRED: [&str; 33] = [
         ABI_VERSION,
         BUILD_ID,
         INPUT,
@@ -171,6 +176,7 @@ pub mod export {
         RESUME,
         CANCEL,
         RESET,
+        SETUP_DONE,
         SNAPSHOT,
         SET_FUEL,
         FUEL,

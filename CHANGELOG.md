@@ -54,7 +54,12 @@ hashes are pre-release history, kept in the private archive
   `Session::reset` starts the count anew. The setup's code stays charged
   to the memory limit, and what a cell drops of it is freed by the next
   reclamation. `mm-cell-worker` calls it after each bootstrap it runs or
-  resets to.
+  resets to. The mm-wasm guest exports it as `mm_setup_done`
+  (`ABI_VERSION` 2, a required export; a host built for version 1 refuses
+  the guest and the reverse): `Session::setup_done` on the reference host
+  and `session.setupDone()` on the JavaScript host, called after the
+  definitions and the bootstrap cell, after a setup run again following a
+  reset, and after restoring a setup's image.
   Over the recorded sessions on the replay worker, against the build
   before: the 79 fresh-per-cell (py-sdk) sessions counted take a median
   0.893 of their instructions (collections 1,952 to 362: a session reset

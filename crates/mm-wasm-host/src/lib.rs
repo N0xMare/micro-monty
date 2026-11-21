@@ -914,6 +914,7 @@ impl Runtime {
             resume: f!(export::RESUME),
             cancel: f!(export::CANCEL),
             reset: f!(export::RESET),
+            setup_done: f!(export::SETUP_DONE),
             snapshot: f!(export::SNAPSHOT),
             set_fuel: f!(export::SET_FUEL),
             fuel: f!(export::FUEL),
@@ -964,6 +965,7 @@ struct Funcs {
     resume: TypedFunc<u32, u32>,
     cancel: TypedFunc<u32, u32>,
     reset: TypedFunc<u32, u32>,
+    setup_done: TypedFunc<u32, u32>,
     snapshot: TypedFunc<(u32, u64), u32>,
     set_fuel: TypedFunc<(u32, u64), u32>,
     fuel: TypedFunc<u32, u64>,
@@ -1143,6 +1145,18 @@ impl Session {
             status::OK => Ok(()),
             code => Err(self.failure(code)),
         }
+    }
+
+    /// `Session::setup_done`: the code loaded so far (definitions, a
+    /// bootstrap cell) is the session's setup and does not count toward
+    /// reclaiming unreachable code when a cell starts. Call it after the
+    /// setup and before the first cell, after a setup run again following
+    /// [`Session::reset`], and after [`Runtime::restore`] of a setup's
+    /// image: the mark is not in an image.
+    pub fn setup_done(&mut self) -> Result<(), Error> {
+        let id = self.id;
+        self.call(|s| s.f.setup_done.call(&mut s.store, id))?;
+        Ok(())
     }
 
     /// `Session::snapshot` (`max_bytes` `None`: capped at the memory limit).

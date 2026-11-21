@@ -1266,7 +1266,7 @@ the engine's own test gates.
 
 `crates/mm-wasm-guest` builds micro-monty as a wasm module for
 `wasm32-unknown-unknown` or `wasm32-wasip1` speaking the `mm-wasm` interface
-(`crates/mm-wasm-abi`, `ABI_VERSION` 1): a host sizes an input buffer, calls
+(`crates/mm-wasm-abi`, `ABI_VERSION` 2): a host sizes an input buffer, calls
 exports such as `mm_session_new`, `mm_define`, `mm_start`, `mm_resume` and
 `mm_snapshot`, and answers the `mm_host` imports (clock, park poll, wall
 clock, entropy, output, time zones). The guest reads no WASI clock,
@@ -1275,6 +1275,15 @@ change to the interface, a new option tag or optional export included, bumps
 `ABI_VERSION`, and a host and a guest must agree on it. A session's options
 (its limits, and the settings an image does not carry) are a tagged record
 that `mm_session_new` and `mm_session_restore` both take.
+
+`mm_setup_done` is `Session::setup_done` ("Driving a session"): a host
+calls it once a session's setup is done, after `mm_define` and the
+bootstrap cell's `mm_start` have finished and before the first cell, again
+after a setup it runs again following `mm_reset`, and after an
+`mm_session_restore` of an image taken right after a setup. The mark is not
+in an image, so a restored session counts all its code until the call. The
+reference host has `Session::setup_done`, the JavaScript host
+`session.setupDone()`.
 
 Two guests are shipped:
 

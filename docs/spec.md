@@ -951,7 +951,7 @@ each other with `=` requirements, as one engine, and the five internal
 crates have no API of their own to keep.
 
 **The `mm-wasm` interface.** A host checks `ABI_VERSION` (`mm-wasm-abi`,
-currently 1) and the required export list before it runs anything, and
+currently 2) and the required export list before it runs anything, and
 refuses a guest of another version. A change to the interface, a new
 option tag or optional export included, bumps `ABI_VERSION`, with
 `crates/mm-wasm-host` and `hosts/js` updated in the same change; the tag
