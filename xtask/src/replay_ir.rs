@@ -113,22 +113,20 @@ const WASM_MARKS: &str = "--cfg mm_size_wasm";
 /// What a count holds, in the cache key: change it when that changes.
 const COUNTING: &str = "callgrind from start_thread, all counted: total, total without the \
                         allocator's entry points, allocator calls; replay_worker, wasm marks on, \
-                        lockstep, fixed getrandom, 5";
+                        lockstep, fixed getrandom, 6";
 /// glibc's allocator entry points. Their inclusive Ir is left out of the
-/// judged count; the calls of the first [`CALLED`] are a session's
-/// allocator calls. `free` is one of them: with it two workers that do the
-/// same work differ by at most 0.031% of a session's calls, without it by
-/// 0.057% [M].
-const ALLOCATOR: [&str; 6] = [
-    "malloc",
-    "free",
-    "realloc",
-    "calloc",
-    "posix_memalign",
-    "__libc_thread_freeres",
-];
-/// How many of [`ALLOCATOR`] are the calls a session's allocations count.
-const CALLED: usize = 5;
+/// judged count and their calls are a session's allocator calls. `free`
+/// is one of them: with it two workers that do the same work differ by at
+/// most 0.031% of a session's calls, without it by 0.057% [M]. No entry
+/// may run inside another: a dump holds callers, not call stacks, so the
+/// inner one's Ir would be left out twice. glibc's cleanup at a thread's
+/// exit (`__libc_thread_freeres`) was one until it was found to do so:
+/// it flushes the thread's cache through `free`, 341 to 373 calls and
+/// 92,294 to 383,280 Ir a session that follow the heap's layout, and
+/// leaving them out twice read a session 1.0059 that read 0.9997 with
+/// them left out once [M]. What the cleanup runs outside `free`, about
+/// 3,900 Ir a session, is in the judged count.
+const ALLOCATOR: [&str; 5] = ["malloc", "free", "realloc", "calloc", "posix_memalign"];
 /// How many of [`ALLOCATOR`] every worker that ran calls, so a dump
 /// without one of them is an error.
 const REQUIRED: usize = 2;
@@ -166,7 +164,7 @@ struct Count {
     ir: u64,
     /// Every instruction from `start_thread` on.
     total: u64,
-    /// Calls of the first [`CALLED`] of [`ALLOCATOR`].
+    /// Calls of [`ALLOCATOR`].
     calls: u64,
 }
 
@@ -732,7 +730,7 @@ fn canary(valgrind: &Path, preload: &Path, worker: &Path, dir: &Path) -> Result<
 /// without glibc's `malloc` or `free` (an
 /// allocator linked in, or interposed without forwarding to glibc's) and
 /// a dump without its totals are errors, never zero; the other entry
-/// points, called once a session or not at all, count 0 when missing.
+/// points count 0 when missing.
 fn dump(text: &str) -> Result<Count, String> {
     // Names are compressed: `(id) name` the first time, `(id)` after.
     fn name<'a>(table: &mut BTreeMap<&'a str, &'a str>, spec: &'a str) -> &'a str {
@@ -755,7 +753,7 @@ fn dump(text: &str) -> Result<Count, String> {
     let (mut ob, mut cob, mut cfn): (&str, Option<&str>, Option<&str>) = ("", None, None);
     let mut call: Option<u64> = None;
     let mut total = None;
-    let (mut inclusive, mut calls, mut seen) = ([0u64; 6], [0u64; 6], [false; 6]);
+    let (mut inclusive, mut calls, mut seen) = ([0u64; 5], [0u64; 5], [false; 5]);
     for line in text.lines() {
         // The line after `calls=` is the call's inclusive cost.
         if let Some(n) = call.take() {
@@ -809,7 +807,7 @@ fn dump(text: &str) -> Result<Count, String> {
     Ok(Count {
         ir,
         total,
-        calls: calls[..CALLED].iter().sum(),
+        calls: calls.iter().sum(),
     })
 }
 
@@ -1089,7 +1087,8 @@ mod tests {
 
     /// A dump in callgrind's compressed form: `malloc` named once and
     /// referred to by id after, an allocator call from the worker's object
-    /// counted only when its callee is glibc's.
+    /// counted only when its callee is glibc's, and glibc's cleanup at the
+    /// thread's exit (7 Ir, inclusive) freeing twice (6 of the 7).
     const DUMP: &str = "events: Ir
 ob=(1) /w/replay_worker
 fn=(1) main
@@ -1122,6 +1121,11 @@ cob=(2)
 cfn=(7) __libc_thread_freeres
 calls=1 0
 0 7
+ob=(2)
+fn=(8) __malloc_arena_thread_freeres
+cfn=(3)
+calls=2 0
+0 6
 cob=(3) /w/other.so
 cfn=(2)
 calls=9 0
@@ -1134,9 +1138,10 @@ totals: 1117
         assert_eq!(
             dump(DUMP),
             Ok(Count {
-                ir: 1117 - (40 + 20 + 30 + 10 + 5 + 5 + 7),
+                // The cleanup's two frees are left out once, as `free`.
+                ir: 1117 - (40 + 20 + 30 + 10 + 5 + 5 + 6),
                 total: 1117,
-                calls: 3 + 2 + 4 + 1 + 1 + 1,
+                calls: 3 + 2 + (4 + 2) + 1 + 1 + 1,
             })
         );
     }
@@ -1149,18 +1154,15 @@ totals: 1117
     }
 
     #[test]
-    fn entry_points_called_once_a_session_may_be_missing() {
-        // A worker that never calls posix_memalign, and one that exits
-        // without its thread's cleanup.
-        let text = DUMP
-            .replace("cfn=(6) posix_memalign", "cfn=(6) other")
-            .replace("cfn=(7) __libc_thread_freeres", "cfn=(7) other2");
+    fn an_entry_point_a_session_never_calls_may_be_missing() {
+        // A worker that never calls posix_memalign.
+        let text = DUMP.replace("cfn=(6) posix_memalign", "cfn=(6) other");
         assert_eq!(
             dump(&text),
             Ok(Count {
-                ir: 1117 - (40 + 20 + 30 + 10 + 5),
+                ir: 1117 - (40 + 20 + 30 + 10 + 5 + 6),
                 total: 1117,
-                calls: 3 + 2 + 4 + 1 + 1,
+                calls: 3 + 2 + (4 + 2) + 1 + 1,
             })
         );
     }

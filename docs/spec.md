@@ -3086,10 +3086,10 @@ counting everything each worker runs from glibc's `start_thread` (the
 thread that serves) on, without `pthread_getattr_np`. From each
 replay's callgrind dump it reads three numbers. The total. The judged
 count: the total without the inclusive Ir of glibc's `malloc`, `free`,
-`realloc`, `calloc`, `posix_memalign` and its cleanup at a thread's
-exit (`__libc_thread_freeres`), 17.6% of all the sessions' Ir, 1.2% to
-28.4% of one and 16.3% of the `codex` sessions' [M]. And the
-allocator's calls: the calls of the first five, `free` included. The
+`realloc`, `calloc` and `posix_memalign`, 17.6% of all the sessions' Ir,
+1.2% to 28.4% of one and 16.3% of the `codex` sessions' [M, counted
+with the cleanup below left out too]. And the allocator's calls: the
+calls of those five. The
 allocator's cost follows the heap's layout, not the work: a worker that
 made one more allocation of 24 bytes moved a session's total by up to
 0.67% against the same worker without it, both ways, while the judged
@@ -3111,11 +3111,17 @@ something. An allocator linked in, or interposed without forwarding to
 glibc's, leaves glibc's `malloc` and `free` out of the dumps, and a dump
 that ran without them, or without its totals, is an error, never a
 zero; one that forwards to glibc's is counted, its own instructions in
-the judged count. `posix_memalign` and `__libc_thread_freeres` are
-called once a session or not at all and count 0 when missing. The
-cleanup frees through glibc's own functions, so that `free` (about 200
-Ir and one call a session, the same on both sides) is left out twice: a
-dump holds callers, not call stacks.
+the judged count. `posix_memalign` is called once a session or not at
+all and counts 0 when missing. No entry point may run inside another: a
+dump holds callers, not call stacks, so the inner one's Ir would be
+left out twice. glibc's cleanup at a thread's exit
+(`__libc_thread_freeres`) was left out as an entry point until it was
+found to do that: it flushes the thread's cache through `free`, 341 to
+373 calls and 92,294 to 383,280 Ir a session that follow the heap's
+layout, and with them left out twice a session read 1.0059 that reads
+0.9997 with them left out once [M]. The cleanup's frees are now left
+out once, as `free`, and what it runs outside `free` (about 3,900 Ir a
+session) is in the judged count.
 The rest of a count still follows the layout (probes keyed by
 addresses), so the replay pins the two things that moved it from run to
 run. `gate.py --lockstep` sends a frame only once every thread of the
