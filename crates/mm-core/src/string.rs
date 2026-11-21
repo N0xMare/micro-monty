@@ -917,6 +917,28 @@ impl Heap {
 
     /// After marking, remove dead strings in place. Backward-shifting a
     /// cluster closes each hole without tombstones or a rehash allocation.
+    ///
+    /// An entry is dead when its string's mark bit is clear: this runs at
+    /// the end of a collection (`Heap::finish_collection`), in the step
+    /// that drained the last marks and before any block is swept, so the
+    /// bits are final and no entry's address has been reused. A slot holds
+    /// an interned string's reference or no object (never stored to, or
+    /// emptied here): there are no tombstones, so a lookup's probe ends at
+    /// the first slot without an object, and every entry must stay
+    /// reachable from its hash's slot over occupied slots only. Removing
+    /// an entry therefore moves up each later entry of its cluster that
+    /// the hole would cut off, until a slot without an object ends the
+    /// cluster.
+    ///
+    /// The dead entries are taken in ascending slot order, each looked at
+    /// again after its removal (the shift may have put another dead entry
+    /// in its slot). Slots holding a live entry or none are only read, so
+    /// they are found by one scan of the table's words
+    /// ([`Heap::next_dead_interned`]) instead of a checked read of each: a
+    /// collection that frees no interned string writes only the count.
+    /// The count is written even then, as the walk of every slot wrote
+    /// it: nothing reads the dirty flag that write sets, since the mark is
+    /// idle here and the next one clears every segment's flag as it starts.
     pub(crate) fn prune_intern(&mut self) -> Result<(), Error> {
         let Some(table) = self.intern_table else {
             return Ok(());
@@ -924,34 +946,24 @@ impl Heap {
         let cap = self.table_cap(table)?;
         let mask = cap - 1;
         let mut count = self.interned_count();
-        for i in 0..cap {
-            // A deletion may move another dead entry into this slot.
-            while let Some(r) = self.get(table, 1 + i)?.as_obj() {
-                let (seg, off) = crate::space::split(r.raw());
-                if self
-                    .words
-                    .marks
-                    .get(seg)
-                    .is_some_and(|m| crate::space::bit(m, off))
-                {
-                    break;
+        let mut i = 0;
+        while let Some(dead) = self.next_dead_interned(table, i)? {
+            i = dead;
+            let mut hole = i;
+            let mut j = (i + 1) & mask;
+            for _ in 0..cap {
+                let v = self.get(table, 1 + j)?;
+                let Some(r) = v.as_obj() else { break };
+                let bucket = u32::try_from(self.get_raw(r, SLOT_HASH)? & u64::from(mask))
+                    .map_err(|_| Error::BadRef)?;
+                if (hole.wrapping_sub(bucket) & mask) < (j.wrapping_sub(bucket) & mask) {
+                    self.write_slot(table, 1 + hole, v.0, true, false)?;
+                    hole = j;
                 }
-                let mut hole = i;
-                let mut j = (i + 1) & mask;
-                for _ in 0..cap {
-                    let v = self.get(table, 1 + j)?;
-                    let Some(r) = v.as_obj() else { break };
-                    let bucket = u32::try_from(self.get_raw(r, SLOT_HASH)? & u64::from(mask))
-                        .map_err(|_| Error::BadRef)?;
-                    if (hole.wrapping_sub(bucket) & mask) < (j.wrapping_sub(bucket) & mask) {
-                        self.write_slot(table, 1 + hole, v.0, true, false)?;
-                        hole = j;
-                    }
-                    j = (j + 1) & mask;
-                }
-                self.write_slot(table, 1 + hole, Value::UNDEFINED.0, true, false)?;
-                count = count.saturating_sub(1);
+                j = (j + 1) & mask;
             }
+            self.write_slot(table, 1 + hole, Value::UNDEFINED.0, true, false)?;
+            count = count.saturating_sub(1);
         }
         self.write_slot(
             table,
@@ -962,6 +974,27 @@ impl Heap {
         )
     }
 
+    /// The first slot at or after `from` of intern table `table` whose
+    /// entry is dead (an object whose mark bit is clear), read from the
+    /// table's words with one validation.
+    fn next_dead_interned(&self, table: Ref, from: u32) -> Result<Option<u32>, Error> {
+        let entries = self
+            .slot_words(table)?
+            .get(1 + from as usize..)
+            .ok_or(Error::BadSlot)?;
+        let dead = entries.iter().position(|&w| {
+            Value(w).as_obj().is_some_and(|r| {
+                let (seg, off) = crate::space::split(r.raw());
+                !self
+                    .words
+                    .marks
+                    .get(seg)
+                    .is_some_and(|m| crate::space::bit(m, off))
+            })
+        });
+        Ok(dead.and_then(|n| u32::try_from(n).ok()).map(|n| from + n))
+    }
+
     /// Adds `r` to the table; the caller has made room.
     fn insert_interned(&mut self, r: Ref, hash: u64) -> Result<(), Error> {
         let table = self.intern_table.ok_or(Error::BadRef)?;
@@ -970,5 +1003,120 @@ impl Heap {
         let count = Value(*head).as_int().ok_or(Error::BadSlot)? + 1;
         *head = Value::int(count).ok_or(Error::OutOfMemory)?.0;
         Self::place_interned(entries, Value::from_ref(r, 0).0, hash)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::cast_possible_truncation,
+        reason = "tests"
+    )]
+
+    use super::*;
+    use alloc::{format, string::String, vec::Vec};
+
+    /// The table a walk of every slot leaves: each slot in order, looked
+    /// at again after a removal, over a copy of the entries. What
+    /// `prune_intern` must leave, slot for slot.
+    fn pruned_slot_by_slot(
+        mut slots: Vec<u64>,
+        hash: &dyn Fn(u64) -> u64,
+        live: &dyn Fn(u64) -> bool,
+    ) -> Vec<u64> {
+        let object = |w: u64| Value(w).as_obj().is_some();
+        let mask = slots.len() - 1;
+        for i in 0..slots.len() {
+            while object(slots[i]) && !live(slots[i]) {
+                let mut hole = i;
+                let mut j = (i + 1) & mask;
+                while object(slots[j]) {
+                    let bucket = hash(slots[j]) as usize & mask;
+                    if (hole.wrapping_sub(bucket) & mask) < (j.wrapping_sub(bucket) & mask) {
+                        slots[hole] = slots[j];
+                        hole = j;
+                    }
+                    j = (j + 1) & mask;
+                }
+                slots[hole] = Value::UNDEFINED.0;
+            }
+        }
+        slots
+    }
+
+    /// Over rounds of interning and collections that keep none, all, or a
+    /// pseudo-random part of the strings, in tables of 64 to 1,024 slots
+    /// with clusters that wrap past the last slot: the table is, slot for
+    /// slot, the one the walk of every slot leaves, its count is the live
+    /// strings', every live string is found as itself and no dead one is.
+    #[test]
+    fn a_prune_leaves_the_table_a_walk_of_every_slot_leaves() {
+        let mut heap = Heap::default();
+        let mut held: Vec<(String, Ref)> = Vec::new();
+        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut removed = 0;
+        for round in 0..40_u32 {
+            // New names: a run that hashes to the table's last slots, so a
+            // cluster wraps, then others; some rounds enough to grow it.
+            let wrapping = (0..)
+                .map(|i| format!("wrap{round}_{i}"))
+                .filter(|s| hash_bytes(s.as_bytes()) & 63 >= 60)
+                .take(6);
+            let plain = (0..if round % 7 == 3 { 150 } else { 12 }).map(|i| format!("n{round}_{i}"));
+            for name in wrapping.chain(plain) {
+                let r = heap.intern(&name).unwrap();
+                held.push((name, r));
+            }
+            let table = heap.intern_table.unwrap();
+            let before = heap.slot_words(table).unwrap()[1..].to_vec();
+            let hashes: Vec<(u64, u64)> = held
+                .iter()
+                .map(|(_, r)| {
+                    let hash = heap.get_raw(*r, SLOT_HASH).unwrap();
+                    (Value::from_ref(*r, 0).0, hash)
+                })
+                .collect();
+            let keep: Vec<bool> = held
+                .iter()
+                .map(|_| {
+                    seed = seed
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    match round % 5 {
+                        0 => true,
+                        4 => false,
+                        k => (seed >> 33) % 4 < u64::from(k),
+                    }
+                })
+                .collect();
+            let hash = |w: u64| hashes.iter().find(|(e, _)| *e == w).unwrap().1;
+            let live = |w: u64| {
+                let at = hashes.iter().position(|(e, _)| *e == w).unwrap();
+                keep[at]
+            };
+            let want = pruned_slot_by_slot(before.clone(), &hash, &live);
+            removed += before.iter().zip(&want).filter(|(b, w)| b != w).count();
+
+            heap.collect(&mut |t| {
+                for ((_, r), keep) in held.iter().zip(&keep) {
+                    if *keep {
+                        t.value(Value::from_ref(*r, types::STR as u8));
+                    }
+                }
+            });
+
+            let after = &heap.slot_words(table).unwrap()[1..];
+            assert_eq!(after, want.as_slice(), "round {round}");
+            let kept = keep.iter().filter(|k| **k).count();
+            assert_eq!(heap.interned_count() as usize, kept, "round {round}");
+            for ((name, r), keep) in held.iter().zip(&keep) {
+                assert_eq!(heap.find_interned(name), keep.then_some(*r), "{name}");
+            }
+            let mut keep = keep.iter();
+            held.retain(|_| *keep.next().unwrap());
+        }
+        // The rounds did move entries, not only empty slots.
+        assert!(removed > 500, "{removed}");
     }
 }
