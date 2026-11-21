@@ -135,7 +135,9 @@ each stage logs to
   (`crates/mm-core/src/heap.rs` or `string.rs`,
   `crates/mm-engine/src/strmeth.rs`), whose timed half, on musl too,
   stays in the release gate; a
-  `crates/mm-wasm-*` crate adds `wasm` and `wasm-host`. **Release gate**:
+  `crates/mm-wasm-*` crate adds `wasm` and `wasm-host`;
+  `crates/mm-cell-worker/` adds `musl` (Linux), where the worker's
+  musl-only seccomp rules are built and tested. **Release gate**:
   `cargo xtask check --release-gate`, every stage (the timed step oracle,
   memory probes, package, wasm-ir, v8-ir, replay-ir, the wasip1 runs,
   wasm-host, codemode, the real replay). It runs on main's tip after

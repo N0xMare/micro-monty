@@ -862,8 +862,9 @@ fn check(args: &[String]) -> Result<(), String> {
     if !release_gate {
         let mut kept = DEV_STAGES.to_vec();
         kept.extend(adds.iter().flat_map(|(stages, _)| stages.iter().copied()));
-        // The Ir gates count under valgrind: Linux only.
-        kept.retain(|name| cfg!(target_os = "linux") || *name != "native-ir");
+        // The Ir gates count under valgrind and musl is a Linux target:
+        // Linux only.
+        kept.retain(|name| cfg!(target_os = "linux") || !["native-ir", "musl"].contains(name));
         stages = check::keep(stages, &kept)?;
     }
     check::run(stages, &root, serial)
@@ -894,8 +895,8 @@ const DEV_STAGES: &[&str] = &[
 /// Paths (prefixes) and the stages a change to one adds to the dev tier,
 /// the ones that guard it: what an image holds (durability at its fine
 /// setting too, `check`), the dispatch loop and the park state (the step
-/// oracle's fuel half; its timed half needs the machine alone), and the
-/// wasm crates.
+/// oracle's fuel half; its timed half needs the machine alone), the wasm
+/// crates, and the worker (its musl build).
 const DEV_ADDS: &[(&[&str], &[&str])] = &[
     (
         &[
@@ -932,6 +933,10 @@ const DEV_ADDS: &[(&[&str], &[&str])] = &[
         &["steps-build", "steps-fuel"],
     ),
     (&["crates/mm-wasm-"], &["wasm", "wasm-host"]),
+    // The worker's seccomp rules for musl's and mimalloc's system calls
+    // are compiled for musl only, with their tests: no other dev-tier
+    // stage builds them.
+    (&["crates/mm-cell-worker/"], &["musl"]),
 ];
 
 /// The stages [`DEV_ADDS`] adds for `changed` (a path a line), each group
@@ -1377,6 +1382,12 @@ mod tests {
         assert_eq!(
             stages("README.md\ncrates/mm-wasm-host/src/lib.rs\ncrates/mm-engine/src/vm.rs\n"),
             ["steps-build", "steps-fuel", "wasm", "wasm-host"]
+        );
+        // The worker's musl-only seccomp rules; `mm-cell-worker` is a
+        // directory prefix, so another crate's file of that name is not one.
+        assert_eq!(
+            stages("crates/mm-cell-worker/src/seccomp.rs\ncrates/mm-cli/src/main.rs\n"),
+            ["musl"]
         );
         assert_eq!(
             dev_adds("a\ncrates/mm-wasm-abi/x.rs\ncrates/mm-wasm-host/y.rs\n")[0].1,
