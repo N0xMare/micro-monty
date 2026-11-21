@@ -12,6 +12,7 @@ use crate::Exit;
 use crate::types::{T, ty};
 use crate::vm::{Raised, Vm, exc_slot};
 use alloc::{format, string::String, sync::Arc, vec::Vec};
+use core::sync::atomic::AtomicBool;
 use mm_compile::bytecode::Code;
 use mm_core::Value;
 
@@ -1449,7 +1450,25 @@ impl Vm {
         {
             s.host = Some(Arc::clone(prog));
         }
-        let made = match self.run(entry) {
+        // The definition is the host's, not a cell's: it runs to its end
+        // off the session's fuel, deadline, clock and park flag, which come
+        // back as they were, so no park is due in it and a request made
+        // meanwhile (the flag is shared with other threads) lands on the
+        // session's flag, for the next cell. Its length is the
+        // definition's (no loop; a few calls per function, class and
+        // field, into the prelude's globals and natives only: no cell can
+        // rebind what it names), so nothing a cell did makes it long.
+        let (fuel, overdraft) = (self.fuel, self.fuel_overdraft);
+        let (deadline, clock) = (self.deadline.take(), self.clock.take());
+        let park = core::mem::replace(&mut self.park, Arc::new(AtomicBool::new(false)));
+        self.set_fuel(None);
+        let exit = self.run(entry);
+        self.set_fuel(fuel);
+        self.fuel_overdraft = overdraft;
+        self.deadline = deadline;
+        self.clock = clock;
+        self.park = park;
+        let made = match exit {
             Exit::Complete(v) if v.is_obj_kind(ty::DICT as u8) => v,
             Exit::Error => return Err(Raised),
             _ => return Err(self.err(T::SystemError, "host definition code did not complete")),

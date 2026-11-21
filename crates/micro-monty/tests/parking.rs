@@ -7,7 +7,7 @@
 #![allow(clippy::expect_used, clippy::panic, reason = "tests")]
 
 use micro_monty::{
-    Engine, EngineConfig, HostModule, ParkReason, Progress, Resume, Session, Stream,
+    Engine, EngineConfig, HostModule, HostSignature, ParkReason, Progress, Resume, Session, Stream,
 };
 use std::{
     sync::{
@@ -1508,6 +1508,92 @@ fn a_park_request_survives_start_and_cancel_until_a_cell_parks() {
             reason: ParkReason::Requested
         }
     );
+}
+
+/// A definition's generated code is the host's, not a cell's: it runs to
+/// its end whatever park is due, off the session's fuel, and leaves the
+/// park for the next cell. (A typed function has generated code; an
+/// untyped one has none.)
+#[test]
+fn define_runs_through_a_due_park_and_leaves_it_for_the_next_cell() {
+    let engine = Engine::new(EngineConfig::default());
+    let looping = engine
+        .compile("t = 0\nfor i in range(1000):\n    t += i\nt", "loop.py")
+        .expect("compiles");
+    let one = engine.compile("1", "one.py").expect("compiles");
+    let module = |typed: bool| HostModule {
+        name: "t".to_owned(),
+        functions: vec![if typed {
+            HostSignature {
+                name: "f".to_owned(),
+                ..HostSignature::default()
+            }
+        } else {
+            HostSignature::any("f")
+        }],
+        ..HostModule::default()
+    };
+    for typed in [true, false] {
+        for cause in ["request", "deadline", "fuel 0", "fuel 1"] {
+            for cell_first in [false, true] {
+                let case = format!("typed {typed}, {cause}, cell first {cell_first}");
+                let mut s = Session::new(&engine).expect("session");
+                if cell_first {
+                    assert!(matches!(s.start(&one), Progress::Complete(_)), "{case}");
+                }
+                let reason = match cause {
+                    "request" => {
+                        s.request_park();
+                        ParkReason::Requested
+                    }
+                    "deadline" => {
+                        s.set_deadline(Some(Instant::now()));
+                        ParkReason::Deadline
+                    }
+                    "fuel 0" => {
+                        s.set_fuel(Some(0));
+                        ParkReason::Fuel
+                    }
+                    _ => {
+                        s.set_fuel(Some(1));
+                        ParkReason::Fuel
+                    }
+                };
+                let fuel = s.fuel();
+                let defined = s.define(&module(typed));
+                assert!(defined.is_ok(), "{case}: {defined:?}");
+                assert_eq!(s.fuel(), fuel, "{case}: define charged the session");
+                assert_eq!(
+                    s.start(&looping),
+                    Progress::Parked { reason },
+                    "{case}: the park is the next cell's"
+                );
+                // One park was due, once: the cell then runs to its end.
+                if reason == ParkReason::Fuel {
+                    s.set_fuel(None);
+                }
+                assert!(
+                    matches!(s.resume(Resume::Continue), Ok(Progress::Complete(_))),
+                    "{case}"
+                );
+            }
+        }
+    }
+    // The budget set before a definition is the next cell's, whole: the
+    // cell spends what it spends with the definition made first.
+    let spent = |define_last: bool| {
+        let mut s = Session::new(&engine).expect("session");
+        if !define_last {
+            s.define(&module(true)).expect("defines");
+        }
+        s.set_fuel(Some(5_000));
+        if define_last {
+            s.define(&module(true)).expect("defines");
+        }
+        assert!(matches!(s.start(&looping), Progress::Complete(_)));
+        s.fuel()
+    };
+    assert_eq!(spent(true), spent(false));
 }
 
 #[test]

@@ -238,8 +238,36 @@ session.define(&HostModule::untyped("fs.meta", &["stat"]))?;      // also the at
   `json.decoder`, `builtins`, enabled in this build or not) is refused;
   names under a bundled package that are not its modules (`json.tools`)
   are the host's.
+- **Not a cell's work.** The Python a typed function, class or exception
+  is made of runs inside `define`, to its end: off the session's fuel
+  (`fuel()` and the total read the same after it, and a budget set with
+  `set_fuel` is still the next cell's, whole), with no deadline, and
+  through a park request, which stays for the next cell. Its length is the
+  definition's: a few calls per function, class and field, none into code
+  a cell wrote.
+- **Runs to completion.** A `define` cannot be parked or timed out:
+  generating and compiling a module's code was never interruptible, and
+  its run is not either. One call on shipped builds \[M\], where a
+  function has two checked parameters, a class 10 fields and 3 such
+  methods, cold is an Engine's first define of the module and warm a later
+  session's (while the code fits the Engine's module cache, 8 MiB by
+  default; the wasm guest has no warm path):
+
+  | Module | Native, cold | Native, warm | wasm guest under Node |
+  |---|---:|---:|---:|
+  | 100 functions | 8 ms | 1 ms | 13 ms |
+  | 1,000 functions | 122 ms | 19 ms | 137 ms |
+  | 10,000 functions | 1.8 s | 1.8 s | 2.0 s |
+  | 100 classes | 81 ms | 10 ms | 91 ms |
+  | 1,000 classes | 0.9 s | 0.9 s | 1.0 s |
+
+  A host that needs every define under about 50 ms (about 500 functions
+  or 70 classes, cold) splits its surface into modules of a few hundred
+  functions and checks its own deadline between `define` calls.
 - **Size.** A module may have any number of functions, classes and
-  exceptions. The Python that typed functions and classes are made of is
+  exceptions that fit the memory limit and the compiler's 65,535 code
+  objects a program: about 25,000 typed functions or 2,978 such classes
+  at the default limits \[M\]. The Python that typed functions and classes are made of is
   compiled once per `Engine` and reused by later sessions of that Engine
   and its clones: `Session::new` plus `define` of 100 typed functions takes
   about 0.9 ms warm, against 6 ms cold \[M\].
@@ -601,8 +629,8 @@ dropped. Globals keep what the cell assigned, so the session stays usable. To
 stop a cell running on another thread, request a park, then cancel the
 parked cell.
 
-A park request stays until a cell parks for it. Neither `start` nor
-`cancel` drops it, so a host that requests a park and then sees the cell
+A park request stays until a cell parks for it. Neither `start`, `cancel`
+nor `define` drops it, so a host that requests a park and then sees the cell
 end on its own gets one more `Parked { reason: Requested }` from the next
 cell, and answers it with `Continue`. `Session::phase()` says what the
 session is stopped at (`Idle`, `HostCall`, `Waiting` or `Parked`), and so
@@ -1383,6 +1411,29 @@ while wasm runs, so deadlines fire only after I/O; use fuel there.
 (an idle session costs about 1.57 MB of linear memory alone in an instance,
 about 0.1 MB as one more in a shared one \[M\]), but a trap then loses all
 of them, and the instance's memory must hold the sum of their bounds.
+
+**Typed definitions: define once, then restore.** The guest has one Engine
+per session, so it has no warm `define`: every new session that defines
+typed functions or classes compiles their code again, also with several
+sessions in one instance. A host with many short sessions defines its
+modules once on a setup session, snapshots it, and starts each new session
+with a restore of that image, in any instance or isolate of the build: the
+guest's images hold the compiled code, so a restore only decodes it. Keep
+the image per build id, as any snapshot, and call `setup_done` on each
+restored session (the mark is not in an image). A session the host keeps can
+`reset()` instead, which keeps its definitions. For 10 / 100 / 500 typed
+functions of two checked parameters, on shipped builds, the default guest
+(the bundle guest is the same within noise) \[M\]:
+
+| | Node (`hosts/js`) | wasmtime (`mm-wasm-host`) |
+|---|---:|---:|
+| `define` in a new session | 2.4 / 13 / 66 ms | 2.1 / 21 / 107 ms |
+| Restore the image taken after the defines | 1.5 / 3.7 / 15 ms | 0.9 / 4.3 / 20 ms |
+| `reset()` of a kept session | 0.1 / 0.3 / 1.4 ms | 0.1 / 0.3 / 1.6 ms |
+| That image | 83 KB / 407 KB / 1.9 MB | the same |
+
+Untyped functions (`HostSignature::any`, `HostModule::untyped`) generate no
+code and cost none of this.
 
 ## Binary size
 

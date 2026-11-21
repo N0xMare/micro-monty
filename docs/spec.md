@@ -2418,6 +2418,24 @@ and the engine keeps the definition as a `HostValue` for `host_modules()` and
 session's lifetime (`Vm::host_id`, a table in the snapshot); `HOSTFN` objects
 carry it in a raw slot, so `HostCall` reports it without a lookup.
 
+**Definition code is the host's, not a cell's.** The Python generated for a
+module's typed functions, classes and exceptions runs between cells
+(`Vm::run_host_defs`) on the one dispatch loop, to its end: without the
+session's fuel, deadline, clock and park flag, which come back as they were
+(fuel, overdraft and the fuel total unchanged), so no park is due in it and a
+park request, pending or made meanwhile, stays for the next cell. A park there would leave a half-made module
+and a stopped run that is no cell. It stays bounded without them: the code
+has no loop of its own (a few calls per function, class and field), so its
+work grows with the definition the host gave and with nothing a cell did:
+charged as a cell's would be, 61 fuel units for one typed function, 556 for
+100, 3,244 for 100 with 20 checked parameters each, 6,982 for 100 classes
+of 10 fields and 3 methods, 1,384 for 100 exceptions [M]. It calls only the prelude's globals and natives
+(`_mm.signature`, `property`, the class builder with `tuple` or a built-in
+exception as base), which no cell can rebind: user code has no handle on the
+prelude's globals (no `__globals__`, `__builtins__` or `builtins` module),
+and built-in types and the prelude's functions and classes are immutable.
+Collections it makes due still run at its safepoints.
+
 **Typed host functions and classes are generated Python.** The facade
 generates one program per module and the engine runs it once, between
 cells, in the prelude's globals (`Vm::run_host_defs`). The program is

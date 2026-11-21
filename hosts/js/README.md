@@ -66,6 +66,28 @@ first cells and free nothing. Call it:
 It changes no result, output or fuel, and the setup's code stays charged to
 the memory limit.
 
+### Typed definitions: define once, then restore
+
+The guest compiles a typed function's or class's code in every session that
+defines it: a second session pays what the first did, also with several
+sessions in one instance. For many short sessions, define the modules once
+on a setup session, keep `setup.snapshot()` (per build id), and start each
+new session with `rt.restore(image)`: the image holds the compiled code, so
+a restore only decodes it, in any isolate with the build loaded. Call
+`setupDone()` on the restored session, as above. A session you keep can `reset()` instead, which keeps its definitions. For 10 / 100 /
+500 typed functions of two checked parameters, on the shipped default guest
+under Node (the bundle guest is the same within noise) [M]:
+
+| | 10 | 100 | 500 |
+|---|---:|---:|---:|
+| `define` in a new session | 2.4 ms | 13 ms | 66 ms |
+| `rt.restore(image)` | 1.5 ms | 3.7 ms | 15 ms |
+| `reset()` of a kept session | 0.1 ms | 0.3 ms | 1.4 ms |
+| The image | 83 KB | 407 KB | 1.9 MB |
+
+Untyped functions (`anySignature`, `untypedModule`) generate no code and
+cost none of this.
+
 The low-level API is the reference host's: `define`, `start`, `resume`
 (`{ kind: "value" | "error" | "future" | "batch" | "continue" }`), `cancel`,
 `reset`, `setupDone`, `snapshot`, `pending`, `phase`, fuel (`setFuel`, `fuelWanted`,

@@ -626,9 +626,18 @@ fn a_park_request_between_calls_parks_the_next_call_instead_of_trapping() {
     s.park_handle().request();
     std::thread::sleep(std::time::Duration::from_millis(250));
     assert_eq!(s.fuel_wanted().expect("no trap"), 0);
+    // `f` is typed: its definition is generated code the guest runs with
+    // the request pending and the clock `mm_start` armed, and it must not
+    // park there (the request is the next cell's).
     s.define(&HostModule {
         name: "t".into(),
-        functions: vec![HostSignature::any("f")],
+        functions: vec![
+            HostSignature {
+                name: "f".into(),
+                ..HostSignature::default()
+            },
+            HostSignature::any("g"),
+        ],
         classes: Vec::new(),
         constants: Vec::new(),
         exceptions: Vec::new(),

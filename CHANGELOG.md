@@ -130,6 +130,14 @@ hashes are pre-release history, kept in the private archive
   part of the way no longer leaves a container marked as being rendered:
   the same `repr` showed it as `[...]` afterwards, and an outer level
   could end in `KeyError` instead of the `MemoryError` [M].
+- `Session::define` of a typed function, a class or an exception no longer
+  fails with `SystemError: host definition code did not complete` when a
+  park is due: after `request_park()`, with a deadline that has passed, or
+  with fuel 0 or 1 set (since 0.0.2; on the wasm guests, whose clock stays
+  armed, after any cell with a request pending). The generated code now
+  runs to its end off the session's fuel, deadline and clock: a define
+  charges the session no fuel, and a park request stays for the next cell
+  (it was consumed by the failed define).
 - `reset()` gives back the memory earlier cells committed and no longer
   use, without moving an object: after a cell filled a 3 MiB heap with
   4 KB buffers, a 1 MB `bytearray` raised `MemoryError` after the reset
