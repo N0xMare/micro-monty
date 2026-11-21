@@ -10,7 +10,6 @@ aio.rs::end_task
 aio.rs::finish_task
 aio.rs::gather
 aio.rs::load_coro_args
-aio.rs::mark_run_root
 aio.rs::must_cancel
 aio.rs::new_awaitable
 aio.rs::new_coro
@@ -22,6 +21,7 @@ aio.rs::settle_as
 aio.rs::sleep_due
 aio.rs::spawn_named
 aio.rs::start_coro_frame
+aio.rs::start_run
 aio.rs::task_index
 aio.rs::unawaited
 aio.rs::vslot_raw_of

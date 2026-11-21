@@ -89,6 +89,18 @@ hashes are pre-release history, kept in the private archive
   `__init__`, `object()`, `slice(1, n)` or a failing `assert`. A handler
   that keeps the data can still be refused: it has only the room the fill
   left.
+- An operation refused after it had entered a frame is raised in the
+  frame it started from. `g.throw(e)` into a generator delegating with
+  `yield from`, with room under the recursion limit for the generator's
+  frame but not its sub-generator's, left the generator "already
+  executing" for good; it now ends with the `RecursionError`, as
+  `next(g)` there already did and as CPython ends a generator whose
+  resumption is refused. (A generator whose own frame is the one refused
+  is still left as it was, where CPython ends it.) `asyncio.run` refused the memory for its task after
+  entering the coroutine ended in `AttributeError: 'bool' object has no
+  attribute 'aio_stop'` instead of `MemoryError`. A coroutine driven by
+  `send()` and a host function called as a dunder no longer leave frames
+  entered when their next step is refused.
 - `reset()` gives back the memory earlier cells committed and no longer
   use, without moving an object: after a cell filled a 3 MiB heap with
   4 KB buffers, a 1 MB `bytearray` raised `MemoryError` after the reset

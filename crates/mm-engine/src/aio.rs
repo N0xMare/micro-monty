@@ -761,12 +761,15 @@ impl Vm {
         )
         .unwrap_or_default();
         self.burn(frames.len() as u64);
+        // The frames up to the one `send()` entered, when it drives this.
+        let mut levels = 0;
         let mut driven = false;
         let mut c = st.coro;
         for f in &frames {
             if !c.is_obj_kind(ty::CORO as u8) {
                 break;
             }
+            levels += 1;
             let fc = f
                 .cont
                 .checked_sub(1)
@@ -796,6 +799,29 @@ impl Vm {
             self.prelude_request("_bad_yield", alloc::vec![y], Cont::None)?;
             return self.land(st, pc, pc + 1, Cont::None);
         }
+        // Every coroutine up to the one `send()` runs gets the buffer its
+        // suspension copies its registers to before a frame is left (one
+        // has none before its first suspension, and a collection drops it,
+        // `Vm::clear_running`): a buffer refused after the first frame had
+        // gone raised in a frame `st` no longer was (`Vm::landing`).
+        // Refused here, nothing has changed.
+        let mut level = (st.coro, st.ci);
+        for f in &frames[..levels] {
+            let nregs = self.codes[level.1 as usize].code.nregs as usize;
+            let buf = self.vslot_hot(level.0, coro::ARGS);
+            let len = buf
+                .as_obj()
+                .filter(|_| buf.is_obj_kind(ty::BUF as u8))
+                .and_then(|b| self.heap.header(b).ok())
+                .map_or(0, |h| h.nvals() as usize);
+            if len < nregs
+                && let Some(r) = level.0.as_obj()
+            {
+                let b = self.alloc_buf(nregs.max(1))?;
+                self.set_slot_hot(r, coro::ARGS, Value::from_ref(b, ty::BUF as u8));
+            }
+            level = (f.coro, f.code);
+        }
         let mut awaited = w;
         let mut at = pc;
         loop {
@@ -806,16 +832,8 @@ impl Vm {
             let nregs = code.nregs as usize;
             let pcs = crate::generator::suspend_pcs(code, at as u64);
             crate::interp::clear_frame(&mut self.stack, code, st.base, st.base + nregs, &pcs);
-            let mut buf = self.vslot_hot(c, coro::ARGS);
-            let len = buf
-                .as_obj()
-                .filter(|_| buf.is_obj_kind(ty::BUF as u8))
-                .and_then(|b| self.heap.header(b).ok())
-                .map_or(0, |h| h.nvals() as usize);
-            if len < nregs {
-                let b = self.alloc_buf(nregs.max(1))?;
-                buf = Value::from_ref(b, ty::BUF as u8);
-            }
+            // Reserved above.
+            let buf = self.vslot_hot(c, coro::ARGS);
             let Some(r) = c.as_obj() else {
                 return Err(self.err(T::SystemError, "micro-monty: bad coroutine"));
             };
@@ -2560,22 +2578,47 @@ impl Vm {
         self.cur != 0 || is_coro(st.coro) || self.specials.iter().any(|f| is_coro(f.coro))
     }
 
-    /// Marks `c` as `asyncio.run`'s coroutine, which runs as the first
-    /// step of its loop's first iteration.
+    /// Starts `asyncio.run`'s coroutine `c` from `st` (a call from
+    /// `call_pc` returning to `ret_pc`): its frame runs as the first step
+    /// of its loop's first iteration. What can fail (its task's handle,
+    /// the frame's entry) comes first and changes nothing when it does,
+    /// so an error is raised in the caller's frame, which `st` still is
+    /// (`Vm::landing`): the handle was allocated after the entry, and one
+    /// refused left `st` in the coroutine's frame with the caller's pc
+    /// and registers, whose handlers then ran on them [M].
     #[cfg(feature = "asyncio")]
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
-    pub(crate) fn mark_run_root(&mut self, c: Value) -> Result<(), Raised> {
+    pub(crate) fn start_run(
+        &mut self,
+        st: &mut State,
+        c: Value,
+        call_pc: usize,
+        ret_pc: usize,
+    ) -> Result<(), Raised> {
+        // Its task is `Task-1` of a first run, as CPython numbers them.
+        let counter = self.task_counter;
+        let started = self
+            .new_task_handle(Value::NONE, 0, Value::NONE)
+            .and_then(|h| {
+                self.start_coro_frame(st, c, call_pc, ret_pc, crate::cont::Cont::None)
+                    .map(|()| h)
+            });
+        let handle = match started {
+            Ok(h) => h,
+            Err(e) => {
+                self.task_counter = counter;
+                return Err(e);
+            }
+        };
         let s = self.raw_of_hot(c, coro::STATE);
         self.set_raw_of_hot(c, coro::STATE, s | coro::RUN_ROOT);
         self.iter_left = 0;
         self.iter_open = true;
         self.stop_wait = 0;
         self.loop_flags |= crate::vm::LOOP_IN_RUN;
-        // Its task is `Task-1` of a first run, as CPython numbers them.
         if let Some(Some(t)) = self.tasks.get_mut(0) {
-            t.handle = Value::NONE;
+            t.handle = handle;
         }
-        self.current_task()?;
         if s & coro::RUN_ANON != 0 {
             self.task_counter = self.task_counter.saturating_sub(1);
         }

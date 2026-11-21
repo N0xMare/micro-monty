@@ -450,14 +450,17 @@ impl Vm {
                 at: u32::try_from(ypc).unwrap_or(0),
             };
             if sub.is_obj_kind(ty::GEN as u8) {
-                return match self.gen_throw(
-                    st,
-                    sub,
-                    exc,
-                    dcont,
-                    ypc,
-                    ypc + instr_len(op::YIELD_FROM),
-                )? {
+                let thrown =
+                    self.gen_throw(st, sub, exc, dcont, ypc, ypc + instr_len(op::YIELD_FROM));
+                // The sub-generator's frame was not entered (the stack or
+                // the recursion limit refused it): `st` is this generator's
+                // frame, which the error is raised in, at its `yield from`.
+                // Returned as an error, it was raised at the `throw()` with
+                // this frame still entered and the generator still running.
+                let Ok(thrown) = thrown else {
+                    return Ok(Resumed::Fault);
+                };
+                return match thrown {
                     Resumed::Out(out) => {
                         // The sub-generator could not run: finish here.
                         let n = self.finish(st.base, dcont, out);

@@ -405,6 +405,183 @@ fn python_recursion_is_limited_without_rust_recursion() {
     assert_eq!(p, Progress::Complete(None));
 }
 
+/// `throw()` into a generator delegating with `yield from`, with room for
+/// the generator's frame but not for its sub-generator's: the
+/// `RecursionError` is raised in the generator, which ends, as `next()`
+/// there ends it. It was raised at the `throw()` with the generator's frame
+/// still entered, so the generator stayed "already executing" for good.
+/// The outcomes are a set, as python3.14's list differs: it ends a
+/// generator whenever its resumption is refused, where micro-monty leaves
+/// one untouched whose own frame is the one refused, and it does not count
+/// a delegation level as a frame (user guide, "Other differences").
+#[test]
+fn a_throw_refused_inside_a_delegating_generator_ends_it() {
+    let src = "\
+def inner():
+    try:
+        yield 1
+        yield 2
+    except ValueError:
+        yield 'caught'
+def outer():
+    yield from inner()
+g = outer()
+next(g)
+r = []
+def deep():
+    try:
+        deep()
+    except RecursionError:
+        pass
+    if len(r) < 4 and 'caught' not in r:
+        try:
+            r.append(g.throw(ValueError('x')))
+        except RecursionError:
+            r.append('RE')
+        except ValueError as e:
+            r.append('VE ' + str(e))
+        except StopIteration:
+            r.append('stop')
+deep()
+try:
+    r.append(next(g))
+except StopIteration:
+    r.append('stop')
+print(sorted(set(r)))
+";
+    let (p, out) = run(src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    assert_eq!(out, "['RE', 'VE x', 'stop']\n");
+}
+
+/// `asyncio.run` refused the memory for its task's handle, at a real wall:
+/// the heap is filled with 8-word tuples and left holes of 8 words, one of
+/// 16 and one of 11, which `asyncio.run` takes for its own coroutine
+/// before it asks for the handle's 9 [M]. The `MemoryError` is raised at
+/// the call and the coroutine has not started, so it runs afterwards. The
+/// handle was allocated after the coroutine's frame was entered, so the
+/// cell ended in `AttributeError: 'bool' object has no attribute
+/// 'aio_stop'`. A fill that stops hitting the request prints `ran`.
+#[test]
+fn asyncio_run_refused_its_task_raises_memory_error_before_it_starts() {
+    let src = "\
+import asyncio
+import gc
+started = [0]
+async def main():
+    started[0] += 1
+    return 7
+async def warm():
+    return 1
+asyncio.run(warm())
+co = main()
+out = [None, None, None]
+xs = [None] * 150000
+k0 = (0,)
+h16 = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+k1 = (0,)
+h11 = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+k2 = (0,)
+i = n = 0
+try:
+    while True:
+        xs[n] = (n, n, n, n, n, n, n)
+        n += 1
+except MemoryError:
+    pass
+while i < 4000:
+    xs[i] = None
+    i += 2
+h16 = None
+h11 = None
+gc.collect()
+try:
+    asyncio.run(co)
+    out[0] = 'ran'
+except MemoryError:
+    out[0] = 'MemoryError'
+xs = None
+gc.collect()
+out[1] = started[0]
+out[2] = asyncio.run(co)
+print(out)
+";
+    let (p, out) = run_with(Limits::new().with_memory(8 << 20), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    assert_eq!(out, "['MemoryError', 0, 7]\n");
+}
+
+/// A coroutine driven by `send()` suspends through three levels with no
+/// room for the middle one's copy of its registers, at a real wall: a
+/// collection has dropped the copies, the heap's holes are 24 words, the
+/// innermost coroutine's copy is smaller and the middle one's, with 40
+/// locals, is 44 [M]. The `MemoryError` is raised at the innermost
+/// `await`, whose handler runs, and the coroutine goes on. The copies
+/// were allocated as the frames were left, so it was raised with the
+/// innermost frame gone and reached `send()`'s caller.
+#[test]
+fn a_send_driven_suspension_refused_a_copy_raises_at_its_await() {
+    let src = "\
+import gc
+import types
+@types.coroutine
+def pause(v):
+    got = yield v
+    return got
+out = [None] * 6
+xs = [None] * 60000
+def fill():
+    n = 0
+    try:
+        while True:
+            xs[n] = (n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n)
+            n += 1
+    except MemoryError:
+        pass
+    i = 0
+    while i < 2000:
+        xs[i] = None
+        i += 2
+    return n
+async def l3():
+    n = fill()
+    gc.collect()
+    try:
+        out[0] = await pause(1)
+    except MemoryError:
+        out[0] = 'MemoryError in l3'
+        i = 0
+        while i < n:
+            xs[i] = None
+            i += 1
+        gc.collect()
+        out[1] = await pause(2)
+    return 3
+async def l2():
+    a0 = a1 = a2 = a3 = a4 = a5 = a6 = a7 = a8 = a9 = 0
+    b0 = b1 = b2 = b3 = b4 = b5 = b6 = b7 = b8 = b9 = 0
+    c0 = c1 = c2 = c3 = c4 = c5 = c6 = c7 = c8 = c9 = 0
+    d0 = d1 = d2 = d3 = d4 = d5 = d6 = d7 = d8 = d9 = 0
+    r = await l3()
+    return r + a0 + b0 + c0 + d0 + a9 + b9 + c9 + d9
+async def l1():
+    return await l2()
+co = l1()
+try:
+    out[2] = co.send(None)
+    out[3] = co.send('a')
+    out[4] = co.send('b')
+except StopIteration as e:
+    out[5] = e.value
+except MemoryError:
+    out[5] = 'MemoryError at send'
+print(out)
+";
+    let (p, out) = run_with(Limits::new().with_memory(8 << 20), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    assert_eq!(out, "['MemoryError in l3', 'a', 2, None, None, 3]\n");
+}
+
 /// An exhausted builtin iterator drops its sequence, as python3.14's do:
 /// three exhausted iterators over 8 MB lists kept the lists, so the next
 /// three raised `MemoryError` under a 32 MiB limit. Each kind of iterator

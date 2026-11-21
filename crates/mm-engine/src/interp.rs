@@ -1890,14 +1890,21 @@ impl Vm {
         call_pc: usize,
         ret_pc: usize,
     ) -> Result<(usize, usize), Raised> {
+        let depth = self.depth;
         let mut pcs = (call_pc, ret_pc);
         for &c in conts {
             if c == Cont::None {
                 continue;
             }
             let top = st.base + self.codes[st.ci as usize].code.nregs as usize + HDR;
-            self.ensure_stack(top + 1)?;
-            self.enter_frame(st, Value::NONE, self.tramp, top, pcs.0, pcs.1, c)?;
+            let entered = self
+                .ensure_stack(top + 1)
+                .and_then(|()| self.enter_frame(st, Value::NONE, self.tramp, top, pcs.0, pcs.1, c));
+            if let Err(e) = entered {
+                // All or none: `st` is the caller's frame again.
+                self.pop_tramps(st, depth);
+                return Err(e);
+            }
             pcs = (0, 0);
         }
         Ok(pcs)
@@ -1935,6 +1942,19 @@ impl Vm {
             Ok(Landed::Fault) => Some(Err(Fault { reraise: false })),
             Ok(Landed::Block(a)) => Some(Ok(Flow::Block(a))),
             Err(Raised) => {
+                // The operation raised in the frame it started from: `st`
+                // is that frame, and only its pc and accumulator are put
+                // back. One that failed after `st` moved (a frame entered
+                // or left) would unwind the new frame's code with this
+                // frame's pc and registers, so every step that can fail
+                // comes before the frame entry (`Vm::start_run`,
+                // `Vm::push_tramps`, `Vm::await_yield`), or the frames it
+                // entered are popped first (`Vm::drive`), or the error is
+                // raised in the new frame (`Landed::Fault`,
+                // `Vm::gen_throw`). Asserted here only: an error that
+                // leaves the dispatch loop through `tri!` or `fail!` is
+                // not checked.
+                debug_assert_eq!(st.base, base, "an operation failed in another frame");
                 st.pc = pc;
                 st.base = base;
                 st.acc = acc;
@@ -1982,7 +2002,8 @@ impl Vm {
         args: &[Value],
         discard: bool,
     ) -> Option<Result<Flow, Fault>> {
-        let pc = st.pc;
+        // Before `land`, so `landing` sees a frame it moved to.
+        let (pc, base) = (st.pc, st.base);
         let r = if failed && !self.slow {
             Err(Raised)
         } else if failed {
@@ -1995,7 +2016,7 @@ impl Vm {
         } else {
             self.land(st, pc, pc + len, cont)
         };
-        let (base, acc) = (st.base, st.acc);
+        let acc = st.acc;
         self.landing(st, r, pc, base, acc)
     }
 
@@ -2089,8 +2110,7 @@ impl Vm {
                         "asyncio.run() cannot be called from a running event loop",
                     ));
                 }
-                self.start_coro_frame(st, c, call_pc, ret_pc, Cont::None)?;
-                self.mark_run_root(c)?;
+                self.start_run(st, c, call_pc, ret_pc)?;
                 Ok(Landed::Go)
             }
             Some(Request::Call {
@@ -2199,7 +2219,12 @@ impl Vm {
                             {
                                 // A host function as a dunder: continuation
                                 // frames carry the rest.
-                                let (cp2, rp2) = self.push_tramps(st, &[cont], cp, rp)?;
+                                let Ok((cp2, rp2)) = self.push_tramps(st, &[cont], cp, rp) else {
+                                    // The pending continuations' frames go
+                                    // too: `st` is the caller's again.
+                                    self.pop_tramps(st, depth);
+                                    return Err(Raised);
+                                };
                                 self.host_call = Some((call.id, u32::try_from(cp2).unwrap_or(0)));
                                 st.pc = rp2;
                                 return Ok(Landed::Host(call));

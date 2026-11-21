@@ -1635,6 +1635,14 @@ differs:
   `True` for two `float('nan')` objects (CPython: `False`).
 - **Deep comparisons** raise `RecursionError` past 1,000 levels whatever
   `Limits::recursion_depth` is.
+- **A generator resumed at the recursion limit.** When `next(g)`,
+  `g.send()` or `g.throw()` has no room for the generator's own frame, the
+  `RecursionError` is raised at the call and the generator stays
+  suspended, where CPython ends it; a later `next(g)` continues it. Each
+  `yield from` level a resumption passes through counts as a frame, so a
+  delegating generator is refused one level earlier per delegation than
+  CPython's; refused below its own frame, it ends with the
+  `RecursionError`, as CPython's does.
 - **Numbers.** `math.cbrt`, `exp`, `log`, the trigonometric and hyperbolic
   functions, `erf`, `gamma`, `atan2` and float `**` can differ from glibc's
   results in the last digit (108 of 92,000 random calls \[M\]). `range`
