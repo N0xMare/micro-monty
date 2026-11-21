@@ -159,5 +159,11 @@ test-hooks = []
 micro-monty = { path = ".", default-features = false, features = ["test-hooks"] }
 mm-wasm-alloc.workspace = true
 
+# tests/steps_mimalloc.rs: the step-time oracle on musl with the allocator
+# `mm` and `mm-cell-worker` register there. A dev-dependency: the facade's
+# own dependencies do not change.
+[target.'cfg(target_env = "musl")'.dev-dependencies]
+mimalloc = { version = "0.1.52", default-features = false }
+
 [lints]
 workspace = true

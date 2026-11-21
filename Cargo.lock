@@ -340,6 +340,7 @@ name = "micro-monty"
 version = "0.0.2"
 dependencies = [
  "micro-monty",
+ "mimalloc",
  "mm-compile",
  "mm-core",
  "mm-engine",

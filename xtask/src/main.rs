@@ -672,12 +672,35 @@ fn check(args: &[String]) -> Result<(), String> {
             ir
         }));
         let musl_mm = root.join(format!("target/{musl}/release/mm"));
+        let musl_worker = root.join(format!("target/{musl}/release/mm-cell-worker"));
+        // The worker's protocol tests on the shipped musl worker, with
+        // `MIMALLOC_USE_NUMA_NODES` set to `nodes` if given.
+        let musl_worker_protocol = |nodes: Option<&str>| {
+            let mut test = debug_cargo(&[
+                "test",
+                "--locked",
+                "--profile",
+                "gate-test",
+                "--target",
+                &musl,
+                "--package",
+                "mm-cell-worker",
+                "--test",
+                "protocol",
+            ]);
+            test.env("MM_CELL_WORKER", &musl_worker);
+            if let Some(nodes) = nodes {
+                test.env("MIMALLOC_USE_NUMA_NODES", nodes);
+            }
+            test
+        };
         // musl, the main embedder's Linux target (README "Platforms"): the
         // string functions are musl's, `mm` and the worker allocate through
         // mimalloc (C, built with musl-gcc: .cargo/config.toml), the
         // binaries link static-pie, and the worker's seccomp filter meets
         // musl's and mimalloc's system calls. `mm` built there as shipped runs the own cases and the
-        // corpus, and the worker's tests run there. The engine brings its
+        // corpus, and the worker's tests run there, the protocol suite
+        // again on the worker built as shipped. The engine brings its
         // own libm, so durability and the other engine tests would repeat
         // the glibc stages. The step-time oracle runs there in the release
         // gate (`steps-musl`).
@@ -717,7 +740,18 @@ fn check(args: &[String]) -> Result<(), String> {
                     &musl,
                     "--package",
                     "mm-cell-worker",
-                ])),
+                ]))
+                // The worker as release.yml publishes it (shipped, its
+                // own build so `mm`'s features stay out of it), under its
+                // filter: the protocol suite, as mimalloc runs on one
+                // NUMA node and on two.
+                .run({
+                    let mut build = shipped_build(&musl);
+                    build.args(["--package", "mm-cell-worker", "--bins"]);
+                    build
+                })
+                .run(musl_worker_protocol(None))
+                .run(musl_worker_protocol(Some("2"))),
         );
     } else {
         println!(
@@ -792,11 +826,16 @@ fn check(args: &[String]) -> Result<(), String> {
         // `memmove` are slow where glibc's are not (README "Platforms"):
         // it guards the musl-only copy paths, such as `move_values`' stack
         // buffer, which a toolchain could fuse back into a `memmove`. In
-        // the release gate only: run alone, it adds about 6 minutes.
-        let musl_steps: Vec<&str> = steps
+        // the release gate only: run alone, the two runs add about 17 minutes.
+        // Twice: on musl's `malloc` (`steps`), what an embedder without
+        // an allocator gets, and on mimalloc (`steps_mimalloc`), which `mm`
+        // and the worker register there. Their rows differ by up to 36 ms
+        // either way [M].
+        let mut musl_steps: Vec<&str> = steps
             .iter()
             .map(|&a| if a == host { musl.as_str() } else { a })
             .collect();
+        musl_steps.extend(["--test", "steps_mimalloc"]);
         let musl_dir = root.join("target/check/steps-musl");
         stages.push(
             Stage::new("steps-musl-build")

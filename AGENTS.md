@@ -69,14 +69,16 @@ Ir measures).
 `wasm-host`, `native-ir`, `replay-ir` and `shipped-mm` build that way, `shipped-cases`
 runs the own cases and Monty's corpus on the shipped `mm`, `musl` does the
 same on `mm` shipped for `<arch>-unknown-linux-musl` and runs the worker's
-tests there (Linux), and the
+tests there, the protocol suite again on the worker built as shipped
+(Linux), and the
 step-time oracle is built fully as shipped (std and libtest rebuilt, each
 test in its own process; a row over the limit prints `OVER`).
 
 `check` runs its stages at the same time (`xtask/src/check.rs`): `mm`,
 durability and the workspace tests at normal priority, the rest at `nice`
 10, and the step-time oracle's wall-time half last, alone (in the release
-gate, on musl too: `steps-musl`); each stage logs to
+gate, on musl too, with musl's `malloc` and with mimalloc: `steps-musl`);
+each stage logs to
 `target/check/logs/<stage>.log`.
 
 ## Working agreements

@@ -47,6 +47,14 @@ fn bootstrap() -> MontyBootstrap {
     }
 }
 
+/// The worker under test: the one cargo built beside the tests, or the
+/// binary `MM_CELL_WORKER` names (`cargo xtask check`'s `musl` stage runs
+/// the suite again on the worker built as shipped).
+fn worker_binary() -> std::ffi::OsString {
+    std::env::var_os("MM_CELL_WORKER")
+        .unwrap_or_else(|| env!("CARGO_BIN_EXE_mm-cell-worker").into())
+}
+
 struct Worker {
     child: Child,
     stdin: Option<ChildStdin>,
@@ -55,7 +63,7 @@ struct Worker {
 
 impl Worker {
     fn spawn() -> Self {
-        Self::spawn_with(Command::new(env!("CARGO_BIN_EXE_mm-cell-worker")))
+        Self::spawn_with(Command::new(worker_binary()))
     }
 
     fn spawn_with(mut command: Command) -> Self {
@@ -250,7 +258,7 @@ fn seccomp_mode(worker: &Worker) -> String {
 #[test]
 fn after_the_handshake_the_worker_runs_under_its_seccomp_filter() {
     for opt_out in [false, true] {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_mm-cell-worker"));
+        let mut command = Command::new(worker_binary());
         command.env_remove("MM_CELL_WORKER_NO_SECCOMP");
         if opt_out {
             command.env("MM_CELL_WORKER_NO_SECCOMP", "1");
