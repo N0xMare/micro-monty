@@ -49,9 +49,10 @@ hashes are pre-release history, kept in the private archive
   functions and the prelude's natives from two lists made at compile time
   with the natives table, instead of comparing every native's name with
   every type's and every native's module with the prelude's at each
-  start. `mm run` of an empty program takes 18.1% fewer instructions
-  natively (535,676 to 438,494) and 21.1% fewer on wasm32-wasip1 under
-  wasmtime (855,689 to 675,128) [M]. The
+  start, and the `Engine`'s module-cache slots for decoded modules and
+  decoder tables are allocated on first use. `mm run` of an empty program
+  takes 18.7% fewer instructions natively (535,676 to 435,751) and 21.4%
+  fewer on wasm32-wasip1 under wasmtime (855,689 to 672,382) [M]. The
   builtins, the prelude's globals and a new session's image are the same,
   byte for byte, and the build id does not move.
 - The Huffman decoder tables of the bundled modules and the prelude are

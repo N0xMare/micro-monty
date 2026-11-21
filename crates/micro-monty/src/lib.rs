@@ -190,15 +190,19 @@ pub const DEFAULT_MODULE_CACHE: u64 = 8 << 20;
 /// with the prelude's chunks unpacked once, up to a byte limit; past it,
 /// sessions decode their own as without one.
 struct ModuleCache {
-    slots: Vec<ProgramSlot>,
+    /// The decoded bundled modules, by module: allocated on the first
+    /// offer, so an engine whose sessions import none pays nothing.
+    slots: std::sync::OnceLock<Vec<ProgramSlot>>,
     chunks: Vec<std::sync::OnceLock<Arc<mm_engine::PreludeChunk>>>,
     /// Prelude units' programs a restore decoded, by unit: allocated on
     /// the first offer, so an engine that restores none pays nothing
     /// (none without the chunk cache).
     units: std::sync::OnceLock<Vec<ProgramSlot>>,
     /// The bundled code's decoder tables, by header
-    /// ([`mm_engine::decoder_headers`]): built once per engine.
-    decoders: Vec<std::sync::OnceLock<Arc<mm_compile::pack::Tables>>>,
+    /// ([`mm_engine::decoder_headers`]): built once per engine. Allocated
+    /// on the first offer, so an engine whose sessions unpack no bundled
+    /// code pays nothing.
+    decoders: std::sync::OnceLock<Vec<std::sync::OnceLock<Arc<mm_compile::pack::Tables>>>>,
     /// Host-module code compiled once ([`Session::define`]), by key.
     host: std::sync::Mutex<Vec<Arc<mm_engine::HostProgram>>>,
     /// Bytes still free under the limit.
@@ -288,11 +292,17 @@ impl mm_engine::ModuleCache for ModuleCache {
     }
 
     fn get(&self, i: usize) -> Option<Arc<mm_engine::DecodedModule>> {
-        ModuleCache::program(self.slots.get(i))
+        ModuleCache::program(self.slots.get()?.get(i))
     }
 
     fn offer(&self, i: usize, module: &Arc<mm_engine::DecodedModule>) {
-        self.offer_program(self.slots.get(i), module);
+        let slots = self.slots.get_or_init(|| {
+            mm_stdlib::MODULES
+                .iter()
+                .map(|_| ProgramSlot::default())
+                .collect()
+        });
+        self.offer_program(slots.get(i), module);
     }
 
     fn prelude_chunk(&self, c: usize) -> Option<Arc<mm_engine::PreludeChunk>> {
@@ -320,11 +330,16 @@ impl mm_engine::ModuleCache for ModuleCache {
     }
 
     fn decoders(&self, k: usize) -> Option<Arc<mm_compile::pack::Tables>> {
-        self.decoders.get(k)?.get().cloned()
+        self.decoders.get()?.get(k)?.get().cloned()
     }
 
     fn offer_decoders(&self, k: usize, tables: &Arc<mm_compile::pack::Tables>) {
-        ModuleCache::offer(self, self.decoders.get(k), tables, tables.bytes());
+        let decoders = self.decoders.get_or_init(|| {
+            (0..mm_engine::decoder_headers())
+                .map(|_| std::sync::OnceLock::new())
+                .collect()
+        });
+        ModuleCache::offer(self, decoders.get(k), tables, tables.bytes());
     }
 
     fn host_program(&self, key: &[u8; 16]) -> Option<Arc<mm_engine::HostProgram>> {
@@ -1207,15 +1222,10 @@ impl Engine {
     fn with_caches(config: EngineConfig, max_bytes: u64, chunks: usize) -> Engine {
         let modules = (max_bytes > 0).then(|| {
             Arc::new(ModuleCache {
-                slots: mm_stdlib::MODULES
-                    .iter()
-                    .map(|_| ProgramSlot::default())
-                    .collect(),
+                slots: std::sync::OnceLock::new(),
                 chunks: (0..chunks).map(|_| std::sync::OnceLock::new()).collect(),
                 units: std::sync::OnceLock::new(),
-                decoders: (0..mm_engine::decoder_headers())
-                    .map(|_| std::sync::OnceLock::new())
-                    .collect(),
+                decoders: std::sync::OnceLock::new(),
                 host: std::sync::Mutex::new(Vec::new()),
                 free: max_bytes.into(),
             })
@@ -1271,8 +1281,10 @@ impl Engine {
         self.modules.as_ref().map_or(0, |c| {
             let modules: u64 = c
                 .slots
-                .iter()
-                .chain(c.units.get().into_iter().flatten())
+                .get()
+                .into_iter()
+                .chain(c.units.get())
+                .flatten()
                 .filter_map(|s| ModuleCache::program(Some(s)))
                 .map(|m| m.bytes())
                 .sum();
@@ -1291,7 +1303,9 @@ impl Engine {
                 .sum();
             let decoders: u64 = c
                 .decoders
-                .iter()
+                .get()
+                .into_iter()
+                .flatten()
                 .filter_map(|s| s.get())
                 .map(|t| t.bytes())
                 .sum();
