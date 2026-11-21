@@ -42,6 +42,26 @@ hashes are pre-release history, kept in the private archive
   memory, the release-recipe worker binaries take 3.33 to 3.37 s of cell
   time on glibc, 4.79 to 4.89 s on musl with musl's `malloc` and 3.72 to
   3.81 s with mimalloc; the worker grows by 146 KiB [M].
+- `Session::setup_done()`: the code loaded so far is the session's setup
+  and does not count toward the trigger that reclaims unreachable code
+  when a cell starts (a full collection once 16 KiB of code, or an eighth
+  of the live heap, was loaded since the last one). A setup's code stays
+  in use, so counted, it brought that collection forward to a session's
+  first cells, where it frees nothing. The mark is not in an image: a
+  host calls it again after `SessionTemplate::instantiate` and
+  `Session::reset_to`, whose sessions otherwise count all the template's
+  code and collect at their first cell's start, as before.
+  `Session::reset` starts the count anew. The setup's code stays charged
+  to the memory limit, and what a cell drops of it is freed by the next
+  reclamation. `mm-cell-worker` calls it after each bootstrap it runs or
+  resets to.
+  Over the recorded sessions on the replay worker, against the build
+  before: the 79 fresh-per-cell (py-sdk) sessions counted take a median
+  0.893 of their instructions (collections 1,952 to 362: a session reset
+  to its template no longer collects at every cell's start), and the
+  persistent (py-ptc) sessions of five cells or fewer a median 0.960
+  (collections 23 to 5 in 29 sessions); allocator calls do not move [M].
+  Not in an image: no snapshot format change.
 
 ### Changed
 

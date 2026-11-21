@@ -195,7 +195,8 @@ fn a_cut_exception_report_fails_its_cell_within_the_result_cap() {
 }
 
 /// A [`NativeEngine`] whose sessions log each bootstrap run (a source
-/// starting `# boot`) and each `reset_to_kept` with its result.
+/// starting `# boot`), each `setup_done` and each `reset_to_kept` with its
+/// result.
 struct Logged(NativeEngine, Arc<Mutex<Vec<String>>>);
 
 struct LoggedSession(Box<dyn CellSession>, Arc<Mutex<Vec<String>>>);
@@ -225,6 +226,10 @@ impl CellSession for LoggedSession {
     fn cancel(&mut self) {
         self.0.cancel();
     }
+    fn setup_done(&mut self) {
+        self.1.lock().expect("log").push("setup done".into());
+        self.0.setup_done();
+    }
     fn reset(&mut self) -> Result<(), String> {
         self.0.reset()
     }
@@ -249,7 +254,8 @@ impl CellSession for LoggedSession {
 
 /// A bootstrap after each `Reset` runs once and is then restored, unless
 /// it read entropy or the clock: then it runs every time, so each cell
-/// sees its own random values.
+/// sees its own random values. Each run ends the session's setup
+/// (`CellSession::setup_done`); a restored one is marked by the restore.
 #[test]
 fn a_reset_bootstrap_runs_once_unless_it_reads_entropy_or_the_clock() {
     let log = Arc::new(Mutex::new(Vec::new()));
@@ -281,7 +287,10 @@ fn a_reset_bootstrap_runs_once_unless_it_reads_entropy_or_the_clock() {
         let log = log.lock().expect("log").clone();
         if extra.is_empty() {
             assert_eq!(seen, ["1", "1", "1"]);
-            assert_eq!(log, ["bootstrap", "reset_to true", "reset_to true"]);
+            assert_eq!(
+                log,
+                ["bootstrap", "setup done", "reset_to true", "reset_to true"]
+            );
         } else {
             assert_eq!(
                 log.iter().filter(|l| *l == "bootstrap").count(),
@@ -314,7 +323,15 @@ fn a_reset_bootstrap_runs_once_unless_it_reads_entropy_or_the_clock() {
     run(true, "T.n", Some("z = 3\n"));
     assert_eq!(
         *log.lock().expect("log"),
-        ["bootstrap", "bootstrap", "bootstrap", "reset_to true"]
+        [
+            "bootstrap",
+            "setup done",
+            "bootstrap",
+            "setup done",
+            "bootstrap",
+            "setup done",
+            "reset_to true"
+        ]
     );
     worker.send(&HostFrame::Shutdown);
     assert!(matches!(worker.recv(), WorkerFrame::ResourceReport { .. }));

@@ -2482,7 +2482,9 @@ leaves when it runs right after a `Reset` (a `SessionTemplate`; one at a
 time, replaced when another bootstrap is kept) and resets to it while the
 bootstrap stays the same, instead of resetting, compiling and running it
 again. A bootstrap that read the wall clock or entropy is not kept: it runs
-after every `Reset`, so each cell sees its own values. Against a local checkout of plak it
+after every `Reset`, so each cell sees its own values. After each bootstrap
+it runs or resets to, the worker calls `Session::setup_done` (§11, Session
+lifetime): the tool functions and the bootstrap's code stay for every cell. Against a local checkout of plak it
 passes 46 of 48 of plak's worker-driven protocol tests [M]; the two failures
 are Monty-only behaviour (the allocator ceiling) and the SDK test's
 type-error cell, which expects a checker.
@@ -2608,6 +2610,24 @@ the session and in its images. Keeping a unit keeps its nested function
 bodies too. Code, source and cache indices are compacted only between
 cells, never under suspended frames. Reset also reclaims unreachable user
 code. The cost includes a heap scan.
+
+The count starts anew at each reclamation and at `Session::reset`, and at
+`Session::setup_done`, by which a host says the code loaded so far is the
+session's setup (host definitions, a bootstrap cell's functions). A setup
+stays reachable, so counted, it brings the first reclamation forward to
+the session's first cells, where the collection frees nothing; a new
+session's count starts at zero, with the prelude's and the host modules'
+records in it. The mark is not in an image: a restored session
+(`Engine::restore`, `SessionTemplate::instantiate`, `Session::reset_to`)
+starts the count at zero, as its image may hold dead code, and a host
+that restored a setup calls `setup_done` again. The mark
+changes only when the trigger fires: all code, the setup's too, stays
+charged to the memory limit, and a reclamation frees every dead unit,
+whenever it was loaded. So the dead code a session holds between
+reclamations is at most the threshold above and what the last cell
+loaded, plus, new with the mark, the units of the marked code the
+program has since dropped, which wait for the next reclamation (after
+the threshold of newer code, at the wall or at a reset).
 
 Reclamation's live marks and remapping indices belong to the code, source
 and shape records, admitted with those records during loading and restore.

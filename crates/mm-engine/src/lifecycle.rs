@@ -361,6 +361,17 @@ impl Vm {
         Ok(())
     }
 
+    /// The code loaded so far is the session's setup: [`Vm::prepare_cell`]'s
+    /// reclamation trigger counts only what is loaded from here on. A setup
+    /// (host definitions, a bootstrap cell's functions) stays reachable, so
+    /// counted, it brought the first reclamation's collection forward to
+    /// the first few cells, which freed nothing. It stays charged to the
+    /// memory limit, and the next reclamation frees what a cell dropped of
+    /// it. Between cells.
+    pub fn setup_done(&mut self) {
+        self.code_kept = self.code_charge;
+    }
+
     /// Cancels the previous cell and releases its transient execution state
     /// and, once enough has accumulated, unreachable loaded programs.
     /// Previously returned code indices may change; call this before loading

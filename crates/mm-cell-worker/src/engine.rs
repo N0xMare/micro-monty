@@ -59,6 +59,11 @@ pub trait CellSession {
     fn resume(&mut self, answer: Resume) -> Result<Progress, String>;
     /// Ends the running cell where it stands.
     fn cancel(&mut self);
+    /// The session's setup (its definitions and bootstrap) is done: its
+    /// code is not counted toward reclaiming unreachable code
+    /// ([`CellSession::reset_to_kept`] restores it marked so). The default
+    /// does nothing.
+    fn setup_done(&mut self) {}
     /// Starts a fresh generation of globals.
     ///
     /// # Errors
@@ -194,6 +199,10 @@ impl CellSession for Native {
         self.session.cancel();
     }
 
+    fn setup_done(&mut self) {
+        self.session.setup_done();
+    }
+
     fn reset(&mut self) -> Result<(), String> {
         self.reads = self.session.outside_reads();
         self.session.reset().map_err(|error| error.message)
@@ -212,6 +221,8 @@ impl CellSession for Native {
             return false;
         };
         if self.session.reset_to(kept).is_ok() {
+            // The kept state is a bootstrap's: a setup, as when it ran.
+            self.session.setup_done();
             return true;
         }
         // Not restored (the memory limit, say): the caller resets and

@@ -2982,3 +2982,135 @@ fn the_report_is_bounded_by_the_text_limit() {
             .ends_with("RecursionError: maximum recursion depth exceeded\n")
     );
 }
+
+/// A setup that defines `n` functions the session keeps, each a code
+/// object of a few hundred bytes: 64 of them are past the 16 KiB of new
+/// code after which a cell's start reclaims.
+fn setup_source(n: usize) -> String {
+    use std::fmt::Write as _;
+    let mut src = String::new();
+    for i in 0..n {
+        write!(
+            src,
+            "def tool_{i}(first, second=None, *rest, **options):\n    \
+             '''Tool {i}: gathers its arguments.'''\n    \
+             gathered = [first, second, len(rest), sorted(options), 'tool_{i}']\n    \
+             for item in rest:\n        gathered.append((item, 'tool_{i}'))\n    \
+             return gathered\n"
+        )
+        .expect("writes");
+    }
+    src
+}
+
+/// `Session::setup_done`: a setup's code, which stays reachable, does not
+/// count toward the trigger that reclaims unreachable code at a cell's
+/// start, so a short session runs no collection for it; it stays charged
+/// to the memory limit, and the trigger still fires on the code loaded
+/// after it, freeing also what a cell dropped of the setup. The mark is the
+/// host's to repeat after a restore, a template or a reset.
+#[test]
+fn a_setup_marked_done_is_not_counted_toward_code_reclamation() {
+    use micro_monty::SessionTemplate;
+    use micro_monty::test_hooks::code_state;
+    // Two compilation units: reclamation frees a unit once none of its
+    // functions is reachable.
+    let tools = setup_source(64);
+    let extra = format!(
+        "def extra(x):\n    \"{}\"\n    return x\n",
+        "x".repeat(8192)
+    );
+    let setup = |c: &mut Cells| {
+        assert_eq!(c.start(&tools), Progress::Complete(None));
+        assert_eq!(c.start(&extra), Progress::Complete(None));
+    };
+    let cell = "tool_3(1, 2, 3)[0]";
+    // How many collections `n` short cells run.
+    let cells = |c: &mut Cells, n: usize| {
+        let before = c.session.gc_collections();
+        for _ in 0..n {
+            assert_eq!(c.value(cell), "1");
+        }
+        c.session.gc_collections() - before
+    };
+
+    // Counted (the default): the first cell's start collects, and frees
+    // none of the setup's functions.
+    let mut counted = Cells::new();
+    setup(&mut counted);
+    let (loaded, ..) = code_state(&counted.session);
+    assert!(loaded > 32 << 10, "{loaded}");
+    assert_eq!(cells(&mut counted, 1), 1);
+    assert_eq!(counted.value("tool_63(7)[4]"), "'tool_63'");
+
+    // Marked done: three cells collect nothing, and the setup's code is
+    // charged as before.
+    let mut c = Cells::new();
+    setup(&mut c);
+    c.session.setup_done();
+    assert_eq!(code_state(&c.session).0, loaded);
+    assert_eq!(cells(&mut c, 3), 0);
+    assert!(code_state(&c.session).0 >= loaded);
+
+    // The trigger counts what is loaded after the mark: cells that each
+    // define a function reach it, and that reclamation frees the setup's
+    // unit whose function a cell dropped.
+    assert_eq!(c.start("del extra"), Progress::Complete(None));
+    let before = c.session.gc_collections();
+    let mut loads = 0;
+    while c.session.gc_collections() == before {
+        loads += 1;
+        assert!(
+            loads <= 64,
+            "no reclamation after {loads} cells of new code"
+        );
+        let src = format!(
+            "def later(x):\n    '''{}'''\n    return x\n",
+            "x".repeat(1024)
+        );
+        assert_eq!(c.start(&src), Progress::Complete(None));
+    }
+    assert!(loads >= 2, "reclaimed after {loads} cells");
+    assert!(
+        code_state(&c.session).0 < loaded,
+        "extra's unit was not freed"
+    );
+    assert_eq!(c.value("tool_63(7)[4]"), "'tool_63'");
+
+    // The mark is not in an image: a session made from a template, reset
+    // to one or restored counts all its code until the host marks it.
+    let mut source = Cells::new();
+    setup(&mut source);
+    source.session.setup_done();
+    let template = SessionTemplate::capture(&source.engine, &mut source.session).expect("captures");
+    let mut made = Cells::new();
+    made.session = template.instantiate().expect("instantiates");
+    assert_eq!(cells(&mut made, 1), 1);
+    made.session = template.instantiate().expect("instantiates");
+    made.session.setup_done();
+    assert_eq!(cells(&mut made, 3), 0);
+    made.session
+        .reset_to(&template)
+        .expect("resets to the template");
+    assert_eq!(cells(&mut made, 1), 1);
+    made.session
+        .reset_to(&template)
+        .expect("resets to the template");
+    made.session.setup_done();
+    assert_eq!(cells(&mut made, 3), 0);
+    made.session = source.engine.restore(template.image()).expect("restores");
+    assert_eq!(cells(&mut made, 1), 1);
+    made.session = source.engine.restore(template.image()).expect("restores");
+    made.session.setup_done();
+    assert_eq!(cells(&mut made, 3), 0);
+
+    // A reset starts the count anew: the setup run again counts until it
+    // is marked again.
+    c.session.reset().expect("reset");
+    setup(&mut c);
+    assert_eq!(cells(&mut c, 1), 1);
+    c.session.reset().expect("reset");
+    setup(&mut c);
+    c.session.setup_done();
+    assert_eq!(cells(&mut c, 3), 0);
+}

@@ -2445,6 +2445,31 @@ impl Session {
         Ok(())
     }
 
+    /// Says the session's setup is done: the code loaded so far (host
+    /// definitions, the functions and classes of a bootstrap cell, the
+    /// modules it imported) does not count toward the trigger that
+    /// reclaims unreachable code when a cell starts. That trigger runs a
+    /// full collection once the code loaded since the last one passes a
+    /// bound (docs/spec.md §11, Session lifetime); a setup's code stays reachable, so
+    /// counted, it only brings that collection forward to a session's
+    /// first few cells. Call it between cells, after the setup and before
+    /// the first cell, and again whenever the session comes to hold a
+    /// setup anew: after a setup run again ([`Session::reset`] starts the
+    /// count anew), and after [`SessionTemplate::instantiate`],
+    /// [`Session::reset_to`] or an [`Engine::restore`] of a setup's
+    /// image. The mark is not in an image, and a restored session counts
+    /// all its code: a restore cannot tell a setup from a cell's dead
+    /// code, and a template's instantiation continues as a restore of its
+    /// image does.
+    ///
+    /// The setup's code stays charged to the memory limit. What a later
+    /// cell drops of it is freed by the next reclamation, which comes
+    /// after as much new code as before, at the memory limit, or at a
+    /// reset.
+    pub fn setup_done(&mut self) {
+        self.vm.setup_done();
+    }
+
     /// The limits the session was made or restored with.
     fn limits(&self) -> Limits {
         Limits {

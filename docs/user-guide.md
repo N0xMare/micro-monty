@@ -559,6 +559,23 @@ let progress = session.run(&code, &mut tools)?;   // start + drive
 Neither handler needs a feature or a dependency; `drive` takes
 `&mut dyn HostHandler`.
 
+**After the setup, say so.** A host that prepares each session before its
+first cell (defines host functions, runs a bootstrap cell that defines
+helpers or imports modules) calls `session.setup_done()` once that is
+done, and again after a setup it runs again following `reset()`. When a
+cell starts, the session frees the code no function refers to any more,
+with a full collection, once enough code was loaded since it last did
+(docs/spec.md §11, "Session lifetime"); a setup's code is in use for the
+whole session, so counting it only makes that collection run during the
+first few cells and free nothing. `setup_done` takes the code loaded so
+far out of the count. It frees and keeps nothing by itself: the setup's
+code is still charged to the memory limit, and if a cell later drops part
+of it (`del helper`), the next such collection frees it. The mark is not
+part of a snapshot: call it again after restoring a setup (a template's
+`instantiate`, `reset_to`). After `Engine::restore` of a session's
+snapshot it is your choice, since a snapshot taken between cells may hold
+code the cells no longer use.
+
 ## Parking, deadlines and cancel
 
 A cell parks at a safepoint: a call, a backward jump, a step of a long
@@ -791,6 +808,13 @@ Rebuild templates from their setup code whenever the build id changes
 instead of draining them. Key them by build id and setup code, not by their
 bytes: captures differ where imports read the clock or entropy. A template
 written natively restores on both wasm targets of the same build id.
+
+**Say the template is the setup.** Call `session.setup_done()` after
+`instantiate()` and after each `reset_to` ("Driving a session"). A
+restored session counts all its code as loaded since it last freed dead
+code, so without the call every session made from the template, and
+every cell after a `reset_to`, starts with a full collection that frees
+nothing.
 
 **Resetting to a template.** A host that resets a session and runs the same
 setup before every cell (a presentation whose cells start fresh) calls

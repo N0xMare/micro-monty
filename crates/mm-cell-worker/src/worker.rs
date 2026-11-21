@@ -653,6 +653,10 @@ impl Worker {
         let keep = self.after_reset && !bootstrap.source.is_empty();
         let kept = keep.then(|| bootstrap.clone());
         self.run_bootstrap(bootstrap)?;
+        // The tool functions and the bootstrap's code stay for every cell:
+        // counted as reclaimable, they brought a collection that frees
+        // nothing forward to the session's first cells.
+        self.session.setup_done();
         if let Some(kept) = kept {
             self.session.keep();
             let bindings = self.bindings.clone().unwrap_or_default();

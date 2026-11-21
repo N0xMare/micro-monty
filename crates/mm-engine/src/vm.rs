@@ -855,8 +855,9 @@ pub struct Vm {
     /// between cells.
     pub(crate) codes: Arc<Vec<Arc<CodeObj>>>,
     pub(crate) code_charge: u64,
-    /// `code_charge` after the last reclamation between cells (0 in a new
-    /// or restored session, so its first cell counts all code as
+    /// `code_charge` after the last reclamation between cells, the last
+    /// reset or [`Vm::setup_done`], whichever came last (0 in a new or
+    /// restored session, so its first cell counts all code as
     /// reclaimable); see [`Vm::prepare_cell`].
     pub(crate) code_kept: u64,
     /// `code_bytes`' walk of `codes`, kept as codes are appended: the
@@ -1556,6 +1557,9 @@ impl Vm {
         // The emptied tables, if new ones replaced them, are released.
         self.heap.idle_collected = false;
         self.reclaim_code();
+        // A reclamation: the trigger counts what is loaded from here on,
+        // not from wherever the count stood before the code went.
+        self.code_kept = self.code_charge;
         // What the cells committed and no longer need is given back, so a
         // reset session has the room a new one has (`Heap::shrink`): after
         // a collection, as code reclamation leaves its constants to the
