@@ -1179,8 +1179,9 @@ fails with `Error::Trap` before any guest code runs and can be retried.
 `mm` runs Python files on micro-monty. It is built with the four opt-in
 stdlib modules (`uuid`, `unicodedata`, `html.entities`, `ast`) and the
 default limits (256 MiB, no fuel limit). Get it from a release's archive
-(`micro-monty-<target>.tar.gz` for macOS arm64 and x86_64 and Linux x86_64
-and arm64, with `mm-cell-worker` beside it), or build it:
+(`micro-monty-<target>.tar.gz` for macOS arm64 and x86_64, Linux x86_64
+and arm64 with glibc, and Linux x86_64 with musl, static; with
+`mm-cell-worker` beside it), or build it:
 
 ```text
 cargo install --locked --git https://github.com/N0xMare/micro-monty mm-cli

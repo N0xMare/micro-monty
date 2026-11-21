@@ -363,8 +363,9 @@ mod tests {
         println!("SOCKET {}", socket.is_ok());
     }
 
-    /// The child half of [`an_abort_raises_sigabrt`]: aborts, as a panic
-    /// in a shipped build does, under the filter.
+    /// The child half of [`an_abort_raises_sigabrt`]: aborts, as
+    /// `std::process::abort` and a failed allocation do, under the filter
+    /// (a panic in a shipped build is an illegal instruction, `SIGILL`).
     #[test]
     fn child_aborts_under_filter() {
         if std::env::var("MM_SECCOMP_TEST_CHILD").as_deref() != Ok("1") {

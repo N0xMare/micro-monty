@@ -25,7 +25,8 @@ hashes are pre-release history, kept in the private archive
 - `x86_64-unknown-linux-musl` is a tested platform: `cargo xtask check`'s
   `musl` stage builds `mm` there as shipped (static-pie), runs the own
   cases and Monty's corpus on it, and runs the worker's tests there; the
-  release gate's `steps-musl` stage runs the timed step-time oracle there.
+  release gate's `steps-musl` stage runs the timed step-time oracle there,
+  with musl's `malloc` and with mimalloc.
   The workspace tests, durability and the recorded sessions (in memory
   and durable, and on the seccomp-filtered worker binary) also pass on it
   [M].
@@ -33,7 +34,11 @@ hashes are pre-release history, kept in the private archive
   compiled with `musl-gcc`, which `.agents/setup` installs) as their
   global allocator; the engine crates and the facade take no new
   dependency. The worker's seccomp filter allows what mimalloc calls,
-  out of memory included. Over the 158 typical recorded sessions in
+  out of memory included: `getcpu`, which it calls on a machine with two
+  or more NUMA nodes, and `writev`, with which it prints when
+  `MIMALLOC_SHOW_ERRORS` or `MIMALLOC_VERBOSE` is set. The confined
+  worker obeys its parent's `MIMALLOC_*` variables. The musl binaries
+  need a CPU with POPCNT. Over the 158 typical recorded sessions in
   memory, the release-recipe worker binaries take 3.33 to 3.37 s of cell
   time on glibc, 4.79 to 4.89 s on musl with musl's `malloc` and 3.72 to
   3.81 s with mimalloc; the worker grows by 146 KiB [M].
@@ -240,7 +245,10 @@ hashes are pre-release history, kept in the private archive
   collection beside garbage.
   `xml.etree.ElementTree` reports ill-formed bytes as `ParseError` (it
   reads `e.start`, and raised `AttributeError`). The build id moves.
-- The step bound (docs/spec.md §5) holds on musl. 15 bounded rows of the
+- The step bound (docs/spec.md §5) holds on musl on every `Bounded` row
+  of the step-time oracle, with musl's `malloc` and with mimalloc; the
+  closest rows are at 95 to 97% of the limit with musl's `malloc`, as
+  with glibc, and at 86 to 100% with mimalloc [M]. 15 bounded rows of the
   step-time oracle took 51 to 200 ms between safepoints against a 44 ms
   limit, `t = s[::2]` over two-byte chars 39 to 40 ms against 38.6 to
   44 ms, and the queue test's 50,000 `list.insert(0, i)` 2.7 s against a
@@ -258,11 +266,18 @@ hashes are pre-release history, kept in the private archive
   those stay on the libc path, which is faster there. Values, fuel and
   outcomes are unchanged. On musl the slowest of those rows now takes
   36 ms against a limit of 38.6 to 40.6 ms, and the inserts 0.25 s [M].
-- `mm-cell-worker` on musl: a panic, which aborts in a shipped build,
-  killed the worker with the seccomp filter's `SIGSYS` instead of
-  `SIGABRT`, as musl's `abort` signals with `tkill` where glibc's uses
-  `tgkill`. The filter allows `tkill` aimed at the main thread or the
-  thread that installed it.
+  A `bytearray` with spare capacity that opens a gap in place (`insert`,
+  a slice assignment that grows) moved its tail with the same backward
+  `memmove`: 68 to 72 ms at 64 MiB against a limit of 55 to 56 ms. On
+  musl the tail now moves in pieces that copy forward: 49 to 50 ms, as
+  on glibc (47 to 48 ms against 50) [M].
+- `mm-cell-worker` on musl: an abort (`std::process::abort`, a failed
+  allocation) killed the worker with the seccomp filter's `SIGSYS`
+  instead of `SIGABRT`, as musl's `abort` signals with `tkill` where
+  glibc's uses `tgkill`. (A panic in a shipped build is an illegal
+  instruction, `SIGILL`, and makes no system call.) The filter allows
+  `tkill` aimed at the main thread or the thread that installed it; an
+  abort on the reader thread still ends in `SIGSYS` there.
 
 ### Added
 

@@ -35,8 +35,13 @@ memory and 82% with a snapshot and restore at every host call [M, 0.0.3];
 a global allocator such as mimalloc in the host binary recovers half to
 three quarters of it [M]. This repository's `mm` and `mm-cell-worker`
 register mimalloc on musl; building them there needs `musl-gcc` (Debian's
-`musl-tools`). The step bound (docs/spec.md §5) holds there: the step-time
-oracle passes on musl [M], and the release gate runs it there. The wasm
+`musl-tools`), and mimalloc is compiled with `-mpopcnt`, so the musl
+binaries need a CPU with POPCNT (every x86-64 CPU since 2009), which the
+Rust target's baseline does not ask for. The step bound (docs/spec.md §5) holds there on every
+`Bounded` row of the step-time oracle, which the release gate runs on musl
+twice, with musl's `malloc` and with mimalloc; the closest rows are at 95
+to 97% of the limit with musl's `malloc`, as with glibc, and at 86 to 100%
+with mimalloc [M]. The wasm
 targets `wasm32-wasip1` and `wasm32-unknown-unknown` are supported builds,
 gated with the native ones (the facade, the mm-wasm guest under wasmtime,
 and snapshots restored across targets).

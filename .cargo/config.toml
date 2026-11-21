@@ -8,11 +8,16 @@ xtask = "run --quiet --package xtask --"
 [target.x86_64-unknown-linux-gnu]
 linker = "cc"
 
-# mimalloc, mm and mm-cell-worker's allocator on musl, is C: compile it with
-# musl's compiler driver (musl-tools). Without `-mpopcnt` its bit scans call
-# libgcc's `__popcountdi2`, which a Rust musl link does not provide; every
-# x86-64 CPU since 2009 has the instruction.
+# mimalloc, mm and mm-cell-worker's allocator on musl, is C, compiled by
+# musl's compiler driver. For x86_64 the `cc` crate finds it by itself
+# (`x86_64-linux-musl-gcc`, Alpine's, or `musl-gcc`, Debian's musl-tools).
+# Without `-mpopcnt` its bit scans call libgcc's `__popcountdi2`, which a
+# Rust musl link does not provide; every x86-64 CPU since 2009 has the
+# instruction, which the Rust target's baseline does not ask for.
+# For aarch64 the crate looks for `aarch64-linux-musl-gcc` only: the line
+# below is for an aarch64 host with musl-tools (untested). A cross build
+# from another host sets `CC_aarch64_unknown_linux_musl` in its
+# environment, which wins over this table.
 [env]
-CC_x86_64_unknown_linux_musl = "musl-gcc"
 CFLAGS_x86_64_unknown_linux_musl = "-mpopcnt"
 CC_aarch64_unknown_linux_musl = "musl-gcc"
