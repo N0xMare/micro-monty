@@ -20,12 +20,23 @@ use crate::wasm_wall::git;
 
 /// Lines written before the form above, read as what they meant: the
 /// commit, its prefix and the line in the current form.
-const LEGACY: [(&str, &str, &str); 1] = [(
-    // v8-ir's first landing: main's plain-guest dict creep since v0.0.1.
-    "28ed45dd7fc6aefcfbe1a121c6632d4f036280b1",
-    "V8-IR-Accepted:",
-    "plain/dict 1.006 correctness costs of cdf5c099 and 901e0377 since v0.0.1",
-)];
+const LEGACY: [(&str, &str, &str); 2] = [
+    (
+        // v8-ir's first landing: main's plain-guest dict creep since v0.0.1.
+        "28ed45dd7fc6aefcfbe1a121c6632d4f036280b1",
+        "V8-IR-Accepted:",
+        "plain/dict 1.006 correctness costs of cdf5c099 and 901e0377 since v0.0.1",
+    ),
+    (
+        // Written without its names and with the ratio last, `the clearing
+        // pass on held, ... (1.0134)`, so wasm-ir could not read the
+        // commits since v0.0.2 at all; its native and v8 lines say
+        // `held 1.014`.
+        "cd4f79b98cd9cbdb56818ce4f3335b50fd307f38",
+        "Wasm-IR-Accepted:",
+        "held 1.014 the clearing pass on the program that holds suspended generators",
+    ),
+];
 
 /// One accept line.
 #[derive(Debug, Clone)]
