@@ -130,7 +130,11 @@ each stage logs to
   `crates/mm-compile/src/encode.rs`) adds durability at `1:1000` and
   cross-target; the dispatch loop and park state (in
   `crates/mm-engine/src/` `interp.rs`, `nstep.rs`, `cont.rs`, `vm.rs`,
-  `generator.rs` or `aio.rs`) adds the step oracle's fuel half; a
+  `generator.rs` or `aio.rs`) adds the step oracle's fuel half, as do
+  the files of the copies and compares that take another path on musl
+  (`crates/mm-core/src/heap.rs` or `string.rs`,
+  `crates/mm-engine/src/strmeth.rs`), whose timed half, on musl too,
+  stays in the release gate; a
   `crates/mm-wasm-*` crate adds `wasm` and `wasm-host`. **Release gate**:
   `cargo xtask check --release-gate`, every stage (the timed step oracle,
   memory probes, package, wasm-ir, v8-ir, replay-ir, the wasip1 runs,

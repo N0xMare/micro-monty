@@ -919,6 +919,18 @@ const DEV_ADDS: &[(&[&str], &[&str])] = &[
         ],
         &["steps-build", "steps-fuel"],
     ),
+    // The copies and compares that take another path on musl, where the
+    // libc's are slow (`move_values`, `copy_bytes`, `bytes_eq`,
+    // `push_char`). Their timed half, on musl too (`steps-musl`), stays in
+    // the release gate.
+    (
+        &[
+            "crates/mm-core/src/heap.rs",
+            "crates/mm-core/src/string.rs",
+            "crates/mm-engine/src/strmeth.rs",
+        ],
+        &["steps-build", "steps-fuel"],
+    ),
     (&["crates/mm-wasm-"], &["wasm", "wasm-host"]),
 ];
 
@@ -1349,6 +1361,11 @@ mod tests {
         );
         assert_eq!(
             stages("crates/mm-engine/src/interp.rs\n"),
+            ["steps-build", "steps-fuel"]
+        );
+        // The files of the musl-only copies and compares.
+        assert_eq!(
+            stages("crates/mm-core/src/heap.rs\ncrates/mm-engine/src/strmeth.rs\n"),
             ["steps-build", "steps-fuel"]
         );
         // `gc` is a prefix (gc.rs, gc_inc.rs); snapshot.rs of mm-engine is

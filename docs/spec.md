@@ -3232,7 +3232,7 @@ opens a draft release.
   (`crates/micro-monty/tests/steps.rs`, §5.1, built fully as shipped in
   `target/check/steps`: its fuel half beside the
   other stages, its wall-time half last, alone).
-- **musl** (Linux): the `musl` stage builds `mm` as shipped for
+- **musl** (Linux, release gate): the `musl` stage builds `mm` as shipped for
   `<arch>-unknown-linux-musl`, runs the own cases and Monty's corpus on
   it, runs the worker's tests built for that target, then builds the
   worker as shipped and runs its protocol suite on that binary, under its
