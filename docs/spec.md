@@ -341,7 +341,9 @@ messages; copy wording where behaviour matches.
   needs an exception overrides `[lints]` in its own manifest and the
   exception is recorded here first, only with evidence. The exceptions:
   - **Worker:** `mm-cell-worker/src/seccomp.rs` may use FFI to install
-    Linux's seccomp filter (`prctl`, `seccomp`) and read `getrusage`. Its
+    Linux's seccomp filter (`prctl`, `seccomp`, and on musl `gettid`,
+    which takes no argument: the filter names the installing thread as
+    one musl's `abort` may signal with `tkill`) and read `getrusage`. Its
     pointers refer only to initialized, owned structures that outlive the
     syscall; the kernel copies the BPF program during installation. The
     worker denies `unsafe` elsewhere. The subprocess seccomp test proves
@@ -933,7 +935,12 @@ on `mm-parse` only with its `ast` or `tokenize` feature (its build script
 uses `mm-parse` and `mm-compile` to compile the prelude); `mm-stdlib` on
 `mm-engine` (its build script compiles the bundled modules the same way);
 the facade on all five; `mm-cli` and the worker on the facade (the worker
-also on `plakous-cell`); `mm-wasm-abi` on the facade and `mm-wasm-guest` on
+also on `plakous-cell`), and both, on musl only, on `mimalloc`, which
+they register as their global allocator there (musl's `malloc` maps and
+unmaps every block of 128 KiB or more; docs/user-guide.md, "musl"): C,
+compiled with musl's compiler driver, in no engine crate and not in the
+facade, whose only use of it is a musl-only dev-dependency for the step
+oracle (§13); `mm-wasm-abi` on the facade and `mm-wasm-guest` on
 both and on `mm-wasm-alloc`. The wasmtime reference host,
 `crates/mm-wasm-host`, is its own workspace (excluded from the root), so
 wasmtime never enters the root lockfile; `hosts/js` is a TypeScript host for
@@ -3225,6 +3232,16 @@ opens a draft release.
   (`crates/micro-monty/tests/steps.rs`, §5.1, built fully as shipped in
   `target/check/steps`: its fuel half beside the
   other stages, its wall-time half last, alone).
+- **musl** (Linux): the `musl` stage builds `mm` as shipped for
+  `<arch>-unknown-linux-musl`, runs the own cases and Monty's corpus on
+  it, runs the worker's tests built for that target, then builds the
+  worker as shipped and runs its protocol suite on that binary, under its
+  seccomp filter, as mimalloc runs on one NUMA node and on two
+  (`MIMALLOC_USE_NUMA_NODES=2`). In the release gate, `steps-musl` runs
+  the step-time oracle's wall-time half there, alone, twice: on musl's
+  `malloc` (`tests/steps.rs`) and on mimalloc
+  (`tests/steps_mimalloc.rs`), the allocator `mm` and the worker
+  register on musl.
 - **GC stress** (not in `check`): `cargo xtask gc-stress` reruns the own
   cases, the corpus and durability collecting at every safepoint
   (`--incremental`: an incremental mark in tiny slices at every safepoint,
