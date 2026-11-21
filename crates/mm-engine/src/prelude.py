@@ -883,9 +883,13 @@ def _percent(fmt, args):
 
 # ---------------------------------------------------------------- repr
 
-_REPR_ACTIVE = []
-# The ids of `_REPR_ACTIVE`, so meeting one again costs one lookup, not a
-# scan per level (a deep nesting parked level by level would be quadratic).
+# What no iterator yields: the end of one.
+_REPR_END = []
+# The containers being rendered, by id, so meeting one again costs one
+# lookup, not a scan per level (a deep nesting parked level by level would
+# be quadratic). Entering one is this dict's one store: refused, nothing
+# has changed. (With a list of them beside it, a store refused after the
+# list's append left the container there for good, shown as `[...]` [M].)
 _REPR_IDS = {}
 
 
@@ -946,7 +950,6 @@ def _repr_to(x, d, out):
             else:
                 out.append('...')
             return
-        _REPR_ACTIVE.append(x)
         _REPR_IDS[id(x)] = x
         try:
             it = None
@@ -986,8 +989,8 @@ def _repr_to(x, d, out):
                     if not p:
                         continue
                 else:
-                    y = next(it, _REPR_ACTIVE)
-                    if y is _REPR_ACTIVE:
+                    y = next(it, _REPR_END)
+                    if y is _REPR_END:
                         break
                     p = (y,)
                 if not first:
@@ -1031,7 +1034,7 @@ def _repr_to(x, d, out):
                     _repr_run(out)
             out.append(end)
         finally:
-            del _REPR_IDS[id(_REPR_ACTIVE.pop())]
+            del _REPR_IDS[id(x)]
         return
     if t is str or t is bytes or t is bytearray:
         # A long one, which `repr` builds a step at a time.

@@ -101,6 +101,10 @@ hashes are pre-release history, kept in the private archive
   attribute 'aio_stop'` instead of `MemoryError`. A coroutine driven by
   `send()` and a host function called as a dunder no longer leave frames
   entered when their next step is refused.
+- A `repr` or `str` of nested containers that is refused memory or stack
+  part of the way no longer leaves a container marked as being rendered:
+  the same `repr` showed it as `[...]` afterwards, and an outer level
+  could end in `KeyError` instead of the `MemoryError` [M].
 - `reset()` gives back the memory earlier cells committed and no longer
   use, without moving an object: after a cell filled a 3 MiB heap with
   4 KB buffers, a 1 MB `bytearray` raised `MemoryError` after the reset

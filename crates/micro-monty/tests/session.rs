@@ -582,6 +582,55 @@ print(out)
     assert_eq!(out, "['MemoryError in l3', 'a', 2, None, None, 3]\n");
 }
 
+/// A `repr` refused memory part of the way into a nesting forgets every
+/// container it was rendering, at a real wall (8-word holes, the prelude's
+/// table of the containers being rendered at 30 before it: its next
+/// growth is what is refused [M]). The container whose entry was refused
+/// stayed in the list kept beside the table, so the same `repr` showed it
+/// as `[...]` afterwards.
+#[test]
+fn a_repr_refused_memory_leaves_no_container_marked_as_being_rendered() {
+    let src = "\
+import gc
+class R:
+    def __repr__(self):
+        return 'R'
+def nest(d):
+    x = [R()]
+    while d:
+        x = [R(), x]
+        d -= 1
+    return x
+repr(nest(30))
+deep = nest(200)
+out = [None, None]
+xs = [None] * 150000
+i = n = 0
+try:
+    while True:
+        xs[n] = (n, n, n, n, n, n, n)
+        n += 1
+except MemoryError:
+    pass
+while i < 2000:
+    xs[i] = None
+    i += 2
+gc.collect()
+try:
+    repr(deep)
+    out[0] = 'ran'
+except MemoryError:
+    out[0] = 'MemoryError'
+xs = None
+gc.collect()
+out[1] = repr(deep).count('...')
+print(out)
+";
+    let (p, out) = run_with(Limits::new().with_memory(8 << 20), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    assert_eq!(out, "['MemoryError', 0]\n");
+}
+
 /// An exhausted builtin iterator drops its sequence, as python3.14's do:
 /// three exhausted iterators over 8 MB lists kept the lists, so the next
 /// three raised `MemoryError` under a 32 MiB limit. Each kind of iterator
