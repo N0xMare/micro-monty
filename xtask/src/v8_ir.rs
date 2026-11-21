@@ -54,18 +54,26 @@
 //! `x86-64-v3`, valgrind is run by its absolute path, and node's key holds
 //! its binary's hash as well as its version.
 //!
-//! Every side runs the head's host JS. The first run also holds
+//! Every side's guests are driven by the host of the tree that built them
+//! (`hosts/js/src/` and `package.json`), since a host speaks one
+//! `ABI_VERSION`, under the head's `bench/count.ts`, which is the counting
+//! method. The host's JS as V8 compiled it is in the count (about 174 k of
+//! plain/str's 681 M [M]), so a host change moves a count as a guest change
+//! does, and is judged. The first run also holds
 //! V8's lazy compiles (read alone, they made one head 4.4% "faster" [M]),
 //! and one process per program because twelve in one valgrind process
 //! exited early twice [M]. Valgrind runs no AVX-512, so this is V8's AVX2
 //! code. `startup` is left out: its run is a few instructions of V8 code.
 //!
-//! A count depends only on the guest's bytes, the program and the tools,
-//! so counts are cached in `target/v8-ir/cache/` per guest content, keyed
-//! by the counting method, node's version and binary, valgrind's version,
-//! glibc and the CPU class ([`floors::host`]), the driver
-//! (`hosts/js/bench/count.ts`, `hosts/js/src/` and `package.json`) and
-//! each program's source; a commit's guests are cached per commit and recipe
+//! A count depends only on the guest's bytes, its driver, the program and
+//! the tools, so counts are cached in `target/v8-ir/cache/` per guest
+//! content and driver, keyed by the counting method, node's version and
+//! binary, valgrind's version, glibc and the CPU class ([`floors::host`]),
+//! the driver (the head's `hosts/js/bench/count.ts`, the side's
+//! `hosts/js/src/` and `package.json`) and each program's source. A floor's
+//! key holds the head's driver, so a host change makes the floors stale
+//! and they are recounted on their builds, each with its own host. A
+//! commit's guests are cached per commit and recipe
 //! ([`crate::size::recipe_key`]), the guests themselves in
 //! `target/v8-ir/guests/`. A change to the head's recipe rebuilds the
 //! guests of the commits built with it, and counts only those whose bytes
@@ -88,7 +96,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        Mutex, PoisonError,
+        Arc, Mutex, PoisonError,
         atomic::{AtomicU32, Ordering},
         mpsc,
     },
@@ -179,10 +187,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         return Err("v8-ir: no bench program selected".to_owned());
     }
     let root = workspace_root();
-    let mut driver = Vec::new();
-    for file in driver_files(&root)? {
-        driver.extend(fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?);
-    }
+    let head_driver = driver(&root, &root)?;
     let host = floors::host(&valgrind);
     // V8 picks its code by the CPU's features, which the class names only
     // in part: without AVX plain/floats counts 1.556% more [M], and
@@ -206,10 +211,12 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let node_build = fs::read(&node)
         .map(|b| source_hash(&b))
         .map_err(|e| format!("{}: {e}", node.display()))?;
-    let tools = format!(
-        "{COUNTING}; node {node_version} ({node_build}); {valgrind_version}; {host}; driver {}",
-        source_hash(&driver)
-    );
+    // What a count is keyed by, but for its side's driver; the floors are
+    // keyed with the head's, so a head that changes the host makes every
+    // floor stale, to be recounted on its build with that build's host.
+    let method =
+        format!("{COUNTING}; node {node_version} ({node_build}); {valgrind_version}; {host}");
+    let tools = key_of(&method, &head_driver);
     let base_sha = git(&root, &["merge-base", &base, "HEAD"])?;
     let tag = git(
         &root,
@@ -248,7 +255,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         println!("v8-ir: {:<6} = {}", side.label, side.name);
     }
     let counts = measure(
-        &root, &valgrind, &node, &tools, &sides, &programs, head_built,
+        &root, &valgrind, &node, &method, &sides, &programs, head_built,
     )?;
     // Counts by floor name.
     let named = |c: &Counts| -> Counts {
@@ -407,25 +414,67 @@ fn sides(root: &Path, base: &str, base_sha: &str, floors: &[String]) -> Result<V
     Ok(sides)
 }
 
-/// The JS the count runs: the driver, the host it loads and the
-/// `package.json` that makes them modules.
-fn driver_files(root: &Path) -> Result<Vec<PathBuf>, String> {
-    let js = root.join("hosts/js");
+/// The JS a count runs, by path under `hosts/js`, and its hash.
+struct Driver {
+    files: Vec<(String, Vec<u8>)>,
+    hash: String,
+}
+
+/// The JS that counts the guests built from `tree`: that tree's host
+/// (`hosts/js/src/*.ts` and the `package.json` that makes them modules),
+/// which speaks its guests' ABI, under the head's `bench/count.ts` (`root`),
+/// which is the counting method: xtask reads the dumps and the mappings
+/// that file makes. Read here, since a commit's tree is checked out again
+/// for the next side while its guests are counted.
+fn driver(tree: &Path, root: &Path) -> Result<Driver, String> {
+    let js = tree.join("hosts/js");
     let src = js.join("src");
-    let mut files: Vec<PathBuf> = fs::read_dir(&src)
+    let mut paths: Vec<PathBuf> = fs::read_dir(&src)
         .map_err(|e| format!("{}: {e}", src.display()))?
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "ts"))
         .collect();
-    files.sort();
-    files.push(js.join("bench/count.ts"));
-    files.push(js.join("package.json"));
-    Ok(files)
+    paths.sort();
+    let mut from: Vec<(String, PathBuf)> = paths
+        .into_iter()
+        .filter_map(|p| Some((format!("src/{}", p.file_name()?.to_str()?), p)))
+        .collect();
+    from.push((
+        "bench/count.ts".to_owned(),
+        root.join("hosts/js/bench/count.ts"),
+    ));
+    from.push(("package.json".to_owned(), js.join("package.json")));
+    let mut files = Vec::new();
+    let mut all = Vec::new();
+    for (name, path) in from {
+        let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        all.extend(&bytes);
+        files.push((name, bytes));
+    }
+    Ok(Driver {
+        files,
+        hash: source_hash(&all),
+    })
 }
 
-/// Each side's counts. A count depends only on the guest's bytes, the
-/// program and the tools, so counts are cached per guest content, and a
+/// The key of the counts `driver` makes under `method`.
+fn key_of(method: &str, driver: &Driver) -> String {
+    format!("{method}; driver {}", driver.hash)
+}
+
+/// The tree `side`'s guests are built from: the checkout, or a commit's
+/// worktree outside it ([`crate::shipped::refs_dir`]).
+fn tree_of(root: &Path, side: &Side) -> PathBuf {
+    match side.sha {
+        Some(_) => crate::shipped::refs_dir("v8-ir").join(format!("{}-src", side.tree)),
+        None => root.to_path_buf(),
+    }
+}
+
+/// Each side's counts, its guests driven by its own host ([`driver`]). A
+/// count depends only on the guest's bytes, the driver, the program and the
+/// tools, so counts are cached per guest content and driver, and a
 /// commit's guests per commit and recipe (in `target/v8-ir/cache/`, the
 /// guests themselves in `target/v8-ir/guests/`): a recipe change rebuilds
 /// the guests, and only a guest whose bytes changed is counted again.
@@ -433,7 +482,7 @@ fn measure(
     root: &Path,
     valgrind: &Path,
     node: &Path,
-    tools: &str,
+    method: &str,
     sides: &[Side],
     programs: &[(&str, &str)],
     head_built: bool,
@@ -451,14 +500,13 @@ fn measure(
         let source = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         hashes.insert(name.to_owned(), source_hash(&source));
     }
-    // Each side's guests by content, built in turn, while a pool counts
-    // the programs of each new guest content as soon as it is there.
-    let mut by_content: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
+    // Each side's guests by content and driver (`<content>.<driver>`),
+    // built in turn, while a pool counts the programs of each new one as
+    // soon as it is there.
+    let mut by_content: BTreeMap<String, (String, BTreeMap<String, u64>)> = BTreeMap::new();
     let mut contents = Vec::new();
-    let (tx, rx) = mpsc::channel::<(String, &str, &str)>();
+    let (tx, rx) = mpsc::channel::<(String, String, Arc<Driver>, &str, &str)>();
     let (rx, done) = (Mutex::new(rx), Mutex::new(Vec::new()));
-    let js = root.join("hosts/js");
-    let driver = driver_files(root)?;
     sweep();
     make_scratch_root()?;
     let workers = thread::available_parallelism().map_or(1, usize::from);
@@ -467,14 +515,14 @@ fn measure(
             scope.spawn(|| {
                 loop {
                     let job = rx.lock().unwrap_or_else(PoisonError::into_inner).recv();
-                    let Ok((id, name, stem)) = job else {
+                    let Ok((id, guest, driver, name, stem)) = job else {
                         break;
                     };
                     let n = count(
                         valgrind,
                         node,
-                        (&js, &driver),
-                        &store.join(format!("{id}.wasm")),
+                        &driver,
+                        &store.join(format!("{guest}.wasm")),
                         &bench.join(format!("{stem}.py")),
                         expected.get(name).map_or("", String::as_str),
                     );
@@ -486,19 +534,24 @@ fn measure(
         }
         let mut jobs = 0;
         let built = sides.iter().try_for_each(|side| {
-            let ids = contents_of(root, side, head_built)?;
-            for id in ids.values() {
-                if by_content.contains_key(id) {
+            let guests = contents_of(root, side, head_built)?;
+            let driver = Arc::new(driver(&tree_of(root, side), root)?);
+            let key = key_of(method, &driver);
+            let mut ids = BTreeMap::new();
+            for (name, guest) in guests {
+                let id = format!("{guest}.{}", driver.hash);
+                ids.insert(name, id.clone());
+                if by_content.contains_key(&id) {
                     continue;
                 }
-                let cached = load(&cache, id, tools, &hashes);
+                let cached = load(&cache, &id, &key, &hashes);
                 for &(name, stem) in programs {
                     if !cached.contains_key(name) {
                         jobs += 1;
-                        let _ = tx.send((id.clone(), name, stem));
+                        let _ = tx.send((id.clone(), guest.clone(), driver.clone(), name, stem));
                     }
                 }
-                by_content.insert(id.clone(), cached);
+                by_content.insert(id, (key.clone(), cached));
             }
             contents.push(ids);
             Ok::<(), String>(())
@@ -513,12 +566,12 @@ fn measure(
     let _ = fs::remove_dir_all(scratch_root());
     built?;
     for (id, name, n) in done.into_inner().unwrap_or_else(PoisonError::into_inner) {
-        if let Some(c) = by_content.get_mut(&id) {
+        if let Some((_, c)) = by_content.get_mut(&id) {
             c.insert(name.to_owned(), n?);
         }
     }
-    for (id, c) in &by_content {
-        save(&cache, id, tools, &hashes, c)?;
+    for (id, (key, c)) in &by_content {
+        save(&cache, id, key, &hashes, c)?;
     }
     Ok(contents
         .iter()
@@ -526,6 +579,7 @@ fn measure(
             ids.iter()
                 .flat_map(|(guest, id)| {
                     by_content[id]
+                        .1
                         .iter()
                         .map(move |(name, &n)| (format!("{guest}/{name}"), n))
                 })
@@ -543,15 +597,15 @@ fn contents_of(
 ) -> Result<BTreeMap<String, String>, String> {
     let dir = root.join("target/v8-ir");
     let (cache, store) = (dir.join("cache"), dir.join("guests"));
-    let (tree, own) = match &side.sha {
+    let tree = tree_of(root, side);
+    let own = match &side.sha {
         Some(sha) => {
-            // Outside this checkout ([`crate::shipped::refs_dir`]); checked
-            // out either way, since its toolchain builds it.
-            let tree = crate::shipped::refs_dir("v8-ir").join(format!("{}-src", side.tree));
+            // Checked out either way, since its toolchain builds it and its
+            // host drives its guests.
             checkout(root, &tree, sha)?;
-            (tree, size::builds_itself(root, sha))
+            size::builds_itself(root, sha)
         }
-        None => (root.to_path_buf(), true),
+        None => true,
     };
     let recipe = size::recipe_key(if own { &tree } else { root }, &tree)?;
     let known = side
@@ -682,7 +736,7 @@ fn paths(file: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
 fn count(
     valgrind: &Path,
     node: &Path,
-    (js, driver): (&Path, &[PathBuf]),
+    driver: &Driver,
     guest: &Path,
     program: &Path,
     want: &str,
@@ -692,16 +746,16 @@ fn count(
     let counted = (|| {
         let place = |from: &Path, to: &str| {
             let to = dir.join(to);
-            if let Some(parent) = to.parent() {
-                fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-            }
             fs::copy(from, &to)
                 .map(|_| ())
                 .map_err(|e| format!("cannot copy {} to {}: {e}", from.display(), to.display()))
         };
-        for file in driver {
-            let local = file.strip_prefix(js).map_err(|e| e.to_string())?;
-            place(file, &local.to_string_lossy())?;
+        for (name, bytes) in &driver.files {
+            let to = dir.join(name);
+            if let Some(parent) = to.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+            }
+            fs::write(&to, bytes).map_err(|e| format!("{}: {e}", to.display()))?;
         }
         place(guest, "guest.wasm")?;
         place(program, "program.py")?;

@@ -3374,21 +3374,26 @@ opens a draft release.
   removes a libstdc++ allocator stub whose calls moved by one, for no
   cause found. A count whose dump does not add up to its `totals:` line,
   or that has `???` code in no mapping, fails. Every count also runs from
-  `/tmp/mm-v8-ir-<pid>/<job>/` with copies of the head's host JS, the
+  `/tmp/mm-v8-ir-<pid>/<job>/` with copies of the host JS, the
   guest and the program under fixed names and an empty environment, which
   keeps `NODE_OPTIONS` and `VALGRIND_OPTS` out; the gate runs only where
   valgrind shows the CPU as `x86-64-v3` (without AVX plain/floats counts
   1.556% more). A revision whose xtask has `size --head` builds its guests
   with its own recipe, so a change to the `wasm-opt` flags or the
   `optimize(size)` marks is counted at its commit; older ones are built
-  with the head's recipe.
+  with the head's recipe. Each revision's guests are driven by its own
+  host (`hosts/js/src/`, `package.json`), as a host speaks one
+  `ABI_VERSION`, under the head's `bench/count.ts`, the counting method;
+  the host's compiled JS is in the count, so a host change is judged as a
+  guest change is, and since a floor's key holds the head's driver it
+  makes the floors stale, recounted on their builds with their own hosts.
   The floors (§12) are named `plain/<program>` and `bundle/<program>`.
   An accept line `V8-IR-Accepted: <names> <ceiling> <reason>` (programs or
   `geomean`, `plain/` or `bundle/` before one for one guest) passes only
   those counts up to that ratio and raises only their floors;
   `MM_V8_IR_ACCEPT` stands for it in an uncommitted tree only. Limits, on
   either guest against base and floor: a program rising past 0.5% or the geomean past
-  0.3%; decreases pass. Counts are cached per guest content, keyed by
+  0.3%; decreases pass. Counts are cached per guest content and driver, keyed by
   the counting method, node's version and binary, valgrind's version,
   glibc, the CPU class, the driver and the program's source, so only a
   guest whose bytes changed is counted again. Stability [M, on one host,
