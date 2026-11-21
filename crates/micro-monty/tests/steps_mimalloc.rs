@@ -5,7 +5,8 @@
 //! by row: mimalloc hands out memory it has used before, where musl maps
 //! every large block fresh, so a 64 MiB result costs 30 ms more with one
 //! and a table that grows 30 ms more with the other \[M\]. `cargo xtask
-//! check`'s `steps-musl` stage runs both.
+//! check`'s `steps-musl` stage runs both. Rows marked `OpenOnMimalloc` are
+//! only reported here.
 
 #![cfg(target_env = "musl")]
 

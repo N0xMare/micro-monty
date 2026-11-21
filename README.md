@@ -37,11 +37,15 @@ three quarters of it [M]. This repository's `mm` and `mm-cell-worker`
 register mimalloc on musl; building them there needs `musl-gcc` (Debian's
 `musl-tools`), and mimalloc is compiled with `-mpopcnt`, so the musl
 binaries need a CPU with POPCNT (every x86-64 CPU since 2009), which the
-Rust target's baseline does not ask for. The step bound (docs/spec.md §5) holds there on every
-`Bounded` row of the step-time oracle, which the release gate runs on musl
-twice, with musl's `malloc` and with mimalloc; the closest rows are at 95
-to 97% of the limit with musl's `malloc`, as with glibc, and at 86 to 100%
-with mimalloc [M]. The wasm
+Rust target's baseline does not ask for. The step bound (docs/spec.md §5)
+holds there on every `Bounded` row of the step-time oracle, which the
+release gate runs on musl twice, with musl's `malloc` and with mimalloc.
+Two rows are known to exceed the limit on some runs with mimalloc and are
+not judged there (they are with glibc and with musl's `malloc`):
+`json.dumps(d, sort_keys=True, indent=1)` of a million keys, 53.1 to
+65.4 ms against 52.5 to 52.9 in 8 of 8 runs, and a dict of 2^20 colliding
+keys filled beside a 46 MiB bytearray, 36.9 to 61.3 ms against 52.5 to
+53.2 in 4 of 8 [M]. The wasm
 targets `wasm32-wasip1` and `wasm32-unknown-unknown` are supported builds,
 gated with the native ones (the facade, the mm-wasm guest under wasmtime,
 and snapshots restored across targets).

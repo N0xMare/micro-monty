@@ -246,9 +246,8 @@ hashes are pre-release history, kept in the private archive
   `xml.etree.ElementTree` reports ill-formed bytes as `ParseError` (it
   reads `e.start`, and raised `AttributeError`). The build id moves.
 - The step bound (docs/spec.md §5) holds on musl on every `Bounded` row
-  of the step-time oracle, with musl's `malloc` and with mimalloc; the
-  closest rows are at 95 to 97% of the limit with musl's `malloc`, as
-  with glibc, and at 86 to 100% with mimalloc [M]. 15 bounded rows of the
+  of the step-time oracle, with musl's `malloc` and with mimalloc, but
+  for two rows with mimalloc (Known issues). 15 bounded rows of the
   step-time oracle took 51 to 200 ms between safepoints against a 44 ms
   limit, `t = s[::2]` over two-byte chars 39 to 40 ms against 38.6 to
   44 ms, and the queue test's 50,000 `list.insert(0, i)` 2.7 s against a
@@ -270,7 +269,8 @@ hashes are pre-release history, kept in the private archive
   a slice assignment that grows) moved its tail with the same backward
   `memmove`: 68 to 72 ms at 64 MiB against a limit of 55 to 56 ms. On
   musl the tail now moves in pieces that copy forward: 49 to 50 ms, as
-  on glibc (47 to 48 ms against 50) [M].
+  on glibc (47 to 48 ms against 50) [M], which is still at the limit
+  (Known issues).
 - `mm-cell-worker` on musl: an abort (`std::process::abort`, a failed
   allocation) killed the worker with the seccomp filter's `SIGSYS`
   instead of `SIGABRT`, as musl's `abort` signals with `tkill` where
@@ -306,6 +306,20 @@ hashes are pre-release history, kept in the private archive
 
 ### Known issues
 
+- A `bytearray` with spare capacity that opens a gap near its start in
+  place (`b.insert(0, x)`, `b[0:0] = ...` on 64 MiB never written) is one
+  step of 96 to 97% of the 50 ms bound, with glibc and with musl's
+  `malloc`, and over it on glibc in 3 of 15 runs [M]: the step
+  first-touches 64 MiB of pages. The step oracle's three rows for it are
+  `Open`. The fix, moving the tail a step at a time, is not in this
+  release.
+- With mimalloc on musl (what `mm` and `mm-cell-worker` register there),
+  two rows of the step oracle exceed the bound on some runs and are not
+  judged with that allocator; with glibc and with musl's `malloc` they
+  are, and pass. `json.dumps(d, sort_keys=True, indent=1)` of a million
+  keys: 53.1 to 65.4 ms against a limit of 52.5 to 52.9, over in 8 of 8
+  runs. A dict of 2^20 colliding keys filled beside a 46 MiB bytearray:
+  36.9 to 61.3 ms against 52.5 to 53.2, over in 4 of 8 [M].
 - On musl, recorded agent sessions take 54% more engine time in memory
   and 82% more with a snapshot and restore on a fresh `Engine` at every
   host call (snapshot 2.8×, restore 1.7×) than on glibc on the same
