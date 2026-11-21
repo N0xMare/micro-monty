@@ -76,6 +76,19 @@ hashes are pre-release history, kept in the private archive
 
 ### Fixed
 
+- An `except MemoryError` handler that drops the data that filled memory
+  can allocate again. Displays (`[...]`, `(...)`, `{...}`, `x[a:b]`),
+  `lambda` and `def`, `str`/`int`/`float` of numbers, strs and bytes,
+  builtin exceptions and instances of classes without `__init__` or
+  `__new__` now wait once for a collection when refused, as string
+  operations and copies did: after `xs = None`, `d = {'k': [1, 2, 3]}`
+  raised `MemoryError` again at 8, 16, 32, 64 and 256 MiB with nearly the
+  whole heap garbage, and ran at 2, 4 and 12 MiB only because the fill
+  happened to be refused at a large request [M]. Other first statements
+  may still be refused, for example an instance of a class with
+  `__init__`, `object()`, `slice(1, n)` or a failing `assert`. A handler
+  that keeps the data can still be refused: it has only the room the fill
+  left.
 - `reset()` gives back the memory earlier cells committed and no longer
   use, without moving an object: after a cell filled a 3 MiB heap with
   4 KB buffers, a 1 MB `bytearray` raised `MemoryError` after the reset

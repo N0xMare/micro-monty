@@ -565,6 +565,141 @@ fn the_mark_stacks_doubling_leaves_handlers_room() {
     assert_eq!(out, "0\n");
 }
 
+/// Runs `cells` in one session under a memory limit of `mib` MiB.
+fn run_cells_at(mib: u64, cells: &[&str]) -> Vec<Progress> {
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(mib << 20)));
+    let mut session = Session::new(&engine).expect("session");
+    cells
+        .iter()
+        .map(|src| {
+            let code = engine.compile(src, "cell.py").expect("compiles");
+            session.start(&code)
+        })
+        .collect()
+}
+
+/// An `except MemoryError` handler that drops the data that filled the
+/// heap can allocate again, whichever request the fill was refused at.
+/// Dropping allocates nothing and straight-line code has no safepoint, so
+/// no collection ran before the handler's first allocation, and a display,
+/// a lambda, `str(n)`, an exception or an instance was refused in the
+/// handler with nearly the whole heap garbage: the instruction now waits
+/// for a collection and runs again (`Vm::oom_retry_fault`). The walls [M]:
+/// a list of short strs leaves the words space 24 B of free blocks and no
+/// room for a segment at 8 and 16 MiB, and reaches the mark stack's
+/// capacity, whose doubling (4 MiB) does not fit, at 64 MiB; strs of 200
+/// chars fill the bytes space (440 to 2,600 B free), where `str(big)`
+/// needs 4,001 B.
+#[test]
+fn a_memory_error_handler_allocates_after_dropping_its_data() {
+    const SHORT: &str = "xs.append(str(len(xs)))";
+    const LONG: &str = "xs.append('%0200d' % len(xs))";
+    const HANDLERS: [&str; 11] = [
+        "d = {'k': [1, 2, 3], 'msg': 'x' * 100000}",
+        "d = {r: n}",
+        "d = [r, r]",
+        "d = (r, n)",
+        "d = {r, 1}",
+        "d = r[1:n]",
+        "d = lambda: r",
+        "d = str(12345678901234567890)",
+        "d = ValueError('full')",
+        "d = C()",
+        "d = E('full')",
+    ];
+    let mut cases = Vec::new();
+    // At the mark stack's wall no object fits; in the words space a last
+    // free block of 24 B still holds a pair. No handler calls anything
+    // before it allocates: a call is a safepoint, which collects.
+    for handler in HANDLERS {
+        cases.push((64, SHORT, handler));
+    }
+    for mib in [8, 16] {
+        for handler in [HANDLERS[0], HANDLERS[1], HANDLERS[7], HANDLERS[9]] {
+            cases.push((mib, SHORT, handler));
+        }
+    }
+    for mib in [8, 16, 64] {
+        cases.push((mib, LONG, "d = str(big)"));
+    }
+    let mut failed = Vec::new();
+    for (mib, fill, handler) in cases {
+        let src = format!(
+            "class C: pass\nclass E(Exception): pass\nbig = 10 ** 4000\nn = 5\nxs = []\nr = 'start'\n\
+             try:\n    while True:\n        {fill}\n\
+             except MemoryError:\n    r = 'handler-ran'\n    xs = None\n    {handler}\n\
+             \x20   r = 'handler-allocated'\nr\n"
+        );
+        let p = run_cells_at(mib, &[&src]).remove(0);
+        if !matches!(&p, Progress::Complete(Some(c)) if c.repr == "'handler-allocated'") {
+            failed.push(format!("{mib} MiB, {fill}, {handler}: {p:?}"));
+        }
+    }
+    assert!(failed.is_empty(), "{failed:#?}");
+}
+
+/// What is not run again: a call that runs user code. A failure after an
+/// `__init__` or a `__str__` returned is reported at the same `CALL` as
+/// one before it started, so a rerun would run the method a second time
+/// (`Vm::call_only_allocates` leaves out a class with `__init__` or
+/// `__new__`, and `str`, `int` and `float` of anything but a builtin
+/// scalar). Each method here fills memory, keeps nothing and returns a
+/// value the call rejects, where raising the `TypeError` needs room: it
+/// runs once and the call raises `MemoryError`. Retried, the call ran it
+/// again after every collection, without end [M]; the fuel limit ends
+/// such a run.
+#[test]
+fn a_call_that_ran_user_code_is_not_rerun_after_memory_error() {
+    const FILL: &str = "        global n\n        n += 1\n        xs = []\n        try:\n\
+         \x20           while True:\n                xs.append(str(len(xs)))\n\
+         \x20       except MemoryError:\n            pass\n        return 1\n";
+    for (def, call) in [
+        ("class K:\n    def __init__(self):\n", "K()"),
+        ("class O:\n    def __str__(self):\n", "str(O())"),
+    ] {
+        let src = format!(
+            "n = 0\n{def}{FILL}r = 'start'\ntry:\n    {call}\n    r = 'made'\n\
+             except MemoryError:\n    r = 'ME'\nexcept TypeError:\n    r = 'TE'\n(r, n)\n"
+        );
+        for mib in [8, 16, 64] {
+            let limits = Limits::new()
+                .with_memory(mib << 20)
+                .with_fuel(Some(100_000_000));
+            let (p, _) = run_with(limits, &src);
+            assert!(
+                matches!(&p, Progress::Complete(Some(c)) if c.repr == "('ME', 1)"),
+                "{mib} MiB, {call}: {p:?}"
+            );
+        }
+    }
+}
+
+/// The limit of that: a handler that keeps the data has only the room the
+/// fill left, which may be none. A collection frees nothing, so the
+/// handler's allocation raises `MemoryError` again, uncaught here. The
+/// session goes on: the next cell reads what the handler set.
+#[test]
+fn a_memory_error_handler_that_keeps_its_data_may_be_refused_again() {
+    for mib in [8, 16, 64] {
+        let ps = run_cells_at(
+            mib,
+            &[
+                "xs = []\nr = 'start'\n\
+                 try:\n    while True:\n        xs.append(str(len(xs)))\n\
+                 except MemoryError:\n    r = 'handler-ran'\n    d = {'k': [1, 2, 3], 'msg': 'x' * 100}\n\
+                 \x20   r = 'handler-allocated'\nr\n",
+                "r",
+            ],
+        );
+        assert_eq!(error_of(&ps[0]).type_name, "MemoryError", "{mib} MiB");
+        assert!(
+            matches!(&ps[1], Progress::Complete(Some(c)) if c.repr == "'handler-ran'"),
+            "{mib} MiB: {:?}",
+            ps[1]
+        );
+    }
+}
+
 /// `+=` and the other in-place operators on an instance of a list, dict or
 /// set subclass change its backing object before they can fail, as on the
 /// builtin type, so they do not run again after a collection: `x += c` on

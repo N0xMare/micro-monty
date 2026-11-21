@@ -1855,9 +1855,36 @@ timer deadlines.
   `FORMAT` and `FORMAT_SPEC` (a user `__repr__`, `__str__` or
   `__format__` anywhere in the value hands the whole format to the
   prelude twin `_op_fmt`, whose `repr`, `ascii`, `format` and walk
-  `_walk_repr` are retried natives) and `CALL` of a builtin type whose constructor copies its
-  argument (`list(l)`), the last ones read at the fault exit
-  (`Vm::oom_retry_fault`).
+  `_walk_repr` are retried natives), `CALL` of a builtin type whose constructor copies its
+  argument (`list(l)`), and the instructions that only allocate their
+  result: the displays `BUILD_LIST`, `BUILD_TUPLE`, `BUILD_SET`,
+  `BUILD_DICT` and `BUILD_SLICE` (they read their registers and write the
+  accumulator once the object exists; keys with a user `__hash__` or
+  `__eq__` go to the prelude twin), `MAKE_FUNCTION`, `MAKE_CELL`, and a
+  plain `CALL` of a builtin exception type, of `str`, `int` or `float`
+  with builtin scalar arguments (int, float, bool, `None`, str, bytes,
+  bytearray), or of a user class with no `__init__`, `__new__`, metaclass
+  or builtin base other than an exception (`Vm::call_only_allocates`),
+  all read at the fault exit (`Vm::oom_retry_fault`). These are what an
+  `except MemoryError` handler runs first: dropping the data that filled
+  the heap allocates nothing and straight-line code has no safepoint, so
+  without the retry the handler's first allocation was refused beside a
+  heap of garbage (a list of strs dropped at 8 MiB and up: the words
+  space had 24 B of free blocks, or the mark stack could not double
+  [M]). Everything else is not retried, so it may be refused there until
+  a safepoint (a call of a Python function, a loop's backward jump) has
+  collected. For example: a class with `__init__` or `__new__` and `str`,
+  `int` or `float` of any other value (user code's result is checked back
+  at the `CALL`, where a failure cannot be told from the first; these run
+  when the callee's own frame reaches a safepoint first), keyword forms
+  of these calls, `raise E` of a class not yet instantiated, an exception
+  the engine raises itself (a failing `assert` raises `MemoryError`),
+  `object()`, `range(5)`, `slice(1, n)`, `import`, attribute access that
+  binds a method, a unary operator on a heap int, `with`, and iteration.
+  Whether one of these is refused depends on the wall the fill hit and on
+  what the statement allocates first [M]. A handler that keeps the data has only the room
+  the fill left, which may be none: a collection frees nothing, and its
+  allocation raises `MemoryError` again.
   User code never runs inside those natives (a dunder runs as a request),
   so it never runs twice. Nothing that drew items from a one-shot iterator
   runs again: `Vm::collect` marks the failure as a rerun's (`oom_rerun`)
@@ -1872,7 +1899,11 @@ timer deadlines.
   in the image): the next instruction in the same tick (`f(**d)`'s
   `CALL_EX` after its spread; a binary operator, `SET_ITEM` or directly
   called builtin after a slice's rerun, whose own retry names no
-  instruction and takes only such a mark for its rerun) retries as its own. The hooks sit outside the dispatch loop's arms
+  instruction and takes only such a mark for its rerun) retries as its own. The
+  other order errs towards raising: a binary operator's mark names no
+  instruction, so an instruction refused in the same tick after the
+  operator's successful rerun (the display of `{'k': x * 3, 'j': 1}`)
+  takes it for its own rerun and raises after the one charge. The hooks sit outside the dispatch loop's arms
   (`Vm::op_binop`, `Vm::op_setitem`, `Vm::oom_retry_fault`), so its code is
   unchanged. A size the heap refuses before the native allocates
   (`Heap::would_fit`, `list(range(n))`) is retried as a block that did not

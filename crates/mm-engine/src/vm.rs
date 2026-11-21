@@ -1959,7 +1959,12 @@ impl Vm {
     /// `Heap::would_fit` refused, `Vm::err`) came from an instruction
     /// whose native changed nothing before its block did not fit, and no
     /// user code ran: [`Vm::oom_retry_op`] for it. `BUILD_STRING` (an
-    /// f-string's join of its pieces, all str already); `LIST_TO_TUPLE` (a
+    /// f-string's join of its pieces, all str already); the displays and
+    /// makers that only allocate their result (`BUILD_LIST`, `BUILD_TUPLE`,
+    /// `BUILD_SET`, `BUILD_DICT`, `BUILD_SLICE`, `MAKE_FUNCTION`,
+    /// `MAKE_CELL`) and a `CALL` that does ([`Vm::call_only_allocates`]):
+    /// what an `except MemoryError` handler runs after dropping its data,
+    /// in straight-line code no safepoint collects for; `LIST_TO_TUPLE` (a
     /// starred tuple display's tuple of its list); `UNPACK_EX` from a list or tuple (a
     /// starred target's list, written to its registers only once it
     /// exists); `LIST_EXTEND` from a list or tuple (the list grows once,
@@ -1993,8 +1998,23 @@ impl Vm {
             // `__repr__`, `__str__` or `__format__` anywhere in the value
             // hands the whole format to the prelude twin (`_op_fmt`), a
             // long repr under fuel too, so a failure here ran none.
+            //
+            // A display reads its registers and writes `acc` only once its
+            // object exists; a set's or dict's keys with a user `__hash__`
+            // or `__eq__` go to the prelude twin without raising here, so
+            // a failure in the instruction ran none, and the object it
+            // filled part way is garbage. `MAKE_FUNCTION` and `MAKE_CELL`
+            // allocate one object from their registers (`MAKE_CELL` writes
+            // its register last).
             Some(
                 op::BUILD_STRING
+                | op::BUILD_LIST
+                | op::BUILD_TUPLE
+                | op::BUILD_SET
+                | op::BUILD_DICT
+                | op::BUILD_SLICE
+                | op::MAKE_FUNCTION
+                | op::MAKE_CELL
                 | op::LIST_TO_TUPLE
                 | op::LIST_APPEND
                 | op::SET_ADD
@@ -2027,13 +2047,12 @@ impl Vm {
             // argument (`list(l)`, `dict(x, **kw)`); a builtin called
             // directly retries in `call_native`, one called through `*` or
             // `**` here (`max(*a)` retries when its arguments do not fit,
-            // `Vm::oom_retry_expansion`).
+            // `Vm::oom_retry_expansion`). A plain `CALL` that only
+            // allocates its result too (`Vm::call_only_allocates`).
             Some(o @ (op::CALL | op::CALL_EX)) => {
-                let f = self
-                    .stack
-                    .get(st.base + operand(bc, st.pc, 0))
-                    .copied()
-                    .unwrap_or(Value::NONE);
+                let at = st.base + operand(bc, st.pc, 0);
+                let f = self.stack.get(at).copied().unwrap_or(Value::NONE);
+                let args = (at + 2)..(at + 2 + operand(bc, st.pc, 1));
                 let builtin = if o == op::CALL_EX && f.is_obj_kind(ty::BOUND as u8) {
                     self.vslot(f, 1).as_native()
                 } else if o == op::CALL_EX {
@@ -2046,6 +2065,7 @@ impl Vm {
                         .or_else(|| self.type_of_typeobj(f).and_then(|t| self.ctor_of(t)))
                         .and_then(crate::native)
                         .is_some_and(Self::native_pure)
+                    || (o == op::CALL && self.call_only_allocates(f, args))
             }
             // A subscript read of a builtin container builds only its
             // result (a slice); a user `__getitem__` runs as a request.
@@ -2062,6 +2082,47 @@ impl Vm {
         let retry = self.oom_retry_if(true, Self::op_at(st));
         self.oom_wait = false;
         retry
+    }
+
+    /// Whether a plain `CALL` of `f` with the arguments at stack indexes
+    /// `args` does nothing but allocate what it returns, so one refused
+    /// for room ran no user code and changed nothing
+    /// ([`Vm::oom_retry_fault`]):
+    /// - a builtin exception type (`ValueError('x')`): its arguments' tuple
+    ///   and the exception;
+    /// - `str`, `int` or `float` of builtin scalars (int, float, bool,
+    ///   None, str, bytes, bytearray), which convert natively: any other
+    ///   argument may run a user `__str__`, `__int__` or `__repr__`, whose
+    ///   result is checked back at this instruction, where a failure
+    ///   would run it a second time;
+    /// - a user class with no `__init__` or `__new__` of its own or
+    ///   inherited, no metaclass and no builtin base other than an
+    ///   exception: `Vm::call_class` allocates the instance and returns
+    ///   it. With an `__init__`, a failure after it returned is reported
+    ///   at this instruction too, so such a class is not retried.
+    fn call_only_allocates(&self, f: Value, args: core::ops::Range<usize>) -> bool {
+        use crate::class::f as flag;
+        if let Some(cr) = f.as_obj().filter(|_| Self::is_class(f)) {
+            let base = self.class_base_t(f);
+            return self.meta_of(f).is_none()
+                && self.raw(cr, crate::class::cls::FLAGS) & (flag::INIT | flag::NEW) == 0
+                && base != T::type_
+                && !Self::is_bx_type(base);
+        }
+        match self.type_of_typeobj(f) {
+            Some(t) if t.is_exception() => true,
+            Some(T::str | T::int | T::float) => self.stack.get(args).is_some_and(|a| {
+                a.iter().all(|&v| {
+                    v.is_int()
+                        || v.as_float().is_some()
+                        || [Value::NONE, Value::TRUE, Value::FALSE].contains(&v)
+                        || Self::is_str(v)
+                        || Self::is_heap_int(v)
+                        || Self::is_bytes_like(v)
+                })
+            }),
+            _ => false,
+        }
     }
 
     /// A `CALL_EX` at `pc` of a callee other than a Python function did not

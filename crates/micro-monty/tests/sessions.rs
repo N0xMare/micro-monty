@@ -1074,11 +1074,13 @@ fn a_cell_start_at_the_wall_collects_once_per_cell_that_ran() {
     let mut session = Session::new(&engine).expect("session");
     assert_eq!(start(&mut session, fill).0, "ok");
     assert_eq!(start(&mut session, "y = 1"), me(1));
-    // Its names are interned already, so it loads at the wall.
+    // Its names are interned already, so it loads at the wall. Its
+    // `str(n)` is refused and waits once for a collection of its own
+    // before it raises (`Vm::oom_retry_fault`), beside the start's.
     let grow = "while True:\n    xs.append(str(len(xs)))";
-    assert_eq!(start(&mut session, grow), me(0));
     assert_eq!(start(&mut session, grow), me(1));
-    assert_eq!(start(&mut session, grow), me(1));
+    assert_eq!(start(&mut session, grow), me(2));
+    assert_eq!(start(&mut session, grow), me(2));
     // A fill that raised: the next cell's safepoints do not collect again.
     let mut session = Session::new(&engine).expect("session");
     let raises = "xs = []\nwhile True:\n    xs.append(str(len(xs)))";

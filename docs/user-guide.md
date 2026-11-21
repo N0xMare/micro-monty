@@ -1081,11 +1081,20 @@ while the heap stays at the wall, even when the cells succeed: with 256 MiB
 filled by live strings and bytes, 200 cells of `n += 1` take 25.8–32.0 ms
 a start, 6.9–7.1 s in all against 1.1–1.2 s without it \[M\]. A
 session kept below its limit (90% of 256 MiB live: none in 200 starts
-\[M\]) never pays it. Within one cell
-it does not help: after a caught `MemoryError` and a dropped reference, a
-statement that allocates may still raise `MemoryError` \[M\];
-`gc.collect()` frees the room only if `gc` was imported before memory
-filled, and ending the cell recovers. Count
+\[M\]) never pays it. Within one cell,
+an `except MemoryError` handler that first drops the data that filled
+memory (`xs = None`, or a fill inside a function the error left) can
+allocate again: a list, tuple, set, dict or slice display, a string
+operation or f-string, a lambda or `def`, `str`, `int` or `float` of a
+number, str or bytes, a builtin exception, an instance of a class without
+`__init__` or `__new__`, and anything after a call of a Python function
+or a loop iteration, each waiting once for a collection, charged as
+below \[M\]. Any other first statement may still raise `MemoryError`
+there, for example an instance of a class with `__init__`, `raise E`
+without a call, a failing `assert`, `object()`, `range(5)`, `slice(1, n)`
+or `import json` \[M\]. A handler that keeps the data has only the room the fill left,
+which may be none: expect `MemoryError` again from anything it allocates,
+and drop the data first. Ending the cell recovers in either case. Count
 what a cell was charged from a fuel total (`set_fuel_total`; refuel with
 `Some(n)`, not `None`), not granted fuel less `fuel()`, which stops at 0
 and misses overdrafts; `hosts/js`'s driver does.
@@ -1659,7 +1668,9 @@ differs:
   allocation fails wait for a full collection and run once more: copies,
   constructors over a container, slices and list comprehensions succeed
   where the result fits (three dropped `s.copy()` of a 2M-item set at 256
-  MiB, as in CPython \[M\]). A retry's collection is charged, a unit per 64
+  MiB, as in CPython \[M\]), and so do displays, function objects and
+  simple constructors, so an `except MemoryError` handler that drops its
+  data first can build its report (Embedding guarantees, above). A retry's collection is charged, a unit per 64
   bytes of `Limits::memory` up to 2^20, so a loop that catches `MemoryError`
   pays for each; every retry pays, also one made while another collection
   was already asked for. A suspended generator keeps no dead temporary its
