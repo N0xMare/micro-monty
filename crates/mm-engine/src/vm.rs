@@ -994,6 +994,11 @@ pub struct Vm {
     /// A loop runs for `get_running_loop()`: [`LOOP_TOP_AWAIT`] (the cell's
     /// top level awaits) and [`LOOP_IN_RUN`] (inside `asyncio.run`).
     pub(crate) loop_flags: u8,
+    /// The prelude global `_aio_asyncgens` may hold a list (an async
+    /// generator was tracked since the last cell ended), so the end of the
+    /// cell looks the name up; without it every cell would. Not in an
+    /// image: a restored session starts with it set.
+    pub(crate) asyncgens_listed: bool,
     /// The cell's host futures by call id (settled ones stay until the
     /// cell ends, to tell "already settled" from "unknown"). Sorted by id.
     pub(crate) futures: Vec<(u64, Value)>,
@@ -1341,6 +1346,7 @@ impl Vm {
             cancelling: Value::NONE,
             unretrieved: Vec::new(),
             loop_flags: 0,
+            asyncgens_listed: false,
             futures: Vec::new(),
             seq: 0,
             vclock: 0.0,

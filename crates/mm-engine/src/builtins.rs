@@ -1166,6 +1166,8 @@ const DEFS: &[Def] = &[
     #[cfg(feature = "asyncio")]
     m!("_mm", "aio_set", 2, 2, NO, NO, aio_set),
     #[cfg(feature = "asyncio")]
+    m!("_mm", "aio_asyncgens", 0, 0, NO, NO, aio_asyncgens),
+    #[cfg(feature = "asyncio")]
     m!("_mm", "aio_current_task", 0, 0, NO, NO, aio_current_task),
     #[cfg(feature = "asyncio")]
     m!("_mm", "aio_all_tasks", 0, 0, NO, NO, aio_all_tasks),
@@ -3283,6 +3285,12 @@ fn aio_task_ctx(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
     vm.set_task_context(t, d);
     Ok(Value::NONE)
+}
+
+#[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
+fn aio_asyncgens(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
+    vm.take_asyncgens()
 }
 
 #[cfg(feature = "asyncio")]

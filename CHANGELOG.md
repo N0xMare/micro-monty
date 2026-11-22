@@ -525,6 +525,16 @@ hashes are pre-release history, kept in the private archive
   later collection [M, `--release`]. No collection shrinks it (a guest
   could then grow and shrink it in a loop); `reset()`, `reset_to` and a
   template restore give it back.
+- A run that leaves 800,000 or more async generators unfinished with
+  something to run when closed (a `try`, `with` or `async with` open at
+  their `yield`) has native steps past the 50 ms bound: the list of
+  tracked generators is walked whole in one step, by `track_asyncgen`'s
+  prune each time its length reaches a power of two and by
+  `take_asyncgens` at the run's end. At 800,000 a step ran 50 to 51 ms
+  past its deadline in 2 of 4 runs, at 1,600,000 52 to 67 ms in 4 of 4
+  [M, shipped codegen]; 200,000 and 400,000 pass. The step oracle's row
+  for 1,600,000 is `Open`. Before this release such generators were not
+  tracked, or closed.
 - A `bytearray` with spare capacity that opens a gap near its start in
   place (`b.insert(0, x)`, `b[0:0] = ...` on 64 MiB never written) is one
   step of 96 to 97% of the 50 ms bound, with glibc and with musl's

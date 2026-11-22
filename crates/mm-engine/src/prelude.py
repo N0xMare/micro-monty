@@ -4052,7 +4052,7 @@ class Runner:
             return
         # shutdown_asyncgens() and shutdown_default_executor(), each a task.
         import _mm
-        self._loop._mm_run(_aio_noop(), _mm.ctx_copy(), True)
+        self._loop._mm_run(_aio_shutdown_asyncgens(), _mm.ctx_copy(), True)
         self._loop._mm_run(_aio_noop(), _mm.ctx_copy(), True)
         if self._set_event_loop:
             set_event_loop(None)
@@ -4125,9 +4125,44 @@ async def _aio_main(main, open):
             # the loop two iterations each.
             if not open:
                 await _mm.aio_stop(4)
+        if not open:
+            gens = _mm.aio_asyncgens()
+            if gens is not None:
+                await _aio_close_asyncgens(gens)
+                # Those first stepped while the others were closed, once:
+                # a `finally` that always steps a new one ends the run.
+                gens = _mm.aio_asyncgens()
+                if gens is not None:
+                    await _aio_close_asyncgens(gens)
         _aio_unretrieved()
         # A KeyboardInterrupt or SystemExit a task raised leaves the run.
         _mm.aio_escape()
+
+
+async def _aio_shutdown_asyncgens():
+    # `Runner.close()`'s task for it.
+    import _mm
+    gens = _mm.aio_asyncgens()
+    if gens is not None:
+        await _aio_close_asyncgens(gens)
+
+
+async def _aio_close_asyncgens(gens):
+    # CPython's `loop.shutdown_asyncgens()`: every async generator first
+    # iterated in the run and not finished is closed, and what a close
+    # raises goes to the exception handler. CPython closes all at once;
+    # here 256 at a time, so that the tasks of many closes are neither one
+    # native step nor all in memory together.
+    import asyncio
+    for i in range(0, len(gens), 256):
+        part = gens[i:i + 256]
+        results = await asyncio.gather(*[_aio_await(g.aclose()) for g in part],
+                                       return_exceptions=True)
+        for r, g in zip(results, part):
+            if isinstance(r, Exception):
+                _aio_exc_handler({
+                    'message': f'an error occurred during closing of asynchronous generator {g!r}',
+                    'exception': r, 'asyncgen': g})
 
 
 def _aio_unretrieved():

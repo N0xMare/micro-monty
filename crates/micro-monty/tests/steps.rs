@@ -2897,6 +2897,29 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "me = asyncio.create_task(w())\nawait asyncio.sleep(0)",
         1,
     ),
+    // The async generators `asyncio.run` closes when it ends, 256 at a
+    // time. Closed by one `gather`, 200,000 abandoned ones were one step 61
+    // to 98 ms past the deadline (the gather starting their tasks), and
+    // 400,000 ended the run with `MemoryError` [M, reviewer and here,
+    // release builds].
+    (
+        Row::Bounded,
+        "import asyncio\nasync def gen():\n    try:\n        yield 1\n        yield 2\n    finally:\n        pass\nasync def main():\n    for _ in range(200_000):\n        async for x in gen():\n            break",
+        "asyncio.run(main())",
+        1,
+    ),
+    // The same with 1,600,000: the two native walks of the tracked list
+    // (`track_asyncgen`'s prune each time its length reaches a power of
+    // two, `take_asyncgens` at the run's end) visit every tracked
+    // generator in one step: 52 to 67 ms past the deadline in 4 of 4 runs,
+    // and 50 to 51 ms at 800,000 in 2 of 4 [M, shipped codegen], so the
+    // row is `Open` (CHANGELOG, Known issues).
+    (
+        Row::Open,
+        "import asyncio\nasync def gen():\n    try:\n        yield 1\n        yield 2\n    finally:\n        pass\nasync def main():\n    for _ in range(1_600_000):\n        async for x in gen():\n            break",
+        "asyncio.run(main())",
+        1,
+    ),
     // One item of a guest-sized tuple, read without copying the tuple: an
     // exception's fields from `args` (an `OSError`'s, a `SyntaxError`'s
     // from its 8M-item location tuple: 73 and 563 ms a read on e54f65f

@@ -4525,6 +4525,72 @@ gc.collect()
 pad = bytearray(lo - {free})
 ";
 
+/// A cell whose start is refused for memory (120 KB of source and its code
+/// do not fit beside a global that fills the heap) ends the cell before
+/// it, which was parked inside `asyncio.run` with a tracked async
+/// generator: the run of a later cell does not close that generator, with
+/// the session restored from an image of the park too
+/// (`Vm::asyncgens_listed` is not in an image). The refusal is the load's:
+/// a start that fails later, with no room for the cell's registers
+/// (`Vm::run`), was not reached at any fill, as the code needs more room
+/// than its registers.
+#[test]
+fn a_failed_start_drops_the_async_generators_of_the_cell_it_ends() {
+    // The memory is a global's, so ending the parked cell frees none of it.
+    let fill = LEAVE_FREE.replace("{free}", "300_000");
+    let first = format!(
+        "import asyncio\nimport gc\nasync def gen():\n    try:\n        yield 1\n        yield 2\n    \
+         finally:\n        print('finally of gen')\nasync def warm():\n    await asyncio.sleep(0)\n\
+         async def main():\n    async for x in gen():\n        break\n    print('filled')\n    \
+         while True:\n        await asyncio.sleep(0)\nasyncio.run(warm())\n{fill}asyncio.run(main())\n"
+    );
+    let big = format!("x = max({}0)\n", "0,".repeat(59_999));
+    let later =
+        "import asyncio\nasync def other():\n    print('other runs')\nasyncio.run(other())\n";
+    for restore in [false, true] {
+        let engine =
+            Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(8 << 20)));
+        let sink = |s: &mut Session| {
+            let out = Arc::new(Mutex::new(String::new()));
+            let o = Arc::clone(&out);
+            s.set_output(Box::new(move |t: &str| o.lock().expect("lock").push_str(t)));
+            out
+        };
+        let mut session = Session::new(&engine).expect("session");
+        let mut out = sink(&mut session);
+        session.set_fuel(Some(200_000));
+        let mut p = session.start(&engine.compile(&first, "a.py").expect("compiles"));
+        while !out.lock().expect("lock").contains("filled") {
+            assert!(matches!(p, Progress::Parked { .. }), "{p:?}");
+            session.set_fuel(Some(200_000));
+            p = session.resume(Resume::Continue).expect("resumes");
+        }
+        assert!(matches!(p, Progress::Parked { .. }), "{p:?}");
+        if restore {
+            let image = session.snapshot().expect("snapshot");
+            session = engine.restore(&image).expect("restores");
+            out = sink(&mut session);
+        }
+        session.set_fuel(None);
+        let p = session.start(&engine.compile(&big, "b.py").expect("compiles"));
+        let Progress::Error(e) = p else {
+            panic!("restore {restore}: {p:?}")
+        };
+        assert!(e.traceback.contains("MemoryError"), "{}", e.traceback);
+        out.lock().expect("lock").clear();
+        let p = session.start(&engine.compile(later, "c.py").expect("compiles"));
+        assert!(
+            matches!(p, Progress::Complete(_)),
+            "restore {restore}: {p:?}"
+        );
+        assert_eq!(
+            *out.lock().expect("lock"),
+            "other runs\n",
+            "restore {restore}"
+        );
+    }
+}
+
 /// A callable that is not a Python function or a method of one (a
 /// `functools.partial`, an object with a Python `__call__`) is called by
 /// `_aio_callback` when its slot runs, so that call is its run: no room
@@ -4748,6 +4814,33 @@ except EOFError as e:
         "name? input(): there is no stdin in this sandbox; put the value in the code or get \
          it from a tool\n"
     );
+}
+
+/// A run does not hold an abandoned async generator that has nothing to
+/// run when closed: 300 pages of an 80 KiB list each, every generator left
+/// after its first row, fit 8 MiB as they did before the run closed the
+/// generators it leaves (it held all of them to its end: `MemoryError`).
+#[test]
+fn a_run_does_not_hold_abandoned_async_generators_with_nothing_to_close() {
+    let src = "\
+import asyncio
+async def rows(page):
+    data = [page] * 10_000
+    for r in data:
+        yield r
+async def first_row(page):
+    async for r in rows(page):
+        return r
+async def main():
+    total = 0
+    for page in range(300):
+        total += await first_row(page)
+    return total
+print(asyncio.run(main()))
+";
+    let (p, out) = run_with(Limits::new().with_memory(8 << 20), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?} {out}");
+    assert_eq!(out, "44850\n");
 }
 
 /// `Semaphore.release()` with no room to wake its waiter raises
@@ -4993,10 +5086,12 @@ except asyncio.CancelledError as e:
 
 /// Own case 579 (cancels longer than a step) charges this fuel, run whole
 /// or parked every 1,000 units: a long cancel's steps charge what its
-/// first pass visits and `_steps`' calls, and a park moves neither.
+/// first pass visits and `_steps`' calls, and a park moves neither. (Each
+/// of its nine `asyncio.run` calls pays a unit to ask for the async
+/// generators to close: 3,550,819 before that.)
 #[test]
 fn the_long_cancels_charge_the_same_fuel_whole_and_sliced() {
-    const FUEL: u64 = 3_550_819;
+    const FUEL: u64 = 3_550_828;
     let src = include_str!("../../../conformance/own/579_asyncio_cancel_long.py");
     let run = |slice: u64| {
         let engine = Engine::new(EngineConfig::default());

@@ -1216,6 +1216,93 @@ impl Vm {
         Ok(())
     }
 
+    /// The prelude global that lists the async generators first iterated
+    /// inside `asyncio.run` (CPython's `loop._asyncgens`, which its
+    /// `shutdown_asyncgens()` closes): a list, or `None`. In the prelude's
+    /// globals, so it is in an image with no field of its own.
+    #[cfg(feature = "asyncio")]
+    const ASYNCGENS: &'static str = "_aio_asyncgens";
+
+    /// An async generator takes its first step inside `asyncio.run`: the
+    /// run closes it when it ends, if it has not finished by then. There
+    /// is no finalizer to close one that became garbage earlier, as
+    /// CPython's does, so the list holds it until the run ends; each time
+    /// its length reaches a power of two, the finished ones leave it.
+    #[cfg(feature = "asyncio")]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    pub(crate) fn track_asyncgen(&mut self, agen: Value) -> Result<(), Raised> {
+        let key = self.intern(Self::ASYNCGENS)?;
+        let list = match self.dict_lookup_str(self.prelude_globals, key) {
+            Some(l) if l.is_obj_kind(ty::LIST as u8) => l,
+            _ => {
+                let l = self.new_list(&[])?;
+                self.dict_set(self.prelude_globals, key, l)?;
+                l
+            }
+        };
+        self.asyncgens_listed = true;
+        let n = self.list_len(list);
+        if n >= 32 && n.is_power_of_two() {
+            self.burn(n as u64);
+            let live = self.unfinished_asyncgens(list);
+            self.list_set_items(list, &live)?;
+        }
+        self.list_push(list, agen)
+    }
+
+    /// The generators of `list` the run still has to close: not finished,
+    /// and not suspended at a yield no handler covers. Closing one of those
+    /// runs none of its code (no `finally`, `except` or `async with` is
+    /// open), so the run does not hold it, or what its frame holds, to its
+    /// end.
+    #[cfg(feature = "asyncio")]
+    fn unfinished_asyncgens(&self, list: Value) -> Vec<Value> {
+        use crate::generator::g;
+        let mut live = self.list_items(list);
+        live.retain(|&gn| match self.gen_state(gn) {
+            g::DONE => false,
+            // Suspended at a yield no handler covers: a close would run
+            // none of its code, so the run need not hold it.
+            g::SUSPENDED => {
+                let ypc = self.gen_raw(gn, g::YPC) & !g::CLEARED;
+                let code = usize::try_from(self.gen_raw(gn, g::CODE))
+                    .ok()
+                    .and_then(|ci| self.codes.get(ci));
+                match (code, u32::try_from(ypc)) {
+                    (Some(c), Ok(pc)) => c.code.handler(pc).is_some(),
+                    _ => true,
+                }
+            }
+            _ => true,
+        });
+        live
+    }
+
+    /// `_mm.aio_asyncgens()`: the tracked async generators that have not
+    /// finished, as a list the run then closes, or `None` for none; the
+    /// run tracks none after it.
+    #[cfg(feature = "asyncio")]
+    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
+    pub(crate) fn take_asyncgens(&mut self) -> Result<Value, Raised> {
+        let Some(key) = self.find_interned(Self::ASYNCGENS) else {
+            return Ok(Value::NONE);
+        };
+        let Some(list) = self
+            .dict_lookup_str(self.prelude_globals, key)
+            .filter(|l| l.is_obj_kind(ty::LIST as u8))
+        else {
+            return Ok(Value::NONE);
+        };
+        self.dict_set(self.prelude_globals, key, Value::NONE)?;
+        self.burn(self.list_len(list) as u64);
+        let live = self.unfinished_asyncgens(list);
+        if live.is_empty() {
+            return Ok(Value::NONE);
+        }
+        self.list_set_items(list, &live)?;
+        Ok(list)
+    }
+
     /// Ends the cell that completed or raised: reports what it never
     /// awaited, then drops its frames, tasks and futures.
     pub(crate) fn finish_cell(&mut self) {
@@ -1228,6 +1315,17 @@ impl Vm {
     pub(crate) fn end_cell(&mut self) {
         self.check_parked_bytes();
         self.abandon_calls();
+        // No run of a later cell closes an async generator of this one: not
+        // those of a run the cell did not finish, of a loop it left open
+        // (`run_until_complete()`, a `Runner` not closed), or first stepped
+        // while a run's end was closing the others.
+        if self.asyncgens_listed {
+            self.asyncgens_listed = false;
+            #[cfg(feature = "asyncio")]
+            if let Some(key) = self.find_interned(Self::ASYNCGENS) {
+                let _ = self.dict_set(self.prelude_globals, key, Value::NONE);
+            }
+        }
         if self.cur != 0
             && let Some(Some(t)) = self.tasks.first()
         {

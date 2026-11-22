@@ -3186,3 +3186,73 @@ fn a_setup_marked_done_is_not_counted_toward_code_reclamation() {
     c.session.setup_done();
     assert_eq!(cells(&mut c, 3), 0);
 }
+
+/// An async generator a cell leaves unfinished is never closed by an
+/// `asyncio.run` of a later cell, whichever way the first cell left it
+/// listed: a loop it left open, a `Runner` it did not close, or a generator
+/// first stepped while the run's end closed another. Its `finally` printed
+/// inside the second cell, across `Session::reset()` too.
+#[test]
+fn no_later_cell_closes_an_async_generator_an_earlier_cell_left() {
+    const GEN: &str = "\
+import asyncio
+async def gen(tag):
+    try:
+        yield 1
+        yield 2
+    finally:
+        print('finally of', tag)
+async def main(tag):
+    async for x in gen(tag):
+        break
+";
+    let ways = [
+        (
+            "an open loop",
+            "loop = asyncio.new_event_loop()\nloop.run_until_complete(main('open'))\n",
+            "",
+        ),
+        (
+            "a runner not closed",
+            "r = asyncio.Runner()\nr.run(main('runner'))\n",
+            "",
+        ),
+        (
+            "first stepped at the shutdown",
+            "\
+async def outer():
+    try:
+        yield 1
+    finally:
+        async for x in gen('late'):
+            break
+        print('finally of outer')
+async def main2():
+    async for x in outer():
+        break
+asyncio.run(main2())
+",
+            "finally of outer\nfinally of late\n",
+        ),
+    ];
+    let later = "\
+import asyncio
+async def other():
+    print('other runs')
+asyncio.run(other())
+";
+    for (way, first, printed) in ways {
+        for reset in [false, true] {
+            let mut c = Cells::new();
+            let p = c.start(&format!("{GEN}{first}"));
+            assert!(matches!(p, Progress::Complete(_)), "{way}: {p:?}");
+            assert_eq!(c.take_out(), printed, "{way}");
+            if reset {
+                c.session.reset().expect("reset");
+            }
+            let p = c.start(later);
+            assert!(matches!(p, Progress::Complete(_)), "{way}: {p:?}");
+            assert_eq!(c.take_out(), "other runs\n", "{way}, reset {reset}");
+        }
+    }
+}

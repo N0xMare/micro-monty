@@ -157,7 +157,7 @@ impl Vm {
         Ok(gn)
     }
 
-    fn gen_raw(&self, gn: Value, i: u32) -> u64 {
+    pub(crate) fn gen_raw(&self, gn: Value, i: u32) -> u64 {
         gn.as_obj().map_or(0, |r| self.raw_hot(r, i))
     }
 
@@ -790,6 +790,10 @@ impl Vm {
                     T::TypeError,
                     "can't send non-None value to a just-started async generator",
                 ));
+            }
+            #[cfg(feature = "asyncio")]
+            if state == g::CREATED && self.loop_flags & crate::vm::LOOP_IN_RUN != 0 {
+                self.track_asyncgen(agen)?;
             }
             crate::vm::Request::Call {
                 func: agen,

@@ -2344,6 +2344,7 @@ impl Vm {
             cancelling,
             unretrieved,
             loop_flags,
+            asyncgens_listed: true,
             futures,
             seq,
             vclock,

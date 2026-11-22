@@ -38,6 +38,11 @@ const USES: &[(&str, &str, &str)] = &[
         "write, clear_saved sets the bit",
     ),
     (
+        "aio.rs",
+        "self.gen_raw(gn, g::YPC)",
+        "read, unfinished_asyncgens",
+    ),
+    (
         "snapshot.rs",
         ".get_raw(r, g::YPC)",
         "read, restore's generators check",
