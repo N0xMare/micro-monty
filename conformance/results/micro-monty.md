@@ -18,21 +18,19 @@ The first thing that stops each case: a feature `mm` reports it does not support
 
 | Cause | Cases | Examples |
 |---|---:|---|
-| unexpected AssertionError | 18 | `args__macro_errors.py`, `bytes__percent_format.py`, `class__numeric.py` |
-| missing builtin | 7 | `builtin__eval_exec.py`, `builtin__exec_import_traceback.py`, `builtin__exec_namespaces.py` |
+| unexpected AssertionError | 19 | `args__macro_errors.py`, `bytes__percent_format.py`, `class__numeric.py` |
+| missing builtin | 8 | `builtin__eval_exec.py`, `builtin__exec_import_traceback.py`, `builtin__exec_namespaces.py` |
 | unexpected NotImplementedError | 2 | `builtin__setattr.py`, `dataclass__basic.py` |
 | wrong exception | 2 | `fstring__error_invalid_spec.py`, `fstring__error_invalid_spec_str.py` |
 | wrong traceback | 2 | `dataclass__call_field_error.py`, `dataclass__get_missing_attr_error.py` |
 | int work cap | 1 | `builtin__math_funcs.py` |
 | no exception raised | 1 | `import__star_error.py` |
-| unexpected IndexError | 1 | `lookup__mutation.py` |
-| unexpected TypeError | 1 | `iter__user_class.py` |
 
 ## Failing cases (35)
 
 | Case | Tag | Status | Cause | Reason |
 |---|---|---|---|---|
-| `args__macro_errors.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError: py-dup-kw-only: function got multiple values for keyword argument 'key' |
+| `args__macro_errors.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError: c-convert-vs-conflict: function missing required argument 'month' (pos 2) |
 | `bytes__percent_format.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
 | `class__numeric.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
 | `collections__deque.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError: a NaN element makes the ordering false |
@@ -42,6 +40,7 @@ The first thing that stops each case: a feature `mm` reports it does not support
 | `id__non_overlapping_lifetimes_same_types.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
 | `import__sys_monty.py` | monty-specific | fail | unexpected AssertionError | unexpected exception: AssertionError: version should be 3.14.0 (Monty), got '&lt;version> (micro-monty)' |
 | `iter__generator_expr_type.py` | monty-specific | fail | unexpected AssertionError | unexpected exception: AssertionError |
+| `lookup__mutation.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError: expected RuntimeError |
 | `str__format.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
 | `str__percent_format.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
 | `typing__get_type_hints.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
@@ -57,6 +56,7 @@ The first thing that stops each case: a feature `mm` reports it does not support
 | `ext_call__eval_exec.py` | host | fail | missing builtin | unexpected exception: NameError: name 'eval' is not defined. micro-monty does not support eval() |
 | `functools__lru_cache.py` | cpython | fail | missing builtin | unexpected exception: NameError: name 'locals' is not defined |
 | `inline__string_operations.py` | cpython | fail | missing builtin | unexpected exception: NameError: name 'eval' is not defined. micro-monty does not support eval() |
+| `iter__user_class.py` | cpython | fail | missing builtin | unexpected exception: NameError: name 'locals' is not defined |
 | `builtin__setattr.py` | host | fail | unexpected NotImplementedError | unexpected exception: NotImplementedError: mm's host fixtures do not provide host objects (make_mutable_point) until clas… |
 | `dataclass__basic.py` | host | fail | unexpected NotImplementedError | unexpected exception: NotImplementedError: mm's host fixtures do not provide host objects (make_point) until classes land… |
 | `fstring__error_invalid_spec.py` | monty-specific | fail | wrong exception | expected SyntaxError("Invalid format specifier '10xyz'"), got ValueError("Invalid format specifier '10xyz' for object of type 'int'… |
@@ -65,5 +65,3 @@ The first thing that stops each case: a feature `mm` reports it does not support
 | `dataclass__get_missing_attr_error.py` | host | fail | wrong traceback | traceback line 2: expected …__get_missing_attr_error.py", line 6, in &lt;module>, got …__get_missing_attr_error.py", line 5, in &lt;module> |
 | `builtin__math_funcs.py` | cpython | fail | int work cap | unexpected exception: MemoryError: integer operation too large |
 | `import__star_error.py` | monty-specific | fail | no exception raised | no exception raised, expected Traceback (most recent call last):\\n  File "import__star_error.py", line 4, in &lt;module>\\n    from s… |
-| `lookup__mutation.py` | cpython | fail | unexpected IndexError | unexpected exception: IndexError: list assignment index out of range |
-| `iter__user_class.py` | cpython | fail | unexpected TypeError | unexpected exception: TypeError: acquire_partial() missing 1 required positional argument: 'instance' |

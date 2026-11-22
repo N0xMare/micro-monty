@@ -14,7 +14,7 @@
 {"file":"args__list_append_too_many.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"args__list_insert_too_few.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"args__list_insert_too_many.py","tags":["cpython"],"status":"pass","reason":""}
-{"file":"args__macro_errors.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError: py-dup-kw-only: function got multiple values for keyword argument 'key'","category":"unexpected AssertionError"}
+{"file":"args__macro_errors.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError: c-convert-vs-conflict: function missing required argument 'month' (pos 2)","category":"unexpected AssertionError"}
 {"file":"args__repr_no_args.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"arith__div_zero_float.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"arith__div_zero_int.py","tags":["cpython"],"status":"pass","reason":""}
@@ -370,7 +370,7 @@
 {"file":"iter__not_iterable.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"iter__reentrant.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"iter__sentinel.py","tags":["cpython"],"status":"pass","reason":""}
-{"file":"iter__user_class.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: TypeError: acquire_partial() missing 1 required positional argument: 'instance'","category":"unexpected TypeError"}
+{"file":"iter__user_class.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: NameError: name 'locals' is not defined","category":"missing builtin"}
 {"file":"itertools__adaptors.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"itertools__combinatoric.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"itertools__count_repeat.py","tags":["cpython"],"status":"pass","reason":""}
@@ -407,7 +407,7 @@
 {"file":"list__unpack_type_error.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"longint__index_error.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"longint__repeat_error.py","tags":["cpython"],"status":"pass","reason":""}
-{"file":"lookup__mutation.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: IndexError: list assignment index out of range","category":"unexpected IndexError"}
+{"file":"lookup__mutation.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError: expected RuntimeError","category":"unexpected AssertionError"}
 {"file":"loop__break_continue.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"loop__break_finally.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"loop__break_in_function_error.py","tags":["cpython"],"status":"pass","reason":""}
