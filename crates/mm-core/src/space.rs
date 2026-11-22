@@ -113,9 +113,6 @@ pub(crate) trait Store {
     fn fill_to(&mut self, units: usize);
     /// Keeps room for `units` units only, and the contents below them.
     fn shrink(&mut self, units: usize);
-    /// Forgets the units from `units` on, keeping the room: the bump
-    /// allocator zero-fills them again as it reaches them.
-    fn cut_to(&mut self, units: usize);
     /// Units initialized.
     fn units(&self) -> usize;
     fn read(&self, unit: usize) -> Option<u64>;
@@ -156,9 +153,6 @@ impl Store for Vec<u64> {
     fn shrink(&mut self, units: usize) {
         self.truncate(units);
         self.shrink_to(units);
-    }
-    fn cut_to(&mut self, units: usize) {
-        self.truncate(units);
     }
     #[inline]
     fn units(&self) -> usize {
@@ -233,9 +227,6 @@ impl Store for Vec<u8> {
     fn shrink(&mut self, units: usize) {
         self.truncate(units * 8);
         self.shrink_to(units * 8);
-    }
-    fn cut_to(&mut self, units: usize) {
-        self.truncate(units.saturating_mul(8));
     }
     #[inline]
     fn units(&self) -> usize {
@@ -1256,10 +1247,10 @@ impl<S: Store> Space<S> {
             }
             out.freed_units += s.used as u64;
             if idx == self.bump {
-                // What lies past the top is zero, as in a restored segment,
-                // so the blocks allocated there next hold the same words.
+                // What lies past the top stays as it was: an allocation
+                // writes every word of its block, and a free block's body
+                // is in no image.
                 s.top = 0;
-                s.data.cut_to(0);
                 s.used = 0;
                 s.starts.fill(0);
                 m.fill(0);
@@ -1472,7 +1463,6 @@ fn walk<S: Store>(
                 s.data.write(free, u64::from(S::free_len(hole)) << 32);
             }
             s.top = free + hole;
-            s.data.cut_to(s.top);
         } else {
             file_after(lists, s, idx, free, top - free, last);
         }

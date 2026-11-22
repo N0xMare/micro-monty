@@ -175,7 +175,7 @@ GitHub release also attaches the two mm-wasm guests.
   the free lists, marks, mark stack, pending sweep and registry it reads
   against the blocks, and refuses an image where they disagree as
   `Corrupt`. Images hold dead objects too, so they can be larger than
-  before until dead payloads are omitted. The durability gate compares
+  before; a free block is written as its first two words only. The durability gate compares
   report and fuel within each GC mode. The build id moves.
 - The Huffman decoder tables of the bundled modules and the prelude are
   built once per `Engine` and kept in its module cache (about 90 KB),

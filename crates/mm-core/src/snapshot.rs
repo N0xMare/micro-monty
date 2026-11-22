@@ -316,8 +316,7 @@ impl Heap {
         self.write_snapshot_to(&mut Sink::Buf(out));
     }
 
-    /// Streams [`Heap::write_snapshot`]'s form without allocating scratch
-    /// or an output buffer.
+    /// Appends the image directly to the caller's sink, without a scratch table.
     #[cfg_attr(mm_shipped, optimize(size))]
     pub fn write_snapshot_to(&self, out: &mut Sink<'_>) {
         let c = self.config;
@@ -761,8 +760,8 @@ impl Heap {
 
 impl<S: Store> Space<S> {
     /// One space as it is: per present segment its blocks (`[0, top)`,
-    /// free ones and garbage included), its dirty flag and its marks if it
-    /// has any; then the free run, the free-list heads and the segments the
+    /// garbage included, a free block without its body), its dirty flag
+    /// and its marks if it has any; then the free run, the free-list heads and the segments the
     /// lazy sweep has not reached. A restore derives the start bitmaps,
     /// `used`, the list masks and the listed units from the blocks.
     #[cfg_attr(mm_shipped, optimize(size))]
@@ -786,7 +785,21 @@ impl<S: Store> Space<S> {
             // A large segment's room past its block (`append_bytes`) is a
             // number, never bytes: restoring reserves it again.
             put_len(out, s.cap());
-            s.data.append_units(0, s.top, out);
+            // Free blocks carry only their header here. Their links follow
+            // in list order, so neither stale words nor a lookup table are needed.
+            let (mut at, mut start) = (0usize, 0usize);
+            while at < s.top {
+                let h = s.data.read(at).unwrap_or(0);
+                let size = S::units_for(header_len(h)).max(1);
+                if h.trailing_zeros() >= 32 && size >= 2 {
+                    s.data.append_units(start, at + 1 - start, out);
+                    start = at + size;
+                }
+                at += size;
+            }
+            if start < s.top {
+                s.data.append_units(start, s.top - start, out);
+            }
             let marks = self.marks.get(idx).map_or(&[][..], |m| &m[..]);
             let marked = marks.iter().any(|&m| m != 0);
             put_u8(out, u8::from(marked));
@@ -812,6 +825,18 @@ impl<S: Store> Space<S> {
             put_len(out, p);
         }
         put_u64(out, self.lazily_freed);
+        for &head in self.lists.small.iter().chain(self.lists.medium.iter()) {
+            let mut cur = head;
+            while cur != crate::space::NIL {
+                let (i, o) = split(cur);
+                cur = self
+                    .segs
+                    .get(i)
+                    .and_then(|s| s.data.read(o + 1))
+                    .map_or(crate::space::NIL, link);
+                put_u32(out, cur);
+            }
+        }
     }
 
     /// Reads one space; `valid` accepts a block header word of this space.
@@ -877,7 +902,7 @@ impl<S: Store> Space<S> {
             let dirty = input.u8().ok_or(e)?;
             let top = input.u32().ok_or(e)? as usize;
             let cap = input.u32().ok_or(e)? as usize;
-            if dirty & !DIRTY_REFS != 0 || input.remaining() / 8 < top {
+            if dirty & !DIRTY_REFS != 0 {
                 return bad();
             }
             if large {
@@ -899,34 +924,56 @@ impl<S: Store> Space<S> {
                 }
             }
             let seg = self.segs.get_mut(idx).ok_or(e)?;
-            seg.data.load_units(0, input.take(top * 8).ok_or(e)?);
-            seg.data.fill_to(top);
-            // The blocks tile `[0, top)`: an allocated block has a header
-            // of this space and a start bit, a free one type 0.
-            let mut at = 0;
-            while at < top {
-                let h = seg.data.read(at).ok_or(e)?;
-                let size = S::units_for(header_len(h));
-                if size > top - at || (large && (at != 0 || size != top)) {
-                    return bad();
-                }
-                // A free block's low half is zero (type 0, no flags); any
-                // other type-0 header fails `valid`.
-                if h.trailing_zeros() >= 32 {
-                    if large {
+            {
+                // One pass over the image's blocks, copied in runs. They
+                // tile `[0, top)`: an allocated block has a header of this
+                // space and a start bit; a free one has type 0 and
+                // only its header in the stream (the gap is
+                // zero-filled by the next run's copy or `fill_to`).
+                let stream = *input.rest_mut();
+                let (mut at, mut p, mut run_at, mut run_p) = (0usize, 0usize, 0usize, 0usize);
+                while at < top {
+                    let h = stream
+                        .get(p * 8..p * 8 + 8)
+                        .and_then(|b| b.try_into().ok())
+                        .map(u64::from_le_bytes)
+                        .ok_or(e)?;
+                    let size = S::units_for(header_len(h));
+                    if size == 0 || size > top - at || (large && (at != 0 || size != top)) {
                         return bad();
                     }
-                    free.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
-                    free.push(addr_of(idx, at));
-                } else {
-                    if !valid(h) {
-                        return bad();
+                    if h.trailing_zeros() >= 32 {
+                        if large {
+                            return bad();
+                        }
+                        free.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
+                        free.push(addr_of(idx, at));
+                        if size > 1 {
+                            seg.data
+                                .load_units(run_at, stream.get(run_p * 8..(p + 1) * 8).ok_or(e)?);
+                            p += 1;
+                            run_p = p;
+                            at += size;
+                            run_at = at;
+                            continue;
+                        }
+                    } else {
+                        if !valid(h) {
+                            return bad();
+                        }
+                        crate::space::set_bit(&mut seg.starts, at);
+                        seg.used += size;
                     }
-                    crate::space::set_bit(&mut seg.starts, at);
-                    seg.used += size;
+                    p += size;
+                    at += size;
                 }
-                at += size;
+                if run_p < p {
+                    seg.data
+                        .load_units(run_at, stream.get(run_p * 8..p * 8).ok_or(e)?);
+                }
+                input.take(p * 8).ok_or(e)?;
             }
+            seg.data.fill_to(top);
             seg.dirty = dirty;
             if input.bool().ok_or(e)? {
                 let m = self.marks.get_mut(idx).ok_or(e)?;
@@ -1012,7 +1059,12 @@ impl<S: Store> Space<S> {
                 }
                 units += n as u64;
                 let (s, o) = split(cur);
-                cur = link(self.segs.get(s).and_then(|s| s.data.read(o + 1)).ok_or(e)?);
+                cur = input.u32().ok_or(e)?;
+                self.segs
+                    .get_mut(s)
+                    .ok_or(e)?
+                    .data
+                    .write(o + 1, u64::from(cur));
             }
             if head != crate::space::NIL {
                 self.lists.mask |= 1 << n;
@@ -1027,7 +1079,12 @@ impl<S: Store> Space<S> {
                 }
                 units += m as u64;
                 let (s, o) = split(cur);
-                cur = link(self.segs.get(s).and_then(|s| s.data.read(o + 1)).ok_or(e)?);
+                cur = input.u32().ok_or(e)?;
+                self.segs
+                    .get_mut(s)
+                    .ok_or(e)?
+                    .data
+                    .write(o + 1, u64::from(cur));
             }
             if head != crate::space::NIL
                 && let Some(bits) = self.lists.medium_mask.get_mut(c / 64)

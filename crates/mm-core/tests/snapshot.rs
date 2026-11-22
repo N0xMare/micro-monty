@@ -135,6 +135,61 @@ fn restore_is_the_collected_heap() {
     assert_eq!(image(&copy), image(&heap));
 }
 
+/// A free block contributes only its header and, if listed, a link.
+/// What dead objects held never reaches the image; the restored heap
+/// writes the same image and places the next objects alike.
+#[test]
+fn a_free_blocks_body_is_not_in_the_image() {
+    // Live objects between dead ones of 51 units, the dead ones filled
+    // with `fill`.
+    let build = |fill: i64| {
+        let mut heap = Heap::new(HeapConfig {
+            memory_limit: 64 << 20,
+            ..HeapConfig::default()
+        });
+        let mut keep = Vec::new();
+        for i in 0..2_000 {
+            let live = heap.alloc(T, 0, 2, 0).unwrap();
+            heap.set(live, 0, Value::int(i).unwrap()).unwrap();
+            keep.push(Value::from_ref(live, 0));
+            let dead = heap.alloc(T, 0, 50, 0).unwrap();
+            for slot in 0..50 {
+                heap.set(dead, slot, Value::int(fill).unwrap()).unwrap();
+            }
+        }
+        let before = image(&heap).len();
+        let roots = keep.clone();
+        heap.collect(&mut |t| t.values(&roots));
+        (heap, keep, before)
+    };
+    let (mut heap, keep, before) = build(1);
+    let bytes = image(&heap);
+    // Each dead block now takes one header and at most a four-byte list link.
+    let dead = 2_000 * 51 * 8;
+    assert!(
+        bytes.len() + dead - 2_000 * 12 - 4096 < before && bytes.len() < before - dead / 2,
+        "{} after, {before} before",
+        bytes.len()
+    );
+    assert_eq!(image(&build(2).0), bytes, "what the dead objects held");
+
+    let mut copy = Heap::read_snapshot(&mut Reader::new(&bytes), u64::MAX).unwrap();
+    assert_eq!(image(&copy), bytes);
+    // Blocks of other sizes split the free blocks: both heaps go on alike.
+    for h in [&mut heap, &mut copy] {
+        for n in [3, 20, 47, 50, 7] {
+            for _ in 0..300 {
+                h.alloc(T, 0, n, 0).unwrap();
+            }
+        }
+    }
+    assert_eq!(image(&copy), image(&heap));
+    let roots = keep.clone();
+    heap.collect(&mut |t| t.values(&roots));
+    copy.collect(&mut |t| t.values(&roots));
+    assert_eq!(image(&copy), image(&heap));
+}
+
 #[test]
 fn empty_heap_round_trips() {
     let heap = Heap::default();
@@ -180,6 +235,25 @@ struct Segment {
     marked: usize,
 }
 
+/// Where unit `off` of a word segment whose units start at `data` is in
+/// `b`: the block stream holds a free block's header only, so the units
+/// after one sit that much earlier. `off` at the segment's top gives where
+/// its units end.
+fn unit_at(b: &[u8], data: usize, off: usize) -> usize {
+    let (mut unit, mut at) = (0, data);
+    while unit < off {
+        let h = u64::from_le_bytes(b[at..at + 8].try_into().unwrap());
+        let size = (h >> 32) as usize + 1;
+        if unit + size > off {
+            return at + (off - unit) * 8;
+        }
+        // A free block: type 0, no flags.
+        at += 8 * if h.trailing_zeros() >= 32 { 1 } else { size };
+        unit += size;
+    }
+    at
+}
+
 /// The word space's present segments, read from `b` by the image layout.
 fn segments(b: &[u8]) -> Vec<Segment> {
     let u32_at = |at: usize| u32::from_le_bytes(b[at..at + 4].try_into().unwrap()) as usize;
@@ -191,7 +265,7 @@ fn segments(b: &[u8]) -> Vec<Segment> {
     let mut at = space + 16 + 4 * nvacant;
     let mut out = Vec::new();
     for _ in 0..present {
-        // Index, large, dirty, top, capacity, then the units up to top.
+        // Index, large, dirty, top, capacity, then the blocks up to top.
         let large = b[at + 4] != 0;
         let seg = Segment {
             index: at,
@@ -199,7 +273,7 @@ fn segments(b: &[u8]) -> Vec<Segment> {
             top: at + 6,
             cap: at + 10,
             data: at + 14,
-            marked: at + 14 + u32_at(at + 6) * 8,
+            marked: unit_at(b, at + 14, u32_at(at + 6)),
         };
         at = seg.marked + 1;
         if b[seg.marked] != 0 {
@@ -234,7 +308,7 @@ fn word_at(b: &[u8], raw: u32) -> impl Fn(usize) -> usize {
         .into_iter()
         .filter(|s| u32_at(s.index) == seg)
         .find(|s| off < u32_at(s.top))
-        .map(|s| s.data + off * 8)
+        .map(|s| unit_at(b, s.data, off))
         .unwrap();
     move |i| data + i * 8
 }

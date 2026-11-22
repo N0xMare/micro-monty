@@ -2312,8 +2312,10 @@ heap     memory limit, GC ratio and floor, GC statistics, intern table;
          per space: segment-table size, bump segment, vacant indices,
          each segment's capacity (a dedicated segment's room past its
          object as a number), its blocks up to its top (live, garbage
-         and free), dirty flag and mark bitmap; the allocation run, the
-         free lists' heads, the segments the lazy sweep has not reached;
+         and free; a free block as its header only), dirty flag and mark
+         bitmap; the allocation run, the
+         free lists' heads, pending sweep segments and lazily freed units,
+         then the free-list links in traversal order;
          object counts, the mark stack (capacity and entries), the
          incremental mark's state and partial scans, char positions,
          the idle flag
@@ -2436,10 +2438,10 @@ edit in any of the four codecs, a tuning constant, a prelude edit that
 changes bytecode and a host-wrapper generator edit change it [M].
 
 **Restore.** Order: magic, format version, checksum, `build_id`; a
-template's trusted read (§10.1) skips the checksum. Lengths
-are checked against the remaining input before any allocation; the heap is
-checked against the engine's memory limit (`TooLarge`, §11 "Restore
-admission").
+template's trusted read (§10.1) skips the checksum. Counts of records in
+the input are checked against the remaining bytes. Reserved capacity and
+free-block bodies need not have corresponding bytes in the input: their
+admission is bounded by the memory limit (`TooLarge`, §11 "Restore admission").
 
 Validated on restore: segment indices, run tiling, every block header, every
 `str` (UTF-8, char count, flags), the intern table (identity, count, load,
@@ -2479,7 +2481,7 @@ table's untagged string references are checked by mm-core. The collector
 state the image holds is checked as well, so a damaged image ends in
 `Corrupt` at restore, never in a heap that later hands out live memory:
 blocks tile each segment up to its top and a free block is a typed free
-header; start bits and used counts are derived from the blocks; marks sit
+header, whose body the image does not hold and the restore zero-fills; start bits and used counts are derived from the blocks; marks sit
 on block starts only, and outside a mark only in segments the sweep has
 not reached, which are present, distinct and not the bump segment; every
 free-list and run entry is a free block of its list's size class, each
