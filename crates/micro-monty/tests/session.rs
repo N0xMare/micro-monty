@@ -4730,6 +4730,26 @@ print(fired, errors)
     }
 }
 
+/// `input()` exists and says what to do instead: there is no stdin, so it
+/// raises the `EOFError` of a stdin at its end, with a text a model
+/// can act on, where a `NameError` only said the name was missing.
+#[test]
+fn input_says_there_is_no_stdin() {
+    let src = "\
+try:
+    input('name? ')
+except EOFError as e:
+    print(e)
+";
+    let (p, out) = run_with(Limits::new(), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?} {out}");
+    assert_eq!(
+        out,
+        "name? input(): there is no stdin in this sandbox; put the value in the code or get \
+         it from a tool\n"
+    );
+}
+
 /// `Semaphore.release()` with no room to wake its waiter raises
 /// `MemoryError` and changes nothing: the permit it added is taken back,
 /// so the release a guest retries once memory is freed hands over one

@@ -27,12 +27,15 @@ include!(concat!(env!("OUT_DIR"), "/prelude_units.rs"));
 
 /// Prelude functions that are builtins: put in the builtins on their first
 /// lookup.
-pub(crate) const AS_BUILTINS: [&str; 8] = [
+pub(crate) const AS_BUILTINS: [&str; 11] = [
     "__import__",
     "map",
     "filter",
     "open",
     "help",
+    "exit",
+    "quit",
+    "input",
     "globals",
     "BaseExceptionGroup",
     "ExceptionGroup",

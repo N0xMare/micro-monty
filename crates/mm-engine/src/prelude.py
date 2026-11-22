@@ -3048,6 +3048,14 @@ def _match_class(x, cls, kw, nargs):
     return tuple(attrs)
 
 
+def input(prompt='', /):
+    # What CPython does with stdin at its end: the prompt is written, and
+    # an `except EOFError` fallback is taken.
+    print(prompt, end='')
+    raise EOFError('input(): there is no stdin in this sandbox; '
+                   'put the value in the code or get it from a tool')
+
+
 def help(*args, **kwds):
     # The stub of a host function, class or module (the host's signature
     # and docstring), else the object's name and docstring. CPython's
@@ -5261,6 +5269,10 @@ def exit(*args):
     if isinstance(args[0], tuple):
         raise SystemExit(*args[0])
     raise SystemExit(args[0])
+
+
+# The builtins `exit` and `quit` are `sys.exit`.
+quit = exit
 
 
 def get_int_max_str_digits():
