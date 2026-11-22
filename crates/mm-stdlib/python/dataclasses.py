@@ -668,7 +668,50 @@ def _process_class(cls, init, repr, eq, order, unsafe_hash, frozen,
     if weakref_slot and not slots:
         raise TypeError('weakref_slot is True but slots is False')
 
+    if not getattr(cls, '__doc__'):
+        # A default whose repr raises does not stop the class: as CPython,
+        # which catches what `inspect.signature` raises, the doc-string is
+        # then the class name alone.
+        try:
+            sig = _text_signature(cls, init, std_init_fields, kw_only_init_fields)
+        except (TypeError, ValueError):
+            sig = ''
+        if sig is not None:
+            cls.__doc__ = cls.__name__ + sig
+
     return cls
+
+
+def _text_signature(cls, init, std_fields, kw_only_fields):
+    # The signature CPython's `inspect.signature(cls)` gives the class
+    # doc-string, from the fields `__init__` takes. `None` for an
+    # `__init__` that is not the generated one: there is no `inspect`
+    # here to read its parameters.
+    if not init:
+        for b in cls.__mro__[:-1]:
+            if '__init__' in b.__dict__:
+                return None
+        return '()'
+    parts = [_text_param(f) for f in std_fields]
+    if kw_only_fields:
+        parts.append('*')
+        parts.extend([_text_param(f) for f in kw_only_fields])
+    return '(' + ', '.join(parts) + ')'
+
+
+def _text_param(f):
+    t = f.type
+    if isinstance(t, type):
+        # As `inspect.formatannotation`.
+        t = t.__qualname__ if t.__module__ == 'builtins' else f'{t.__module__}.{t.__qualname__}'
+    elif not isinstance(t, str):
+        t = repr(t)
+    text = f'{f.name}: {t}'
+    if f.default is not MISSING:
+        text += f' = {f.default!r}'
+    elif f.default_factory is not MISSING:
+        text += ' = <factory>'
+    return text
 
 
 def dataclass(cls=None, /, *, init=True, repr=True, eq=True, order=False,
