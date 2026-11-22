@@ -1261,8 +1261,18 @@ tags           1 SmallInt (i48) | 2 Ref (u32 offset, optional kind byte)
 Interned strings are ordinary `str` objects with the interned flag, so `str`
 has one representation. The arena's intern table is weak: live strings retain
 their identity, but unreachable literals and names are removed before sweep can
-reuse their addresses. In-place backward-shift deletion preserves probe chains
-without allocating another table. Code and shape metadata explicitly trace the
+reuse their addresses. A cluster that holds a dead string is laid out again
+in its own slots, its survivors sorted by bucket, each at its bucket or right
+after the one before it; a full table is replaced by one of twice its slots,
+which takes the entries sorted the same way, with no probe. Neither allocates
+another table for a prune, and both take O(n log n) for a cluster of n
+whatever its buckets: removing or placing entries one by one takes time
+quadratic in a cluster's length in one step (§5), and names chosen for their
+buckets make long clusters (guest `hash()` shows a name's bucket). A snapshot
+holds the table's slots as they lie, so the layout is part of what an image
+holds (§9.3). An interning that walks 64 slots or more is charged a unit per
+64. Doubling the table and pruning it are each one step, linear
+in its slots. Code and shape metadata explicitly trace the
 names they own; builtin names remain reachable through the builtins and prelude.
 The table retains its high-water capacity inside the arena budget.
 

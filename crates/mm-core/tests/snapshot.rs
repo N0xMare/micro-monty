@@ -8,7 +8,7 @@
     reason = "tests"
 )]
 
-use mm_core::{Error, Heap, HeapConfig, Reader, Ref, Value, types, xxh64};
+use mm_core::{Error, Heap, HeapConfig, Reader, Ref, Value, hash_bytes, types, xxh64};
 
 const T: u16 = types::FIRST_ENGINE;
 
@@ -268,6 +268,167 @@ fn restore_refuses_each_inconsistent_field() {
         }),
     ] {
         assert!(!restores(&b), "restored with {what}");
+    }
+}
+
+/// The entries of intern table `table`, sorted.
+fn interned_entries(heap: &Heap, table: Ref) -> Vec<u64> {
+    let cap = heap.header(table).unwrap().len() - 1;
+    let mut entries: Vec<u64> = (1..=cap)
+        .map(|i| heap.get(table, i).unwrap().to_bits())
+        .filter(|&w| w != Value::UNDEFINED.to_bits())
+        .collect();
+    entries.sort_unstable();
+    entries
+}
+
+/// Tables of `cap` slots a restore admits, made of the entries `present`
+/// (`honest` is the table they came from): none has them where lookups
+/// look.
+fn forged_tables(
+    honest: &[u64],
+    present: &[u64],
+    cap: usize,
+    hash: &dyn Fn(u64) -> u64,
+) -> Vec<(&'static str, Vec<u64>)> {
+    let free = Value::UNDEFINED.to_bits();
+    let mut reversed = honest.to_vec();
+    reversed.reverse();
+    let mut across_end = vec![free; cap];
+    let mut every_other = vec![free; cap];
+    for (k, &w) in present.iter().enumerate() {
+        across_end[(cap - 150 + k) % cap] = w;
+        every_other[2 * k + 1] = w;
+    }
+    let mut from_start = vec![free; cap];
+    from_start[..present.len()].copy_from_slice(present);
+    let one_name = honest
+        .iter()
+        .map(|&w| if w == free { free } else { present[7] })
+        .collect();
+    let mut half_full = vec![free; cap];
+    for (k, slot) in half_full.iter_mut().take(cap / 2).enumerate() {
+        *slot = present[k % present.len()];
+    }
+    // Runs of 40 with a free slot between, buckets falling from run to
+    // run (`honest` holds them rising): a doubling that sorts each run
+    // alone places them out of order.
+    let mut falling_runs = vec![free; cap];
+    let rising = honest.iter().copied().filter(|&w| w != free);
+    for (k, w) in rising.rev().enumerate() {
+        falling_runs[k + k / 40] = w;
+    }
+    // A doubling's two runs meet: from slot 1 on, entries of the first
+    // buckets whose hashes send them to the upper half, then one of the
+    // last buckets that stays in the lower half; after a free slot, every
+    // other entry that stays there. Sorted run by run, those pile up
+    // behind the one of the last buckets, into the upper half's first
+    // slots, which are taken.
+    let upper = |w: u64| hash(w) & cap as u64 != 0;
+    let bucket = |w: u64| hash(w) & (cap as u64 - 1);
+    let first: Vec<u64> = present
+        .iter()
+        .copied()
+        .filter(|&w| upper(w) && (1..100).contains(&bucket(w)))
+        .collect();
+    let high = present
+        .iter()
+        .copied()
+        .find(|&w| !upper(w) && bucket(w) >= 1000)
+        .unwrap();
+    let rest: Vec<u64> = present
+        .iter()
+        .copied()
+        .filter(|&w| !upper(w) && w != high)
+        .collect();
+    assert!(first.len() >= 10 && rest.len() >= 150);
+    let mut runs_meet = vec![free; cap];
+    let run = first.iter().chain([&high, &free]).chain(&rest);
+    for (slot, &w) in runs_meet[1..].iter_mut().zip(run) {
+        *slot = w;
+    }
+    vec![
+        ("two runs that meet", runs_meet),
+        ("runs of falling buckets", falling_runs),
+        ("reversed", reversed),
+        ("one run across the end", across_end),
+        ("one run from the start", from_start),
+        ("every other slot", every_other),
+        ("one name in every entry", one_name),
+        ("half full of repeats", half_full),
+    ]
+}
+
+/// A restore admits any intern table whose entries are interned strings,
+/// as many as its count says and at most half its slots, wherever they
+/// lie: a forged one's are not where lookups look. Pruning and growing
+/// such a table still keep exactly its live entries, each as often as it
+/// was there.
+#[test]
+fn a_forged_intern_table_prunes_and_grows_to_its_live_entries() {
+    let mut heap = Heap::new(HeapConfig {
+        memory_limit: 64 << 20,
+        ..HeapConfig::default()
+    });
+    let names: Vec<String> = (0..400).map(|i| format!("forged{i}")).collect();
+    let refs: Vec<Ref> = names.iter().map(|n| heap.intern(n).unwrap()).collect();
+    // Entries carry no kind; neither do these roots.
+    let roots: Vec<Value> = refs.iter().map(|&r| Value::from_ref(r, 0)).collect();
+    heap.collect(&mut |t| t.values(&roots));
+    let bytes = image(&heap);
+    let table = Ref::from_raw(u32::from_le_bytes(bytes[68..72].try_into().unwrap()));
+    let cap = heap.header(table).unwrap().len() as usize - 1;
+    let free = Value::UNDEFINED.to_bits();
+    let honest: Vec<u64> = (1..=cap as u32)
+        .map(|i| heap.get(table, i).unwrap().to_bits())
+        .collect();
+    let present = interned_entries(&heap, table);
+    assert_eq!((cap, present.len()), (1024, 400));
+    let keeps: [fn(usize) -> bool; 4] = [|_| false, |_| true, |i| i % 3 == 0, |i| i % 3 != 0];
+    let hash_of = |w: u64| {
+        let i = roots.iter().position(|v| v.to_bits() == w).unwrap();
+        hash_bytes(names[i].as_bytes())
+    };
+    for (what, arranged) in forged_tables(&honest, &present, cap, &hash_of) {
+        let word = word_at(&bytes, table.raw());
+        let mut b = bytes.clone();
+        let count = arranged.iter().filter(|&&w| w != free).count();
+        let count = Value::int(i64::try_from(count).unwrap()).unwrap().to_bits();
+        b[word(1)..word(1) + 8].copy_from_slice(&count.to_le_bytes());
+        for (k, w) in arranged.iter().enumerate() {
+            b[word(k + 2)..word(k + 2) + 8].copy_from_slice(&w.to_le_bytes());
+        }
+        for (k, keep) in keeps.into_iter().enumerate() {
+            let restored = Heap::read_snapshot(&mut Reader::new(&b), u64::MAX);
+            assert!(restored.is_ok(), "{what}: refused");
+            let mut copy = restored.unwrap();
+            let kept: Vec<Value> = (0..400).filter(|&i| keep(i)).map(|i| roots[i]).collect();
+            copy.collect(&mut |t| t.values(&kept));
+            let mut want: Vec<u64> = arranged
+                .iter()
+                .copied()
+                .filter(|&w| kept.iter().any(|v| v.to_bits() == w))
+                .collect();
+            want.sort_unstable();
+            assert_eq!(interned_entries(&copy, table), want, "{what}, keep {k}");
+            assert_eq!(copy.interned_count() as usize, want.len(), "{what}, {k}");
+            // Lookups end, whatever they find.
+            for name in &names {
+                let _ = copy.find_interned(name);
+            }
+            // Doubled, the table holds the same entries.
+            copy.reserve_interned(cap as u32).unwrap();
+            let mut grown = None;
+            copy.for_each_object(&mut |r, h| {
+                if h.type_id() == types::INTERN_TABLE && h.len() as usize == 2 * cap + 1 {
+                    grown = Some(r);
+                }
+            });
+            assert_eq!(interned_entries(&copy, grown.unwrap()), want, "{what}, {k}");
+            assert_eq!(copy.interned_count() as usize, want.len(), "{what}, {k}");
+            let new = copy.intern("a new name").unwrap();
+            assert_eq!(copy.find_interned("a new name"), Some(new), "{what}, {k}");
+        }
     }
 }
 

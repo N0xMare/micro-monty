@@ -275,6 +275,60 @@ const SETUP_W100: &str = concat!(
     "        x.send(0)\n",
 );
 
+/// Names whose hashes put them in the first `$width` buckets of the intern
+/// table they end in (`$mask` + 1 slots), which a guest picks by `hash()`:
+/// `names`, `$n` of them, interned in bucket order, so they fill one run of
+/// slots at little cost, and `probes`, 2,000 new names of that run's first
+/// buckets, each of which walks all of it.
+macro_rules! intern_cluster {
+    ($n:literal, $mask:literal, $width:literal) => {
+        concat!(
+            "class O:\n",
+            "    pass\n",
+            "o = O()\n",
+            "def pick(prefix, n, mask, width):\n",
+            "    out = []\n",
+            "    k = 0\n",
+            "    while len(out) < n:\n",
+            "        k += 1\n",
+            "        s = prefix + str(k)\n",
+            "        if hash(s) & mask < width:\n",
+            "            out.append(s)\n",
+            "    return out\n",
+            "names = pick('q', ",
+            $n,
+            ", ",
+            $mask,
+            ", ",
+            $width,
+            ")\n",
+            "names.sort(key=lambda s: hash(s) & ",
+            $mask,
+            ")\n",
+            "for s in names:\n",
+            "    hasattr(o, s)\n",
+            "probes = pick('p', 2_000, ",
+            $mask,
+            ", 1024)\n",
+        )
+    };
+}
+
+/// 34,000 names of the first eighth of the buckets of a 131,072-slot
+/// intern table, not yet interned, in no order: interned, they double the
+/// table from 65,536 slots while they fill one run of its slots.
+const INTERN_GROWS: &str = "\
+class O:
+    pass
+o = O()
+names = []
+k = 0
+while len(names) < 34_000:
+    k += 1
+    s = 'q' + str(k)
+    if hash(s) & 131071 < 16384:
+        names.append(s)";
+
 /// (row, setup, the operation, times it repeats as straight-line code):
 /// each at about the largest size the default limits allow. The phase 2
 /// packages add their sites here.
@@ -2823,6 +2877,54 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         Row::Bounded,
         "M = type\nfor _ in range(13):\n    M = type('M', (M,), {})\nKs = tuple(M('K%d' % i, (), {}) for i in range(64))\nt = Ks * 255 + Ks[:63]",
         "b = isinstance(1, t)",
+        1,
+    ),
+    // The intern table (mm-core `string.rs`), with names a guest picks by
+    // `hash()` so that they share one run of slots. Dropped, 36,000 of
+    // them were pruned one by one, each removal shifting the rest of the
+    // run back: 1.67 s in the collection's last step; the run is now laid
+    // out again once, sorted: 6.4 ms [M, `--release`].
+    (
+        Row::Bounded,
+        intern_cluster!("36_000", "131071", "32768"),
+        "names = probes = s = None\njunk = [[i] for i in range(200_000)]\njunk = None\njunk = [[i] for i in range(200_000)]",
+        1,
+    ),
+    // The table doubling over such a run: every entry probed for its slot
+    // past the ones placed before it, 235 ms; the entries are now sorted
+    // first and placed with no probe: 4.5 ms [M, `--release`].
+    (
+        Row::Bounded,
+        INTERN_GROWS,
+        "for s in names:\n    hasattr(o, s)",
+        1,
+    ),
+    // Interning into a run of 72,000: each lookup walks all of it, and
+    // 125 of them ran between two looks at the clock, 88 ms; the walk is
+    // now charged, a unit per 64 slots: 2.5 ms [M, `--release`].
+    (
+        Row::Bounded,
+        intern_cluster!("72_000", "262143", "65536"),
+        "for s in probes:\n    hasattr(o, s)",
+        1,
+    ),
+    // The table at 2,000,000 names, whatever their buckets: its last
+    // doubling (1,048,576 entries sorted run by run and moved, 88 to 97
+    // ms; 69 to 84 ms when each was probed for) and the prune of its
+    // 4,194,304 slots once the names are dropped (46 ms; 165 to 189 ms
+    // by shifts) are each one step, linear in the table [M, `--release`].
+    // `Open` (CHANGELOG, Known issues) until the prune goes a slice at a
+    // time.
+    (
+        Row::Open,
+        "class O:\n    pass\no = O()\nnames = ['q' + str(i) for i in range(2_000_000)]",
+        "for s in names:\n    hasattr(o, s)",
+        1,
+    ),
+    (
+        Row::Open,
+        "class O:\n    pass\no = O()\nnames = ['q' + str(i) for i in range(2_000_000)]\nfor s in names:\n    hasattr(o, s)",
+        "names = s = None\njunk = [[i] for i in range(400_000)]\njunk = None\njunk = [[i] for i in range(400_000)]\njunk = None\njunk = [[i] for i in range(400_000)]",
         1,
     ),
 ];

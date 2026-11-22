@@ -212,6 +212,10 @@ dunders! {
 /// Number of [`Dn`] names.
 pub(crate) const NDUNDERS: usize = DUNDER_NAMES.len();
 
+/// Slots of the intern table an interning walks for one unit of fuel
+/// (`Vm::intern_value`): a walk shorter than this is not charged.
+const INTERN_WALK_SLOTS: u64 = 64;
+
 /// The dunder each flag stands for.
 const FLAG_NAMES: &[(Dn, u64)] = &[
     (Dn::Eq, f::EQ),
@@ -1665,6 +1669,12 @@ impl Vm {
         }
         let res = self.heap.intern_str(r);
         let r = self.hx_hot(res)?;
+        // The lookup's walk is native work: names chosen for their
+        // buckets make each one walk the others.
+        let walk = self.heap.interned_walk(r) as u64 / INTERN_WALK_SLOTS;
+        if walk != 0 {
+            self.burn(walk);
+        }
         Ok(Value::from_ref(r, ty::STR as u8))
     }
 

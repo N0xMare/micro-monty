@@ -147,6 +147,23 @@ hashes are pre-release history, kept in the private archive
   runs to its end off the session's fuel, deadline and clock: a define
   charges the session no fuel, and a park request stays for the next cell
   (it was consumed by the failed define).
+- A collection that dropped names sharing one run of the intern table's
+  slots no longer takes seconds in one step. Attribute names computed at
+  run time are interned (`hasattr`, `getattr`, `setattr`), and guest
+  `hash()` shows which bucket a name gets, so a guest could pick names
+  that fill one run; each dead one was removed by shifting the rest of
+  the run back. 36,000 such names, dropped: 1.67 s in the collection's
+  last step, now 5 to 6 ms: a run that holds a dead name is laid out
+  again once, its survivors sorted by bucket. The table doubling over
+  such a run probed for every entry past the ones before it (235 ms for
+  34,000 names): the doubled table now takes the entries sorted, with no
+  probe (5 ms). An interning's walk along a run is charged, a unit per
+  64 slots: 125 walks of a 72,000-slot run took 88 ms between two looks
+  at the clock, now 2 to 3 ms. The table's slots are laid out otherwise
+  than before, so `SNAPSHOT_EPOCH` and the build id move; results and
+  fuel are those of the build before on every own case, Monty's corpus
+  and the recorded sessions, none of which has a walk long enough to be
+  charged [M, `--release`, x86-64].
 - `reset()` gives back the memory earlier cells committed and no longer
   use, without moving an object: after a cell filled a 3 MiB heap with
   4 KB buffers, a 1 MB `bytearray` raised `MemoryError` after the reset
@@ -445,6 +462,13 @@ hashes are pre-release history, kept in the private archive
 
 ### Known issues
 
+- The intern table at 2,000,000 names (computed attribute names, of any
+  bucket) is doubled and pruned in one step each, linear in the table:
+  88 to 97 ms for its last doubling, which sorts each run of entries
+  (69 to 84 ms before), and 46 ms for the prune of its 4,194,304 slots
+  once the names are dropped (165 to 189 ms before), against the 50 ms
+  bound [M, `--release`]. The step oracle's two rows for it are `Open`.
+  The fix, pruning a slice at a time, is not in this change.
 - A `bytearray` with spare capacity that opens a gap near its start in
   place (`b.insert(0, x)`, `b[0:0] = ...` on 64 MiB never written) is one
   step of 96 to 97% of the 50 ms bound, with glibc and with musl's
