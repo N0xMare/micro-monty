@@ -4126,7 +4126,7 @@ async def _aio_main(main, open):
             if not open:
                 await _mm.aio_stop(4)
         if not open:
-            gens = _mm.aio_asyncgens()
+            gens = _mm.aio_asyncgens(tasks)
             if gens is not None:
                 await _aio_close_asyncgens(gens)
                 # Those first stepped while the others were closed, once:
@@ -4153,6 +4153,14 @@ async def _aio_close_asyncgens(gens):
     # raises goes to the exception handler. CPython closes all at once;
     # here 256 at a time, so that the tasks of many closes are neither one
     # native step nor all in memory together.
+    if not gens:
+        # None to close and no task was left, but callbacks are queued (a
+        # done callback of a task that ended as the main coroutine did):
+        # CPython's `shutdown_asyncgens()` and `shutdown_default_executor()`
+        # each run the loop two iterations, in which they run.
+        import _mm
+        await _mm.aio_stop(4)
+        return
     import asyncio
     for i in range(0, len(gens), 256):
         part = gens[i:i + 256]

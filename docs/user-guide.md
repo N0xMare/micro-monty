@@ -1747,6 +1747,10 @@ differs:
   generators. Use `contextlib.aclosing` where the cleanup must run at a
   known point. Each generator first stepped inside a run costs one fuel
   unit, and each `asyncio.run` one.
+- Callbacks still queued when `asyncio.run`'s main coroutine has ended
+  run in the loop iterations its shutdown makes, as in CPython.
+  `run_until_complete()` and `Runner.run()` drop them with the tasks they
+  leave, where CPython runs them in the loop's next run or at `close()`.
 - A task's first step and a loop callback start with the exception being
   handled where `asyncio.run` was called, as in CPython (`None` for a
   cell whose top level awaits).

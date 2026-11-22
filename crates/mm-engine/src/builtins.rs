@@ -1176,7 +1176,7 @@ const DEFS: &[Def] = &[
     #[cfg(feature = "asyncio")]
     m!("_mm", "aio_set", 2, 2, NO, NO, aio_set),
     #[cfg(feature = "asyncio")]
-    m!("_mm", "aio_asyncgens", 0, 0, NO, NO, aio_asyncgens),
+    m!("_mm", "aio_asyncgens", 0, 1, NO, NO, aio_asyncgens),
     #[cfg(feature = "asyncio")]
     m!("_mm", "aio_current_task", 0, 0, NO, NO, aio_current_task),
     #[cfg(feature = "asyncio")]
@@ -3315,8 +3315,20 @@ fn aio_task_ctx(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 #[cfg(feature = "asyncio")]
 #[cfg_attr(mm_shipped, optimize(size))]
-fn aio_asyncgens(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
-    vm.take_asyncgens()
+fn aio_asyncgens(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let gens = vm.take_asyncgens()?;
+    // `asyncio.run` with no task left to cancel (its empty list) and
+    // callbacks still queued: an empty list, for which the run goes on the
+    // iterations CPython's shutdown runs anyway.
+    let left = vm.arg_o(&a, 0);
+    if gens == Value::NONE
+        && left.is_obj_kind(ty::LIST as u8)
+        && vm.list_len(left) == 0
+        && vm.callbacks_queued()
+    {
+        return vm.new_list(&[]);
+    }
+    Ok(gens)
 }
 
 #[cfg(feature = "asyncio")]

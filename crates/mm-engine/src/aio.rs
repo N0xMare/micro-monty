@@ -1370,6 +1370,12 @@ impl Vm {
         Ok(list)
     }
 
+    /// Is anything in the run queue (with every task done: callbacks)?
+    #[cfg(feature = "asyncio")]
+    pub(crate) fn callbacks_queued(&self) -> bool {
+        !self.ready.is_empty()
+    }
+
     /// Ends the cell that completed or raised: reports what it never
     /// awaited, then drops its frames, tasks and futures.
     pub(crate) fn finish_cell(&mut self) {

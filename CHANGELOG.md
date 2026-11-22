@@ -557,6 +557,12 @@ hashes are pre-release history, kept in the private archive
     596). Not copied: after that, CPython's C task raises `await wasn't
     used with future` at any later `await` of the task while it is
     pending.
+  - A done callback, or a `call_soon`, queued in the iteration where
+    `asyncio.run`'s main coroutine ended, with no task left to cancel,
+    runs: the run goes on the four loop iterations CPython's
+    `shutdown_asyncgens()` and `shutdown_default_executor()` make, where
+    it stopped at once and dropped the queue (own case 597). A run that
+    ends with nothing queued costs the same fuel.
 
 ### Added
 
