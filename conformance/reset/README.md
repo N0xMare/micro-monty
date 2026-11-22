@@ -42,12 +42,19 @@ JS host (`hosts/js/test/reset.test.ts`).
   types, 613 methods, about 3.5 s in a release build [M].
 - `probes.rs`: the host both Rust tests define (typed and untyped
   functions, a class, an exception class, list, dict and record
-  constants and record defaults, in the builtins and in a module), its answers and the
-  comparison. The JS test defines the same.
+  constants, record defaults and a `dict_as_kwargs` function and
+  method, in the builtins and in a module), its answers and the
+  comparison. The JS test defines the same. The `dict_as_kwargs`
+  definitions make the host module's code name a wrapper inside a
+  function: without the host modules' exemption from the refusals
+  (`Vm::writes_shared`) the definitions fail and so does every test [M].
 
 What the walk cannot see: state only native code reads and no attribute
 shows (the recursion limit and the int-to-str digit limit have their own
-probes), and objects past six levels or behind a call it does not make.
+probes), memory a shared object holds without showing it (a class's
+subclass list has its probes: a subclass holding 30 MB under each kind of
+shared base), and objects past six levels or behind a call it does not
+make.
 
 A new way to share state across a reset gets a probe here; a new host
 definition kind or native module is covered by the walk once its name is in

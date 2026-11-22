@@ -1046,8 +1046,14 @@ impl Vm {
         mro.extend(mro_rest);
         let mro_t = self.alloc_tuple(&mro)?;
         self.set_slot(r, cls::MRO, mro_t);
+        // A base lists its subclasses to give them new versions when it
+        // changes. One every reset shares never changes once it is shared
+        // (`Vm::refuse_shared_change`), and its list would hold a cell's
+        // subclass, with all that holds, for every cell after a reset
+        // (`class Sub(Entry): blob = bytearray(30_000_000)`): it lists
+        // none.
         for &b in base_list {
-            if Vm::is_class(b) {
+            if Vm::is_class(b) && !self.is_shared_class(b) {
                 let l = self.vslot(b, cls::SUBS);
                 self.list_push(l, c)?;
             }

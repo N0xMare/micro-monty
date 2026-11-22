@@ -1837,7 +1837,11 @@ differs:
   (`json.JSONEncoder.__init__(json.JSONEncoder, default=f)` raises the
   `TypeError`; CPython sets the attributes on the class): make an
   instance or a subclass. `type(fetch)` is `function` and its `repr` a
-  function's, though the messages name a builtin.
+  function's, though the messages name a builtin. Subclassing a stdlib
+  or host class works as in CPython. A subclass of one of your own
+  classes that you delete stays in memory as long as its base does.
+  `id()` values and the addresses in default `repr`s are not
+  the same after a reset as in a new session.
 
 - **Sorting.** `sorted` and `list.sort` are a stable merge sort that calls
   only `<`. For a total order the result is CPython's, but `__lt__` is

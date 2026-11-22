@@ -88,6 +88,13 @@ pub fn modules() -> Vec<HostModule> {
             ],
         )
     };
+    // `dict_as_kwargs`: the function a cell gets is a wrapper the host
+    // module's code names inside a function (`_host_kw`).
+    let kwargs = |name: &str| HostSignature {
+        name: name.to_owned(),
+        dict_as_kwargs: true,
+        ..read.clone()
+    };
     vec![
         HostModule {
             name: String::new(),
@@ -98,9 +105,10 @@ pub fn modules() -> Vec<HostModule> {
                 sig("boom", Vec::new()),
                 read.clone(),
                 record("readr"),
+                kwargs("readk"),
                 HostSignature::any("tool"),
             ],
-            classes: vec![class("Entry", vec![go, record("gor")])],
+            classes: vec![class("Entry", vec![go, record("gor"), kwargs("gok")])],
             constants: vec![
                 ("CONF".to_owned(), list("a")),
                 (

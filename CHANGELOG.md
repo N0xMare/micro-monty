@@ -275,11 +275,20 @@ hashes are pre-release history, kept in the private archive
   exception's `__init__` through the type refuses an object that is not
   an exception (it returned `None`), and a method called with no
   argument at all says `unbound method str.upper() needs an argument`
-  as CPython does. Host call ids and `Task-N` numbers continue, and loaded code
+  as CPython does. A subclass of a class a reset shares
+  (`class Sub(Entry): blob = bytearray(30_000_000)`, the same under a
+  host exception class, a record class, `asyncio.Lock`,
+  `json.JSONEncoder`, `ExceptionGroup`) stayed on its base's subclass
+  list with all it held: the next cell had 8,986 pages of 4 KiB at a
+  64 MiB limit where a new session has 16,310, and 20,000 empty
+  subclasses cost 2,006 pages [M]. A shared class no longer lists its
+  subclasses (it never changes, so it has none to invalidate): the
+  next cell has a new session's room within 7 pages, and within 33
+  after 20,000 or 200,000 subclasses [M]. Host call ids and `Task-N` numbers continue, and loaded code
   stays loaded; `reset_to` and a new session share nothing. A host whose
   cells set attributes on a typed host function (`tool.calls = 0`) now
   gets the `AttributeError`: none of the 3,487 recorded Python cells does
-  [M]. The test is `conformance/reset`: 88 probes, a sweep that calls every method of the
+  [M]. The test is `conformance/reset`: 100 probes, a sweep that calls every method of the
   builtin types and of the prelude's classes with each shared object as `self`, and a walk that writes
   to each of the 11,000 objects a cell can reach from the builtins, the
   host's definitions and every importable module, and finds no write

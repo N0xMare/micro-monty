@@ -684,6 +684,84 @@ import asyncio
 await asyncio.sleep(0)
 getattr(asyncio.get_running_loop(), 'leak', None)
 
+=== a subclass of a host class holding memory
+class Sub(Entry):
+    blob = bytearray(30_000_000)
+---
+len([bytearray(1_000_000) for _ in range(45)])
+
+=== a subclass of a host class in a module holding memory
+import fs
+class Sub(fs.Node):
+    blob = bytearray(30_000_000)
+---
+len([bytearray(1_000_000) for _ in range(45)])
+
+=== a subclass of a host exception class holding memory
+class Sub(ToolError):
+    blob = bytearray(30_000_000)
+---
+len([bytearray(1_000_000) for _ in range(45)])
+
+=== a subclass of a record class holding memory
+class Sub(type(CONFR)):
+    blob = bytearray(30_000_000)
+---
+len([bytearray(1_000_000) for _ in range(45)])
+
+=== a subclass of a prelude class holding memory
+import asyncio
+class Sub(asyncio.Lock):
+    blob = bytearray(30_000_000)
+---
+len([bytearray(1_000_000) for _ in range(45)])
+
+=== a subclass of json.JSONEncoder holding memory
+import json
+class Sub(json.JSONEncoder):
+    blob = bytearray(30_000_000)
+---
+len([bytearray(1_000_000) for _ in range(45)])
+
+=== a subclass of a prelude exception class holding memory
+import json
+class Sub(json.JSONDecodeError):
+    blob = bytearray(30_000_000)
+---
+len([bytearray(1_000_000) for _ in range(45)])
+
+=== a subclass of ExceptionGroup holding memory
+class Sub(ExceptionGroup):
+    blob = bytearray(30_000_000)
+---
+len([bytearray(1_000_000) for _ in range(45)])
+
+=== a subclass of the struct sequence class holding memory
+import sys
+class Sub(type(sys.version_info)):
+    blob = bytearray(30_000_000)
+---
+len([bytearray(1_000_000) for _ in range(45)])
+
+=== 20,000 subclasses of a host class
+for i in range(20000):
+    class Sub(Entry):
+        pass
+---
+len([bytearray(1_000_000) for _ in range(60)])
+
+=== a dict_as_kwargs host function: attribute
+>>> AttributeError: 'builtin_function_or_method' object has no attribute 'leak' and no __dict__ for setting new attributes
+readk.leak = 'secret'
+---
+[getattr(readk, 'leak', None), readk.__name__, readk({'limit': 2}), obj().gok({'paths': ['p']})]
+
+=== a dict_as_kwargs host method: __name__
+>>> AttributeError: 'builtin_function_or_method' object has no attribute '__name__' and no __dict__ for setting new attributes
+Entry.gok.__name__ = 'evil'
+---
+[Entry.gok.__name__, Entry.gok.__qualname__, readk.__qualname__]
+
 === the reset walk
 @walk mark
 ---

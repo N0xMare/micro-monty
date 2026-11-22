@@ -314,6 +314,21 @@ evaluated, matching deferred annotations).
   - asyncio's current loop object, the one `asyncio.set_event_loop` set
     and the one that stands for the running loop, is forgotten by a
     reset.
+  - A class keeps a list of its subclasses, to give them new versions
+    when it changes. A class a reset shares never changes once shared,
+    and keeps no list: a cell's subclass of one is freed like any other
+    object, by a reset or when the cell drops it. A deleted subclass of
+    a guest's own class stays held by its base's list while the base
+    lives (CPython's list is weak).
+  - Not covered: `id()` and the address in a default `repr` after a
+    reset depend on where earlier cells left the heap; they are equal
+    to a new session's only by chance. An exception's `__init__` called
+    through another exception class than the instance's
+    (`OSError.__init__(ValueError('v'), 1)`) is accepted where CPython
+    raises `TypeError`; `type.mro()` with no argument returns a list,
+    and a dunder that is a method descriptor in CPython
+    (`dict.__getitem__()`) has the slot wrapper's `descriptor ... needs
+    an argument` text.
   - `sys`'s struct sequences (`version_info`, `float_info`, `hash_info`,
     `flags`, `int_info`) refuse attribute writes with CPython's errors
     (`readonly attribute` for a field, `... has no attribute 'x' and no

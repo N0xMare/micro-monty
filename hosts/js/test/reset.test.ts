@@ -45,15 +45,17 @@ function modules(): HostModule[] {
 			{ name: "row", default: row() },
 			{ name: "rows", default: [row()], kind: "keyword-only" },
 		]);
+	// `dictAsKwargs`: the function a cell gets is a wrapper the host module's code names inside a function.
+	const kwargs = (name: string): HostSignature => ({ ...read, name, dictAsKwargs: true });
 	return [
 		{
 			name: "",
-			functions: [typed("h"), typed("rec"), typed("obj"), typed("boom"), read, record("readr"), anySignature("tool")],
+			functions: [typed("h"), typed("rec"), typed("obj"), typed("boom"), read, record("readr"), kwargs("readk"), anySignature("tool")],
 			classes: [
 				{
 					name: "Entry",
 					fields: [["path", "str"]],
-					methods: [typed("go", [{ name: "n", default: 1 }]), record("gor")],
+					methods: [typed("go", [{ name: "n", default: 1 }]), record("gor"), kwargs("gok")],
 				},
 			],
 			constants: [
