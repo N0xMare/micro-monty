@@ -2324,7 +2324,8 @@ vm       registers, fuel left, limits, seq / virtual clock, the
          pending host calls and their ids, park reason,
          host modules (definition; for code the Engine shares, its 16-byte
          key, code hash and recipe), before the
-         code table (Code::encode_into; bundled-module code, loaded
+         code table (Code::encode_into: the room each of a code's eleven
+         tables keeps past its length, then the code; bundled-module code, loaded
          prelude units' code (by the unit's chunk and record offset) and
          the shared code of host modules' current definitions referenced,
          not stored)
@@ -2928,10 +2929,9 @@ bound owned capacities, not an allocator's transient peak or process RSS.
   bit per byte of code; loading reserves the largest such workspace across
   retained codes, so a same-budget restore can verify. Code is charged by
   its buffers' capacities: compiled code keeps the growth slack of its
-  bytecode and tables, which a restore decodes without, so a restored
-  session is charged less for the same compiled code than the session it
-  came from (46,820 against 39,056 bytes in a 2 MiB session [M]). A plain
-  run and a parked one hold the same code and are charged alike; host
+  bytecode and tables, which an image carries and a restore reserves, so
+  a restored session holds and is charged what the session it came from
+  is, and stays so through its next loads. Host
   signature code has its decode's capacities either way.
 - **The kept stop.** The stop a session keeps for `Session::pending` is
   charged by its length while the host holds it, in the session that

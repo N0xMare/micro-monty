@@ -36,6 +36,7 @@ fn compiled_words_verify_and_jumps_land_on_instruction_starts() {
     let module = mm_parse::parse(SRC).expect("parses");
     let program = compile(&module, Options::default()).expect("compiles");
     let mut jumps = 0;
+    let mut slack = 0;
     let mut fused = 0;
     let mut seen_for_prep = false;
     for code in &program.codes {
@@ -86,7 +87,13 @@ fn compiled_words_verify_and_jumps_land_on_instruction_starts() {
         let decoded = mm_compile::bytecode::Code::decode(&mut rest).expect("decodes");
         assert_eq!(rest, &[] as &[u8]);
         assert_eq!(&decoded, &**code);
+        // The growth room compiled tables keep is in the encoding: the
+        // decoded code holds, and is charged, what this one is.
+        assert_eq!(decoded.buffer_bytes(), code.buffer_bytes());
+        // (A clone's tables are their lengths.)
+        slack += code.buffer_bytes() - (**code).clone().buffer_bytes();
     }
+    assert!(slack > 0, "no compiled table keeps growth room");
     assert!(jumps >= 8, "{jumps} jumps");
     assert!(fused >= 1, "no fused pair");
     assert!(seen_for_prep, "no FOR_PREP");
@@ -291,4 +298,63 @@ fn the_unset_table_grows_with_the_code_for_many_captures() {
             f.bytecode.len()
         );
     }
+}
+
+/// A code object's tables are charged by capacity, so its encoding for
+/// images carries the room each keeps past its length: also an empty
+/// table's, within the decode's budget, and never trusted past it.
+#[test]
+fn an_encoded_code_keeps_the_room_of_its_tables() {
+    use mm_compile::{DecodeError, bytecode::Code};
+
+    let mut code = Code {
+        bytecode: Vec::with_capacity(8),
+        names: Vec::with_capacity(3),
+        freevars: Vec::with_capacity(5),
+        live: Vec::with_capacity(4),
+        ..Code::default()
+    };
+    code.bytecode.push(u32::from(op::RETURN));
+    code.names.push("n".into());
+    let mut bytes = Vec::new();
+    code.encode_into(&mut bytes);
+    let need = code.buffer_bytes();
+    let mut budget = need;
+    let decoded = Code::decode_bounded(&mut bytes.as_slice(), &mut budget).expect("decodes");
+    assert_eq!(decoded, code);
+    assert_eq!(budget, 0, "the decode charges what the code's buffers are");
+    assert_eq!(decoded.buffer_bytes(), need);
+    for (name, a, b) in [
+        ("bytecode", decoded.bytecode.capacity(), 8),
+        ("names", decoded.names.capacity(), 3),
+        ("freevars", decoded.freevars.capacity(), 5),
+        ("live", decoded.live.capacity(), 4),
+        ("consts", decoded.consts.capacity(), 0),
+    ] {
+        assert_eq!(a, b, "{name}");
+    }
+    let mut budget = need - 1;
+    assert_eq!(
+        Code::decode_bounded(&mut bytes.as_slice(), &mut budget),
+        Err(DecodeError::TooLarge)
+    );
+    assert_eq!(budget, need - 1);
+    // Forged room: the first field is the instructions' spare room as a
+    // varint. More than the budget is refused as too large, and more than
+    // a length can be as malformed; neither allocates.
+    let mut forged = vec![0x80, 0x80, 0x80, 0x80, 0x80, 0x20];
+    forged.extend_from_slice(&bytes[1..]);
+    let mut budget = 1 << 30;
+    assert_eq!(
+        Code::decode_bounded(&mut forged.as_slice(), &mut budget),
+        Err(DecodeError::TooLarge)
+    );
+    let mut forged = vec![0xff; 9];
+    forged.push(0x01);
+    forged.extend_from_slice(&bytes[1..]);
+    assert_eq!(
+        Code::decode_bounded(&mut forged.as_slice(), &mut budget),
+        Err(DecodeError::Invalid)
+    );
+    assert_eq!(Code::decode(&mut forged.as_slice()), None);
 }

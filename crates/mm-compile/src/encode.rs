@@ -361,6 +361,9 @@ pub enum DecodeError {
     TooLarge,
 }
 
+/// The tables of a code object that keep growth room ([`Code::spare`]).
+const TABLES: usize = 11;
+
 /// A reader. Everything but string references and instructions comes
 /// from `meta`; in the sectioned form string references come from `index`
 /// and instructions from `code` (sections [`section::OP`] to
@@ -380,6 +383,12 @@ struct In<'a> {
     /// `Arc` on its first use (`memo`); `pool` holds the rest.
     shared: SharedStrings<'a>,
     memo: Vec<Option<Arc<str>>>,
+    /// The room each of the code's tables keeps past its length
+    /// ([`Code::spare`]), read ahead of a single code object; zeros
+    /// otherwise.
+    spares: [usize; TABLES],
+    /// The next table's, taken by the reader that allocates it.
+    spare: usize,
 }
 
 #[inline]
@@ -471,7 +480,17 @@ impl<'a> In<'a> {
             deferred: false,
             shared: SharedStrings::default(),
             memo: Vec::new(),
+            spares: [0; TABLES],
+            spare: 0,
         }
+    }
+
+    /// An empty vector with room for `n` elements and the pending spare
+    /// room, charged first.
+    fn room<T>(&mut self, n: usize) -> Option<Vec<T>> {
+        let cap = n.checked_add(core::mem::take(&mut self.spare))?;
+        self.charge((cap as u64).checked_mul(size_of::<T>() as u64)?)?;
+        Some(Vec::with_capacity(cap))
     }
 
     fn charge(&mut self, bytes: u64) -> Option<()> {
@@ -518,8 +537,9 @@ impl<'a> In<'a> {
 
     fn bytes(&mut self) -> Option<Vec<u8>> {
         let n = self.len()?;
-        self.charge(n as u64)?;
-        self.take(n).map(<[u8]>::to_vec)
+        let mut out = self.room(n)?;
+        out.extend_from_slice(self.take(n)?);
+        Some(out)
     }
 
     fn words(&mut self) -> Option<Vec<u32>> {
@@ -541,8 +561,7 @@ impl<'a> In<'a> {
             return self.split_words(n);
         }
         let n = self.len()?;
-        self.charge(n as u64 * 4)?;
-        let mut out = Vec::with_capacity(n);
+        let mut out = self.room(n)?;
         while out.len() < n {
             let s = self.meta;
             let (n0, n1) = word_bytes(*s.first()?);
@@ -698,8 +717,7 @@ impl<'a> In<'a> {
     // that produced it, including when only one or two elements are present.
     fn list<T>(&mut self, read: fn(&mut Self) -> Option<T>) -> Option<Vec<T>> {
         let n = self.len()?;
-        self.charge((n as u64).checked_mul(size_of::<T>() as u64)?)?;
-        let mut values = Vec::with_capacity(n);
+        let mut values = self.room(n)?;
         for _ in 0..n {
             values.push(read(self)?);
         }
@@ -731,6 +749,14 @@ impl<'a> In<'a> {
         })
     }
 
+    /// One code object as [`Code::encode_into`] writes it.
+    fn spared_code(&mut self) -> Option<Code> {
+        for k in 0..TABLES {
+            self.spares[k] = usize::try_from(self.u64()?).ok()?;
+        }
+        self.code()
+    }
+
     fn code(&mut self) -> Option<Code> {
         let name = self.shared()?;
         let qualname = self.shared()?;
@@ -740,10 +766,15 @@ impl<'a> In<'a> {
         }
         let flag = |i: u8| flags >> i & 1 != 0;
         let first_line = self.u32()?;
+        let [bytecode, consts, names, varnames, ..] = self.spares;
+        self.spare = bytecode;
         let bytecode = self.words()?;
+        self.spare = consts;
         let consts = self.list(Self::konst)?;
+        self.spare = names;
         let names = self.shareds()?;
         let nregs = self.u32()?;
+        self.spare = varnames;
         let varnames = self.shareds()?;
         let params = ParamSpec {
             argcount: self.u32()?,
@@ -777,6 +808,35 @@ impl<'a> In<'a> {
         };
         if flag(6) {
             self.extras(&mut code)?;
+        } else if self.spares[4..] != [0; TABLES - 4] {
+            // Empty tables that keep room.
+            let [
+                _,
+                _,
+                _,
+                _,
+                freevars,
+                freenames,
+                exc,
+                positions,
+                live,
+                unset,
+                regs,
+            ] = self.spares;
+            self.spare = freevars;
+            code.freevars = self.room(0)?;
+            self.spare = freenames;
+            code.freenames = self.room(0)?;
+            self.spare = exc;
+            code.exc_table = self.room(0)?;
+            self.spare = positions;
+            code.positions = self.room(0)?;
+            self.spare = live;
+            code.live = self.room(0)?;
+            self.spare = unset;
+            code.unset = self.room(0)?;
+            self.spare = regs;
+            code.reg_names = self.room(0)?;
         }
         code.n_ics = self.u32()?;
         if flag(3) {
@@ -786,8 +846,24 @@ impl<'a> In<'a> {
     }
 
     fn extras(&mut self, c: &mut Code) -> Option<()> {
+        let [
+            _,
+            _,
+            _,
+            _,
+            freevars,
+            freenames,
+            exc,
+            positions,
+            live,
+            unset,
+            regs,
+        ] = self.spares;
+        self.spare = freevars;
         c.freevars = self.bytes()?;
+        self.spare = freenames;
         c.freenames = self.shareds()?;
+        self.spare = exc;
         c.exc_table = self.list(|r| {
             Some(ExcEntry {
                 start: r.u32()?,
@@ -796,6 +872,7 @@ impl<'a> In<'a> {
                 depth: r.u32()?,
             })
         })?;
+        self.spare = positions;
         c.positions = self.list(|r| {
             Some(PosEntry {
                 pc: r.u32()?,
@@ -810,6 +887,7 @@ impl<'a> In<'a> {
                 no_carets: r.bool()?,
             })
         })?;
+        self.spare = live;
         c.live = self.list(|r| {
             Some(LiveEntry {
                 pc: r.u32()?,
@@ -817,12 +895,14 @@ impl<'a> In<'a> {
                 unset: r.u32()?,
             })
         })?;
+        self.spare = unset;
         c.unset = self.list(|r| {
             Some(Unset {
                 reg: r.byte()?,
                 next: r.u32()?,
             })
         })?;
+        self.spare = regs;
         c.reg_names = self.list(|r| {
             Some(RegName {
                 start: r.u32()?,
@@ -836,17 +916,48 @@ impl<'a> In<'a> {
 }
 
 impl Code {
-    /// Appends the binary form of one code object ([`Code::decode`] reads
-    /// it), for snapshots.
-    pub fn encode_into(&self, out: &mut Vec<u8>) {
-        // Most pieces are one byte: pushed, not copied by a `memcpy` call.
-        self.encode_to(&mut |b| match b {
-            [x] => out.push(*x),
-            _ => out.extend_from_slice(b),
-        });
+    /// The room each table keeps past its length, in the order a decode
+    /// allocates them. The memory limit charges a code's tables by
+    /// capacity ([`Code::buffer_bytes`]), and compiled code keeps its
+    /// growth room, so an image carries these: the code a restore decodes
+    /// holds, and is charged, what the session's does.
+    fn spare(&self) -> [usize; TABLES] {
+        fn spare<T>(v: &Vec<T>) -> usize {
+            v.capacity() - v.len()
+        }
+        [
+            spare(&self.bytecode),
+            spare(&self.consts),
+            spare(&self.names),
+            spare(&self.varnames),
+            spare(&self.freevars),
+            spare(&self.freenames),
+            spare(&self.exc_table),
+            spare(&self.positions),
+            spare(&self.live),
+            spare(&self.unset),
+            spare(&self.reg_names),
+        ]
     }
 
-    /// Streams the same binary form without allocating an output buffer.
+    /// Appends the binary form of one code object ([`Code::decode`] reads
+    /// it), for snapshots: its tables' spare room (`Code::spare`), then
+    /// what [`Code::encode_to`] streams.
+    pub fn encode_into(&self, out: &mut Vec<u8>) {
+        // Most pieces are one byte: pushed, not copied by a `memcpy` call.
+        let mut put = |_, b: &[u8]| match b {
+            [x] => out.push(*x),
+            _ => out.extend_from_slice(b),
+        };
+        let mut o = Out(&mut put, Inline, section::META);
+        for spare in self.spare() {
+            o.len(spare);
+        }
+        o.code(self);
+    }
+
+    /// Streams the code alone, without its tables' spare room (a hash of
+    /// what the code is), allocating no output buffer.
     pub fn encode_to(&self, out: &mut dyn FnMut(&[u8])) {
         Out(&mut |_, b| out(b), Inline, section::META).code(self);
     }
@@ -865,7 +976,7 @@ impl Code {
     /// `Code`, allocator overhead and [`Code::verify`]'s scratch space.
     pub fn decode_bounded(bytes: &mut &[u8], budget: &mut u64) -> Result<Code, DecodeError> {
         let mut r = In::new(bytes, *budget);
-        let c = r.code().ok_or(if r.budget.is_none() {
+        let c = r.spared_code().ok_or(if r.budget.is_none() {
             DecodeError::TooLarge
         } else {
             DecodeError::Invalid

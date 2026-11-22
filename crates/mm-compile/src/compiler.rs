@@ -723,7 +723,14 @@ impl<'a> Compiler<'a> {
 
     #[inline(never)]
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn konst(&mut self, k: Konst) -> R<u16> {
+    fn konst(&mut self, mut k: Konst) -> R<u16> {
+        // A constant string keeps no growth room (a mangled or qualified
+        // name is built by appending): a code object's strings are charged
+        // by capacity, and an image carries the room of its tables only
+        // (`Code::encode_into`).
+        if let Konst::Str(s) = &mut k {
+            s.shrink_to_fit();
+        }
         let u = self.u();
         match &k {
             Konst::Str(s) => {

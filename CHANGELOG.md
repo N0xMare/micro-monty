@@ -424,11 +424,14 @@ GitHub release also attaches the two mm-wasm guests.
   room past the stop is held uncharged, at most 4,096 bytes, as the
   buffer was between stops.
 - Host signature code keeps exact buffer capacities, as a restore decodes
-  it. Compiled code still keeps the growth slack of its buffers, which a
-  restore decodes without: code is charged by capacity, so a restored
-  session is charged less for the same code than the one it came from
-  (46,820 against 39,056 bytes in a 2 MiB session [M]) until restores are
-  made exact.
+  it. Compiled code keeps the growth slack of its tables, and an image
+  now carries it: each stored code is written with the room its eleven
+  tables keep past their lengths, and a restore reserves it, so a
+  restored session holds and is charged what the one it came from is,
+  also after its next loads (before, 74,840 against 51,816 bytes after
+  one load in a probe of 40 functions [M]). An image grows by about 11
+  bytes per stored code. Constant strings are compiled to their exact
+  length.
 - Growing the mark stack during an incremental mark reserves the
   capacity it charges: it reserved that many slots beyond the entries on
   the stack, up to 4 bytes per object uncharged, and a restored session

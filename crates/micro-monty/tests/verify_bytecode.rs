@@ -52,6 +52,7 @@ fn compiler_output_verifies() {
                 )
                 .expect("code decodes within its original buffer budget");
                 assert_eq!(&decoded, &**c);
+                assert_eq!(decoded.buffer_bytes(), c.buffer_bytes());
                 n += 1;
             }
         }
