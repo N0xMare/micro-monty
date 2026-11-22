@@ -6135,7 +6135,12 @@ def _seq_scan_rest(s, x, i, stop, kind, c):
             elif kind == 1:
                 return i
             else:
-                del s[i]
+                try:
+                    del s[i]
+                except IndexError:
+                    # The `==` shortened the list: CPython deletes the
+                    # slice `[i:i + 1]`, which is then empty.
+                    pass
                 return None
         i += 1
     if kind == 0:
