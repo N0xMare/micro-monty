@@ -988,6 +988,11 @@ pub struct Vm {
     /// (`Vm::cancel_sched`): its state, an `nstep::op::CANCEL`'s, or
     /// `None`. Nothing else runs until it ends.
     pub(crate) cancelling: Value,
+    /// The exception `asyncio.run`'s caller handles, while the run lasts
+    /// (`None` otherwise): what a task's first step and a loop callback
+    /// start with as the handled exception, since CPython runs them from
+    /// the loop, beneath which that handler is still open.
+    pub(crate) run_handled: Value,
     /// Failed tasks and futures whose exception may never be retrieved
     /// ([`crate::aio::aw::LOG_TB`]), for the end of `asyncio.run`.
     pub(crate) unretrieved: Vec<Value>,
@@ -1344,6 +1349,7 @@ impl Vm {
             context: Value::NONE,
             escape: Value::NONE,
             cancelling: Value::NONE,
+            run_handled: Value::NONE,
             unretrieved: Vec::new(),
             loop_flags: 0,
             asyncgens_listed: false,

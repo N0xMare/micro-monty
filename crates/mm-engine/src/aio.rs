@@ -675,6 +675,7 @@ impl Vm {
             // `asyncio.run` ends its loop: tasks it left behind go too.
             self.drop_other_tasks();
             self.loop_flags &= !crate::vm::LOOP_IN_RUN;
+            self.run_handled = Value::NONE;
             // CPython's `Runner.close()` runs `shutdown_asyncgens()` and
             // `shutdown_default_executor()` as two more numbered tasks.
             if state & coro::RUN_OPEN == 0 {
@@ -1346,6 +1347,7 @@ impl Vm {
         self.task_names = Value::NONE;
         self.escape = Value::NONE;
         self.cancelling = Value::NONE;
+        self.run_handled = Value::NONE;
         self.unretrieved.clear();
         self.unretrieved.shrink_to_fit();
         self.loop_flags = 0;
@@ -1741,6 +1743,8 @@ impl Vm {
         if let Some(st) = saved {
             return Ok(Some(st));
         }
+        // A first step runs from the loop, under the run's caller.
+        self.handled = self.run_handled;
         let c = self.vslot_hot(handle, aw::EXTRA);
         if c.is_obj_kind(ty::SLEEP as u8) {
             // A sleep's task steps as the `asyncio.sleep()` coroutine does:
@@ -2644,7 +2648,7 @@ impl Vm {
         self.cur = i;
         self.depth = 0;
         self.specials.clear();
-        self.handled = Value::NONE;
+        self.handled = self.run_handled;
         self.context = context;
         let st = self.enter_callback(func, [f, args, h], callee, call_args);
         if st.is_err() {
@@ -2787,6 +2791,8 @@ impl Vm {
         self.iter_open = true;
         self.stop_wait = 0;
         self.loop_flags |= crate::vm::LOOP_IN_RUN;
+        // The run's caller's handler stays open beneath the loop.
+        self.run_handled = self.handled;
         if let Some(Some(t)) = self.tasks.get_mut(0) {
             t.handle = handle;
         }

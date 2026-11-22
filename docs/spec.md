@@ -1626,6 +1626,11 @@ coroutine and no second dispatch loop runs.
 
 `asyncio.create_task` spawns a scheduler task and returns its `Task`
 handle, which runs when the creating task next yields, as on CPython.
+A task's first step and a loop callback start with the exception
+`asyncio.run`'s caller handles as the handled one (`Vm::run_handled`, in
+the image's run queue; `None` in a cell whose top level awaits): CPython
+runs them from the loop, beneath which that handler is still open, and
+not under the task that made them.
 Cancellation is CPython 3.14's `Task.cancel()`: the request goes to what
 the task waits on (a task, a gather's children, a future, a sleep, a host
 future) through one iterative walk (`Vm::cancel_walk`, no recursion and no

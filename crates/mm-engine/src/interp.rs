@@ -1035,7 +1035,7 @@ impl Vm {
             }
             t.values(&self.gathers);
             t.value(self.task_names);
-            t.values(&[self.context, self.escape, self.cancelling]);
+            t.values(&[self.context, self.escape, self.cancelling, self.run_handled]);
             t.values(&self.unretrieved);
             for r in &self.ready {
                 match *r {

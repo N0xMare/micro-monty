@@ -794,6 +794,7 @@ impl Vm {
         put_value(out, self.context);
         put_value(out, self.escape);
         put_value(out, self.cancelling);
+        put_value(out, self.run_handled);
         put_values(out, &self.unretrieved);
         put_u8(out, self.loop_flags);
         put_len(out, self.futures.len());
@@ -2099,6 +2100,7 @@ impl Vm {
         if !(cancelling == Value::NONE || cancelling.is_obj_kind(ty::NSTATE as u8)) {
             return Err(SnapError::Corrupt("run queue"));
         }
+        let run_handled = need(r.value(), "run queue")?;
         let nun = need(r.count(8), "run queue")?;
         charge(&mut budget, nun as u64 * size_of::<Value>() as u64)?;
         let mut unretrieved = Vec::with_capacity(nun);
@@ -2342,6 +2344,7 @@ impl Vm {
             context,
             escape,
             cancelling,
+            run_handled,
             unretrieved,
             loop_flags,
             asyncgens_listed: true,
