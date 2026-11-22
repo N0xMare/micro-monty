@@ -1432,6 +1432,14 @@ impl Vm {
                         all.push(callee);
                         all.extend(pos);
                         (m, all)
+                    } else if m.is_obj_kind(ty::INST as u8)
+                        && self.user_method(m, Dn::Get).is_some()
+                    {
+                        // As `Vm::call_dunder`: a descriptor in Python.
+                        let mut all = Vec::with_capacity(pos.len() + 2);
+                        all.extend_from_slice(&[m, callee]);
+                        all.extend(pos);
+                        (self.prelude_fn("_descr_call")?, all)
                     } else {
                         let c = self.class_of(callee);
                         (self.bind_attr(m, callee, c)?, pos)

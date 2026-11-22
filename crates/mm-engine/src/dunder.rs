@@ -46,6 +46,15 @@ impl Vm {
             };
             return Ok(Next::Invoke(m, all, Value::NONE, cont));
         }
+        if m.is_obj_kind(ty::INST as u8) && self.user_method(m, Dn::Get).is_some() {
+            // A descriptor written in Python (a `functools.partial`): the
+            // prelude binds it with its `__get__` and calls what that gives.
+            let bind = self.prelude_fn("_descr_call")?;
+            let mut all = Vec::with_capacity(args.len() + 2);
+            all.extend_from_slice(&[m, obj]);
+            all.extend_from_slice(args);
+            return Ok(Next::Invoke(bind, Args::from(all), Value::NONE, cont));
+        }
         let c = self.class_of(obj);
         let b = self.bind_attr(m, obj, c)?;
         if b == Value::UNDEFINED {

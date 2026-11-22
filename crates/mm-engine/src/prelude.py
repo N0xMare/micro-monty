@@ -5729,6 +5729,11 @@ def _union_or(a, b):
     return _union_of((a, b))
 
 
+def _descr_call(d, obj, /, *args, **kwargs):
+    # A special method that is a descriptor written in Python.
+    return type(d).__get__(d, obj, type(obj))(*args, **kwargs)
+
+
 def _class_getitem(cls, *args):
     if len(args) != 1:
         raise TypeError(f'{cls.__name__}.__class_getitem__() takes exactly one argument '

@@ -1720,6 +1720,24 @@ impl Vm {
         }
     }
 
+    /// Special method `d` of instance `obj` of class `c` and the arguments
+    /// to call it with: bound as [`Vm::bind_attr`] binds it, or, for a
+    /// descriptor written in Python (a `functools.partial`), the prelude's
+    /// `_descr_call`, which binds it with its `__get__`.
+    fn bind_special(
+        &mut self,
+        d: Value,
+        obj: Value,
+        c: Value,
+        mut args: Vec<Value>,
+    ) -> Result<(Value, Vec<Value>), Raised> {
+        if d.is_obj_kind(ty::INST as u8) && self.user_method(d, Dn::Get).is_some() {
+            args.splice(0..0, [d, obj]);
+            return Ok((self.prelude_fn("_descr_call")?, args));
+        }
+        Ok((self.bind_attr(d, obj, c)?, args))
+    }
+
     /// "property 'x' of 'C' object has no setter".
     fn no_accessor(&mut self, prop: Value, obj: Value, what: &str) -> Raised {
         let g = self.vslot(prop, 0);
@@ -1826,8 +1844,8 @@ impl Vm {
             && let Ok(key) = self.dn(Dn::Getattr)
             && let Some(g) = self.class_lookup(c, key)
         {
-            let m = self.bind_attr(g, obj, c)?;
-            return Ok(Got::Value(self.call_request(m, vec![name], Cont::None)?));
+            let (m, args) = self.bind_special(g, obj, c, vec![name])?;
+            return Ok(Got::Value(self.call_request(m, args, Cont::None)?));
         }
         Ok(Got::Missing)
     }
@@ -2139,8 +2157,8 @@ impl Vm {
             && let Some(sa) = self.class_lookup(c, key)
             && sa.as_native().is_none()
         {
-            let m = self.bind_attr(sa, obj, c)?;
-            self.call_request(m, vec![name, v], Cont::Discard)?;
+            let (m, args) = self.bind_special(sa, obj, c, vec![name, v])?;
+            self.call_request(m, args, Cont::Discard)?;
             return Ok(None);
         }
         self.generic_setattr(obj, name, v)
@@ -2195,8 +2213,8 @@ impl Vm {
             && let Some(da) = self.class_lookup(c, key)
             && da.as_native().is_none()
         {
-            let m = self.bind_attr(da, obj, c)?;
-            self.call_request(m, vec![name], Cont::Discard)?;
+            let (m, args) = self.bind_special(da, obj, c, vec![name])?;
+            self.call_request(m, args, Cont::Discard)?;
             return Ok(());
         }
         self.generic_delattr(obj, name)
