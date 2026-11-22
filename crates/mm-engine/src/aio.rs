@@ -2022,12 +2022,15 @@ impl Vm {
         self.untrack_gather(g);
         if flags & aw::CANCEL_REQUESTED != 0 {
             // `gather(..., return_exceptions=True)` cancelled still raises:
-            // CPython's `_make_cancelled_error()` of the last child.
+            // CPython's `_make_cancelled_error()` of the last child, which
+            // for one that did not end cancelled is a new error with the
+            // message of its last cancel (kept at its settle).
             let last = children.last().copied().unwrap_or(Value::NONE);
             let e = if self.raw_of_hot(last, aw::STATE) == aw::CANCELLED {
                 self.child_error(last)
             } else {
-                self.new_cancelled(Value::NONE).unwrap_or(self.exc)
+                let msg = self.vslot_hot(g, aw::RESULT);
+                self.new_cancelled(msg).unwrap_or(self.exc)
             };
             self.settle(g, false, e);
             return;
@@ -3541,6 +3544,18 @@ impl Vm {
                     .saturating_add(listens.saturating_mul(gathers / 16));
                 (1 + n as u64 / 8, wake, callbacks)
             }
+            // A task that must raise the cancel itself hands its message
+            // to the gathers that wait on it (`Vm::set_must_cancel`), one
+            // read of its waiters.
+            Some(ty::TASK) if pending => {
+                let w = self.vslot(c, aw::WAITERS);
+                let n = if w.is_obj_kind(ty::TUPLE as u8) {
+                    self.tuple_len(w)
+                } else {
+                    0
+                };
+                (1 + n as u64 / 8, 0, 0)
+            }
             _ => (1, 0, 0),
         }
     }
@@ -3706,6 +3721,43 @@ impl Vm {
         self.set_raw_of(h, aw::MUST_CANCEL, 1);
         if let Some(r) = h.as_obj() {
             self.set_slot(r, aw::RESULT, msg);
+        }
+        // The message stays with the task when it ends some other way
+        // than cancelled (`Task._cancel_message`), and its result takes
+        // the slot: a pending gather whose last child it is keeps the
+        // message in its own `RESULT`, for the error it raises if it was
+        // cancelled ([`Vm::check_gather`]).
+        let w = self.vslot(h, aw::WAITERS);
+        let (single, n) = if w.is_obj_kind(ty::TUPLE as u8) {
+            (false, self.tuple_len(w))
+        } else {
+            (true, 1)
+        };
+        for k in 0..n {
+            let g = if single {
+                w
+            } else {
+                self.vslot(w, u32::try_from(k).unwrap_or(0))
+            };
+            if g.is_obj_kind(ty::GATHER as u8)
+                && self.gather_last_child(g) == h
+                && let Some(r) = g.as_obj()
+            {
+                self.set_slot(r, aw::RESULT, msg);
+            }
+        }
+    }
+
+    /// The last listed child of gather `g` (`None` for a `FIRST` waiter
+    /// future, or one with no children).
+    fn gather_last_child(&self, g: Value) -> Value {
+        if self.raw_of(g, aw::AUX) == FIRST {
+            return Value::NONE;
+        }
+        let children = self.vslot(g, aw::EXTRA);
+        match u32::try_from(self.tuple_len(children)) {
+            Ok(n) if n != 0 => self.vslot(children, n - 1),
+            _ => Value::NONE,
         }
     }
 

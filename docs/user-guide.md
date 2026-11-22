@@ -1695,6 +1695,11 @@ differs:
   behind `call_later` and `wait_for` included, are cancelled in creation
   order, "Task exception was never retrieved" is reported when it ends, and
   task reprs and reports have no `coro=<...>` or source locations.
+- A cancel hands its message to the gathers whose last child the
+  cancelled task is, which reads the task's waiters. A task with very
+  many done callbacks, cancelled very many times by separate `cancel()`
+  calls, takes about 3.4 times as long as before for those calls, at the
+  same fuel; no single step is long.
 - Near the memory limit the loop drops nothing it accepted. A done
   callback, a `call_soon` or timer callback, or a task's first step that
   has no room to start waits for one collection and is tried again; if it

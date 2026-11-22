@@ -563,6 +563,11 @@ hashes are pre-release history, kept in the private archive
     `shutdown_asyncgens()` and `shutdown_default_executor()` make, where
     it stopped at once and dropped the queue (own case 597). A run that
     ends with nothing queued costs the same fuel.
+  - A cancelled gather whose last listed child swallowed its cancel
+    raises `CancelledError` with the message of the last cancel that
+    child had to raise itself, as CPython's does (`gather(t).cancel('m')`
+    while `t` is at a bare `sleep(0)` or has a cancelled waiter); the
+    message was lost (own case 598).
 
 ### Added
 
@@ -615,6 +620,16 @@ hashes are pre-release history, kept in the private archive
   later collection [M, `--release`]. No collection shrinks it (a guest
   could then grow and shrink it in a loop); `reset()`, `reset_to` and a
   template restore give it back.
+- A task with many waiters (done callbacks, gathers that hold it)
+  cancelled many times by separate `cancel()` calls pays a read of its
+  waiters at each call, which hands the cancel message to the gathers
+  whose last child it is: N callbacks cancelled N times take about 3.4
+  times as long as before this release at equal fuel (0.39 s against
+  0.11 s at 10,000, 3.15 s against 0.92 s at 30,000 [S, the review,
+  release builds]). Each call is a short step; within one cancel the
+  reads count toward its step's work, so no step is long. Remembering
+  which gathers already hold the message would need image state and is
+  not built.
 - Differences from CPython older than this release, found by the review
   of the CPython fixes and not fixed [S, that review; the same on
   17a2daf]: `gen.throw(exc)` and `gen.close()` overwrite a `__context__`

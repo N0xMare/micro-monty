@@ -5084,6 +5084,156 @@ except asyncio.CancelledError as e:
     );
 }
 
+/// The tree of [`a_cancel_long_by_a_tasks_waiters_is_the_same_parked_and_restored`]:
+/// a task with 600 done callbacks that a gather names 400 times.
+const WAITERS_TREE: &str = "\
+import asyncio
+def cb(f):
+    pass
+async def w():
+    await asyncio.sleep(1000)
+async def holder(g):
+    await g
+def tree():
+    u = asyncio.create_task(w())
+    for _ in range(600):
+        u.add_done_callback(cb)
+    return u, asyncio.gather(*[u] * 400)
+";
+
+/// A cancel of that tree under each caller, with what it prints: the
+/// program's `cancel()`, the scheduler's for a task that blocks with a
+/// cancel pending, and the one for a `SystemExit` that leaves the run.
+const WAITERS_CANCELS: [(&str, &str); 3] = [
+    (
+        "\
+async def main():
+    u, g = tree()
+    t = asyncio.create_task(holder(g))
+    await asyncio.sleep(0)
+    print(t.cancel('m'))
+    try:
+        await t
+    except asyncio.CancelledError as e:
+        print('call', e.args, u.cancelled(), g.cancelled())
+asyncio.run(main())
+",
+        "True\ncall ('m',) True False\n",
+    ),
+    (
+        "\
+async def blocks(t):
+    asyncio.current_task().cancel('p')
+    try:
+        await t
+    except asyncio.CancelledError as e:
+        return 'blocked', e.args
+async def main():
+    u, g = tree()
+    t = asyncio.create_task(holder(g))
+    await asyncio.sleep(0)
+    print(await asyncio.create_task(blocks(t)), t.cancelled(), u.cancelled())
+asyncio.run(main())
+",
+        "('blocked', ('p',)) True True\n",
+    ),
+    (
+        "\
+async def leave():
+    raise SystemExit('lv')
+async def main():
+    u, g = tree()
+    t = asyncio.create_task(holder(g))
+    await asyncio.sleep(0)
+    asyncio.create_task(leave())
+    try:
+        await t
+    except asyncio.CancelledError as e:
+        print('main', e.args, t.cancelled(), u.cancelling())
+        raise
+try:
+    asyncio.run(main())
+except SystemExit as e:
+    print('exit', e.code)
+",
+        "main () True 400\nexit lv\n",
+    ),
+];
+
+/// How a run parks: not at all, at every 997 fuel units, or at every
+/// safepoint (a deadline always past).
+#[derive(Clone, Copy, Debug)]
+enum Parks {
+    None,
+    Fuel,
+    Deadline,
+}
+
+/// Runs `src`, snapshotted and restored at every park: its output, fuel
+/// and parks.
+fn run_restored_at(engine: &Engine, src: &str, parks: Parks) -> (String, u64, usize) {
+    let code = engine.compile(src, "t.py").expect("compiles");
+    let out = Arc::new(Mutex::new(String::new()));
+    let attach = |s: &mut Session| {
+        let sink = Arc::clone(&out);
+        s.set_output(Box::new(move |t: &str| {
+            sink.lock().expect("lock").push_str(t);
+        }));
+    };
+    let arm = |s: &mut Session| match parks {
+        Parks::None => {}
+        Parks::Fuel => s.set_fuel(Some(997u64.max(s.fuel_wanted()))),
+        Parks::Deadline => s.set_deadline(Some(std::time::Instant::now())),
+    };
+    let total = u64::MAX / 2;
+    let mut session = Session::new(engine).expect("session");
+    attach(&mut session);
+    session.set_fuel_total(Some(total));
+    arm(&mut session);
+    let mut p = session.start(&code);
+    let mut n = 0;
+    while let Progress::Parked { .. } = p {
+        n += 1;
+        let image = session.snapshot().expect("snapshot");
+        drop(session);
+        session = engine.restore(&image).expect("restore");
+        attach(&mut session);
+        arm(&mut session);
+        p = session.resume(Resume::Continue).expect("resumes");
+    }
+    assert!(matches!(p, Progress::Complete(_)), "{parks:?}: {p:?}");
+    let fuel = total - session.fuel_total().expect("a total");
+    let out = out.lock().expect("lock").clone();
+    (out, fuel, n)
+}
+
+/// A cancel made long by the waiters of a task it reaches (600 done
+/// callbacks on a task a gather names 400 times: `Vm::settle_work` counts
+/// a task's waiters, which `Vm::set_must_cancel` reads at every visit),
+/// rooted at a task under each caller: the program's `cancel()`, the
+/// scheduler's for a task that blocks with a cancel pending, and the one
+/// for a `SystemExit` that leaves the run. Parked at every safepoint and
+/// at every 997 fuel units, snapshotted and restored at every park, each
+/// prints what the plain run prints and charges its fuel.
+#[test]
+fn a_cancel_long_by_a_tasks_waiters_is_the_same_parked_and_restored() {
+    let engine = Engine::new(EngineConfig::default());
+    for (body, expected) in WAITERS_CANCELS {
+        let src = format!("{WAITERS_TREE}{body}");
+        let (out, fuel, _) = run_restored_at(&engine, &src, Parks::None);
+        assert_eq!(out, expected);
+        for parks in [Parks::Fuel, Parks::Deadline] {
+            let (parked, parked_fuel, n) = run_restored_at(&engine, &src, parks);
+            assert!(n > 100, "{parks:?}: {n} parks");
+            assert_eq!(
+                (parked.as_str(), parked_fuel),
+                (expected, fuel),
+                "{parks:?}"
+            );
+        }
+    }
+}
+
 /// Own case 579 (cancels longer than a step) charges this fuel, run whole
 /// or parked every 1,000 units: a long cancel's steps charge what its
 /// first pass visits and `_steps`' calls, and a park moves neither. (Each

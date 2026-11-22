@@ -2888,6 +2888,17 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "G.cancel()",
         1,
     ),
+    // A task that must raise the cancel itself hands the message to the
+    // gathers that wait on it, one read of its waiters at every visit
+    // (`Vm::set_must_cancel`): a task with 20,000 done callbacks under a
+    // gather that names it 20,000 times was one step 787 to 836 ms past
+    // the deadline with a task's visit a unit [M, shipped].
+    (
+        Row::Bounded,
+        "import asyncio\nawait asyncio.sleep(0)\nasync def w():\n    await asyncio.sleep(1000)\ndef cb(f):\n    pass",
+        "t = asyncio.create_task(w())\nfor _ in range(20_000):\n    t.add_done_callback(cb)\nG = asyncio.gather(*[t] * 20_000)\nG.cancel('m')\nawait asyncio.sleep(0)",
+        1,
+    ),
     // The scheduler's own cancel, for a task that blocks with a cancel
     // pending, goes on in the same steps between tasks: on a gather of
     // 1.2M futures it was one step of 91 to 104 ms [M, shipped, 4a3b195].
