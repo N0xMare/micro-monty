@@ -462,9 +462,8 @@ pub(crate) fn m_trunc(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         }
         return vm.new_big(&Big::from_f64(x));
     }
-    if vm.user_class(v).is_some() {
-        return Err(vm.need_py());
-    }
+    // Only the class's `__trunc__` counts: no `__float__`, no `__index__`
+    // and no instance attribute stands in for it.
     let msg = format!("type {} doesn't define __trunc__ method", vm.type_name(v));
     Err(vm.err(T::TypeError, &msg))
 }
