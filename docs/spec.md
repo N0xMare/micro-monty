@@ -303,7 +303,17 @@ evaluated, matching deferred annotations).
     on such an object refuses it as CPython's descriptor does
     (`BaseException.add_note(read, 'n')`: `TypeError: descriptor
     'add_note' for 'BaseException' objects doesn't apply to a
-    'builtin_function_or_method' object`).
+    'builtin_function_or_method' object`), an exception's `__init__`
+    included (CPython's message names the class the `__init__` is of,
+    this one `BaseException`). The prelude's own methods are refused the
+    same writes: `self.x = v` in one, called through its class on such
+    an object (`json.JSONEncoder.__init__(json.JSONEncoder, default=f)`,
+    which CPython allows), raises as the statement does in a cell; only
+    a prelude unit's top level writes them. `type(read)` is still
+    `function` and `repr(read)` a function's.
+  - asyncio's current loop object, the one `asyncio.set_event_loop` set
+    and the one that stands for the running loop, is forgotten by a
+    reset.
   - `sys`'s struct sequences (`version_info`, `float_info`, `hash_info`,
     `flags`, `int_info`) refuse attribute writes with CPython's errors
     (`readonly attribute` for a field, `... has no attribute 'x' and no

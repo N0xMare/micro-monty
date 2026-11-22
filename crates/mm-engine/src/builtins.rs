@@ -2864,11 +2864,14 @@ impl Vm {
         let method = n.owner.is_some();
         if method && got == 0 {
             // An unbound method called with no receiver.
-            let owner = n.owner.map_or("object", T::name);
-            let msg = format!(
-                "descriptor '{}' of '{owner}' object needs an argument",
-                n.name()
-            );
+            // A dunder is a slot wrapper in CPython, with its own wording
+            // (as in `own_self`).
+            let (owner, name) = (n.owner.map_or("object", T::name), n.name());
+            let msg = if name.starts_with("__") {
+                format!("descriptor '{name}' of '{owner}' object needs an argument")
+            } else {
+                format!("unbound method {owner}.{name}() needs an argument")
+            };
             return Err(self.err(T::TypeError, &msg));
         }
         let (got, min, max) = if method {
@@ -6812,12 +6815,14 @@ fn exc_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 /// `BaseException.__init__` as a type gives it (`Exception.__init__(e,
-/// ...)`): the arguments only, whatever `e` is ([`UNBOUND`]).
+/// ...)`): the arguments only, whatever exception `e` is ([`UNBOUND`]).
+/// Another object is refused as CPython's slot wrapper refuses it, which
+/// names the class the wrapper is of where this names `BaseException`.
 fn exc_init_unbound(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    let e = vm.arg_o(&a, 0);
+    let e = own_self(vm, &a, &[ty::EXC], T::BaseException, "__init__")?;
     let rest: Vec<Value> = (1..a.n).map(|i| vm.arg_o(&a, i)).collect();
     let t = vm.alloc_tuple_hot(&rest)?;
-    if let Some(r) = e.as_obj().filter(|_| e.is_obj_kind(ty::EXC as u8)) {
+    if let Some(r) = e.as_obj() {
         vm.set_slot_hot(r, crate::vm::exc_slot::ARGS, t);
         // `NameError`, `AttributeError` and `ImportError` take keywords
         // (`super().__init__(msg, name=...)`); the others refuse them,

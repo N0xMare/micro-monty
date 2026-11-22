@@ -1831,7 +1831,13 @@ differs:
   The class of a record from the host (a named tuple) refuses them too,
   which CPython's namedtuple classes do not: subclass it to add to it.
   A reset builds the builtins module's list, dict and record constants
-  again, so a cell's change to one in place does not last.
+  again, so a cell's change to one in place does not last, and forgets
+  the loop `asyncio.set_event_loop` set. A stdlib method called through
+  its class on one of these objects is refused as well
+  (`json.JSONEncoder.__init__(json.JSONEncoder, default=f)` raises the
+  `TypeError`; CPython sets the attributes on the class): make an
+  instance or a subclass. `type(fetch)` is `function` and its `repr` a
+  function's, though the messages name a builtin.
 
 - **Sorting.** `sorted` and `list.sort` are a stable merge sort that calls
   only `<`. For a total order the result is CPython's, but `__lt__` is

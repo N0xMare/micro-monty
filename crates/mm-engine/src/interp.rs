@@ -4229,7 +4229,7 @@ impl Vm {
                                 r => op_unit!(r.map(|_| ()), 6, ("_unreachable", &[])),
                             }
                         } else {
-                            let set = if code.gslot == crate::vm::GSLOT_PRELUDE {
+                            let set = if self.writes_shared(code) {
                                 self.setattr(o, name, acc)
                             } else {
                                 self.guest_setattr(o, name, acc)
@@ -4983,7 +4983,7 @@ impl Vm {
             }
             op::DEL_ATTR => {
                 let name = code.names[opd!(0)];
-                let del = if code.gslot == crate::vm::GSLOT_PRELUDE {
+                let del = if self.writes_shared(&code) {
                     self.delattr(acc, name)
                 } else {
                     self.guest_delattr(acc, name)

@@ -262,12 +262,25 @@ hashes are pre-release history, kept in the private archive
   `add_note` called through the type on an object that is not an
   exception raise CPython's `TypeError`: they wrote its slots, emptying
   a host function's closure or a class's namespace and giving a `sys`
-  struct sequence a `__notes__` list, past every refusal [M]. Host call ids and `Task-N` numbers continue, and loaded code
+  struct sequence a `__notes__` list, past every refusal [M]. The
+  prelude's own methods are held to the same refusals: `self.x = v` in
+  one ran as the prelude's write whatever `self` was, so
+  `json.JSONEncoder.__init__(json.JSONEncoder, default=f)` made every
+  later cell's encoder call `f`, and `json.JSONEncoder.__init__(read,
+  default=gen())` or `asyncio.Queue.__init__(type(ROW), 7)` left values
+  on a host function or a record class [M]; they raise the `TypeError`
+  or `AttributeError` now, which CPython does not for a class. The loop
+  `asyncio.set_event_loop` set, with what a cell left on it, was returned
+  by `asyncio.get_event_loop()` after a reset [M]; a reset forgets it. An
+  exception's `__init__` through the type refuses an object that is not
+  an exception (it returned `None`), and a method called with no
+  argument at all says `unbound method str.upper() needs an argument`
+  as CPython does. Host call ids and `Task-N` numbers continue, and loaded code
   stays loaded; `reset_to` and a new session share nothing. A host whose
   cells set attributes on a typed host function (`tool.calls = 0`) now
   gets the `AttributeError`: none of the 3,487 recorded Python cells does
-  [M]. The test is `conformance/reset`: 79 probes, a sweep that calls every method of the
-  builtin types with each shared object as `self`, and a walk that writes
+  [M]. The test is `conformance/reset`: 88 probes, a sweep that calls every method of the
+  builtin types and of the prelude's classes with each shared object as `self`, and a walk that writes
   to each of the 11,000 objects a cell can reach from the builtins, the
   host's definitions and every importable module, and finds no write
   after a reset (181 on the build before) [M], on the native facade and

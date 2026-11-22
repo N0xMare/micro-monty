@@ -2810,7 +2810,7 @@ fn prelude_code_in_images_restores_the_same_from_every_cache_state() {
             .map_err(|e| format!("{e:?}"))
     };
     let mut outcomes = Vec::new();
-    for kb in (200..1400).step_by(8) {
+    for kb in (96..1400).step_by(8) {
         let limits = Limits::new().with_memory(kb << 10);
         let config = || EngineConfig::new().with_limits(limits);
         let cold = restore(&Engine::with_module_cache(config(), 0));

@@ -1633,11 +1633,19 @@ impl Vm {
         // unbound, and built again below. The record classes stay: guest
         // code cannot change them.
         let pg = self.prelude_globals;
-        if let Some(k) = self.find_interned("_int_max_str_digits")
-            && self.dict_lookup_str(pg, k).is_some()
-            && let Some(n) = Value::int(crate::intops::MAX_STR_DIGITS as i64)
-        {
-            let _ = self.dict_set(pg, k, n);
+        let digits = Value::int(crate::intops::MAX_STR_DIGITS as i64).unwrap_or(Value::NONE);
+        for (name, v) in [
+            ("_int_max_str_digits", digits),
+            // asyncio's loop objects: the running loop's and the one
+            // `set_event_loop` set.
+            ("_aio_the", Value::NONE),
+            ("_aio_set", Value::NONE),
+        ] {
+            if let Some(k) = self.find_interned(name)
+                && self.dict_lookup_str(pg, k).is_some()
+            {
+                let _ = self.dict_set(pg, k, v);
+            }
         }
         self.drop_builtin_constants();
         // Released without allocating (`Heap::idle`): the reruns below may

@@ -67,3 +67,20 @@ g = ExceptionGroup('g', [Mine('m')])
 for x in (Mine('m'), g, MemoryError(), StopIteration(3)):
     BaseException.add_note(x, 'n')
     print(type(x).__name__, x.__notes__, BaseException.with_traceback(x, None) is x)
+
+
+# `__init__` through the type refuses what is not an exception; with no
+# argument at all a method names itself as unbound.
+for cls in (BaseException, Exception, ValueError, KeyError):
+    for bad in (5, 'x', len, int, sys.version_info):
+        try:
+            print(cls.__init__(bad, 'x'))
+        except TypeError as err:
+            print(err)
+print(Exception.__init__(e, 'again'), e.args)
+for m in (BaseException.add_note, BaseException.with_traceback, BaseException.__init__, str.upper, list.append,
+          dict.get, list.__init__):
+    try:
+        m()
+    except TypeError as err:
+        print(err)

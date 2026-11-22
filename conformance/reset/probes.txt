@@ -596,6 +596,94 @@ repr(big)
 ---
 len([bytearray(1_000_000) for _ in range(40)])
 
+=== prelude method on its own class: json.JSONEncoder.__init__
+>>> TypeError: cannot set 'skipkeys' attribute of immutable type 'JSONEncoder'
+import json
+def steal(o):
+    return 'stolen'
+json.JSONEncoder.__init__(json.JSONEncoder, default=steal)
+---
+import json
+try:
+    r = json.JSONEncoder().encode({'a': {1, 2}})
+except TypeError as e:
+    r = str(e)
+r
+
+=== prelude method on a typed host function
+>>> AttributeError: 'builtin_function_or_method' object has no attribute 'skipkeys' and no __dict__ for setting new attributes
+import json
+def gen():
+    yield 1
+json.JSONEncoder.__init__(read, default=gen())
+---
+getattr(read, 'default', None)
+
+=== prelude method on a prelude function
+>>> AttributeError: 'builtin_function_or_method' object has no attribute 'skipkeys' and no __dict__ for setting new attributes
+import json
+json.JSONEncoder.__init__(json.dumps, default=[1])
+---
+import json
+getattr(json.dumps, 'default', None)
+
+=== prelude method on a record class
+>>> TypeError: cannot set '_maxsize' attribute of immutable type 'Row'
+import asyncio
+asyncio.Queue.__init__(type(CONFR), 7)
+---
+[n for n in dir(type(CONFR)) if 'max' in n]
+
+=== prelude method on a host exception class
+>>> TypeError: cannot set '_waiters' attribute of immutable type 'ToolError'
+import asyncio
+asyncio.Lock.__init__(ToolError)
+---
+sorted(n for n in vars(ToolError) if n.startswith('_') and not n.startswith('__'))
+
+=== prelude method deleting on a host class
+import asyncio
+r = []
+for f in (asyncio.Queue.shutdown, asyncio.Event.clear, asyncio.Event.set, asyncio.Barrier.abort, asyncio.Timeout.reschedule):
+    try:
+        r.append(f(Entry))
+    except BaseException as e:
+        r.append(type(e).__name__)
+r
+---
+sorted(vars(Entry))
+
+=== a generic alias calling what returns a host class
+import types
+def gen():
+    yield 1
+types.GenericAlias(lambda: Entry, (gen(),))()
+---
+[n for n in dir(Entry) if 'orig' in n]
+
+=== asyncio.set_event_loop
+import asyncio
+l = asyncio.new_event_loop()
+l.leak = ['secret']
+asyncio.set_event_loop(l)
+---
+import asyncio
+try:
+    r = getattr(asyncio.get_event_loop(), 'leak', None)
+except RuntimeError as e:
+    r = str(e)
+r
+
+=== the loop object of asyncio.run
+import asyncio
+async def main():
+    asyncio.get_running_loop().leak = ['secret']
+asyncio.run(main())
+---
+import asyncio
+await asyncio.sleep(0)
+getattr(asyncio.get_running_loop(), 'leak', None)
+
 === the reset walk
 @walk mark
 ---

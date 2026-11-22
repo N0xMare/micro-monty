@@ -4003,12 +4003,20 @@ class BrokenBarrierError(RuntimeError):
 
 __name__ = 'asyncio.runners'
 
+# The loop object that stands for the engine's loop while it runs, and the
+# one set_event_loop() set. Names of the prelude, not attributes of the
+# loop's class: a reset shares the class, so no function here may write it,
+# and a reset binds both back to None (`Vm::reset`).
+_aio_the = None
+_aio_set = None
+
 
 def run(main):
     # The main task runs in a copy of the caller's context.
     import _mm
+    global _aio_the
     if not _mm.aio_running():
-        _UnixSelectorEventLoop._mm_the = None
+        _aio_the = None
     return _aio_run_in(main, _mm.ctx_copy(), False)
 
 
@@ -4719,7 +4727,8 @@ class _UnixSelectorEventLoop:
             if self.is_running():
                 raise RuntimeError('This event loop is already running')
             raise RuntimeError('Cannot run the event loop while another loop is running')
-        _UnixSelectorEventLoop._mm_the = self
+        global _aio_the
+        _aio_the = self
         return _aio_run_in(main, ctx, open)
 
     def run_forever(self):
@@ -4768,11 +4777,10 @@ def _aio_the_loop():
     import _mm
     if not _mm.aio_running():
         raise RuntimeError('no running event loop')
-    L = _UnixSelectorEventLoop
-    loop = getattr(L, '_mm_the', None)
+    global _aio_the
+    loop = _aio_the
     if loop is None:
-        loop = L()
-        L._mm_the = loop
+        loop = _aio_the = _UnixSelectorEventLoop()
     return loop
 
 
@@ -4784,7 +4792,7 @@ def get_event_loop():
     import _mm
     if _mm.aio_running():
         return _aio_the_loop()
-    loop = getattr(_UnixSelectorEventLoop, '_mm_set', None)
+    loop = _aio_set
     if loop is None:
         raise RuntimeError("There is no current event loop in thread 'MainThread'.")
     return loop
@@ -4798,13 +4806,15 @@ def new_event_loop():
 def set_event_loop(loop):
     if loop is not None and not isinstance(loop, _UnixSelectorEventLoop):
         raise TypeError(f"loop must be an instance of AbstractEventLoop or None, not '{type(loop).__name__}'")
-    _UnixSelectorEventLoop._mm_set = loop
+    global _aio_set
+    _aio_set = loop
 
 
 def _set_event_loop_policy(policy):
     if policy is not None:
         raise RuntimeError('micro-monty: event loop policies are not available')
-    _UnixSelectorEventLoop._mm_set = None
+    global _aio_set
+    _aio_set = None
 
 
 __name__ = 'asyncio.futures'

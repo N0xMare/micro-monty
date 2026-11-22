@@ -5241,7 +5241,10 @@ fn a_cancel_long_by_a_tasks_waiters_is_the_same_parked_and_restored() {
 /// generators to close: 3,550,819 before that.)
 #[test]
 fn the_long_cancels_charge_the_same_fuel_whole_and_sliced() {
-    const FUEL: u64 = 3_550_828;
+    // 25 less than before the loop objects became prelude globals: the
+    // case wrote them on the loop's class 17 times (one unit each, the
+    // class's new version) and read them with 8 `getattr` calls.
+    const FUEL: u64 = 3_550_803;
     let src = include_str!("../../../conformance/own/579_asyncio_cancel_long.py");
     let run = |slice: u64| {
         let engine = Engine::new(EngineConfig::default());

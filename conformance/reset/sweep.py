@@ -5,6 +5,15 @@
 # function's closure; `BaseException.add_note` gave a struct sequence a
 # list).
 #
+# The prelude's classes are swept too (`PRELUDE`): their methods are Python,
+# and a `self.x = v` in one, called through its class with a shared object
+# as `self`, wrote where the same statement in a cell is refused
+# (`json.JSONEncoder.__init__(json.JSONEncoder, default=f)` made every later
+# encoder call `f`). They are called with keyword arguments as well (each
+# method's keyword-only names and `KEYWORDS`), and instances made from the
+# shared objects have their methods called (`types.GenericAlias(lambda:
+# Entry, ...)()` gave what its origin returned an attribute).
+#
 # `MODE = 'call'` makes the calls; `MODE = 'check'` reports the shared
 # objects' state. A cell that calls, a `reset()`, and a cell that checks must
 # print what the check prints in a new session.
@@ -12,7 +21,7 @@
 # The types are CPython 3.14's `dir(builtins)` that are types, then the
 # types without a builtin name; one this build does not have is skipped.
 
-import sys, json, asyncio, fs
+import sys, json, asyncio, types, fs
 
 
 def _gen():
@@ -74,6 +83,33 @@ TYPES = [
     lambda: type(asyncio.Lock().acquire), lambda: type(sys.version_info), lambda: type(CONFR),
 ]
 
+# Every class the prelude defines (`^class` in `mm-engine/src/prelude.py`),
+# as a cell reaches it.
+PRELUDE = [
+    ('json.JSONDecodeError', lambda: json.JSONDecodeError), ('json.JSONDecoder', lambda: json.JSONDecoder),
+    ('json.JSONEncoder', lambda: json.JSONEncoder), ('asyncio.Semaphore', lambda: asyncio.Semaphore),
+    ('asyncio.BoundedSemaphore', lambda: asyncio.BoundedSemaphore), ('asyncio.Lock', lambda: asyncio.Lock),
+    ('asyncio.Event', lambda: asyncio.Event), ('asyncio.Condition', lambda: asyncio.Condition),
+    ('asyncio.Barrier', lambda: asyncio.Barrier), ('asyncio.BrokenBarrierError', lambda: asyncio.BrokenBarrierError),
+    ('asyncio.Runner', lambda: asyncio.Runner), ('as_completed', lambda: type(asyncio.as_completed([]))),
+    ('asyncio.QueueEmpty', lambda: asyncio.QueueEmpty), ('asyncio.QueueFull', lambda: asyncio.QueueFull),
+    ('asyncio.QueueShutDown', lambda: asyncio.QueueShutDown), ('asyncio.Queue', lambda: asyncio.Queue),
+    ('asyncio.PriorityQueue', lambda: asyncio.PriorityQueue), ('asyncio.LifoQueue', lambda: asyncio.LifoQueue),
+    ('asyncio.Handle', lambda: asyncio.Handle), ('asyncio.TimerHandle', lambda: asyncio.TimerHandle),
+    ('event loop', lambda: type(asyncio.new_event_loop())), ('asyncio.TaskGroup', lambda: asyncio.TaskGroup),
+    ('asyncio.Timeout', lambda: asyncio.Timeout), ('struct sequence', lambda: type(sys.version_info)),
+    ('types.GenericAlias', lambda: types.GenericAlias), ('types.UnionType', lambda: types.UnionType),
+    ('globals view', lambda: type(globals())), ('coroutine wrapper', lambda: type(_coro().__await__())),
+    ('BaseExceptionGroup', lambda: BaseExceptionGroup), ('ExceptionGroup', lambda: ExceptionGroup),
+]
+
+# Instance methods not called: they run the loop for good with nothing to
+# stop it.
+SKIP = ['run_forever']
+
+# Keyword names tried on every method, beside its own keyword-only ones.
+KEYWORDS = ['default', 'object_hook', 'maxsize', 'value', 'name', 'loop', 'context']
+
 # What a reset shares: host definitions, the prelude's functions, classes
 # and struct sequences, and native types and functions.
 TARGETS = [
@@ -85,21 +121,35 @@ TARGETS = [
     ('json.dumps', lambda: json.dumps), ('json.JSONDecodeError', lambda: json.JSONDecodeError),
     ('asyncio.Lock', lambda: asyncio.Lock), ('MemoryError', lambda: MemoryError), ('int', lambda: int),
     ('object', lambda: object), ('len', lambda: len), ('list.append', lambda: list.append),
+    ('record class', lambda: type(CONFR)), ('json.JSONEncoder', lambda: json.JSONEncoder),
+    ('asyncio.Queue', lambda: asyncio.Queue), ('types.GenericAlias', lambda: types.GenericAlias),
 ]
 
 
+def _made(name, make):
+    try:
+        return [make()]
+    except BaseException:
+        return []
+
+
+def _attempt(f, *a, **k):
+    try:
+        f(*a, **k)
+        return 1
+    except BaseException:
+        return 0
+
+
 def call():
-    tb = _tb()
+    tb, g = _tb(), _gen()
     argsets = [(), (None,), ('x',), ('x', 1), (tb,), ({'x': 1},), (['x'],), (0, 'x'),
-               ('__doc__', 'evil'), (('x',),)]
+               ('__doc__', 'evil'), (('x',),), ('x', ('a',), (g,))]
     targets = [t() for _, t in TARGETS]
+    prelude = [T for name, make in PRELUDE for T in _made(name, make)]
     seen = []
     types = methods = done = 0
-    for make in TYPES:
-        try:
-            T = make()
-        except BaseException:
-            continue
+    for T in [T for make in TYPES for T in _made('', make)] + prelude:
         types += 1
         for name in sorted(dir(T)):
             try:
@@ -110,14 +160,29 @@ def call():
                 continue
             seen.append(m)
             methods += 1
+            own = _try(lambda: list(m.__kwdefaults__ or ()))
+            keys = KEYWORDS + (own if type(own) is list else [])
             for tg in targets:
                 for a in argsets:
-                    try:
-                        m(tg, *a)
-                        done += 1
-                    except BaseException:
-                        pass
-    print('types', types, 'methods', methods, 'returned', done > 1000)
+                    done += _attempt(m, tg, *a)
+                for k in keys:
+                    done += _attempt(m, tg, **{k: g})
+                done += _attempt(m, tg, **{k: g for k in keys})
+    # Instances made from the shared objects, and their methods.
+    made = 0
+    for T in prelude:
+        for tg in targets:
+            for args in ((tg,), (lambda: tg, (g,)), (tg, tg)):
+                for o in _made('', lambda: T(*args)):
+                    made += 1
+                    for name in sorted(dir(o)):
+                        if name in SKIP:
+                            continue
+                        for m in _made('', lambda: getattr(o, name)):
+                            if callable(m):
+                                _attempt(m)
+                                _attempt(m, tg)
+    print('types', types, 'methods', methods, 'returned', done > 1000, 'instances', made > 100)
 
 
 def _try(f):
@@ -141,6 +206,14 @@ def check():
         print(name, _try(lambda: sorted(dir(o))), _try(lambda: sorted(d)),
               _try(lambda: getattr(o, '__notes__', None)), _try(lambda: o.__name__),
               _try(lambda: o.__doc__), _try(lambda: o.__mro__))
+    for name, make in PRELUDE:
+        for T in _made(name, make):
+            print(name, _try(lambda: sorted(T.__dict__)), _try(lambda: T.__name__), _try(lambda: T.__mro__))
+    for f in (lambda: json.JSONEncoder().encode({'a': [1]}), lambda: json.JSONDecoder().decode('{"a": 1}'),
+              lambda: json.dumps({'a': {1}}), lambda: asyncio.Queue().maxsize, lambda: repr(list[int]),
+              lambda: sorted(dir(types.GenericAlias(list, int))), lambda: readr(), lambda: obj().gor(),
+              lambda: sorted(dir(asyncio.new_event_loop())), lambda: asyncio.get_event_loop()):
+        print(_try(f))
     for f in (lambda: read(), lambda: h(), lambda: tool(1), lambda: fs.read(), lambda: fs.raw(2),
               lambda: obj().go(), lambda: repr(obj()), lambda: Entry('q').path, lambda: Entry('q').go(3),
               lambda: fs.Node(), _raised, lambda: json.dumps({'a': [1]}), lambda: json.loads('[1'),

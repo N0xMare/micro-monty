@@ -3787,6 +3787,21 @@ impl Vm {
             .is_some_and(|h| h.flags() & mm_core::flags::FROZEN != 0)
     }
 
+    /// Whether `code`'s attribute writes may change what every reset
+    /// shares: a prelude unit's top level (`_StructSeq.__name__ = ...`)
+    /// and a host module's definitions, which name and document what they
+    /// make. A prelude function's may not: its `self.x = v` is the
+    /// guest's write when the guest chose `self`
+    /// (`json.JSONEncoder.__init__(read, default=f)`).
+    pub(crate) fn writes_shared(&self, code: &crate::vm::CodeObj) -> bool {
+        code.gslot == GSLOT_PRELUDE
+            && (code.name == Value::NONE
+                || self
+                    .sources
+                    .get(code.source as usize)
+                    .is_some_and(|s| s.host.is_some()))
+    }
+
     /// `obj.name = v` by guest code ([`Vm::refuse_shared_change`]).
     pub(crate) fn guest_setattr(
         &mut self,
