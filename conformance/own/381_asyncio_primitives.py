@@ -6,6 +6,12 @@
 # callbacks; task names; and asyncio.run cancelling what is left. (A
 # TaskGroup cancels its other tasks in creation order; CPython walks a set,
 # so here one task is left to cancel.)
+#
+# CPython runs this on real timers, under whatever load the machine has, so
+# no logged order may depend on two timers firing a few milliseconds apart:
+# order comes from events, a timer is short only against LONG or an unset
+# event, and timers that must fire in order take absolute times from one
+# read of the loop's clock.
 eg = ExceptionGroup('m', [ValueError(1), KeyError('k'), ExceptionGroup('n', [TypeError('t')])])
 print(type(BaseExceptionGroup('x', [ValueError()])).__name__, type(BaseExceptionGroup('x', [KeyboardInterrupt()])).__name__)
 print(repr(eg), str(eg), eg.message, eg.exceptions)
@@ -196,9 +202,13 @@ asyncio.run(main())
 
 LONG = 30
 
+# `d` is a delay, or an Event the child waits for.
 async def child(name, d, fail=None):
     try:
-        await asyncio.sleep(d)
+        if isinstance(d, asyncio.Event):
+            await d.wait()
+        else:
+            await asyncio.sleep(d)
         if fail:
             raise fail
         log(name, 'done')
@@ -212,8 +222,8 @@ async def child(name, d, fail=None):
 async def taskgroups():
     log('-- TaskGroup ok')
     async with asyncio.TaskGroup() as tg:
-        a = tg.create_task(child('a', 0.01))
-        b = tg.create_task(child('b', 0.02), name='bee')
+        a = tg.create_task(child('a', 0))
+        b = tg.create_task(child('b', S), name='bee')
         log(repr(tg), b.get_name())
     log(a.result(), b.result(), repr(tg))
     log('-- TaskGroup error cancels siblings')
@@ -262,8 +272,8 @@ async def timeouts():
             await child('t1', LONG)
     except TimeoutError as e:
         log('timeout', repr(e), type(e.__cause__).__name__, cm.expired(), repr(cm))
-    async with asyncio.timeout(1) as cm:
-        await asyncio.sleep(0.01)
+    async with asyncio.timeout(LONG) as cm:
+        await asyncio.sleep(S)
     log(cm.expired(), repr(cm))
     log('-- reschedule')
     try:
@@ -299,7 +309,8 @@ async def timeouts():
 
 async def shields():
     log('-- shield')
-    inner = asyncio.create_task(child('sh', 0.02))
+    go = asyncio.Event()
+    inner = asyncio.create_task(child('sh', go))
     outer = asyncio.shield(inner)
     async def waiter():
         return await outer
@@ -307,12 +318,16 @@ async def shields():
     await asyncio.sleep(0)
     w.cancel()
     log(await asyncio.gather(w, return_exceptions=True), outer.cancelled(), inner.done())
+    go.set()
     log(await inner)
+    go = asyncio.Event()
+    sh2 = asyncio.create_task(child('sh2', go))
     try:
-        await asyncio.wait_for(asyncio.shield(child('sh2', 0.02)), 0.01)
+        await asyncio.wait_for(asyncio.shield(sh2), S)
     except TimeoutError:
-        log('shield timed out')
-    await asyncio.sleep(0.02)
+        log('shield timed out', sh2.done())
+    go.set()
+    log(await sh2)
     s = asyncio.shield(child('sh3', 0, ValueError('v')))
     try:
         await s
@@ -321,15 +336,18 @@ async def shields():
 
 async def waits():
     log('-- wait')
-    t1 = asyncio.create_task(child('w1', 0.01), name='w1')
-    t2 = asyncio.create_task(child('w2', 0.03), name='w2')
-    t3 = asyncio.create_task(child('w3', 0.02, ValueError('w3')), name='w3')
+    go2, go3 = asyncio.Event(), asyncio.Event()
+    t1 = asyncio.create_task(child('w1', S), name='w1')
+    t2 = asyncio.create_task(child('w2', go2), name='w2')
+    t3 = asyncio.create_task(child('w3', go3, ValueError('w3')), name='w3')
     done, pending = await asyncio.wait([t1, t2, t3], return_when=asyncio.FIRST_COMPLETED)
     log(sorted(t.get_name() for t in done), sorted(t.get_name() for t in pending))
+    go3.set()
     done, pending = await asyncio.wait([t1, t2, t3], return_when=asyncio.FIRST_EXCEPTION)
     log(sorted(t.get_name() for t in done), sorted(t.get_name() for t in pending))
     done, pending = await asyncio.wait([t2], timeout=0.001)
     log(len(done), len(pending))
+    go2.set()
     done, pending = await asyncio.wait({t1, t2, t3})
     log(sorted(t.get_name() for t in done), pending)
     cx = child('x', 0)
@@ -352,11 +370,18 @@ async def loops():
     h1 = loop.call_soon(got.append, 1)
     h2 = loop.call_soon(got.append, 2)
     h2.cancel()
-    loop.call_later(0.01, got.append, 3)
-    th = loop.call_at(loop.time() + 0.005, got.append, 4)
+    # Registered latest first; they fire by their times, which one clock
+    # read orders however late the loop gets to them.
+    base = loop.time()
+    fired = loop.create_future()
+    loop.call_at(base + 3 * S, fired.set_result, 'fired')
+    loop.call_at(base + 2 * S, got.append, 3)
+    th = loop.call_at(base + S, got.append, 4)
     log(h2.cancelled(), repr(h2))
-    await asyncio.sleep(0.02)
-    log(got)
+    log(await fired, got)
+    later = loop.create_future()
+    loop.call_later(S, later.set_result, 'later')
+    log(await later)
     f = loop.create_future()
     loop.call_soon(f.set_result, 'fr')
     log(await f)
@@ -466,7 +491,7 @@ async def event_cond():
     async with c:
         c.notify_all()
     log(await asyncio.gather(*ts, return_exceptions=True), got)
-    r = await asyncio.wait_for(c.wait_for(lambda: True) if False else asyncio.sleep(0, 'x'), 1)
+    r = await asyncio.wait_for(c.wait_for(lambda: True) if False else asyncio.sleep(0, 'x'), LONG)
     log(r)
 
 async def queue_cancel():
