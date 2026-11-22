@@ -180,7 +180,10 @@ hashes are pre-release history, kept in the private archive
   slot or without its hash's byte; the build id moves. Names crowded
   on one place of the largest table (4,194,304 slots) raise
   `MemoryError`: about 130 names whose hashes agree in 22 bits, which
-  a guest finds among some 4 million candidates. Results and fuel are
+  a guest finds among some 4 million candidates. Such names leave the
+  table at that size (Known issues) until `reset()`, which now replaces
+  a table far larger than the names left need by a small one: after
+  it the session's image is 51 kB again, not 33.6 MB [M]. Results and fuel are
   those of the build before on every own case, Monty's corpus and the
   recorded sessions, none of which grows the table for a crowded name
   [M, shipped codegen, x86-64].
@@ -499,6 +502,13 @@ hashes are pre-release history, kept in the private archive
   to 142 ms between two safepoints as a `hasattr` loop. The step
   oracle's four rows for these are `Open`. The fix, growing and
   pruning a slice at a time, is not in this change.
+- A session held without `reset()` keeps an intern table at the largest
+  size it grew to, also once its names are dropped: about 130 names
+  crowded on one place of every table leave 4,194,304 slots, 32 MiB of
+  the session's memory limit, a 33.6 MB image, and 3.8 ms more in every
+  later collection [M, `--release`]. No collection shrinks it (a guest
+  could then grow and shrink it in a loop); `reset()`, `reset_to` and a
+  template restore give it back.
 - A `bytearray` with spare capacity that opens a gap near its start in
   place (`b.insert(0, x)`, `b[0:0] = ...` on 64 MiB never written) is one
   step of 96 to 97% of the 50 ms bound, with glibc and with musl's

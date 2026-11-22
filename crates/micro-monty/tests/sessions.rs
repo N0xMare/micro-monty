@@ -536,6 +536,78 @@ fn a_reset_gives_back_what_a_full_heap_committed() {
     }
 }
 
+/// A reset gives back an intern table grown far past what the names left
+/// need. 160 names crowded on one place of every table grow it to its
+/// largest, 4,194,304 slots (32 MiB of the heap, in every image), and
+/// dropping the names does not shrink it; after `reset()` the session's
+/// image is as small as a session's reset after 160 names of any bucket, a
+/// checked restore admits it (every name within the cap of its hash's
+/// slot), and both sessions run on alike.
+#[test]
+fn a_reset_gives_back_an_intern_table_grown_for_crowded_names() {
+    let engine = Engine::new(EngineConfig::default());
+    let cell = |s: &mut Session, src: &str| match s
+        .start(&engine.compile(src, "cell.py").expect("compiles"))
+    {
+        Progress::Complete(c) => c.map_or_else(String::new, |c| c.repr),
+        p => panic!("{p:?}"),
+    };
+    let names = |crowded: bool| -> String {
+        let picked: Vec<String> = (0..)
+            .map(|k| format!("c{k}"))
+            .filter(|s| !crowded || mm_core::hash_bytes(s.as_bytes()) & 4_194_303 < 128)
+            .take(160)
+            .collect();
+        // (One literal: a cell's literals are interned as it is loaded.)
+        format!("names = '{}'.split(',')\n", picked.join(","))
+    };
+    let intern = "import json\nclass O:\n    pass\no = O()\ntaken = 0\ntry:\n    \
+        for s in names:\n        hasattr(o, s)\n        taken += 1\n\
+        except MemoryError:\n    pass\ntaken";
+    // Names and one-char strs through the table and the engine's cache,
+    // host-visible state and the bundled modules, after the reset.
+    let after = "import json\nclass P:\n    left = 1\np = P()\n\
+        (getattr(p, 'le' + 'ft'), 'a' is chr(97), 'xy'[:1] is 'x', \
+        json.loads('{\"k\": [\"v\", \"k\"]}'), sorted(n for n in dir(p) if n[0] != '_'), \
+        hasattr(p, 'c' + '1'), len.__name__ + str.__name__)";
+    let mut sessions = Vec::new();
+    for crowded in [true, false] {
+        let mut s = Session::new(&engine).expect("session");
+        cell(&mut s, &names(crowded));
+        let taken: usize = cell(&mut s, intern).parse().expect("a count");
+        if crowded {
+            // One was refused at the largest table.
+            assert!((129..160).contains(&taken), "{taken} taken");
+        } else {
+            assert_eq!(taken, 160);
+        }
+        let grown = s.snapshot().expect("snapshot").len();
+        assert_eq!(grown > 32 << 20, crowded, "{grown} bytes");
+        // Dropping the names leaves the table.
+        cell(&mut s, "names = s = None");
+        let dropped = s.snapshot().expect("snapshot").len();
+        assert_eq!(dropped > 32 << 20, crowded, "{dropped} bytes");
+        s.reset().expect("reset");
+        sessions.push(s);
+    }
+    let images: Vec<Vec<u8>> = sessions
+        .iter_mut()
+        .map(|s| s.snapshot().expect("snapshot"))
+        .collect();
+    // (A few bytes apart: where the tables lie.)
+    assert!(images[0].len().abs_diff(images[1].len()) < 1024);
+    assert!(images[0].len() < 64 << 10, "{} bytes", images[0].len());
+    let mut restored = engine.restore(&images[0]).expect("a checked restore");
+    let want = cell(&mut sessions[1], after);
+    assert!(want.starts_with("(1, True, True, {'k': ['v', 'k']}, ['left'], False, "));
+    assert_eq!(cell(&mut sessions[0], after), want);
+    assert_eq!(cell(&mut restored, after), want);
+    // And the crowd grows the table again, as in a new session.
+    cell(&mut sessions[0], &names(true));
+    let taken: usize = cell(&mut sessions[0], intern).parse().expect("a count");
+    assert!((129..160).contains(&taken), "{taken} taken");
+}
+
 fn wall_cell(engine: &Engine, session: &mut Session, src: &str) -> String {
     let code = engine.compile(src, "cell.py").expect("compiles");
     match session.start(&code) {

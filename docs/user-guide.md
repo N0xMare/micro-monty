@@ -119,7 +119,9 @@ entropy, so the driving loop above is the whole integration.
   when they fill the memory limit with live data. Host
   functions and host modules stay. It gives back the memory earlier cells
   committed and no longer use, so after a cell that filled the heap the
-  session has the room a new one with the same imports has. `set_module_dunders` sets `__name__` and
+  session has the room a new one with the same imports has, and an intern
+  table grown for names the cells no longer hold is replaced by a small
+  one. `set_module_dunders` sets `__name__` and
   `__file__` (a new session runs as `__main__`).
 - **Errors.** `CompileError` (a `SyntaxError`, including "micro-monty does not
   support X", or a `RecursionError` for nesting too deep) carries the line,

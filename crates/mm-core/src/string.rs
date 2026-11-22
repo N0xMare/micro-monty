@@ -35,6 +35,18 @@ const INTERN_MIN_CAP: u32 = 64;
 /// 44 \[M\].
 pub const INTERN_WALK_CAP: usize = 128;
 
+/// A reset replaces an intern table of at least this many times the
+/// slots of the one its entries get then: one of
+/// [`INTERN_SHRINK_ROOM`] slots an entry (`Heap::shrink_interned`). At
+/// 16, the largest table shrinks with at most 65,536 entries, a sort of
+/// 26 ms; at 4, with 262,144, 69 ms \[M, shipped\].
+const INTERN_SHRINK_FROM: usize = 16;
+
+/// Slots an entry in the table a reset shrinks to, before rounding up to
+/// a power of two: a quarter full or less, so names interned next do not
+/// double it at once.
+const INTERN_SHRINK_ROOM: usize = 4;
+
 /// What a lookup of a string in the intern table found.
 enum Probe {
     /// The interned string equal to it.
@@ -1115,6 +1127,78 @@ impl Heap {
         Ok(table)
     }
 
+    /// Replaces an intern table far larger than its entries need by a
+    /// small one; was it replaced? For a reset, right after a collection
+    /// (every entry is live), which collects again to free the old table.
+    /// Names crowded on one place grow the table to the largest, 32 MiB
+    /// of the arena, which every collection then reads and every image
+    /// holds, and no prune gives it back: a guest could otherwise grow
+    /// and shrink it in a loop, a step each (docs/spec.md §7.3).
+    ///
+    /// The new table has `INTERN_SHRINK_ROOM` slots an entry or more
+    /// and is laid out sorted by bucket, so every entry lies at the
+    /// earliest slot any layout gives it. The old table stays, and this
+    /// is `false`, when it is under `INTERN_SHRINK_FROM` times that
+    /// size, when an entry would lie past [`INTERN_WALK_CAP`] in the new
+    /// one, and when there is no memory for the pass or the new table.
+    pub fn shrink_interned(&mut self) -> bool {
+        let shrunk = self.shrunk_interned().unwrap_or(false);
+        // A refusal here is no request of the guest's.
+        self.take_refused();
+        shrunk
+    }
+
+    fn shrunk_interned(&mut self) -> Result<bool, Error> {
+        let Some(old) = self.intern_table else {
+            return Ok(false);
+        };
+        let entries = self.slot_words(old)?.get(1..).ok_or(Error::BadSlot)?;
+        let count = self.interned_count() as usize;
+        let cap = (count * INTERN_SHRINK_ROOM)
+            .next_power_of_two()
+            .max(INTERN_MIN_CAP as usize);
+        let mut words = Vec::new();
+        if cap * INTERN_SHRINK_FROM > entries.len() || words.try_reserve_exact(count).is_err() {
+            return Ok(false);
+        }
+        // Each entry as its bucket in the new table over its kind byte
+        // and reference, as a growth takes them.
+        for &w in entries {
+            let Some(r) = Value(w).as_obj() else {
+                continue;
+            };
+            // (Only a forged table holds more entries than its count.)
+            if words.len() == words.capacity() {
+                return Ok(false);
+            }
+            #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
+            let bucket = self.get_raw_guarded(r, SLOT_HASH) as usize & (cap - 1);
+            words.push((bucket as u64) << 40 | w & ((1 << 40) - 1));
+        }
+        let n = words.len();
+        sort_words(&mut words, 0, n, usize::MAX);
+        // The entries that pass the table's end go to its start, ahead of
+        // the ones whose buckets are there. How many they are is known
+        // after one pass from an empty start, and a second pass from
+        // behind that many gives the same number: a table under full has
+        // a free slot before its end, from which both passes agree.
+        let (lead, _) = lay_out_sorted(&words, cap, 0, &mut []);
+        let (_, far) = lay_out_sorted(&words, cap, lead, &mut []);
+        if far > INTERN_WALK_CAP {
+            return Ok(false);
+        }
+        let slots = u32::try_from(cap + 1).map_err(|_| Error::OutOfMemory)?;
+        let table = self.alloc_object(types::INTERN_TABLE, 0, slots, 0)?;
+        let count = Value::int(i64::try_from(n).map_err(|_| Error::OutOfMemory)?)
+            .ok_or(Error::OutOfMemory)?;
+        let slots = self.intern_slots_mut(table)?;
+        let (head, entries) = slots.split_first_mut().ok_or(Error::BadSlot)?;
+        *head = count.0;
+        lay_out_sorted(&words, cap, lead, entries);
+        self.intern_table = Some(table);
+        Ok(true)
+    }
+
     /// After marking, remove dead strings in place, with no tombstones and
     /// no allocation: each cluster that holds one is laid out again whole
     /// (`lay_out_cluster`). Removing them one by one, each hole closed by
@@ -1295,6 +1379,28 @@ fn entry_of(word: u64) -> u64 {
 )]
 fn low_ref(word: u64) -> Ref {
     Ref::from_raw(word as u32)
+}
+
+/// Lays out words sorted by bucket (the bits from 40 up) in a table of
+/// `cap` slots: each at its bucket or right after the one before it,
+/// the first no earlier than slot `lead`, around the table's end. How
+/// many pass the end, and the most slots one lies past its bucket. The
+/// entries are written to `into`, the table's slots, unless it is empty.
+/// (One copy for its three passes: a reset is no hot path.)
+#[inline(never)]
+fn lay_out_sorted(words: &[u64], cap: usize, lead: usize, into: &mut [u64]) -> (usize, usize) {
+    let (mut next, mut far) = (lead, 0);
+    for &word in words {
+        #[allow(clippy::cast_possible_truncation, reason = "22 bits")]
+        let bucket = (word >> 40) as usize;
+        let at = bucket.max(next);
+        next = at + 1;
+        far = far.max(at - bucket);
+        if let Some(entry) = into.get_mut(at & (cap - 1)) {
+            *entry = entry_of(word);
+        }
+    }
+    (next.saturating_sub(cap), far)
 }
 
 /// The longest cluster a doubling keeps in order entry by entry as it

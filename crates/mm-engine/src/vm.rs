@@ -1575,6 +1575,12 @@ impl Vm {
         // a collection, as code reclamation leaves its constants to the
         // next one.
         self.collect_now();
+        // An intern table far larger than the names left need (names
+        // crowded on one place grow it to 32 MiB) is replaced by a small
+        // one, and collected. Without memory for that it stays.
+        if self.heap.shrink_interned() {
+            self.collect_now();
+        }
         self.heap.shrink();
         Ok(())
     }

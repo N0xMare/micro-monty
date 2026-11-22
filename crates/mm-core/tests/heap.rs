@@ -855,6 +855,80 @@ fn names_crowded_at_the_largest_table_are_out_of_memory() {
     assert_eq!(heap.find_interned(&refused.0), Some(again));
 }
 
+/// `shrink_interned` (a reset's) replaces a table far larger than its
+/// entries need by one a quarter full or less, laid out sorted: every
+/// name is found at its own string and within the cap, across the
+/// table's end too. It leaves the table as it is where a name would lie
+/// past the cap in the small one, where the table is not far too large,
+/// and without memory for the new one.
+#[test]
+fn a_shrink_replaces_a_table_far_too_large_by_a_small_sorted_one() {
+    let mut heap = Heap::new(HeapConfig {
+        memory_limit: 4 << 20,
+        ..HeapConfig::default()
+    });
+    // 140 names of one bucket of every table up to 8,192 slots grow the
+    // table to 16,384; with them, names of the last buckets of the
+    // 1,024-slot table these all fit, which lie around its end there.
+    let mut names = names_of_one_bucket("crowd", 140, 8191);
+    names.extend(names_in_buckets("end", 30, 1023, |b| b >= 1015));
+    names.extend((0..40).map(|i| format!("any{i}")));
+    let refs: Vec<Ref> = names.iter().map(|n| heap.intern(n).unwrap()).collect();
+    assert_eq!(intern_slots(&heap).len(), 16_384);
+    // All 140 of one bucket cannot lie within the cap of it in 1,024
+    // slots: the table stays.
+    prune_to(&mut heap, &names, &refs, |_| true);
+    assert!(!heap.shrink_interned());
+    assert_eq!(intern_slots(&heap).len(), 16_384);
+    // 100 of them can. Without memory for a table, it stays all the same.
+    let keep = |i: usize| i >= 40;
+    prune_to(&mut heap, &names, &refs, keep);
+    let mut fill = Vec::new();
+    while let Ok(r) = heap.alloc(T, 0, 1000, 0) {
+        fill.push(r);
+    }
+    assert!(!heap.shrink_interned());
+    assert_eq!(intern_slots(&heap).len(), 16_384);
+    assert_eq!(
+        heap.take_refused(),
+        0,
+        "a refusal left for the next request"
+    );
+    prune_to(&mut heap, &names, &refs, keep);
+    drop(fill);
+    assert!(heap.shrink_interned());
+    // The old table is garbage until the collection a reset then makes.
+    prune_to(&mut heap, &names, &refs, keep);
+    let slots = intern_slots(&heap);
+    assert_eq!(slots.len(), 1024);
+    assert!(slots[0].is_some() && slots[1023].is_some(), "none wrapped");
+    for (i, (name, &r)) in names.iter().zip(&refs).enumerate() {
+        if keep(i) {
+            assert_eq!(heap.intern(name), Ok(r), "{name}");
+        }
+    }
+    assert_eq!(heap.interned_count(), 170);
+    // A table under 16 times the small one's size is left alone.
+    assert!(!heap.shrink_interned());
+    heap.reserve_interned(1024).unwrap();
+    assert_eq!(intern_slots(&heap).len(), 2048);
+    assert!(!heap.shrink_interned());
+    // And grown again, it shrinks again; with no names, to the smallest.
+    heap.reserve_interned(4096).unwrap();
+    assert!(!heap.shrink_interned());
+    heap.reserve_interned(8192).unwrap();
+    prune_to(&mut heap, &names, &refs, keep);
+    assert!(heap.shrink_interned());
+    prune_to(&mut heap, &names, &refs, |_| false);
+    assert_eq!(intern_slots(&heap).len(), 1024);
+    heap.reserve_interned(1024).unwrap();
+    heap.reserve_interned(2048).unwrap();
+    assert!(heap.shrink_interned());
+    prune_to(&mut heap, &names, &refs, |_| false);
+    assert_eq!(intern_slots(&heap).len(), 64);
+    assert!(!Heap::default().shrink_interned());
+}
+
 /// Whatever is interned, pruned and doubled, no entry is left further
 /// from its hash's slot than the cap, or behind a free slot: names of
 /// any bucket, runs of consecutive buckets, names crowded on a few

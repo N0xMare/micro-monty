@@ -1287,7 +1287,14 @@ Growing the table and pruning it are each one step, linear in its slots; a
 growth is sized for the name that found no slot, so chosen names can force up
 to one growth per table size. Code and shape metadata explicitly trace the
 names they own; builtin names remain reachable through the builtins and prelude.
-The table retains its high-water capacity inside the arena budget.
+The table retains its high-water capacity inside the arena budget until the
+session is reset: no prune shrinks it, since a guest could then grow and
+shrink it in a loop, a linear step each. `reset` replaces a table of at least
+16 times the slots of one a quarter full of the names left (`INTERN_SHRINK_FROM`,
+`INTERN_SHRINK_ROOM`) by that one, laid out sorted by bucket, and collects
+again; it keeps the table where a name would lie past the cap in the small
+one or there is no memory for it, and succeeds either way. `reset_to` and a
+template restore replace the heap, and the table with it.
 
 ### 7.4 `bytearray`
 
