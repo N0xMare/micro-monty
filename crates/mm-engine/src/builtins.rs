@@ -1032,6 +1032,16 @@ const DEFS: &[Def] = &[
         1,
         &["coro"],
         &["name", "context"],
+        aio_create_task_running
+    ),
+    #[cfg(feature = "asyncio")]
+    m!(
+        "_mm",
+        "aio_create_task",
+        1,
+        1,
+        &["coro"],
+        &["name", "context"],
         aio_create_task
     ),
     #[cfg(feature = "asyncio")]
@@ -3199,6 +3209,22 @@ fn aio_run(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     // The dispatch loop runs the coroutine in place (no nested loop).
     vm.request = Some(Request::Run(root));
     Ok(Value::UNDEFINED)
+}
+
+/// `asyncio.create_task(coro)`: only inside a running loop, as CPython's
+/// (`loop.create_task()` and the prelude take [`aio_create_task`]). The
+/// error is CPython's text, then what to do instead; `ensure_future` and
+/// `shield` of a coroutine come through here too.
+#[cfg(feature = "asyncio")]
+#[cfg_attr(mm_shipped, optimize(size))]
+fn aio_create_task_running(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    if !vm.loop_running() {
+        return Err(vm.err(
+            T::RuntimeError,
+            "no running event loop; await in this cell, or create the task inside asyncio.run()",
+        ));
+    }
+    aio_create_task(vm, a)
 }
 
 #[cfg(feature = "asyncio")]

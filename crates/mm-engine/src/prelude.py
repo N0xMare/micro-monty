@@ -4664,8 +4664,9 @@ class _UnixSelectorEventLoop:
         return _mm.aio_future()
 
     def create_task(self, coro, **kwargs):
-        import asyncio
-        return asyncio.create_task(coro, **kwargs)
+        # A loop that is not running takes tasks too, as CPython's.
+        import _mm
+        return _mm.aio_create_task(coro, **kwargs)
 
     def call_soon(self, callback, *args, **kwargs):
         import _mm
@@ -4822,15 +4823,14 @@ ALL_COMPLETED = 'ALL_COMPLETED'
 
 def _aio_create_ctx(coro, name, context):
     import _mm
-    import asyncio
-    t = asyncio.create_task(coro, name=name)
+    t = _mm.aio_create_task(coro, name=name)
     _mm.aio_task_ctx(t, context._data)
     return t
 
 
 def _aio_create_named(coro, name):
-    import asyncio
-    return asyncio.create_task(coro, name=str(name))
+    import _mm
+    return _mm.aio_create_task(coro, name=str(name))
 
 
 def _aio_set_name(task, value):

@@ -2617,6 +2617,19 @@ fn the_schedulers_timers_end_cancelled_with_their_loop() {
 }
 
 #[test]
+fn create_task_outside_a_loop_says_what_to_do() {
+    // CPython's text first, so a match on it holds, then the hint; the
+    // same through `ensure_future` and `shield` of a coroutine.
+    let mut c = Cells::new();
+    let src = "import asyncio\nasync def f():\n    return 1\nout = []\n\
+               for make in (asyncio.create_task, asyncio.ensure_future, asyncio.shield):\n    \
+               co = f()\n    try:\n        make(co)\n    except RuntimeError as e:\n        \
+               out.append(str(e))\n    co.close()\nout";
+    let text = "no running event loop; await in this cell, or create the task inside asyncio.run()";
+    assert_eq!(c.value(src), format!("['{text}', '{text}', '{text}']"));
+}
+
+#[test]
 fn create_task_works_under_top_level_await() {
     // A cell with top-level `await` is its own event loop: `create_task`
     // there must run the task (no "no running event loop").
