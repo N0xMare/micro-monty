@@ -933,6 +933,23 @@ def durability_diffs(plain, got):
     ) if not same]
 
 
+# The length of a durability case's scratch directory path, whatever
+# `TMPDIR` is: `mm exec --main-module` keeps the script's absolute path in
+# the heap (`__file__`), so its length moves the heap by a few bytes, and a
+# case that fills memory to the limit then spends other fuel (own case 535:
+# 19 units at some lengths [M]).
+SCRATCH_PATH_LENGTH = 96
+
+
+def durability_scratch():
+    """(the directory to remove, the scratch directory inside it, its path
+    SCRATCH_PATH_LENGTH long unless the temporary directory's is longer)."""
+    root = os.path.realpath(tempfile.mkdtemp())
+    scratch = os.path.join(root, 'p' * max(1, SCRATCH_PATH_LENGTH - len(root) - 1))
+    os.mkdir(scratch)
+    return root, scratch
+
+
 def run_durability_case(path, mm, every, max_parks, timeout, alternate=None):
     """`alternate`: None, or (wasmtime, module, wasm_first) for a cross-target chain."""
     name = os.path.basename(path)
@@ -954,7 +971,7 @@ def run_durability_case(path, mm, every, max_parks, timeout, alternate=None):
             flags.append('--host-fixtures')
         flags.extend(mm_module_flags(expectation, header))
         zone = header['timezone']
-    scratch = os.path.realpath(tempfile.mkdtemp())
+    root, scratch = durability_scratch()
     parks = []
     runs = {}
     mode = 'unparked'
@@ -1011,7 +1028,7 @@ def run_durability_case(path, mm, every, max_parks, timeout, alternate=None):
         return {'file': name, 'status': abnormal.status, 'parks': len(parks),
                 'reason': f'{mode}: {abnormal.reason}{where}', 'detail': clip(abnormal.detail, 2000)}
     finally:
-        shutil.rmtree(scratch, ignore_errors=True)
+        shutil.rmtree(root, ignore_errors=True)
     want = report_of(plain)
     # Each mode against the unparked run, and the restore chain against the
     # session that took the same snapshots and went on (restore fidelity).
