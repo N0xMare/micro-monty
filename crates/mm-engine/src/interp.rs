@@ -69,6 +69,26 @@ pub(crate) enum Landed {
     Block(Value),
 }
 
+/// The class `OSError(errno, strerror)` gives for `errno` (Linux numbers,
+/// which every target reports): the subclasses micro-monty has, of
+/// CPython's errno map.
+fn os_error_class(errno: Value) -> T {
+    let no = if errno == Value::TRUE {
+        Some(1)
+    } else {
+        errno.as_int()
+    };
+    match no {
+        Some(1 | 13) => T::PermissionError,
+        Some(2) => T::FileNotFoundError,
+        Some(17) => T::FileExistsError,
+        Some(20) => T::NotADirectoryError,
+        Some(21) => T::IsADirectoryError,
+        Some(110) => T::TimeoutError,
+        _ => T::OSError,
+    }
+}
+
 /// How `invoke` started a call.
 pub(crate) enum Invoked {
     Frame,
@@ -1478,6 +1498,12 @@ impl Vm {
                     return self.exc_with_kwargs(t, args, npos, kwnames).map(Some);
                 }
                 let items: Vec<Value> = self.stack[args..args + npos].to_vec();
+                // `OSError(errno, strerror, ...)` makes the subclass that
+                // stands for `errno`, as CPython's `OSError.__new__`.
+                let t = match (t, items.as_slice()) {
+                    (T::OSError, [no, _, ..]) if npos <= 5 => os_error_class(*no),
+                    _ => t,
+                };
                 let e = self.new_exception(t, &items)?;
                 if matches!(t, T::UnicodeDecodeError | T::UnicodeEncodeError) {
                     return self.unicode_new(e, t == T::UnicodeDecodeError).map(Some);
