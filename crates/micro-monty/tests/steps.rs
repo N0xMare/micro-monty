@@ -329,6 +329,69 @@ while len(names) < 34_000:
     if hash(s) & 131071 < 16384:
         names.append(s)";
 
+/// [`intern_cluster!`]'s 72,000 names, and `text`: 20,000 of a Latin-1
+/// char whose hash puts it among them.
+const INTERN_CHAR: &str = concat!(
+    intern_cluster!("72_000", "262143", "65536"),
+    "vs = [c for c in range(128, 256) if hash(chr(c)) & 262143 < 8192]\n",
+    "text = chr(vs[0]) * 20_000\n",
+);
+
+/// `crowd(h, n)`: `n` names whose hashes' low 18 bits lie 1 to 8 before
+/// those of hash `h`, so that in any table of at most 262,144 slots they
+/// fill the slots up to and past `h`'s; and `behind(names)`, which
+/// interns them and has a collection lay them out, so that a string of
+/// hash `h`, interned before or after, lies past them all: as far from
+/// its slot as the intern table lets a string lie (`INTERN_WALK_CAP`).
+macro_rules! intern_crowd {
+    ($($rest:literal),*) => {
+        concat!(
+            "import gc\n",
+            "class O:\n",
+            "    pass\n",
+            "o = O()\n",
+            "def crowd(h, n):\n",
+            "    out = []\n",
+            "    k = 0\n",
+            "    while len(out) < n:\n",
+            "        k += 1\n",
+            "        s = 'c' + str(k)\n",
+            "        if 0 < (h - hash(s)) & 262143 <= 8:\n",
+            "            out.append(s)\n",
+            "    return out\n",
+            "def behind(names):\n",
+            "    for s in names:\n",
+            "        hasattr(o, s)\n",
+            "    names.pop()\n",
+            "    s = None\n",
+            "    gc.collect()\n",
+            $($rest,)*
+        )
+    };
+}
+
+/// `names`: 160 of the first 128 buckets of every intern table.
+/// Interned, the one that finds no slot within the cap grows the table
+/// to the largest (4,194,304 slots), and a later one is refused there.
+/// `$rest` runs after them, with `O` and `o`.
+macro_rules! intern_crowd_every_table {
+    ($($rest:literal),*) => {
+        concat!(
+            "class O:\n",
+            "    pass\n",
+            "o = O()\n",
+            "names = []\n",
+            "k = 0\n",
+            "while len(names) < 160:\n",
+            "    k += 1\n",
+            "    s = 'c' + str(k)\n",
+            "    if hash(s) & 4194303 < 128:\n",
+            "        names.append(s)\n",
+            $($rest,)*
+        )
+    };
+}
+
 /// (row, setup, the operation, times it repeats as straight-line code):
 /// each at about the largest size the default limits allow. The phase 2
 /// packages add their sites here.
@@ -2883,7 +2946,9 @@ const SITES: &[(Row, &str, &str, usize)] = &[
     // `hash()` so that they share one run of slots. Dropped, 36,000 of
     // them were pruned one by one, each removal shifting the rest of the
     // run back: 1.67 s in the collection's last step; the run is now laid
-    // out again once, sorted: 6.4 ms [M, `--release`].
+    // out again once, sorted [M, `--release`]. (No entry lies more than
+    // `INTERN_WALK_CAP` slots past its hash's now, so these names double
+    // the table as they are interned, until they part.)
     (
         Row::Bounded,
         intern_cluster!("36_000", "131071", "32768"),
@@ -2892,29 +2957,113 @@ const SITES: &[(Row, &str, &str, usize)] = &[
     ),
     // The table doubling over such a run: every entry probed for its slot
     // past the ones placed before it, 235 ms; the entries are now sorted
-    // first and placed with no probe: 4.5 ms [M, `--release`].
+    // first and placed with no probe [M, `--release`].
     (
         Row::Bounded,
         INTERN_GROWS,
         "for s in names:\n    hasattr(o, s)",
         1,
     ),
-    // Interning into a run of 72,000: each lookup walks all of it, and
-    // 125 of them ran between two looks at the clock, 88 ms; the walk is
-    // now charged, a unit per 64 slots: 2.5 ms [M, `--release`].
+    // Lookups along a run of 72,000, each of which walked all of it, on
+    // every path to the table: computed attribute names (125 of them ran
+    // between two looks at the clock, 88 ms), an import's name (210 ms),
+    // a cell's literals as it is loaded (2,000 of them: 1.2 s, with no
+    // safepoint) and one-char strs, which every str constructor shares
+    // (`list(text)` of 20,000: 9.9 s in one step; a loop over them,
+    // 177 ms) [M, `--release`]. A lookup now reads at most
+    // `INTERN_WALK_CAP` slots and one more, and no string of another hash
+    // on the way.
     (
         Row::Bounded,
         intern_cluster!("72_000", "262143", "65536"),
         "for s in probes:\n    hasattr(o, s)",
         1,
     ),
-    // The table at 2,000,000 names, whatever their buckets: its last
-    // doubling (1,048,576 entries sorted run by run and moved, 88 to 97
-    // ms; 69 to 84 ms when each was probed for) and the prune of its
-    // 4,194,304 slots once the names are dropped (46 ms; 165 to 189 ms
-    // by shifts) are each one step, linear in the table [M, `--release`].
-    // `Open` (CHANGELOG, Known issues) until the prune goes a slice at a
-    // time.
+    (
+        Row::Bounded,
+        intern_cluster!("72_000", "262143", "65536"),
+        "for s in probes:\n    try:\n        __import__(s)\n    except ImportError:\n        pass",
+        1,
+    ),
+    (
+        Row::Bounded,
+        intern_cluster!("72_000", "262143", "65536"),
+        include_str!("steps/intern_load.py"),
+        1,
+    ),
+    (Row::Bounded, INTERN_CHAR, "xs = list(text)", 1),
+    (Row::Bounded, INTERN_CHAR, "for ch in text:\n    pass", 1),
+    // Strings as far from their slots as the table lets them lie, 100
+    // slots or more, where a native makes one per item with no look at
+    // the clock between: a two-char str (shared like one-char ones, but
+    // found in the table), which `json.loads` makes 300,000 times (61 ms
+    // a step when each slot on the way meant reading a string, 6 ms with
+    // the str at its own slot [M, `--release`]); and an engine's own name
+    // (`len.__name__` interns `'len'` at each access).
+    (
+        Row::Bounded,
+        intern_crowd!(
+            "n = 89\n",
+            "behind(crowd(hash(str(n)), 110))\n",
+            "text = '[' + '\"89\",' * 300_000 + '\"89\"]'\n",
+            "import json\n"
+        ),
+        "ys = json.loads(text)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        intern_crowd!("behind(crowd(hash('len'), 110))\n", "f = len\n"),
+        "for i in range(200_000):\n    f.__name__",
+        1,
+    ),
+    // Names crowded on one place of every table: the insert that finds
+    // no slot within the cap grows the table from 2,048 slots to its
+    // largest size in one pass (15 to 17 ms; a doubling at a time, 53
+    // ms), and a later one is refused (`MemoryError`) [M, shipped].
+    (
+        Row::Bounded,
+        intern_crowd_every_table!(),
+        "try:\n    for s in names:\n        hasattr(o, s)\nexcept MemoryError:\n    pass",
+        1,
+    ),
+    // The same over a table that holds 100,000 names: the growth moves
+    // them all to the largest table in one step, 54 to 94 ms for
+    // 100,000 to 1,000,000 names [M, shipped]. `Open` (CHANGELOG, Known
+    // issues) with the rows below.
+    (
+        Row::Open,
+        intern_crowd_every_table!(
+            "others = ['q' + str(i) for i in range(100_000)]\n",
+            "for s in others:\n",
+            "    hasattr(o, s)\n"
+        ),
+        "try:\n    for s in names:\n        hasattr(o, s)\nexcept MemoryError:\n    pass",
+        1,
+    ),
+    // A growth sizes the table for the name that found no slot, so
+    // names that part from the crowd one table size at a time force a
+    // growth each, up to one for every table size: 128 names whose
+    // hashes agree in 22 bits and 13 that agree with them in 9 to 21,
+    // after 30,000 other names, grow the table five times, to its
+    // largest. As the literals of one cell, which is loaded with no
+    // safepoint, that is one step of 86 to 120 ms; as a `hasattr` loop,
+    // 80 to 142 ms between two safepoints [M, shipped]. `Open`.
+    (
+        Row::Open,
+        "class O:\n    pass\no = O()\nothers = ['q' + str(i) for i in range(30_000)]\nfor s in others:\n    hasattr(o, s)",
+        include_str!("steps/intern_chain.py"),
+        1,
+    ),
+    // The table of names of any bucket: a doubling sorts each run of
+    // entries and moves them, one step linear in the table, past the
+    // bound from the doubling at 524,288 names on (to 2,097,152 slots:
+    // 56 to 75 ms, 54 to 77 before; 26 to 31 ms for the one at 262,144
+    // names), and 73 to 111 ms for the last one, at 1,048,576 names.
+    // The prune of the 4,194,304 slots once 2,000,000 names are dropped
+    // is one step too (47 to 57 ms; 253 ms by shifts) [M, shipped].
+    // `Open` (CHANGELOG, Known issues) until the table grows and is
+    // pruned a slice at a time.
     (
         Row::Open,
         "class O:\n    pass\no = O()\nnames = ['q' + str(i) for i in range(2_000_000)]",

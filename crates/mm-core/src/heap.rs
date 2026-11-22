@@ -1160,7 +1160,7 @@ impl Heap {
     /// [`Heap::take_refused`] gives.
     #[cold]
     #[inline(never)]
-    fn refuse(&self, bytes: u64) -> Error {
+    pub(crate) fn refuse(&self, bytes: u64) -> Error {
         self.refused.store(bytes.max(1), Ordering::Relaxed);
         Error::OutOfMemory
     }

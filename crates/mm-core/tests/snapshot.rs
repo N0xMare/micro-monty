@@ -8,7 +8,10 @@
     reason = "tests"
 )]
 
-use mm_core::{Error, Heap, HeapConfig, Reader, Ref, Value, hash_bytes, types, xxh64};
+use mm_core::{
+    Error, Heap, HeapConfig, INTERN_WALK_CAP, Reader, Ref, Value, hash_bytes, hash_tag, types,
+    xxh64,
+};
 
 const T: u16 = types::FIRST_ENGINE;
 
@@ -282,9 +285,9 @@ fn interned_entries(heap: &Heap, table: Ref) -> Vec<u64> {
     entries
 }
 
-/// Tables of `cap` slots a restore admits, made of the entries `present`
-/// (`honest` is the table they came from): none has them where lookups
-/// look.
+/// Tables of `cap` slots made of the entries `present` (`honest` is the
+/// table they came from) that only an unchecked restore takes: none has
+/// them where lookups look.
 fn forged_tables(
     honest: &[u64],
     present: &[u64],
@@ -359,21 +362,24 @@ fn forged_tables(
     ]
 }
 
-/// A restore admits any intern table whose entries are interned strings,
-/// as many as its count says and at most half its slots, wherever they
-/// lie: a forged one's are not where lookups look. Pruning and growing
-/// such a table still keep exactly its live entries, each as often as it
-/// was there.
+/// A checked restore refuses an intern table with an entry where no
+/// lookup finds it. An unchecked one (a template's own image) takes any
+/// table: pruning and growing even a forged one end, and keep exactly its
+/// live entries, each as often as it was there.
 #[test]
-fn a_forged_intern_table_prunes_and_grows_to_its_live_entries() {
+fn a_forged_intern_table_is_refused_and_unchecked_prunes_and_grows_to_its_live_entries() {
     let mut heap = Heap::new(HeapConfig {
         memory_limit: 64 << 20,
         ..HeapConfig::default()
     });
     let names: Vec<String> = (0..400).map(|i| format!("forged{i}")).collect();
     let refs: Vec<Ref> = names.iter().map(|n| heap.intern(n).unwrap()).collect();
-    // Entries carry no kind; neither do these roots.
-    let roots: Vec<Value> = refs.iter().map(|&r| Value::from_ref(r, 0)).collect();
+    // Each as its entry, which carries its hash's byte as its kind.
+    let roots: Vec<Value> = names
+        .iter()
+        .zip(&refs)
+        .map(|(n, &r)| Value::from_ref(r, hash_tag(hash_bytes(n.as_bytes()))))
+        .collect();
     heap.collect(&mut |t| t.values(&roots));
     let bytes = image(&heap);
     let table = Ref::from_raw(u32::from_le_bytes(bytes[68..72].try_into().unwrap()));
@@ -399,8 +405,10 @@ fn a_forged_intern_table_prunes_and_grows_to_its_live_entries() {
             b[word(k + 2)..word(k + 2) + 8].copy_from_slice(&w.to_le_bytes());
         }
         for (k, keep) in keeps.into_iter().enumerate() {
-            let restored = Heap::read_snapshot(&mut Reader::new(&b), u64::MAX);
-            assert!(restored.is_ok(), "{what}: refused");
+            let checked = Heap::read_snapshot(&mut Reader::new(&b), u64::MAX);
+            assert_eq!(checked.err(), Some(Error::BadSnapshot), "{what}");
+            let restored = Heap::read_snapshot_trusted(&mut Reader::new(&b), u64::MAX);
+            assert!(restored.is_ok(), "{what}: refused unchecked");
             let mut copy = restored.unwrap();
             let kept: Vec<Value> = (0..400).filter(|&i| keep(i)).map(|i| roots[i]).collect();
             copy.collect(&mut |t| t.values(&kept));
@@ -430,6 +438,175 @@ fn a_forged_intern_table_prunes_and_grows_to_its_live_entries() {
             assert_eq!(copy.find_interned("a new name"), Some(new), "{what}, {k}");
         }
     }
+}
+
+/// A checked restore refuses an entry more than `INTERN_WALK_CAP` slots
+/// after its hash's, even over occupied slots, and one behind a free
+/// slot; it takes a table with entries at the cap.
+#[test]
+fn a_restore_refuses_an_intern_table_past_the_walk_cap() {
+    let mut heap = Heap::new(HeapConfig {
+        memory_limit: 64 << 20,
+        ..HeapConfig::default()
+    });
+    // 129 names of one bucket: walks of 0 to the cap, in 512 slots.
+    let names: Vec<String> = (0..)
+        .map(|k| format!("cap{k}"))
+        .filter(|s| hash_bytes(s.as_bytes()) & 4095 == 300)
+        .take(INTERN_WALK_CAP + 1)
+        .collect();
+    // And a few elsewhere, before them: occupied slots that are not an
+    // entry's way from its bucket once a free slot follows them.
+    let apart: Vec<String> = (0..)
+        .map(|k| format!("apart{k}"))
+        .filter(|s| (10..250).contains(&(hash_bytes(s.as_bytes()) & 511)))
+        .take(20)
+        .collect();
+    for name in names.iter().chain(&apart) {
+        heap.intern(name).unwrap();
+    }
+    let bytes = image(&heap);
+    let table = Ref::from_raw(u32::from_le_bytes(bytes[68..72].try_into().unwrap()));
+    let cap = heap.header(table).unwrap().len() as usize - 1;
+    assert_eq!(cap, 512);
+    let free = Value::UNDEFINED.to_bits();
+    let honest: Vec<u64> = (1..=cap as u32)
+        .map(|i| heap.get(table, i).unwrap().to_bits())
+        .collect();
+    assert!(
+        honest[300..=300 + INTERN_WALK_CAP]
+            .iter()
+            .all(|&w| w != free)
+    );
+    let restores = |entries: &[u64]| {
+        let word = word_at(&bytes, table.raw());
+        let mut b = bytes.clone();
+        let count = entries.iter().filter(|&&w| w != free).count();
+        let count = Value::int(i64::try_from(count).unwrap()).unwrap().to_bits();
+        b[word(1)..word(1) + 8].copy_from_slice(&count.to_le_bytes());
+        for (k, w) in entries.iter().enumerate() {
+            b[word(k + 2)..word(k + 2) + 8].copy_from_slice(&w.to_le_bytes());
+        }
+        Heap::read_snapshot(&mut Reader::new(&b), u64::MAX).map(drop)
+    };
+    assert_eq!(restores(&honest), Ok(()));
+    // Every entry one slot on, behind a second entry of the first name:
+    // no free slot before any, and the last one a slot past the cap.
+    let mut past = honest.clone();
+    past.copy_within(300..=300 + INTERN_WALK_CAP, 301);
+    assert_eq!(restores(&past), Err(Error::BadSnapshot));
+    // Without that last one, every entry is within the cap again.
+    let mut within = past.clone();
+    within[301 + INTERN_WALK_CAP] = free;
+    assert_eq!(restores(&within), Ok(()));
+    // An entry behind a free slot, one slot from its bucket.
+    let mut behind = honest.clone();
+    behind[300..=300 + INTERN_WALK_CAP].fill(free);
+    behind[301] = honest[300];
+    assert_eq!(restores(&behind), Err(Error::BadSnapshot));
+    behind[300] = honest[301];
+    assert_eq!(restores(&behind), Ok(()));
+    // An entry without its hash's byte: a lookup would pass it.
+    let mut untagged = honest.clone();
+    untagged[310] ^= 1 << 32;
+    assert_eq!(restores(&untagged), Err(Error::BadSnapshot));
+    // An entry that is no value's encoding: bits above its kind byte.
+    let mut stray = honest.clone();
+    stray[310] |= 1 << 40;
+    assert_eq!(restores(&stray), Err(Error::BadSnapshot));
+}
+
+/// A doubling of a table only a trusted restore takes stays one pass. One
+/// run of entries, half for the last buckets of the doubled table's lower
+/// half and half for the first of its upper half: the first half fills
+/// the slots the second half's buckets name, and each of the second half
+/// walked on from its bucket for a free slot, quadratic in the run (1.07 s
+/// at 131,072 slots against 6.6 ms \[M\]). They now take the table's
+/// free slots from its start, in order, with one cursor for all of them.
+#[test]
+fn a_forged_run_that_fills_anothers_buckets_doubles_in_one_pass() {
+    let mut heap = Heap::new(HeapConfig {
+        memory_limit: 64 << 20,
+        ..HeapConfig::default()
+    });
+    let cap = 1024_usize;
+    let n = cap / 2 - 2;
+    for k in 0..n {
+        heap.intern(&format!("honest{k}")).unwrap();
+    }
+    // The run lies in slots 0..n, so the doubling starts after slot n.
+    let origin = n as u64 + 1;
+    let key = |hash: u64| hash.wrapping_sub(origin) & (2 * cap as u64 - 1);
+    let (half, near) = (cap as u64, cap as u64 / 16);
+    let mut pool = |tag: &str, wanted: &dyn Fn(u64) -> bool| -> Vec<(Ref, u64)> {
+        (0..)
+            .map(|k| format!("{tag}{k}"))
+            .filter(|s| wanted(key(hash_bytes(s.as_bytes()))))
+            .take(n / 2)
+            .map(|s| {
+                let r = heap.new_str(&s).unwrap();
+                let hash = heap.str_hash_mut(r).unwrap();
+                (r, Value::from_ref(r, hash_tag(hash)).to_bits())
+            })
+            .collect()
+    };
+    let low = pool("low", &|k| (half - near..half).contains(&k));
+    let high = pool("high", &|k| (half..half + near).contains(&k));
+    let bytes = image(&heap);
+    let table = Ref::from_raw(u32::from_le_bytes(bytes[68..72].try_into().unwrap()));
+    assert_eq!(heap.header(table).unwrap().len() as usize - 1, cap);
+    let word = word_at(&bytes, table.raw());
+    let mut b = bytes.clone();
+    let count = Value::int(i64::try_from(n).unwrap()).unwrap().to_bits();
+    b[word(1)..word(1) + 8].copy_from_slice(&count.to_le_bytes());
+    let free = Value::UNDEFINED.to_bits();
+    let run = low.iter().chain(&high).map(|&(_, w)| w);
+    for (k, w) in run.chain(core::iter::repeat(free)).take(cap).enumerate() {
+        b[word(k + 2)..word(k + 2) + 8].copy_from_slice(&w.to_le_bytes());
+    }
+    assert!(Heap::read_snapshot(&mut Reader::new(&b), u64::MAX).is_err());
+    let mut forged = Heap::read_snapshot_trusted(&mut Reader::new(&b), u64::MAX).unwrap();
+    forged.reserve_interned(cap as u32).unwrap();
+    let mut grown = None;
+    forged.for_each_object(&mut |r, h| {
+        if h.type_id() == types::INTERN_TABLE && h.len() as usize == 2 * cap + 1 {
+            grown = Some(r);
+        }
+    });
+    let grown = grown.unwrap();
+    let slot = |i: usize| forged.get(grown, i as u32 + 1).unwrap().as_obj();
+    // The first half from its buckets on. Of the second, whose buckets
+    // those slots are, each that finds its slot taken goes to the
+    // table's first free slots, in order; the rest follow the first half
+    // (their run's cursor has passed it by then).
+    let refs = |entries: &[(Ref, u64)]| -> Vec<Ref> {
+        let mut refs: Vec<Ref> = entries.iter().map(|&(r, _)| r).collect();
+        refs.sort_unstable_by_key(|r| r.raw());
+        refs
+    };
+    let held = |slots: core::ops::Range<usize>| -> Vec<Ref> {
+        let mut refs: Vec<Ref> = slots.filter_map(&slot).collect();
+        refs.sort_unstable_by_key(|r| r.raw());
+        refs
+    };
+    let first = (origin + half - near) as usize;
+    let (low, high) = (refs(&low), refs(&high));
+    let spilled = held(0..first);
+    assert!(slot(0).is_some() && !spilled.is_empty());
+    assert_eq!(held(0..spilled.len()), spilled, "the first free slots");
+    assert!(
+        spilled
+            .iter()
+            .all(|r| high.binary_search_by_key(&r.raw(), |h| h.raw()).is_ok())
+    );
+    let after = held(first..2 * cap);
+    assert!(
+        low.iter()
+            .all(|r| after.binary_search_by_key(&r.raw(), |h| h.raw()).is_ok())
+    );
+    assert_eq!(spilled.len() + after.len(), n);
+    assert_eq!(forged.interned_count() as usize, n);
+    assert_eq!((0..2 * cap).filter(|&i| slot(i).is_some()).count(), n);
 }
 
 #[test]

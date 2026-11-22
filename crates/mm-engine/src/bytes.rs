@@ -2664,7 +2664,7 @@ impl Vm {
                     let s =
                         core::str::from_utf8(self.heap.bytes(b).unwrap_or(&[])).unwrap_or_default();
                     let s: String = s.into();
-                    return self.intern(&s);
+                    return self.shared_str(&s);
                 }
                 let res = self.heap.str_from_block(b, chars as u64);
                 let r = self.hx(res)?;

@@ -1516,7 +1516,6 @@
 535_task_peak_then_fill.py	wasm-snapshot	fuel,digest	accounting across targets and the snapshot's collection (steps 4, 5)
 536_signature_peak_then_fill.py	cross	refused,fuel,digest	accounting across targets: a park near the limit does not fit on the target that charges more (steps 4, 5)
 536_signature_peak_then_fill.py	restore	fuel,digest	VM vector capacity and the snapshot's collection: a restore charges what the image holds (steps 4, 5)
-536_signature_peak_then_fill.py	restore-vs-snapshot	fuel,digest	VM vector capacity: a restore charges what the image holds, not the capacity a peak left (step 4)
 536_signature_peak_then_fill.py	snapshot	fuel,digest	snapshot collection: the snapshot collects in full and drops caches (step 5)
 536_signature_peak_then_fill.py	wasm	fuel,digest	accounting: the final state follows the target (step 4)
 536_signature_peak_then_fill.py	wasm-parks	fuel,digest	accounting: the final state follows the target (step 4)

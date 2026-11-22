@@ -50,5 +50,5 @@ pub use heap::{
     ObjectCursor, Ref, SEGMENT_BYTES, Scratch, encoding_samples, flags, types,
 };
 pub use snapshot::{Reader, put_bytes, put_len, put_u8, put_u32, put_u64, xxh64};
-pub use string::{StrBuf, bytes_eq, hash_bytes, hash_bytes_const};
+pub use string::{INTERN_WALK_CAP, StrBuf, bytes_eq, hash_bytes, hash_bytes_const, hash_tag};
 pub use value::{Special, Value};

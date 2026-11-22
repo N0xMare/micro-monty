@@ -1450,6 +1450,113 @@ fn a_cut_completion_repr_stops_walking_past_what_the_cut_keeps() {
     }
 }
 
+/// The intern table keeps every name within a fixed walk of its hash's
+/// slot (docs/spec.md §5): names a guest picks by `hash()` for one place
+/// of every table the memory limit allows double the table until one
+/// does not fit, and the next is a `MemoryError` the guest can catch;
+/// the session goes on, and the name interns once the others are gone.
+#[test]
+fn names_crowded_in_the_intern_table_raise_memory_error() {
+    let (p, out) = run_with(
+        Limits::new().with_memory(2 << 20),
+        "\
+import gc
+class O:
+    pass
+o = O()
+names = []
+k = 0
+while len(names) < 200:
+    k += 1
+    s = 'q' + str(k)
+    if hash(s) & 65535 < 64:
+        names.append(s)
+taken = 0
+try:
+    for s in names:
+        hasattr(o, s)
+        taken += 1
+    print('never refused')
+except MemoryError:
+    print('refused', 128 < taken < 200)
+refused = names[taken]
+for attempt in range(2):
+    try:
+        setattr(o, refused, 1)
+        print('set')
+    except MemoryError:
+        print('refused again')
+print(hasattr(o, 'other'), getattr(o, 'x' + 'y', 2))
+s = names = None
+gc.collect()
+setattr(o, refused, 3)
+print(getattr(o, refused))
+",
+    );
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    assert_eq!(
+        out,
+        "refused True\nrefused again\nrefused again\nFalse 2\n3\n"
+    );
+}
+
+/// The empty str and each char up to U+00FF are one object however they
+/// are made, across a collection and a restore.
+#[test]
+fn one_char_strs_are_shared_across_collections_and_restores() {
+    const SAME: &str = "\
+a, e = 'a', '\u{e9}'
+made = ['abc'[0], chr(97), str(b'a', 'ascii'), list('a')[0], 'xa'.strip('x'), json.loads('\"a\"'),
+        getattr(o, 'a', 'a'), ''.join(['a'])]
+print(all(x is a for x in made), '\u{e9}t\u{e9}'[0] is e, chr(233) is e, list('\u{e9}')[0] is e,
+      ''.join([]) is '', 'ab'[2:] is '', [''.join(['b']), ''.join(['a', 'b']), chr(98) + chr(99)] == ['b', 'ab', 'bc'])";
+    let engine = Engine::new(EngineConfig::default());
+    let mut session = Session::new(&engine).expect("session");
+    let out = Arc::new(Mutex::new(String::new()));
+    let attach = |session: &mut Session| {
+        let sink = Arc::clone(&out);
+        session.set_output(Box::new(move |s: &str| {
+            sink.lock().expect("output lock").push_str(s);
+        }));
+    };
+    let run = |session: &mut Session, src: &str| {
+        let p = session.start(&engine.compile(src, "test.py").expect("compiles"));
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    };
+    attach(&mut session);
+    run(&mut session, "import gc, json\nclass O:\n    pass\no = O()");
+    run(&mut session, SAME);
+    run(&mut session, "gc.collect()");
+    run(&mut session, SAME);
+    let image = session.snapshot().expect("snapshot");
+    let mut restored = engine.restore(&image).expect("restores");
+    attach(&mut restored);
+    run(&mut restored, SAME);
+    run(&mut restored, "gc.collect()");
+    run(&mut restored, SAME);
+    assert_eq!(
+        out.lock().expect("output lock").as_str(),
+        "True True True True True True True\n".repeat(4)
+    );
+    // A shared char nothing else holds goes with a collection, and is
+    // made again: the engine's own reference to it does not outlive it.
+    out.lock().expect("output lock").clear();
+    run(
+        &mut restored,
+        "\
+for c in range(128, 256):
+    chr(c)
+gc.collect()
+filler = [str(i) + 'x' for i in range(20_000)]
+print([ord(chr(c)) for c in range(128, 256)] == list(range(128, 256)),
+      all(len(chr(c)) == 1 for c in range(256)), ''.join(map(chr, range(65, 70))))",
+    );
+    assert_eq!(
+        out.lock().expect("output lock").as_str(),
+        "True True ABCDE\n"
+    );
+}
+
 #[test]
 fn memory_limit_raises_memory_error() {
     let limits = Limits::new().with_memory(8 << 20);

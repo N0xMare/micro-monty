@@ -161,7 +161,7 @@ impl Out {
     fn finish(self, vm: &mut Vm) -> Result<Value, Raised> {
         let n = self.buf.len();
         if n <= 1 {
-            return vm.intern(core::str::from_utf8(self.buf.as_bytes()).unwrap_or(""));
+            return vm.shared_str(core::str::from_utf8(self.buf.as_bytes()).unwrap_or(""));
         }
         if n >= 64 {
             vm.burn_result(n, true);

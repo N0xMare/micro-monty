@@ -24,8 +24,28 @@ use alloc::vec::Vec;
 
 const SLOT_DATA: u32 = 0;
 const SLOT_CHARS: u32 = 1;
-const SLOT_HASH: u32 = 2;
+pub(crate) const SLOT_HASH: u32 = 2;
 const INTERN_MIN_CAP: u32 = 64;
+
+/// The most slots an interned string lies past its hash's slot, so a
+/// lookup reads at most this many and one more, whatever names a guest
+/// picks by `hash()` (docs/spec.md §5). An insert with no free slot that
+/// near doubles the table first. Names with random hashes come nowhere
+/// near it: the longest walk in 300 half-full tables of 65,536 slots was
+/// 44 \[M\].
+pub const INTERN_WALK_CAP: usize = 128;
+
+/// What a lookup of a string in the intern table found.
+enum Probe {
+    /// The interned string equal to it.
+    Found(Ref),
+    /// None, and the free slot (an index into the entries) where it goes,
+    /// in a table that stays at most half full with it.
+    Free(usize),
+    /// None, and no slot to take as the table is: none free within
+    /// [`INTERN_WALK_CAP`] of its hash's, a table half full, or no table.
+    NoRoom,
+}
 
 /// The string hash, Fx-style: one multiply per 8 bytes with a fixed seed,
 /// deterministic across runs, processes and platforms (docs/spec.md §5).
@@ -743,12 +763,14 @@ impl Heap {
     /// Equal live strings give the same `Ref`. The caller must root it across GC.
     pub fn intern(&mut self, s: &str) -> Result<Ref, Error> {
         let hash = hash_bytes(s.as_bytes());
-        if let Some(r) = self.find_hashed(s.as_bytes(), hash)? {
-            return Ok(r);
-        }
-        self.reserve_intern()?;
+        let probe = match self.probe_interned(s.as_bytes(), hash)? {
+            Probe::Found(r) => return Ok(r),
+            probe => probe,
+        };
+        // Room before the string exists: a refused table leaves nothing.
+        let slot = self.reserve_intern(hash, &probe)?;
         let r = self.new_str_flagged(s, Some(hash))?;
-        self.insert_interned(r, hash)?;
+        self.insert_interned(r, slot, hash)?;
         Ok(r)
     }
 
@@ -759,22 +781,24 @@ impl Heap {
             return Ok(r);
         }
         let hash = self.str_hash_mut(r)?;
-        let found = self.find_hashed(self.str_bytes(r)?, hash)?;
-        if let Some(existing) = found {
-            return Ok(existing);
-        }
-        self.reserve_intern()?;
+        let probe = match self.probe_interned(self.str_bytes(r)?, hash)? {
+            Probe::Found(existing) => return Ok(existing),
+            probe => probe,
+        };
+        // Room before the flag: a refused table leaves `r` as it was.
+        let slot = self.reserve_intern(hash, &probe)?;
         self.add_core_flag(r, flags::INTERNED)?;
-        self.insert_interned(r, hash)?;
+        self.insert_interned(r, slot, hash)?;
         Ok(r)
     }
 
     /// The interned `str` equal to `s`, if there is one. Allocates nothing.
     #[must_use]
     pub fn find_interned(&self, s: &str) -> Option<Ref> {
-        self.find_hashed(s.as_bytes(), hash_bytes(s.as_bytes()))
-            .ok()
-            .flatten()
+        match self.probe_interned(s.as_bytes(), hash_bytes(s.as_bytes())) {
+            Ok(Probe::Found(r)) => Some(r),
+            _ => None,
+        }
     }
 
     /// Number of interned strings.
@@ -791,25 +815,54 @@ impl Heap {
         Ok(self.header(table)?.len() - 1)
     }
 
-    fn find_hashed(&self, bytes: &[u8], hash: u64) -> Result<Option<Ref>, Error> {
+    /// Looks for the interned string of `bytes` from its hash's slot on,
+    /// over at most [`INTERN_WALK_CAP`] slots after it: no entry lies
+    /// further (inserts, the prune and a doubling keep it so, and a
+    /// checked restore refuses a table that does not).
+    fn probe_interned(&self, bytes: &[u8], hash: u64) -> Result<Probe, Error> {
         let Some(table) = self.intern_table else {
-            return Ok(None);
+            return Ok(Probe::NoRoom);
         };
-        // The table's entries, read with one validation.
-        let entries = self.slot_words(table)?.get(1..).ok_or(Error::BadSlot)?;
+        // The table's count and entries, read with one validation.
+        let (count, entries) = self
+            .slot_words(table)?
+            .split_first()
+            .ok_or(Error::BadSlot)?;
         let mask = entries.len().wrapping_sub(1);
         #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
         let mut i = hash as usize & mask;
-        for _ in 0..entries.len() {
-            let Some(r) = entries.get(i).and_then(|&w| Value(w).as_obj()) else {
-                return Ok(None);
+        let tag = hash_tag(hash);
+        for _ in 0..entries.len().min(INTERN_WALK_CAP + 1) {
+            let entry = Value(entries.get(i).copied().unwrap_or(Value::UNDEFINED.0));
+            let Some(r) = entry.as_obj() else {
+                // Free to take while the table stays under half full.
+                let room = Value(*count)
+                    .as_int()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .is_some_and(|n| (n + 1) * 2 <= entries.len());
+                return Ok(if room { Probe::Free(i) } else { Probe::NoRoom });
             };
-            if self.get_raw(r, SLOT_HASH)? == hash && self.str_bytes(r)? == bytes {
-                return Ok(Some(r));
+            // An entry of another hash is passed by its word alone.
+            if entry.obj_kind() == Some(tag)
+                && self.get_raw(r, SLOT_HASH)? == hash
+                && self.str_bytes(r)? == bytes
+            {
+                return Ok(Probe::Found(r));
             }
             i = (i + 1) & mask;
         }
-        Ok(None)
+        Ok(Probe::NoRoom)
+    }
+
+    /// The first free slot within [`INTERN_WALK_CAP`] of `hash`'s.
+    fn free_interned(&self, table: Ref, hash: u64) -> Result<Option<usize>, Error> {
+        let entries = self.slot_words(table)?.get(1..).ok_or(Error::BadSlot)?;
+        let mask = entries.len().wrapping_sub(1);
+        #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
+        let bucket = hash as usize;
+        Ok((0..entries.len().min(INTERN_WALK_CAP + 1))
+            .map(|k| (bucket + k) & mask)
+            .find(|&i| entries.get(i).is_some_and(|&w| Value(w).as_obj().is_none())))
     }
 
     /// The intern table's slots, writable: its count, then its entries.
@@ -826,40 +879,41 @@ impl Heap {
             .ok_or(Error::BadSlot)
     }
 
-    /// Puts `entry` (an interned string's reference) in `slots` (an intern
-    /// table's, after its count) at its hash's first free place; the caller
-    /// has made room.
-    fn place_interned(slots: &mut [u64], entry: u64, hash: u64) -> Result<(), Error> {
-        let mask = slots.len().wrapping_sub(1);
-        #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
-        let mut i = hash as usize & mask;
-        for _ in 0..slots.len() {
-            let slot = slots.get_mut(i).ok_or(Error::BadSlot)?;
-            if Value(*slot).as_obj().is_none() {
-                *slot = entry;
-                return Ok(());
-            }
-            i = (i + 1) & mask;
+    /// Makes room for one more entry, of hash `hash`, which `probe` did
+    /// not find: the free slot it goes to, the probe's own when it found
+    /// one in a table with room.
+    #[inline]
+    fn reserve_intern(&mut self, hash: u64, probe: &Probe) -> Result<usize, Error> {
+        match *probe {
+            Probe::Free(slot) => Ok(slot),
+            _ => self.make_intern_room(hash),
         }
-        Err(Error::OutOfMemory)
     }
 
-    /// Makes room for one more entry: creates the table or doubles it.
-    fn reserve_intern(&mut self) -> Result<(), Error> {
-        if let Some(t) = self.intern_table {
-            // The usual case, room already: count and capacity in one read.
-            let w = self.slot_words(t)?;
-            let count = w
-                .first()
-                .and_then(|&c| Value(c).as_int())
-                .and_then(|n| usize::try_from(n).ok())
-                .ok_or(Error::BadSlot)?;
-            // Entries are the slots after the count.
-            if (count + 1) * 2 < w.len() {
-                return Ok(());
+    /// [`Heap::reserve_intern`] with no slot to take as it is: creates
+    /// the table, doubles it when it is half full, and doubles it again
+    /// for as long as no slot within [`INTERN_WALK_CAP`] of the hash's is
+    /// free: names crowded in one place whatever the table's size end in
+    /// `OutOfMemory`, at the largest table an object may be.
+    #[cold]
+    #[inline(never)]
+    fn make_intern_room(&mut self, hash: u64) -> Result<usize, Error> {
+        // (Nothing, for a table with room that is only crowded there.)
+        self.grow_intern(self.interned_count() + 1)?;
+        let table = self.intern_table.ok_or(Error::BadRef)?;
+        self.uncrowd_interned(table, hash)
+    }
+
+    /// A free slot for `hash` in `table` or, doubling until there is
+    /// one, in the table that replaces it.
+    fn uncrowd_interned(&mut self, mut table: Ref, hash: u64) -> Result<usize, Error> {
+        loop {
+            if let Some(slot) = self.free_interned(table, hash)? {
+                return Ok(slot);
             }
+            let shift = self.crowd_shift(table, hash)?;
+            table = self.grow_interned(table, shift)?;
         }
-        self.grow_intern(self.interned_count() + 1)
     }
 
     /// Makes room for `n` interned strings in all, so a known batch (the
@@ -893,54 +947,140 @@ impl Heap {
         // A table with entries only ever doubles, as often as it takes
         // (more than once only for a batch reserved late).
         while want > self.table_cap(old)? {
-            old = self.double_interned(old)?;
+            old = self.grow_interned(old, 1)?;
         }
         Ok(())
     }
 
-    /// Replaces intern table `old` by one of twice its slots, with no
-    /// probe; the new table. The entries are taken in table order from the
-    /// slot after a free one (so no cluster is cut) and each cluster's are
-    /// sorted by bucket from that slot on, which sorts them all: a
-    /// cluster's buckets lie within its own slots. An entry `d` buckets
-    /// after that slot in the old table then belongs `d` slots after it in
-    /// the new one, or half a table further on, by its hash's next bit
-    /// (the other way round once past the old table's end). Each of the
-    /// two runs only moves forward, so an entry goes to its bucket or
-    /// right after the one before it. Probing for each entry instead takes
-    /// time quadratic in a cluster's length, in one step (docs/spec.md §5).
-    fn double_interned(&mut self, old: Ref) -> Result<Ref, Error> {
+    /// How many times intern table `table` must double for a string of
+    /// hash `hash`, which finds no slot within [`INTERN_WALK_CAP`] of its
+    /// own, to find one: the fewest after which at most that many of the
+    /// entries near its slot stay near it (those whose hashes agree with
+    /// it in the bits the larger table reads too), or as many as the
+    /// largest table allows. The table then grows once, not a doubling at
+    /// a time: names crowded on one place of every table would make it
+    /// double up to the largest in one step (53 ms from 2,048 slots [M]).
+    fn crowd_shift(&self, table: Ref, hash: u64) -> Result<u32, Error> {
+        let entries = self.slot_words(table)?.get(1..).ok_or(Error::BadSlot)?;
+        let cap = entries.len();
+        let mut most = 0;
+        while !crate::space::over_cap((cap << (most + 1)) + 2) {
+            most += 1;
+        }
+        if most == 0 || cap == 0 {
+            // As the allocation of a larger table would refuse it.
+            return Err(self.refuse(cap as u64 * 16 + 8));
+        }
+        #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
+        let bucket = hash as usize;
+        // An entry that can lie in the string's reach in a larger table
+        // has its bucket within the cap of the string's there, and so
+        // here: it lies at most two caps after it, or one before.
+        let near = (3 * INTERN_WALK_CAP + 1).min(cap);
+        let first = bucket.wrapping_sub(INTERN_WALK_CAP);
+        for shift in 1..most {
+            let mask = (cap << shift) - 1;
+            let mut stay = 0;
+            for k in 0..near {
+                let Some(r) = entries
+                    .get(first.wrapping_add(k) & (cap - 1))
+                    .and_then(|&w| Value(w).as_obj())
+                else {
+                    continue;
+                };
+                #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
+                let other = self.get_raw(r, SLOT_HASH)? as usize;
+                let apart = other.wrapping_sub(bucket).wrapping_add(INTERN_WALK_CAP) & mask;
+                stay += usize::from(apart <= 2 * INTERN_WALK_CAP);
+            }
+            if stay <= INTERN_WALK_CAP {
+                return Ok(shift);
+            }
+        }
+        Ok(most)
+    }
+
+    /// Replaces intern table `old` by one of `1 << shift` times its slots
+    /// (twice, for a table half full), with no probe; the new table. The
+    /// entries are taken in table order from the slot after a free one,
+    /// the origin (so no cluster is cut). Each has a key, how many
+    /// buckets after the origin its bucket lies in the new table: its
+    /// low bits say the same of the old table, and the bits above them
+    /// which of `1 << shift` runs the entry joins, an old table apart
+    /// from the next. A cluster's buckets lie within its own slots, so
+    /// with each cluster's entries sorted by key, every run's entries
+    /// come in bucket order over the whole pass: an entry goes to its
+    /// bucket or right after the one before it in its run, and no run
+    /// reaches the next (a table is at most half full). Probing for each
+    /// entry instead takes time quadratic in a cluster's length, in one
+    /// step (docs/spec.md §5).
+    fn grow_interned(&mut self, old: Ref, shift: u32) -> Result<Ref, Error> {
         let entries = self.slot_words(old)?.get(1..).ok_or(Error::BadSlot)?;
         let old_cap = entries.len();
+        // Refused before any work, as the allocation would refuse it: a
+        // crowded insert at the largest table costs no pass over it.
+        if crate::space::over_cap((old_cap << shift) + 2) {
+            return Err(self.refuse((old_cap as u64) << shift << 3));
+        }
         let mask = old_cap.wrapping_sub(1);
         let occupied = |w: &u64| Value(*w).as_obj().is_some();
         let mut words = Vec::new();
-        words
-            .try_reserve_exact(entries.iter().filter(|w| occupied(w)).count())
-            .map_err(|_| Error::OutOfMemory)?;
+        let mut next = Vec::new();
+        if words
+            .try_reserve_exact(self.interned_count() as usize)
+            .is_err()
+            || next.try_reserve_exact(1 << shift).is_err()
+        {
+            return Err(Error::OutOfMemory);
+        }
         let origin = entries
             .iter()
             .position(|w| !occupied(w))
             .map_or(0, |free| (free + 1) & mask);
         let (wrapped, first) = entries.split_at_checked(origin).ok_or(Error::BadSlot)?;
-        // The hashes first, in a loop of independent loads (each string's
-        // hash is cached: interned strings are `HASHED`): a sort between
-        // them makes each cache miss wait for the one before.
-        for &w in first.iter().chain(wrapped) {
-            if let Some(r) = Value(w).as_obj() {
-                words.push(Moved::new(self.get_raw(r, SLOT_HASH)?, origin, mask, r).0);
+        let new_mask = (old_cap << shift).wrapping_sub(1);
+        // One pass: each entry's word, kept in order within its cluster
+        // as it is added (most clusters of names with any hashes are a
+        // few entries); a long cluster out of order is sorted at its end.
+        let (mut from, mut unsorted) = (0, false);
+        for part in [first, wrapped] {
+            for &w in part {
+                let Some(r) = Value(w).as_obj() else {
+                    if unsorted {
+                        let n = words.len() - from;
+                        sort_words(&mut words, from, n, usize::MAX);
+                        unsorted = false;
+                    }
+                    from = words.len();
+                    continue;
+                };
+                // (Only a forged table holds more entries than its count.)
+                if words.len() == words.capacity() {
+                    return Err(Error::BadSlot);
+                }
+                // An entry is a live string with its hash (the prune and
+                // a checked restore keep it so): read by that guard.
+                #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
+                let key =
+                    (self.get_raw_guarded(r, SLOT_HASH) as usize).wrapping_sub(origin) & new_mask;
+                let word = (key as u64) << 40 | w & ((1 << 40) - 1);
+                let mut at = words.len();
+                words.push(word);
+                if unsorted || words.len() - from > SORT_IN_PLACE {
+                    unsorted |= at > from && words.get(at - 1).is_some_and(|&last| last > word);
+                    continue;
+                }
+                while at > from && words.get(at - 1).is_some_and(|&last| last > word) {
+                    words.swap(at - 1, at);
+                    at -= 1;
+                }
             }
         }
-        let (mut from, mut to) = (0, 0);
-        for w in first.iter().chain(wrapped) {
-            if occupied(w) {
-                to += 1;
-                continue;
-            }
-            sort_words(&mut words, from, to - from, usize::MAX);
-            from = to;
+        if unsorted {
+            let n = words.len() - from;
+            sort_words(&mut words, from, n, usize::MAX);
         }
-        let cap = u32::try_from(old_cap * 2).map_err(|_| Error::OutOfMemory)?;
+        let cap = u32::try_from(old_cap << shift).map_err(|_| Error::OutOfMemory)?;
         let table = self.alloc_object(types::INTERN_TABLE, 0, cap + 1, 0)?;
         let count = Value::int(i64::try_from(words.len()).map_err(|_| Error::OutOfMemory)?)
             .ok_or(Error::OutOfMemory)?;
@@ -948,19 +1088,28 @@ impl Heap {
         let (head, entries) = slots.split_first_mut().ok_or(Error::BadSlot)?;
         *head = count.0;
         let mask = entries.len().wrapping_sub(1);
-        let mut next = [origin, origin + old_cap];
+        let old_bits = old_cap.trailing_zeros();
+        // Each run's next free slot, not yet wrapped.
+        next.extend((0..1_usize << shift).map(|run| origin + run * old_cap));
+        let mut spill = 0;
         for word in words {
-            let mut at = Moved(word).slot(origin, old_cap, &mut next);
-            // Taken only in a forged table, whose entries are not where
-            // probes look: the next free slot then.
-            for _ in 0..entries.len() {
-                if entries.get(at & mask).is_some_and(|w| !occupied(w)) {
-                    break;
-                }
-                at += 1;
+            #[allow(clippy::cast_possible_truncation, reason = "22 bits")]
+            let bucket = origin + (word >> 40) as usize;
+            let mut at = bucket;
+            if let Some(free) = next.get_mut((bucket - origin) >> old_bits) {
+                at = bucket.max(*free);
+                *free = at + 1;
             }
-            *entries.get_mut(at & mask).ok_or(Error::BadSlot)? =
-                Value::from_ref(low_ref(word), 0).0;
+            // Taken only in a forged table, whose entries are not where
+            // probes look: the next free slot then, of one pass over the
+            // table for all of them (`spill` never goes back).
+            if entries.get(at & mask).is_some_and(occupied) {
+                while entries.get(spill).is_some_and(occupied) {
+                    spill += 1;
+                }
+                at = spill;
+            }
+            *entries.get_mut(at & mask).ok_or(Error::BadSlot)? = entry_of(word);
         }
         self.intern_table = Some(table);
         Ok(table)
@@ -1065,10 +1214,11 @@ impl Heap {
         #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
         let slot = |i: usize| 1 + ((base + i) & mask) as u32;
         // The survivors move to the cluster's end, each as its bucket's
-        // distance from `base` over its reference.
+        // distance from `base` over its entry's kind byte and reference.
         let mut first = len;
         for i in (0..len).rev() {
-            let Some(r) = self.get(table, slot(i))?.as_obj() else {
+            let entry = self.get(table, slot(i))?;
+            let Some(r) = entry.as_obj() else {
                 continue;
             };
             if !self.str_marked(r) {
@@ -1079,7 +1229,8 @@ impl Heap {
             #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
             let distance = (hash as usize).wrapping_sub(base) & mask;
             first -= 1;
-            let word = (distance as u64) << 32 | u64::from(r.raw());
+            let kind = u64::from(entry.obj_kind().unwrap_or(0));
+            let word = (distance as u64) << 40 | kind << 32 | u64::from(r.raw());
             self.write_slot(table, slot(first), word, true, false)?;
         }
         let slots = self.intern_slots_mut(table)?;
@@ -1099,47 +1250,42 @@ impl Heap {
             // Never past the slot it came from: a forged table's bucket
             // may lie outside its cluster.
             #[allow(clippy::cast_possible_truncation, reason = "a distance in the table")]
-            let at = next.max((word >> 32) as usize).min(i);
+            let at = next.max((word >> 40) as usize).min(i);
             if let Some(e) = entries.get_mut((base + at) & mask) {
-                *e = Value::from_ref(low_ref(word), 0).0;
+                *e = entry_of(word);
             }
             next = at + 1;
         }
         u32::try_from(first).map_err(|_| Error::BadSlot)
     }
 
-    /// How many slots a lookup of the interned string `r` passes before it
-    /// finds it: the native work an interning of an equal string did.
-    #[must_use]
-    pub fn interned_walk(&self, r: Ref) -> usize {
-        let Some(table) = self.intern_table else {
-            return 0;
-        };
-        let (Ok(words), Ok(hash)) = (self.slot_words(table), self.get_raw(r, SLOT_HASH)) else {
-            return 0;
-        };
-        let entries = words.get(1..).unwrap_or(&[]);
-        let mask = entries.len().wrapping_sub(1);
-        #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
-        let bucket = hash as usize & mask;
-        (0..entries.len())
-            .find(|i| {
-                entries
-                    .get((bucket + i) & mask)
-                    .is_none_or(|&w| Value(w).as_obj().is_none_or(|e| e == r))
-            })
-            .unwrap_or(0)
-    }
-
-    /// Adds `r` to the table; the caller has made room.
-    fn insert_interned(&mut self, r: Ref, hash: u64) -> Result<(), Error> {
+    /// Adds `r`, of hash `hash`, to the table at entry `slot`, the free
+    /// one `reserve_intern` gave.
+    fn insert_interned(&mut self, r: Ref, slot: usize, hash: u64) -> Result<(), Error> {
         let table = self.intern_table.ok_or(Error::BadRef)?;
         let slots = self.intern_slots_mut(table)?;
         let (head, entries) = slots.split_first_mut().ok_or(Error::BadSlot)?;
         let count = Value(*head).as_int().ok_or(Error::BadSlot)? + 1;
         *head = Value::int(count).ok_or(Error::OutOfMemory)?.0;
-        Self::place_interned(entries, Value::from_ref(r, 0).0, hash)
+        *entries.get_mut(slot).ok_or(Error::BadSlot)? = Value::from_ref(r, hash_tag(hash)).0;
+        Ok(())
     }
+}
+
+/// The kind byte of the intern table entry of a string of hash `hash`:
+/// the hash's top byte, which no table size takes for the slot. A lookup
+/// reads a string only where it matches (one entry in 256 of another
+/// hash), so its walk costs a word a slot, wherever a guest has put the
+/// strings (docs/spec.md §5).
+#[must_use]
+pub fn hash_tag(hash: u64) -> u8 {
+    hash.to_be_bytes()[0]
+}
+
+/// The intern table entry a sort word stands for: its low half is the
+/// entry's reference and the byte above it the entry's kind byte.
+fn entry_of(word: u64) -> u64 {
+    Value::from_ref(low_ref(word), word.to_le_bytes()[4]).0
 }
 
 /// The string of a word that holds a reference in its low half.
@@ -1151,39 +1297,9 @@ fn low_ref(word: u64) -> Ref {
     Ref::from_raw(word as u32)
 }
 
-/// An intern table entry on its way to a doubled table, as a word that
-/// sorts by where it goes: how many buckets after the old table's
-/// starting slot its bucket lies, then its hash's next bit, then its
-/// reference. Tables have at most 2^31 slots.
-#[derive(Clone, Copy)]
-struct Moved(u64);
-
-impl Moved {
-    #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
-    fn new(hash: u64, origin: usize, mask: usize, r: Ref) -> Moved {
-        let distance = (hash as usize).wrapping_sub(origin) & mask;
-        let high = u64::from(hash as usize & (mask + 1) != 0);
-        Moved((distance as u64) << 33 | high << 32 | u64::from(r.raw()))
-    }
-
-    /// Its slot in the doubled table, not yet wrapped; `next` is each
-    /// run's next free slot.
-    #[allow(clippy::cast_possible_truncation, reason = "a distance in the table")]
-    fn slot(self, origin: usize, old_cap: usize, next: &mut [usize; 2]) -> usize {
-        let bucket = origin + (self.0 >> 33) as usize;
-        let high = self.0 >> 32 & 1 != 0;
-        // Past the old table's end the bucket has wrapped, and so has
-        // which half its hash's next bit names.
-        let far = high != (bucket >= old_cap);
-        let bucket = bucket + if far { old_cap } else { 0 };
-        let Some(run) = next.get_mut(usize::from(far)) else {
-            return bucket;
-        };
-        let at = (*run).max(bucket);
-        *run = at + 1;
-        at
-    }
-}
+/// The longest cluster a doubling keeps in order entry by entry as it
+/// reads it; a longer one is sorted whole.
+const SORT_IN_PLACE: usize = 16;
 
 /// Sorts the `n` words of `e` from index `first` on, ascending; indexes
 /// are taken under `wrap`, so a run may pass a table's end. In place and
@@ -1241,7 +1357,8 @@ mod tests {
     /// The table `prune_intern` must leave, slot for slot, over a copy of
     /// the entries: each cluster (a run of occupied slots, around the
     /// table's end if it lies there) that holds a dead entry has its live
-    /// ones in bucket order, then reference order, each at its bucket or
+    /// ones in bucket order, then kind byte and reference order, each at its
+    /// bucket or
     /// right after the one before; every other slot is as it was.
     fn pruned_sorted(
         mut slots: Vec<u64>,
@@ -1264,10 +1381,16 @@ mod tests {
             if cluster.iter().all(|&w| live(w)) {
                 continue;
             }
-            let mut kept: Vec<(usize, u32, u64)> = cluster
+            let mut kept: Vec<(usize, u64, u64)> = cluster
                 .iter()
                 .filter(|&&w| live(w))
-                .map(|&w| ((hash(w) as usize).wrapping_sub(base) & mask, w as u32, w))
+                .map(|&w| {
+                    (
+                        (hash(w) as usize).wrapping_sub(base) & mask,
+                        w & 0xff_ffff_ffff,
+                        w,
+                    )
+                })
                 .collect();
             kept.sort_unstable();
             for k in 0..len {
@@ -1312,7 +1435,7 @@ mod tests {
                 .iter()
                 .map(|(_, r)| {
                     let hash = heap.get_raw(*r, SLOT_HASH).unwrap();
-                    (Value::from_ref(*r, 0).0, hash)
+                    (Value::from_ref(*r, hash_tag(hash)).0, hash)
                 })
                 .collect();
             let keep: Vec<bool> = held

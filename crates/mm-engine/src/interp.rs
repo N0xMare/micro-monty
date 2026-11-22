@@ -1059,9 +1059,16 @@ impl Vm {
             }
         };
         let gens = &mut self.gens;
+        let shared_chars = &mut self.shared_chars;
         let mut weak = |t: &mut mm_core::Tracer<'_>| {
             Vm::sweep_fresh(fresh, t);
             gens.retain(|&g| t.marked(g));
+            // As weak as the intern table, which drops the same strings.
+            for c in shared_chars.iter_mut() {
+                if !t.marked(*c) {
+                    *c = Value::NONE;
+                }
+            }
         };
         if !collect(&mut self.heap, kind, &mut roots, &mut weak) {
             return;

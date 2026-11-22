@@ -1036,6 +1036,15 @@ pub struct Vm {
     pub(crate) missing: Value,
     /// The `()` singleton (`() is ()`, as in CPython).
     pub(crate) empty_tuple: Value,
+    /// The shared strs ([`shared_char`]) of at most one char found so
+    /// far, each at its [`shared_index`] (`None`: not yet, or collected):
+    /// a native that makes a char per item (`list(text)`) reads a slot
+    /// each, not the intern table. Only a cache of the table: each is the
+    /// table's string (`'a' is chr(97)`), held as weakly as the table
+    /// holds it, so no collection, image or fuel count differs for it.
+    /// Empty until the first one is found: a session that makes none
+    /// pays nothing for it.
+    pub(crate) shared_chars: Vec<Value>,
     /// Post-mortem work of the main task (see [`Post`]).
     pub(crate) post: Option<Post>,
     /// Arena-owned `(repr, str)` of the completion value; traced until taken.
@@ -1352,6 +1361,7 @@ impl Vm {
             tramp: 0,
             missing: Value::NONE,
             empty_tuple: Value::NONE,
+            shared_chars: Vec::new(),
             post: None,
             completion_text: None,
             want_text: false,
@@ -2938,10 +2948,36 @@ impl Vm {
         Ok(Value::from_ref(r, ty::STR as u8))
     }
 
-    /// A new `str`, shared (interned) when it is [`shared_char`].
+    /// The shared `str` of text `s`, which is [`shared_char`]: the
+    /// interned one, through `shared_chars` if it is at most one char.
+    pub(crate) fn shared_str(&mut self, s: &str) -> Result<Value, Raised> {
+        let Some(i) = shared_index(s.as_bytes()) else {
+            return self.intern(s);
+        };
+        if let Some(&v) = self.shared_chars.get(i)
+            && v != Value::NONE
+        {
+            return Ok(v);
+        }
+        let v = self.intern(s)?;
+        // Without room for the cache the table alone serves.
+        if self.shared_chars.is_empty() && self.shared_chars.try_reserve_exact(SHARED_CHARS).is_ok()
+        {
+            self.shared_chars.resize(SHARED_CHARS, Value::NONE);
+        }
+        if let Some(slot) = self.shared_chars.get_mut(i) {
+            *slot = v;
+        }
+        Ok(v)
+    }
+
+    /// A new `str`, shared when it is [`shared_char`]. Out of line: it
+    /// is short now that the shared ones are found elsewhere, and a copy
+    /// in each of its callers cost 7 KB of `hello` [M].
+    #[inline(never)]
     pub(crate) fn new_str(&mut self, s: &str) -> Result<Value, Raised> {
         if shared_char(s.as_bytes()) {
-            return self.intern_hot(s);
+            return self.shared_str(s);
         }
         if s.len() >= 64 {
             self.burn_result(s.len(), true);
@@ -3047,7 +3083,7 @@ impl Vm {
     fn str_from_buf(&mut self, b: StrBuf) -> Result<Value, Raised> {
         let r = if shared_char(b.as_bytes()) {
             let s = core::str::from_utf8(b.as_bytes()).unwrap_or("");
-            self.intern_hot(s)
+            self.shared_str(s)
         } else {
             if b.len() >= 64 {
                 self.burn_result(b.len(), true);
@@ -3766,6 +3802,21 @@ impl Vm {
 #[inline]
 pub(crate) fn shared_char(b: &[u8]) -> bool {
     b.len() <= 1 || (b.len() == 2 && b[0] < 0xC4)
+}
+
+/// Slots of `Vm::shared_chars`: the empty str, then U+0000 to U+00FF.
+pub(crate) const SHARED_CHARS: usize = 257;
+
+/// The slot of `Vm::shared_chars` for UTF-8 text `b`, if it is at most
+/// one char up to U+00FF (two ASCII chars are [`shared_char`] too, and
+/// only interned).
+pub(crate) fn shared_index(b: &[u8]) -> Option<usize> {
+    match *b {
+        [] => Some(0),
+        [c] => Some(1 + usize::from(c)),
+        [lead @ 0xC2..=0xC3, c] => Some(1 + (usize::from(lead & 3) << 6 | usize::from(c & 0x3F))),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

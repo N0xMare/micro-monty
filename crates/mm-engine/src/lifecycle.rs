@@ -254,7 +254,8 @@ impl Vm {
                 + self.futures.capacity() * size_of::<(u64, Value)>()
                 + self.call_log.capacity() * size_of::<crate::host::CallEntry>()
                 + self.fresh.capacity() * size_of::<Value>()
-                + self.gens.capacity() * size_of::<Value>()) as u64
+                + self.gens.capacity() * size_of::<Value>()
+                + self.shared_chars.capacity() * size_of::<Value>()) as u64
     }
 
     // One shared copy: inlined, it would add hundreds of bytes to each of

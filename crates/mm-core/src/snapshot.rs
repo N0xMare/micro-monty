@@ -380,18 +380,46 @@ impl Heap {
         if header.nvals() != n || cap < 2 || !cap.is_power_of_two() {
             return bad();
         }
-        let mut count = 0u32;
-        for i in 1..n {
-            let v = self.get(table, i)?;
-            if v == Value::UNDEFINED {
+        // One pass over the table's words, from the slot after a free one
+        // (half the slots are), so `run` is the occupied slots since the
+        // last free one. Every entry is an interned `str` where a lookup
+        // finds it: at most `INTERN_WALK_CAP` slots after its hash's,
+        // with no free slot between, and with its hash's byte as its
+        // kind byte (`hash_tag`).
+        let entries = self.slot_words(table)?.get(1..).ok_or(Error::BadSnapshot)?;
+        let mask = entries.len().wrapping_sub(1);
+        let origin = entries
+            .iter()
+            .position(|&w| w == Value::UNDEFINED.0)
+            .map_or(0, |i| i + 1);
+        let (mut count, mut run) = (0u32, 0usize);
+        for k in 0..entries.len() {
+            let i = (origin + k) & mask;
+            let entry = Value(entries.get(i).copied().unwrap_or(0));
+            if entry == Value::UNDEFINED {
+                run = 0;
                 continue;
             }
-            let e = v.as_obj().ok_or(Error::BadSnapshot)?;
+            // (A valid encoding: no bits between the kind byte and the tag.)
+            let e = Value::from_bits(entry.0)
+                .and_then(Value::as_obj)
+                .ok_or(Error::BadSnapshot)?;
             let h = self.header(e)?;
-            if h.type_id() != types::STR || h.flags() & flags::INTERNED == 0 {
+            // (`check_str` refuses an interned `str` without its hash.)
+            let interned = flags::INTERNED | flags::HASHED;
+            if h.type_id() != types::STR || h.flags() & interned != interned {
+                return bad();
+            }
+            let hash = self.get_raw(e, crate::string::SLOT_HASH)?;
+            #[allow(clippy::cast_possible_truncation, reason = "masked to the table size")]
+            let walk = i.wrapping_sub(hash as usize) & mask;
+            if walk > run.min(crate::string::INTERN_WALK_CAP)
+                || entry.obj_kind() != Some(crate::string::hash_tag(hash))
+            {
                 return bad();
             }
             count += 1;
+            run += 1;
         }
         if count > cap / 2 || self.get(table, 0)?.as_int() != Some(i64::from(count)) {
             return bad();

@@ -157,13 +157,33 @@ hashes are pre-release history, kept in the private archive
   again once, its survivors sorted by bucket. The table doubling over
   such a run probed for every entry past the ones before it (235 ms for
   34,000 names): the doubled table now takes the entries sorted, with no
-  probe (5 ms). An interning's walk along a run is charged, a unit per
-  64 slots: 125 walks of a 72,000-slot run took 88 ms between two looks
-  at the clock, now 2 to 3 ms. The table's slots are laid out otherwise
-  than before, so `SNAPSHOT_EPOCH` and the build id move; results and
-  fuel are those of the build before on every own case, Monty's corpus
-  and the recorded sessions, none of which has a walk long enough to be
-  charged [M, `--release`, x86-64].
+  probe (5 ms). The table's slots are laid out otherwise than before,
+  so `SNAPSHOT_EPOCH` and the build id move; results and fuel are those
+  of the build before on every own case, Monty's corpus and the
+  recorded sessions [M, `--release`, x86-64].
+- A lookup in the intern table no longer walks a run of names a guest
+  picked. Every path to the table walked it: computed attribute names
+  (88 to 112 ms between two looks at the clock over a run of 72,000),
+  an import's name (198 ms), a cell's string literals and names while
+  it is loaded (2,000 of them: 1.2 s with no safepoint), and the
+  one-char strs every str constructor shares (`list(text)` of 20,000
+  chars: 10.3 s in one step). Now no interned string lies more than 128
+  slots past its hash's slot (`INTERN_WALK_CAP`): an insert that finds
+  no free slot that near grows the table first, in one pass, to the
+  size at which the names near it part, and a lookup reads at most 129
+  slots. Each entry carries a byte of its string's hash, so a lookup
+  passes an entry of another hash without reading its string. The
+  empty str and the chars up to U+00FF are also found without the
+  table, through a cache the engine keeps beside it (the same objects:
+  `'a' is chr(97)`). The rows above now take 0.1 to 20 ms. A checked
+  restore refuses a table with an entry past the cap, behind a free
+  slot or without its hash's byte; the build id moves. Names crowded
+  on one place of the largest table (4,194,304 slots) raise
+  `MemoryError`: about 130 names whose hashes agree in 22 bits, which
+  a guest finds among some 4 million candidates. Results and fuel are
+  those of the build before on every own case, Monty's corpus and the
+  recorded sessions, none of which grows the table for a crowded name
+  [M, shipped codegen, x86-64].
 - `reset()` gives back the memory earlier cells committed and no longer
   use, without moving an object: after a cell filled a 3 MiB heap with
   4 KB buffers, a 1 MB `bytearray` raised `MemoryError` after the reset
@@ -462,13 +482,23 @@ hashes are pre-release history, kept in the private archive
 
 ### Known issues
 
-- The intern table at 2,000,000 names (computed attribute names, of any
-  bucket) is doubled and pruned in one step each, linear in the table:
-  88 to 97 ms for its last doubling, which sorts each run of entries
-  (69 to 84 ms before), and 46 ms for the prune of its 4,194,304 slots
-  once the names are dropped (165 to 189 ms before), against the 50 ms
-  bound [M, `--release`]. The step oracle's two rows for it are `Open`.
-  The fix, pruning a slice at a time, is not in this change.
+- A growth or a prune of the intern table is one step, linear in the
+  table, and passes the 50 ms bound on a large one [M, shipped
+  codegen]. The doubling at 524,288 names (computed attribute names, of
+  any bucket), to 2,097,152 slots, takes 56 to 75 ms (54 to 77 before
+  this change) and the last one, at 1,048,576 names, 73 to 111 ms; the
+  prune of the 4,194,304 slots once 2,000,000 names are dropped takes
+  47 to 57 ms (253 ms before). A guest reaches a growth as long with
+  fewer names: 100,000 names of any bucket and then 130 crowded on one
+  place of every table grow it from 262,144 slots to the largest in one
+  step of 54 to 94 ms. A growth sizes the table for the name that
+  found no slot, so a guest can force up to one growth per table size:
+  128 names whose hashes agree in 22 bits and 13 that agree with them
+  in 9 to 21, after 30,000 other names, grow the table five times,
+  which is one step of 86 to 120 ms as the literals of one cell and 80
+  to 142 ms between two safepoints as a `hasattr` loop. The step
+  oracle's four rows for these are `Open`. The fix, growing and
+  pruning a slice at a time, is not in this change.
 - A `bytearray` with spare capacity that opens a gap near its start in
   place (`b.insert(0, x)`, `b[0:0] = ...` on 64 MiB never written) is one
   step of 96 to 97% of the 50 ms bound, with glibc and with musl's

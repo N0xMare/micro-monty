@@ -1270,9 +1270,22 @@ whatever its buckets: removing or placing entries one by one takes time
 quadratic in a cluster's length in one step (§5), and names chosen for their
 buckets make long clusters (guest `hash()` shows a name's bucket). A snapshot
 holds the table's slots as they lie, so the layout is part of what an image
-holds (§9.3). An interning that walks 64 slots or more is charged a unit per
-64. Doubling the table and pruning it are each one step, linear
-in its slots. Code and shape metadata explicitly trace the
+holds (§9.3). No entry lies more than `INTERN_WALK_CAP` (128) slots after its
+hash's slot, so a lookup reads at most 129 slots wherever a guest has put the
+names: an insert that finds no free slot that near grows the table first, to
+the first size at which at most 128 of the entries near its slot stay near it
+(or the largest an object may be, 4,194,304 slots, where an insert still
+crowded is refused: `MemoryError`). A layout sorted by bucket puts each entry
+at the earliest slot any layout could, so neither a prune nor a growth moves
+one past the cap. Each entry's kind byte is the top byte of its string's hash
+(`hash_tag`): a lookup compares it before it reads a string, so a slot on the
+way costs a word. The engine keeps the empty str and the chars up to U+00FF
+in a cache beside the table (`Vm::shared_chars`, weak like the table, not in
+an image, and charged to the memory budget with the engine's other buffers),
+so a native that makes a char per item reads no table slot.
+Growing the table and pruning it are each one step, linear in its slots; a
+growth is sized for the name that found no slot, so chosen names can force up
+to one growth per table size. Code and shape metadata explicitly trace the
 names they own; builtin names remain reachable through the builtins and prelude.
 The table retains its high-water capacity inside the arena budget.
 
@@ -2232,7 +2245,10 @@ checked against the engine's memory limit (`TooLarge`, §11 "Restore
 admission").
 
 Validated on restore: segment indices, run tiling, every block header, every
-`str` (UTF-8, char count, flags), the intern table (identity, count, load),
+`str` (UTF-8, char count, flags), the intern table (identity, count, load,
+every entry within `INTERN_WALK_CAP` slots of its hash's with no free slot
+between and with its hash's byte; a template's own image, restored unchecked,
+was written by this build from a table that held all of it),
 every code object (`Code::verify`: operands in range, jumps on instruction
 starts, only `JUMP_LOOP` backward, sane handler ranges, a terminator last;
 and, for stored code, every `YIELD_FROM` right after its `SEND`), frame and

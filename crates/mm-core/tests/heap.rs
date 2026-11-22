@@ -7,8 +7,8 @@
 )]
 
 use mm_core::{
-    ByteRef, Error, Heap, HeapConfig, LARGE_OBJECT_BYTES, ObjectCursor, Ref, SEGMENT_BYTES, Value,
-    flags, hash_bytes, hash_bytes_const, types,
+    ByteRef, Error, Heap, HeapConfig, INTERN_WALK_CAP, LARGE_OBJECT_BYTES, ObjectCursor, Ref,
+    SEGMENT_BYTES, Value, flags, hash_bytes, hash_bytes_const, hash_tag, types,
 };
 
 const T: u16 = types::FIRST_ENGINE;
@@ -499,6 +499,39 @@ fn names_in_buckets(tag: &str, n: usize, mask: u64, wanted: impl Fn(u64) -> bool
         .collect()
 }
 
+/// Names for the buckets `buckets` (under `mask`), one each, in that
+/// order: interned so, each lies at its bucket or right after the ones
+/// that share it, however long the run of slots they fill.
+fn names_at(tag: &str, mask: u64, buckets: &[u64]) -> Vec<String> {
+    let mut wanted: Vec<Vec<usize>> = vec![Vec::new(); mask as usize + 1];
+    for (k, &b) in buckets.iter().enumerate().rev() {
+        wanted[(b & mask) as usize].push(k);
+    }
+    let mut names = vec![String::new(); buckets.len()];
+    let mut left = buckets.len();
+    for i in 0.. {
+        if left == 0 {
+            break;
+        }
+        let name = format!("{tag}{i}");
+        if let Some(k) = wanted[(hash_bytes(name.as_bytes()) & mask) as usize].pop() {
+            names[k] = name;
+            left -= 1;
+        }
+    }
+    names
+}
+
+/// The heap's intern table is one a checked restore admits: every entry
+/// within `INTERN_WALK_CAP` slots of its hash's, with no free slot
+/// between (`check_intern_table`).
+fn assert_in_reach(heap: &Heap, what: &str) {
+    let mut image = Vec::new();
+    heap.write_snapshot(&mut image);
+    let restored = Heap::read_snapshot(&mut mm_core::Reader::new(&image), u64::MAX);
+    assert!(restored.is_ok(), "{what}: an entry out of a lookup's reach");
+}
+
 /// Collects `heap` with the names `keep` picks as roots, and checks that
 /// the table then holds exactly those, each at its own string.
 fn prune_to(heap: &mut Heap, names: &[String], refs: &[Ref], keep: impl Fn(usize) -> bool) {
@@ -514,16 +547,19 @@ fn prune_to(heap: &mut Heap, names: &[String], refs: &[Ref], keep: impl Fn(usize
     for (i, (name, &r)) in names.iter().zip(refs).enumerate() {
         assert_eq!(heap.find_interned(name), keep(i).then_some(r), "{name}");
     }
+    assert_in_reach(heap, "pruned");
 }
 
 #[test]
 fn a_long_cluster_prunes_to_its_live_names() {
     type Keep = (&'static str, fn(usize) -> bool);
-    // 3,000 names of 64 buckets fill one run of the 8,192 slots they end
-    // in, from its start or across its end; the table doubles seven times
-    // on the way, over the run.
-    let from_start = names_in_buckets("low", 3000, 8191, |b| b < 64);
-    let across_end = names_in_buckets("high", 3000, 8191, |b| b >= 8160);
+    // 3,000 names fill one run of the 8,192 slots they end in, from its
+    // start or across its end, two to every other bucket so none is far
+    // from its own; the table doubles seven times on the way, over the
+    // run.
+    let run = |first: u64| -> Vec<u64> { (0..3000).map(|k| first + (k & !1)).collect() };
+    let from_start = names_at("low", 8191, &run(0));
+    let across_end = names_at("high", 8191, &run(8192 - 1400));
     let keeps: [Keep; 7] = [
         ("none", |_| false),
         ("all", |_| true),
@@ -540,6 +576,11 @@ fn a_long_cluster_prunes_to_its_live_names() {
             for (name, &r) in names.iter().zip(&refs) {
                 assert_eq!(heap.find_interned(name), Some(r), "{what}: {name}");
             }
+            let slots = intern_slots(&heap);
+            assert_eq!(slots.len(), 8192, "no doubling for room near a bucket");
+            let longest = slots.split(Option::is_none).map(<[_]>::len).max();
+            // (The run across the end reads as two.)
+            assert!(longest >= Some(1400), "{longest:?}");
             prune_to(&mut heap, names, &refs, keep);
             // The table takes the dead names again, and loses all of them.
             let again: Vec<Ref> = names.iter().map(|n| heap.intern(n).unwrap()).collect();
@@ -556,12 +597,14 @@ fn a_long_cluster_prunes_to_its_live_names() {
 
 #[test]
 fn a_table_of_long_clusters_grows_with_every_name_in_reach() {
-    // Names of an eighth of the buckets, of the table they end in and of
-    // every smaller one: runs of thousands at each doubling, some across
-    // the table's end, beside names of any bucket.
-    let mut names = names_in_buckets("a", 5000, 16383, |b| b < 2048);
-    names.extend(names_in_buckets("b", 1500, 16383, |b| b >= 16000));
-    names.extend((0..500).map(|i| format!("any{i}")));
+    // Names of consecutive buckets, of the table they end in and of every
+    // smaller one: runs of thousands at each doubling, one across the
+    // table's end, after a few names of any bucket (few: each puts the
+    // names of a run it lies in one slot further from their buckets).
+    let run = |first: u64, n: u64| -> Vec<u64> { (0..n).map(|k| first + k).collect() };
+    let mut names: Vec<String> = (0..100).map(|i| format!("any{i}")).collect();
+    names.extend(names_at("a", 16383, &run(2000, 5000)));
+    names.extend(names_at("b", 16383, &run(15_500, 1500)));
     let mut heap = Heap::default();
     let mut refs = Vec::new();
     for (i, name) in names.iter().enumerate() {
@@ -573,7 +616,9 @@ fn a_table_of_long_clusters_grows_with_every_name_in_reach() {
             }
         }
     }
-    assert_eq!(heap.interned_count(), 7000);
+    assert_eq!(heap.interned_count(), 6600);
+    assert_eq!(intern_slots(&heap).len(), 16_384);
+    assert_in_reach(&heap, "grown");
     // A batch reserved late doubles the table more than once.
     heap.reserve_interned(60_000).unwrap();
     assert_eq!(intern_slots(&heap).len(), 131_072);
@@ -585,7 +630,7 @@ fn a_table_of_long_clusters_grows_with_every_name_in_reach() {
         assert_eq!(heap.find_interned(name), Some(r), "{name}");
         assert_eq!(heap.intern(name), Ok(r));
     }
-    assert_eq!(heap.interned_count(), 7000);
+    assert_eq!(heap.interned_count(), 6600);
     assert_eq!(heap.find_interned("absent"), None);
     prune_to(&mut heap, &names, &refs, |i| i % 3 == 0);
 }
@@ -628,7 +673,7 @@ fn model_prune(slots: &mut [Option<(Ref, u64)>], live: &dyn Fn(Ref) -> bool) {
             .filter(|&(r, _)| live(r))
             .map(|(r, hash)| ((hash as usize).wrapping_sub(base) & mask, r, hash))
             .collect();
-        kept.sort_unstable_by_key(|&(distance, r, _)| (distance, r.raw()));
+        kept.sort_unstable_by_key(|&(distance, r, hash)| (distance, hash_tag(hash), r.raw()));
         let mut next = 0;
         for (distance, r, hash) in kept {
             let at = next.max(distance);
@@ -645,12 +690,11 @@ fn model_prune(slots: &mut [Option<(Ref, u64)>], live: &dyn Fn(Ref) -> bool) {
 fn pruned_and_doubled_tables_have_the_slots_of_the_model() {
     let short: Vec<String> = (0..900).map(|i| format!("name{i}")).collect();
     let mut mixed = short.clone();
-    mixed.extend(names_in_buckets("m", 300, 4095, |b| b < 40));
-    mixed.extend(names_in_buckets("e", 200, 4095, |b| b >= 4080));
+    let run = |first: u64, n: u64| -> Vec<u64> { (0..n).map(|k| first + (k & !1)).collect() };
+    mixed.extend(names_at("m", 4095, &run(500, 300)));
+    mixed.extend(names_at("e", 4095, &run(4000, 200)));
     // A long cluster after short ones with dead names.
-    mixed.extend(names_in_buckets("c", 300, 4095, |b| {
-        (2000..2040).contains(&b)
-    }));
+    mixed.extend(names_at("c", 4095, &run(2000, 300)));
     for (what, names, longest) in [("short", &short, 0..=64), ("mixed", &mixed, 200..=4096)] {
         for keep in [
             |i: usize| i.is_multiple_of(2),
@@ -664,6 +708,9 @@ fn pruned_and_doubled_tables_have_the_slots_of_the_model() {
                 hash_bytes(names[i].as_bytes())
             };
             let before = intern_slots(&heap);
+            // No doubling for room near a bucket.
+            let cap = (names.len() * 2 + 2).next_power_of_two();
+            assert_eq!(before.len(), cap, "{what}");
             let run = before.split(Option::is_none).map(<[_]>::len).max().unwrap();
             assert!(longest.contains(&run), "{what}: longest cluster {run}");
             let mut model: Vec<Option<(Ref, u64)>> =
@@ -676,9 +723,9 @@ fn pruned_and_doubled_tables_have_the_slots_of_the_model() {
         }
     }
     // Doubling: the clusters in table order from the slot after the first
-    // free one, each sorted by its entries' buckets from that slot on,
-    // then by the hash's next bit and the reference; each entry then at
-    // its new bucket's first free slot.
+    // free one, each sorted by where its entries' buckets lie after that
+    // slot in the new table; each entry then at its new bucket's first
+    // free slot.
     for names in [&short, &mixed] {
         doubled_as_the_model(names);
     }
@@ -702,9 +749,12 @@ fn doubled_as_the_model(mixed: &[String]) {
             cluster.push(r);
             continue;
         }
-        cluster.sort_unstable_by_key(|&r| {
+        // By the half of the new table the entry goes to and its bucket
+        // there, counted from the origin; then hash byte and reference.
+        cluster.sort_by_key(|&r| {
             let hash = hash_of(r);
-            (hash.wrapping_sub(origin) & (cap - 1), hash & cap, r.raw())
+            let key = hash.wrapping_sub(origin) & (2 * cap - 1);
+            (key, hash_tag(hash as u64), r.raw())
         });
         order.append(&mut cluster);
     }
@@ -719,20 +769,145 @@ fn doubled_as_the_model(mixed: &[String]) {
     assert_eq!(intern_slots(&heap), want, "doubled");
 }
 
+/// `n` names whose hashes agree in the bits of `mask`: they share a
+/// bucket in every table of at most `mask + 1` slots.
+fn names_of_one_bucket(tag: &str, n: usize, mask: u64) -> Vec<String> {
+    names_in_buckets(tag, n, mask, |b| b == 7)
+}
+
 #[test]
-fn an_interned_strings_walk_is_its_distance_from_its_bucket() {
+fn an_insert_with_no_slot_near_its_bucket_doubles_the_table() {
+    // 140 names of one bucket of every table up to 4,096 slots: the
+    // table holds 129 of them (walks of 0 to the cap), and the next one
+    // doubles it until they part, far past the size their count asks.
+    let names = names_of_one_bucket("crowd", 140, 4095);
     let mut heap = Heap::default();
-    // 20 names of one bucket of the first table's 64: each lies one slot
-    // further from it than the one before.
-    let names = names_in_buckets("w", 20, 63, |b| b == 5);
+    let mut refs = Vec::new();
     for (i, name) in names.iter().enumerate() {
-        let r = heap.intern(name).unwrap();
-        assert_eq!(heap.interned_walk(r), i);
+        refs.push(heap.intern(name).unwrap());
+        let cap = intern_slots(&heap).len();
+        if i <= INTERN_WALK_CAP {
+            assert!(cap <= 512, "{i}: {cap} slots");
+            let slots = intern_slots(&heap);
+            let longest = slots.split(Option::is_none).map(<[_]>::len).max();
+            assert!(longest >= Some(i + 1), "{i}");
+        } else {
+            // In one growth, to the first size at which they part.
+            assert_eq!(cap, 8192, "{i}");
+        }
+        assert_in_reach(&heap, name);
+        // Found again at once, the one at the cap too.
+        assert_eq!(heap.find_interned(name), refs.last().copied(), "{i}");
+        assert_eq!(heap.interned_count() as usize, i + 1);
     }
-    let apart = heap
-        .intern(&names_in_buckets("x", 1, 63, |b| b == 40)[0])
-        .unwrap();
-    assert_eq!(heap.interned_walk(apart), 0);
+    for (name, &r) in names.iter().zip(&refs) {
+        assert_eq!(heap.find_interned(name), Some(r), "{name}");
+        assert_eq!(heap.intern(name), Ok(r));
+    }
+    assert_eq!(heap.interned_count(), 140);
+    prune_to(&mut heap, &names, &refs, |i| i % 2 == 0);
+}
+
+#[test]
+fn names_crowded_at_the_largest_table_are_out_of_memory() {
+    // The largest table an object may be, and names of 64 of its buckets
+    // until one finds no slot within the cap.
+    let mut heap = Heap::default();
+    heap.reserve_interned(2_000_000).unwrap();
+    assert_eq!(intern_slots(&heap).len(), 1 << 22);
+    let mask = (1 << 22) - 1;
+    let mut crowd = (0..)
+        .map(|k| format!("z{k}"))
+        .filter(|s| hash_bytes(s.as_bytes()) & mask < 64);
+    let mut held = Vec::new();
+    let refused = loop {
+        let name = crowd.next().unwrap();
+        match heap.intern(&name) {
+            Ok(r) => held.push((name, r)),
+            Err(e) => break (name, e),
+        }
+        assert!(held.len() < 64 + INTERN_WALK_CAP + 1, "never refused");
+    };
+    assert_eq!(refused.1, Error::OutOfMemory);
+    assert!(held.len() > INTERN_WALK_CAP, "{} names", held.len());
+    // Nothing of the refused name is left, as a str either.
+    assert_eq!(heap.find_interned(&refused.0), None);
+    assert_eq!(heap.interned_count() as usize, held.len());
+    let plain = heap.new_str(&refused.0).unwrap();
+    assert_eq!(heap.intern_str(plain), Err(Error::OutOfMemory));
+    assert_eq!(heap.header(plain).unwrap().flags() & flags::INTERNED, 0);
+    assert_eq!(intern_slots(&heap).len(), 1 << 22);
+    // Refused before another table was made.
+    let mut tables = 0;
+    heap.for_each_object(&mut |_, h| tables += usize::from(h.type_id() == types::INTERN_TABLE));
+    assert_eq!(tables, 1);
+    // Every other name interns as before.
+    for (name, r) in &held {
+        assert_eq!(heap.intern(name), Ok(*r));
+    }
+    let apart = heap.intern("a name of another bucket").unwrap();
+    assert_eq!(heap.find_interned("a name of another bucket"), Some(apart));
+    assert_in_reach(&heap, "crowded");
+    // Once the crowd is dropped, the name has room.
+    heap.collect(&mut |t| t.value(Value::from_ref(apart, types::STR as u8)));
+    assert_eq!(heap.interned_count(), 1);
+    let again = heap.intern(&refused.0).unwrap();
+    assert_eq!(heap.find_interned(&refused.0), Some(again));
+}
+
+/// Whatever is interned, pruned and doubled, no entry is left further
+/// from its hash's slot than the cap, or behind a free slot: names of
+/// any bucket, runs of consecutive buckets, names crowded on a few
+/// buckets (walks near the cap) and on one (which doubles the table).
+#[test]
+fn no_prune_or_doubling_leaves_an_entry_past_the_walk_cap() {
+    let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+    let mut next = move |n: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % n
+    };
+    for round in 0..12_u64 {
+        let mut heap = Heap::default();
+        let mut names: Vec<String> = Vec::new();
+        let mut refs: Vec<Ref> = Vec::new();
+        for step in 0..10_u64 {
+            let tag = format!("r{round}s{step}_");
+            let mask = (64_u64 << next(7)) - 1;
+            let first = next(mask + 1);
+            let batch = match next(4) {
+                0 => (0..40 + next(300)).map(|i| format!("{tag}{i}")).collect(),
+                1 => {
+                    let run: Vec<u64> = (0..20 + next(200)).map(|k| first + k / 2).collect();
+                    names_at(&tag, mask, &run)
+                }
+                2 => names_in_buckets(&tag, 60 + next(60) as usize, mask, |b| {
+                    b.wrapping_sub(first) & mask < 8
+                }),
+                _ => names_in_buckets(&tag, 100 + next(60) as usize, 1023, |b| b == first & 1023),
+            };
+            for name in batch {
+                refs.push(heap.intern(&name).unwrap());
+                names.push(name);
+            }
+            assert_in_reach(&heap, &format!("{tag}interned"));
+            if next(3) == 0 {
+                let cap = u32::try_from(intern_slots(&heap).len()).unwrap();
+                heap.reserve_interned(cap).unwrap();
+                assert_in_reach(&heap, &format!("{tag}doubled"));
+            }
+            let (period, phase) = (2 + next(5), next(2));
+            let keep: Vec<bool> = (0..names.len())
+                .map(|i| !(i as u64 + phase).is_multiple_of(period))
+                .collect();
+            prune_to(&mut heap, &names, &refs, |i| keep[i]);
+            let mut kept = keep.iter();
+            names.retain(|_| *kept.next().unwrap());
+            let mut kept = keep.iter();
+            refs.retain(|_| *kept.next().unwrap());
+        }
+    }
 }
 
 #[test]

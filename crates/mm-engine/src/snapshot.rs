@@ -2362,6 +2362,7 @@ impl Vm {
             tramp,
             missing,
             empty_tuple,
+            shared_chars: Vec::new(),
             post,
             completion_text,
             want_text,
