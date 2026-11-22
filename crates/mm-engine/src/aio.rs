@@ -688,7 +688,9 @@ impl Vm {
     /// as a generator's return restores it (`Vm::gen_leave`), and the
     /// coroutine keeps none.
     pub(crate) fn coro_left(&mut self, c: Value) {
-        if let Some(r) = c.as_obj() {
+        if let Some(r) = c.as_obj()
+            && self.slot(r, coro::HANDLED) != Value::NONE
+        {
             self.handled = self.slot(r, coro::OUTER);
             let _ = self
                 .heap
@@ -799,25 +801,16 @@ impl Vm {
         let keep = self.raw_of_hot(c, coro::STATE) & coro::RUN_BITS;
         self.set_raw_of_hot(c, coro::STATE, coro::RUNNING | keep);
         st.coro = c;
-        if let Some(r) = c.as_obj() {
-            if resume {
-                // Back at its `AWAIT`, which steps what it waits on.
-                st.pc = usize::try_from(self.raw_hot(r, coro::PC)).unwrap_or(0);
-                st.acc = self.slot_hot(r, coro::AWAITED);
-                let _ = self
-                    .heap
-                    .set_values(r, coro::AWAITED, &[Value::NONE, Value::NONE]);
-                if cont == crate::cont::Cont::CoroSend {
-                    let (handled, outer) = (self.slot_hot(r, coro::HANDLED), self.handled);
-                    let _ = self
-                        .heap
-                        .set_values(r, coro::HANDLED, &[Value::NONE, outer]);
-                    if handled != Value::NONE {
-                        self.handled = handled;
-                    }
-                }
-            } else if cont == crate::cont::Cont::CoroSend {
-                self.set_slot_hot(r, coro::OUTER, self.handled);
+        if resume && let Some(r) = c.as_obj() {
+            // Back at its `AWAIT`, which steps what it waits on.
+            st.pc = usize::try_from(self.raw_hot(r, coro::PC)).unwrap_or(0);
+            st.acc = self.slot_hot(r, coro::AWAITED);
+            let _ = self
+                .heap
+                .set_values(r, coro::AWAITED, &[Value::NONE, Value::NONE]);
+            let handled = self.slot_hot(r, coro::HANDLED);
+            if handled != Value::NONE {
+                self.own_handler_resume(r, coro::HANDLED, handled);
             }
         }
         Ok(())
@@ -943,19 +936,12 @@ impl Vm {
             let Some(fr) = self.pop_frame(st) else {
                 return Err(self.err(T::SystemError, "micro-monty: lost send() frame"));
             };
+            // Each level inside a handler of its own keeps its handled
+            // exception, so below it the one handled is its awaiter's.
+            if self.slot_hot(r, coro::HANDLED) != Value::NONE {
+                self.own_handler_suspend(r, coro::HANDLED);
+            }
             if self.cont_take(fr.cont) == Cont::CoroSend {
-                let outer = self.slot_hot(r, coro::OUTER);
-                // The caller's handled exception is not the coroutine's
-                // own (`Vm::gen_leave` keeps none either).
-                let inner = if self.handled == outer {
-                    Value::NONE
-                } else {
-                    self.handled
-                };
-                let _ = self
-                    .heap
-                    .set_values(r, coro::HANDLED, &[inner, Value::NONE]);
-                self.handled = outer;
                 st.acc = y;
                 st.pc = fr.ret_pc as usize;
                 return Ok(Landed::Go);

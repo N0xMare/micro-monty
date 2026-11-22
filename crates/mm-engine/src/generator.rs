@@ -235,12 +235,11 @@ impl Vm {
             }
         };
         // The generator's handled exception goes on top of the caller's.
-        let outer = self.handled;
-        if let Some(r) = gn.as_obj() {
-            self.set_slot_hot(r, g::OUTER, outer);
-            if handled != Value::NONE {
-                self.handled = handled;
-            }
+        if handled != Value::NONE
+            && let Some(r) = gn.as_obj()
+        {
+            self.set_slot_hot(r, g::OUTER, self.handled);
+            self.handled = handled;
         }
         self.gen_set_raw(gn, g::STATE, g::RUNNING);
         Ok(())
@@ -344,8 +343,8 @@ impl Vm {
         st.coro = gn;
         st.pc = resume_pc;
         // The kind byte proved a generator: its slots are in place.
-        self.heap.set_guarded(r, g::OUTER, self.handled);
         if handled != Value::NONE {
+            self.heap.set_guarded(r, g::OUTER, self.handled);
             self.handled = handled;
         }
         self.heap.set_raw_guarded(r, g::STATE, g::RUNNING);
@@ -369,15 +368,9 @@ impl Vm {
         }
         self.heap.set_raw_guarded(r, g::STATE, g::SUSPENDED);
         self.heap.set_raw_guarded(r, g::YPC, pc as u64);
-        let outer = self.heap.get_guarded(r, g::OUTER);
-        let mine = if self.handled == outer {
-            Value::NONE
-        } else {
-            self.handled
-        };
-        self.heap.set_guarded(r, g::HANDLED, mine);
-        self.heap.set_guarded(r, g::OUTER, Value::NONE);
-        self.handled = outer;
+        if self.heap.get_guarded(r, g::HANDLED) != Value::NONE {
+            self.own_handler_suspend(r, g::HANDLED);
+        }
     }
 
     fn already_running(&mut self) -> Raised {
@@ -659,17 +652,73 @@ impl Vm {
     /// Restores the caller's handled exception when the generator stops
     /// running.
     fn gen_leave(&mut self, gn: Value) {
-        if let Some(r) = gn.as_obj() {
-            let outer = self.slot_hot(r, g::OUTER);
-            let mine = if self.handled == outer {
-                Value::NONE
-            } else {
-                self.handled
-            };
-            // `HANDLED` and `OUTER` are adjacent: one write.
-            let _ = self.heap.set_values(r, g::HANDLED, &[mine, Value::NONE]);
-            self.handled = outer;
+        if let Some(r) = gn.as_obj()
+            && self.slot_hot(r, g::HANDLED) != Value::NONE
+        {
+            self.own_handler_suspend(r, g::HANDLED);
         }
+    }
+
+    /// The `HANDLED` slot of generator or coroutine `c`; `OUTER` follows it.
+    fn handled_slot(c: Value) -> u32 {
+        if c.is_obj_kind(ty::CORO as u8) {
+            crate::aio::coro::HANDLED
+        } else {
+            g::HANDLED
+        }
+    }
+
+    /// `PUSH_EXC` in the frame of generator or coroutine `c`, with `prev`
+    /// the handled exception until now and `exc` the one from now on: what
+    /// the handler's register keeps. The outermost handler of the frame
+    /// found an exception that is its caller's, which another resumption
+    /// replaces: it keeps `UNDEFINED`, `OUTER` holds `prev` and `HANDLED`
+    /// is set, which marks the frame as handling an exception of its own
+    /// while it runs. A handler inside it keeps `prev`, the frame's own.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn own_handler_enter(&mut self, c: Value, prev: Value, exc: Value) -> Value {
+        let at = Self::handled_slot(c);
+        let Some(r) = c.as_obj() else {
+            return prev;
+        };
+        if self.slot(r, at) != Value::NONE {
+            return prev;
+        }
+        let _ = self.heap.set_values(r, at, &[exc, prev]);
+        Value::UNDEFINED
+    }
+
+    /// `POP_EXC` of the outermost handler of generator or coroutine `c`:
+    /// the handled exception is the caller's of this resumption again.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn own_handler_leave(&mut self, c: Value) {
+        let at = Self::handled_slot(c);
+        if let Some(r) = c.as_obj() {
+            self.handled = self.slot(r, at + 1);
+            let _ = self.heap.set_values(r, at, &[Value::NONE, Value::NONE]);
+        }
+    }
+
+    /// The frame of generator or coroutine `r`, inside a handler of its
+    /// own, stops running: `HANDLED` (slot `at`) keeps its handled
+    /// exception and the caller's is back.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn own_handler_suspend(&mut self, r: mm_core::Ref, at: u32) {
+        let outer = self.slot(r, at + 1);
+        // `HANDLED` and `OUTER` are adjacent: one write.
+        let _ = self.heap.set_values(r, at, &[self.handled, Value::NONE]);
+        self.handled = outer;
+    }
+
+    /// The frame of generator or coroutine `r`, suspended inside a handler
+    /// of its own, runs again: its handled exception goes on top of this
+    /// resumption's caller's.
+    pub(crate) fn own_handler_resume(&mut self, r: mm_core::Ref, at: u32, handled: Value) {
+        self.set_slot(r, at + 1, self.handled);
+        self.handled = handled;
     }
 
     /// The generator returned: it is done.

@@ -163,8 +163,8 @@ opcodes! {
     RETURN = 73, "", "Returns `acc`.";
     RAISE = 74, "br", "b = 0: re-raise the handled exception; 1: raise acc; 2: raise `R[r]` from acc.";
     RERAISE = 75, "", "Re-raises `acc` unchanged (no traceback entry, no context).";
-    PUSH_EXC = 76, "r", "`R[r] = handled; handled = acc` on entry to a handler.";
-    POP_EXC = 77, "r", "`handled = R[r]` on leaving a handler.";
+    PUSH_EXC = 76, "r", "`R[r] = handled; handled = acc` on entry to a handler; the outermost handler of a generator or coroutine frame stores `UNDEFINED` (docs/spec.md §8.5).";
+    POP_EXC = 77, "r", "`handled = R[r]` on leaving a handler; for `UNDEFINED`, the handled exception of the frame's current caller.";
     CHECK_EXC = 78, "r", "`acc = R[r] matches the exception type or tuple in acc`.";
     ASSERT_FAIL = 79, "b", "Raises `AssertionError` (with message `acc` if b = 1).";
     AWAIT = 80, "", "`acc = await acc`: runs a coroutine inline or suspends the task until the awaitable settles.";

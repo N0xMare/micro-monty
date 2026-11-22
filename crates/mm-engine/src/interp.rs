@@ -5252,12 +5252,22 @@ impl Vm {
                 fail!(true);
             }
             op::PUSH_EXC => {
-                reg!(opd!(0)) = self.handled;
+                let prev = self.handled;
                 self.handled = acc;
+                reg!(opd!(0)) = if st.coro == Value::NONE {
+                    prev
+                } else {
+                    self.own_handler_enter(st.coro, prev, acc)
+                };
                 pc += ilen!();
             }
             op::POP_EXC => {
-                self.handled = reg!(opd!(0));
+                let prev = reg!(opd!(0));
+                if prev == Value::UNDEFINED {
+                    self.own_handler_leave(st.coro);
+                } else {
+                    self.handled = prev;
+                }
                 pc += ilen!();
             }
             op::CHECK_EXC => {

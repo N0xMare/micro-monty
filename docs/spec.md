@@ -1599,19 +1599,28 @@ under `coroutine.send()` suspends every coroutine frame from the `AWAIT`
 up to the one `send()` runs: each saves its registers, its `AWAIT` pc and
 what it waits on in its coroutine object (as a generator does at `YIELD`),
 and `send()` returns the value; the next `send()`/`throw()` re-runs the
-saved `AWAIT`s from the outermost. While `send()`, `throw()` or `close()`
-runs a coroutine, its caller's handled exception is set aside
-(`coro::OUTER`) and is back when the coroutine suspends, returns, raises
-or is closed, as for a generator (`Vm::gen_leave`). A handler inside the
-body that began under an earlier `send()` restores, when it ends, the
-handled exception it found then (CPython restores the caller's current
-one), so until the coroutine next returns, raises or is closed, its body
-sees that stale exception as the one being handled: `sys.exc_info()` reads
-it, a bare `raise` re-raises it where CPython raises `RuntimeError('No
-active exception to reraise')`, an exception the coroutine or a function
-it calls raises takes it as `__context__`, and while the coroutine is
-suspended it keeps the exception alive; a generator does the same. In a
-task, a yielded `None` yields to the scheduler (the task is queued again)
+saved `AWAIT`s from the outermost.
+
+A generator or coroutine handles exceptions on top of whoever runs it
+now, as CPython's per-generator exception state does. The frame's
+outermost handler keeps no saved exception in its register (`PUSH_EXC`
+stores `UNDEFINED` there): the exception handled until then is the
+caller's of this resumption, kept in the object's `OUTER` slot, and the
+object's `HANDLED` slot is set, which marks the frame as handling an
+exception of its own while it runs. A handler nested in it saves the
+frame's own exception in its register, which no resumption changes. A
+frame that suspends with the mark set (a `yield`, each level a `send()`
+suspends) writes its handled exception to `HANDLED` and gives the
+caller's back from `OUTER`; resuming writes the new caller's to `OUTER`
+and puts the frame's own back; the outermost handler's `POP_EXC` reads
+`UNDEFINED`, restores `OUTER` and clears the mark. So after a handler
+that began under one resumption ends under another, `sys.exc_info()`, a
+bare `raise` and the `__context__` of the next exception are the current
+caller's, and a frame that handles the very exception its caller handles
+keeps it while its handler lasts. A frame with no handler open writes
+neither slot at a yield or a resume.
+
+In a task, a yielded `None` yields to the scheduler (the task is queued again)
 and any other value raises `RuntimeError`. No Rust frame holds a suspended
 coroutine and no second dispatch loop runs.
 

@@ -1028,6 +1028,266 @@ fn a_pause_inside_a_coroutine_driven_by_send_survives_a_restore() {
     }
 }
 
+/// What the programs of [`a_restore_inside_a_handler_keeps_the_handled_exception`]
+/// read the handled exception with: `sys.exception()`, a bare `raise` and
+/// the `__context__` of the next exception raised.
+const SEE: &str = "\
+import sys
+def see(tag):
+    out = [tag, repr(sys.exception())]
+    try:
+        raise
+    except RuntimeError as e:
+        out.append('none' if 'No active' in str(e) else 're ' + repr(e))
+    except BaseException as e:
+        out.append('re ' + repr(e))
+    try:
+        raise OSError('probe')
+    except OSError as e:
+        out.append(repr(e.__context__))
+    print(*out)
+def under(exc, f, *a):
+    if exc is None:
+        return f(*a)
+    try:
+        raise exc
+    except type(exc):
+        return f(*a)
+";
+
+/// The handled exception of a frame suspended inside a handler survives a
+/// restore at every park, at each kind of suspension: a generator at its
+/// `yield`, a `yield from` chain, coroutines a `send()` suspended and
+/// asyncio tasks (with an async generator). Each program resumes its
+/// frames under callers that handle other exceptions, or none, so a
+/// handler that began under one resumption ends under another; what each
+/// prints is python3.14's output [M], unparked and restored at every park.
+#[test]
+#[allow(clippy::too_many_lines, reason = "four programs as source text")]
+fn a_restore_inside_a_handler_keeps_the_handled_exception() {
+    let cases: [(&str, &str, &str); 4] = [
+        // A generator.
+        (
+            "handled_gen.py",
+            "\
+def g():
+    try:
+        raise KeyError('own')
+    except KeyError:
+        yield 1
+        see('in handler')
+        yield 2
+    see('after handler')
+    try:
+        raise IndexError('second')
+    except IndexError:
+        try:
+            raise ZeroDivisionError('nested')
+        except ZeroDivisionError:
+            yield 3
+        see('after nested')
+    see('end')
+    yield 4
+it = g()
+print(under(ValueError('a'), next, it))
+print(under(None, next, it))
+print(under(TypeError('c'), next, it))
+print(under(LookupError('d'), next, it))
+see('module')
+same = ValueError('same')
+def h():
+    try:
+        yield 0
+    except ValueError:
+        yield 1
+        see('same object')
+    see('after same')
+    yield 2
+it = h()
+next(it)
+under(same, it.throw, same)
+next(it)
+",
+            "\
+1
+in handler KeyError('own') re KeyError('own') KeyError('own')
+2
+after handler TypeError('c') re TypeError('c') TypeError('c')
+3
+after nested IndexError('second') re IndexError('second') IndexError('second')
+end LookupError('d') re LookupError('d') LookupError('d')
+4
+module None none None
+same object ValueError('same') re ValueError('same') ValueError('same')
+after same None none None
+",
+        ),
+        // A `yield from` chain.
+        (
+            "handled_yf.py",
+            "\
+def leaf():
+    try:
+        raise KeyError('leaf')
+    except KeyError:
+        yield 'l1'
+        see('leaf in handler')
+    see('leaf after')
+    yield 'l2'
+def mid():
+    try:
+        raise IndexError('mid')
+    except IndexError:
+        yield from leaf()
+        see('mid in handler')
+    see('mid after')
+    yield 'm'
+def top():
+    yield from mid()
+    see('top after')
+it = top()
+print(under(ValueError('y1'), next, it))
+print(under(None, next, it))
+print(under(TypeError('y3'), next, it))
+print(under(LookupError('y4'), next, it, 'end'))
+see('module')
+",
+            "\
+l1
+leaf in handler KeyError('leaf') re KeyError('leaf') KeyError('leaf')
+leaf after IndexError('mid') re IndexError('mid') IndexError('mid')
+l2
+mid in handler IndexError('mid') re IndexError('mid') IndexError('mid')
+mid after TypeError('y3') re TypeError('y3') TypeError('y3')
+m
+top after LookupError('y4') re LookupError('y4') LookupError('y4')
+end
+module None none None
+",
+        ),
+        // A `send()` chain.
+        (
+            "handled_send.py",
+            "\
+class Aw:
+    def __await__(self):
+        return (yield 'aw')
+async def inner():
+    try:
+        raise KeyError('inner')
+    except KeyError:
+        await Aw()
+        see('inner in handler')
+    see('inner after')
+    await Aw()
+    see('inner end')
+async def outer():
+    try:
+        raise IndexError('outer')
+    except IndexError:
+        await inner()
+        see('outer in handler')
+    see('outer after')
+    await Aw()
+    see('outer end')
+c = outer()
+for exc in [ValueError('s1'), None, TypeError('s3'), LookupError('s4')]:
+    try:
+        print(under(exc, c.send, None))
+    except StopIteration:
+        print('returned')
+    see('caller')
+",
+            "\
+aw
+caller None none None
+inner in handler KeyError('inner') re KeyError('inner') KeyError('inner')
+inner after IndexError('outer') re IndexError('outer') IndexError('outer')
+aw
+caller None none None
+inner end IndexError('outer') re IndexError('outer') IndexError('outer')
+outer in handler IndexError('outer') re IndexError('outer') IndexError('outer')
+outer after TypeError('s3') re TypeError('s3') TypeError('s3')
+aw
+caller None none None
+outer end LookupError('s4') re LookupError('s4') LookupError('s4')
+returned
+caller None none None
+",
+        ),
+        // Asyncio tasks and an async generator.
+        (
+            "handled_task.py",
+            "\
+import asyncio
+async def agen():
+    try:
+        raise KeyError('agen')
+    except KeyError:
+        yield 1
+        see('agen in handler')
+        await asyncio.sleep(0)
+    see('agen after')
+    yield 2
+async def worker(n):
+    try:
+        raise KeyError(n)
+    except KeyError:
+        await asyncio.sleep(0)
+        see('worker %d in handler' % n)
+        try:
+            raise IndexError(n)
+        except IndexError:
+            await asyncio.sleep(0)
+            see('worker %d nested' % n)
+        see('worker %d after nested' % n)
+    await asyncio.sleep(0)
+    see('worker %d after' % n)
+async def main():
+    it = agen()
+    try:
+        raise ValueError('m1')
+    except ValueError:
+        await anext(it)
+        t = asyncio.create_task(worker(1))
+        await asyncio.sleep(0)
+        see('main in handler')
+    await anext(it)
+    await asyncio.gather(t, worker(2))
+    see('main end')
+asyncio.run(main())
+see('module')
+",
+            "\
+main in handler ValueError('m1') re ValueError('m1') ValueError('m1')
+agen in handler KeyError('agen') re KeyError('agen') KeyError('agen')
+worker 1 in handler KeyError(1) re KeyError(1) KeyError(1)
+agen after None none None
+worker 1 nested IndexError(1) re IndexError(1) IndexError(1)
+worker 1 after nested KeyError(1) re KeyError(1) KeyError(1)
+worker 1 after None none None
+worker 2 in handler KeyError(2) re KeyError(2) KeyError(2)
+worker 2 nested IndexError(2) re IndexError(2) IndexError(2)
+worker 2 after nested KeyError(2) re KeyError(2) KeyError(2)
+worker 2 after None none None
+main end None none None
+module None none None
+",
+        ),
+    ];
+    for (name, body, want) in cases {
+        let src = format!("{SEE}{body}");
+        let (plain_out, plain_outcome) = plain(&src, name);
+        assert_eq!(plain_out, want, "{name}, unparked");
+        for fuel in [1, 7] {
+            let (got, got_outcome, parks) = hopping(&src, name, fuel, 1);
+            assert!(parks > 10, "{name}, fuel {fuel}: {parks} parks");
+            assert_eq!(got, want, "{name}, fuel {fuel}");
+            assert_eq!(got_outcome, plain_outcome, "{name}, fuel {fuel}");
+        }
+    }
+}
+
 #[test]
 fn untaken_completion_text_survives_collection_and_restore() {
     use mm_compile::Options;
