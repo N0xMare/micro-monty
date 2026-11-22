@@ -4826,6 +4826,133 @@ for kind in ['queue', 'condition', 'semaphore', 'lock']:
     );
 }
 
+/// A long cancel (`nstep::op::CANCEL`) whose turn between its passes has
+/// no room beside a dropped fill: 40,000 loop futures of an earlier cell
+/// (whose end released the queue's capacity), each with a done callback
+/// whose room the turn reserves, and about 200 KB free of 16 MiB. The
+/// first pass has changed nothing, so its step waits for the collection
+/// that frees the fill and runs again (`Vm::oom_retry`), as a cancel in
+/// one step does: the cancel returns `True` and every callback runs. With
+/// the fill kept, it raises `MemoryError` with nothing cancelled, and
+/// succeeds once the fill is dropped.
+#[test]
+fn a_long_cancel_with_no_room_at_its_turn_waits_for_a_collection() {
+    let first = "\
+import asyncio
+await asyncio.sleep(0)
+loop = asyncio.get_running_loop()
+fs = [loop.create_future() for _ in range(40_000)]
+seen = []
+def cb(f):
+    seen.append(f.cancelled())
+for f in fs:
+    f.add_done_callback(cb)
+";
+    let fill = LEAVE_FREE.replace("{free}", "200_000");
+    let dropped = format!(
+        "\
+import asyncio
+import gc
+g = asyncio.gather(*fs)
+{fill}pad = None
+r = g.cancel()
+await asyncio.sleep(0)
+print(r, sum(f.cancelled() for f in fs), len(seen), all(seen))
+"
+    );
+    let kept = format!(
+        "\
+import asyncio
+import gc
+g = asyncio.gather(*fs)
+{fill}try:
+    r = g.cancel()
+except MemoryError:
+    r = 'MemoryError'
+state = (r, sum(f.done() for f in fs), g.done(), len(seen))
+pad = None
+r = g.cancel()
+await asyncio.sleep(0)
+print(state, r, sum(f.cancelled() for f in fs), len(seen), all(seen))
+"
+    );
+    let limits = || Limits::new().with_memory(16 << 20);
+    let runs = run_cells(limits(), &[first, &dropped]);
+    assert!(matches!(runs[0].0, Progress::Complete(_)), "{runs:?}");
+    let (p, out) = &runs[1];
+    assert!(matches!(p, Progress::Complete(_)), "{p:?} {out}");
+    assert_eq!(out, "True 40000 40000 True\n");
+    let runs = run_cells(limits(), &[first, &kept]);
+    let (p, out) = &runs[1];
+    assert!(matches!(p, Progress::Complete(_)), "{p:?} {out}");
+    assert_eq!(out, "('MemoryError', 0, False, 0) True 40000 40000 True\n");
+}
+
+/// A cancel whose root is an `asyncio.sleep()`, long because its settle
+/// looks at every blocked task (262,200 of them: past a step's work): the
+/// scheduler's, for a task that blocks on the sleep with a cancel pending,
+/// and the program's, called on the sleep itself. Both go on in steps
+/// from a state whose root is the sleep; refused as a root, the first
+/// raised `SystemError` at the main task and the second at the call
+/// [M, reviewer, 16040b7].
+#[test]
+fn a_long_cancel_rooted_at_a_sleep_ends_as_a_short_one() {
+    let src = "\
+import asyncio
+await asyncio.sleep(0)
+ts = [asyncio.ensure_future(asyncio.sleep(1000)) for _ in range(262_200)]
+await asyncio.sleep(0)
+async def blocks():
+    me.cancel('pending')
+    try:
+        await asyncio.sleep(5)
+    except asyncio.CancelledError as e:
+        return 'cancelled at the sleep', e.args
+me = asyncio.create_task(blocks())
+print(await me)
+s = asyncio.sleep(1000)
+t = asyncio.create_task(s)
+await asyncio.sleep(0)
+print(asyncio.Task.cancel(s, 'm'))
+try:
+    await t
+except asyncio.CancelledError as e:
+    print(t.cancelled(), e.args, sum(x.done() for x in ts))
+";
+    let (p, out) = run(src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?} {out}");
+    assert_eq!(
+        out,
+        "('cancelled at the sleep', ('pending',))\nTrue\nTrue ('m',) 0\n"
+    );
+}
+
+/// Own case 579 (cancels longer than a step) charges this fuel, run whole
+/// or parked every 1,000 units: a long cancel's steps charge what its
+/// first pass visits and `_steps`' calls, and a park moves neither.
+#[test]
+fn the_long_cancels_charge_the_same_fuel_whole_and_sliced() {
+    const FUEL: u64 = 3_550_819;
+    let src = include_str!("../../../conformance/own/579_asyncio_cancel_long.py");
+    let run = |slice: u64| {
+        let engine = Engine::new(EngineConfig::default());
+        let mut s = Session::new(&engine).expect("session");
+        s.set_output(Box::new(|_: &str| {}));
+        let total = u64::MAX / 2;
+        s.set_fuel_total(Some(total));
+        s.set_fuel(Some(slice));
+        let mut p = s.start(&engine.compile(src, "579.py").expect("compiles"));
+        while let Progress::Parked { .. } = p {
+            s.set_fuel(Some(slice.max(s.fuel_wanted())));
+            p = s.resume(Resume::Continue).expect("resumes");
+        }
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        total - s.fuel_total().expect("a total")
+    };
+    assert_eq!(run(u64::MAX / 4), FUEL);
+    assert_eq!(run(1_000), FUEL);
+}
+
 /// A task's cancel that cannot be passed to the future it awaits for lack
 /// of room (`block_current`): F, a loop future from an earlier cell (whose
 /// end released the queue's capacity), has 60,000 done callbacks whose room

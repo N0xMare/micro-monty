@@ -2118,3 +2118,49 @@ print(lo)
         );
     }
 }
+
+#[test]
+fn a_long_cancel_parks_for_a_deadline_between_its_steps() {
+    // A cancel walks its tree in steps (`nstep::op::CANCEL`), and every
+    // step is followed by a check, also in its second pass, which charges
+    // no fuel, and in the scheduler's own cancel (a task that blocks with
+    // a cancel pending), which no call returns from: with a deadline
+    // always past, a tree of 200,000 futures parks after each of its
+    // steps (about 13 a pass), where one step walked it all.
+    let engine = Engine::new(EngineConfig::default());
+    let setup = "import asyncio\nawait asyncio.sleep(0)\n\
+                 loop = asyncio.get_running_loop()\n\
+                 fs = [loop.create_future() for _ in range(200_000)]\n\
+                 G = asyncio.gather(*fs)\n\
+                 async def w():\n    me.cancel('w')\n    await G\n";
+    let cases = [
+        ("print(G.cancel('m'), G.cancel())\n", "True False\n"),
+        (
+            "me = asyncio.create_task(w())\nawait asyncio.sleep(0)\n\
+             print(me.cancelling(), fs[0].cancelled(), fs[-1].cancelled())\n",
+            "1 True True\n",
+        ),
+    ];
+    for (src, printed) in cases {
+        let out = Arc::new(Mutex::new(String::new()));
+        let mut s = session(&engine, &out);
+        let p = s.start(&engine.compile(setup, "setup.py").expect("compiles"));
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        let code = engine.compile(src, "cancel.py").expect("compiles");
+        s.set_deadline(Some(Instant::now()));
+        let mut p = s.start(&code);
+        let mut parks = 0;
+        while p
+            == (Progress::Parked {
+                reason: ParkReason::Deadline,
+            })
+        {
+            parks += 1;
+            s.set_deadline(Some(Instant::now()));
+            p = s.resume(Resume::Continue).expect("resumes");
+        }
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        assert_eq!(out.lock().expect("output lock").as_str(), printed);
+        assert!((20..60).contains(&parks), "{src}: {parks} parks");
+    }
+}

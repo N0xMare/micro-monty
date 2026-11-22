@@ -647,6 +647,43 @@ messages; copy wording where behaviour matches.
     `ast.parse` (the worst shape found, a statement every two bytes,
     29–38 ms) and 64 KiB for `tokenize` (a token a byte, about 22 ms) [M];
     a longer source raises `MemoryError`.
+  - **Cancellation.** `cancel()` walks its tree twice (§8.5): a first pass
+    that changes nothing, charges a fuel unit a visit and counts the
+    run-queue room the settles need, one reservation, then a second pass
+    that acts and charges nothing. Both passes in one step when they fit
+    `aio::CANCEL_STEP` (2^14) units of work, with no state and the fuel
+    of a cancel in one step. A unit is a visit that settles nothing
+    costly; a visit costs more by what its settle scans (a future's
+    waiters, 8 a unit; the blocked tasks for each task it wakes and for a
+    sleep; the tracked gathers for each gather that listens), so a step
+    is bounded in work, not in visits: cancelling 30,000 sleeping tasks
+    was one step of 1.66 to 1.88 s at 16,384 visits' worth of fuel [M].
+    A longer cancel keeps its frames (as deep as the tree: node, next
+    child, took) in a buffer of an `op::CANCEL` state and goes on a step
+    at a time, each followed by a forced check (`Vm::force_check`: the
+    second pass charges nothing that would make one). The program's goes
+    through `_steps`, whose calls are its only extra fuel (a unit or two
+    a step). The scheduler's own cancels, for a task that blocks with a
+    cancel pending and for the main task when `SystemExit` or
+    `KeyboardInterrupt` leaves a task, cannot hand work to `_steps`: the
+    state is `Vm::cancelling` (in the image), and `Vm::next_task` runs
+    its steps before any queue entry, a safepoint with the trampoline's
+    state after each, at the same fuel as one step. Nothing else runs
+    between two steps of a cancel: guest code, callbacks and other tasks
+    see the tree before the first pass's end or after the second's. A
+    restored step reads each frame's children from the tree again and
+    checks the frame against them (the node is the pending child its
+    parent visited last, the depth within the first pass's, the
+    callbacks within its count), so a forged or stale state raises
+    `SystemError` (the scheduler's at the main task's `await`) and
+    never panics. A step is bounded between visits, not inside one: a
+    visit settles its awaitable whole, so one future that many tracked
+    gathers listen to is still one step past the bound (`Vm::settle_as`
+    looks each up among the tracked ones: 119.6 ms at 30,000 gathers
+    [M]), as its settle is outside a cancel.
+    The total time of cancelling many blocked tasks is still quadratic
+    in them, as every settle's wake is (`Vm::settle_as` scans
+    `blocked`): the other steps are bounded, the sum is not shorter.
 
   `crates/micro-monty/tests/steps.rs` is the oracle: each row runs a site
   near the default limits with a deadline set again after every park, and
@@ -1582,8 +1619,9 @@ coroutine and no second dispatch loop runs.
 handle, which runs when the creating task next yields, as on CPython.
 Cancellation is CPython 3.14's `Task.cancel()`: the request goes to what
 the task waits on (a task, a gather's children, a future, a sleep, a host
-future) through one iterative walk (`Vm::cancel_tree`, no recursion and no
-nested dispatch loop); when nothing there takes it, the task keeps
+future) through one iterative walk (`Vm::cancel_walk`, no recursion and no
+nested dispatch loop), in steps when the tree is long (§5, "Bounded native
+steps"); when nothing there takes it, the task keeps
 `_must_cancel` and the scheduler raises `CancelledError(msg)` at its pending
 `AWAIT` (the same raise-at-pc path a deadlock uses), or throws it into the
 `__await__` iterator it steps, so `except` and `finally` run in the task.

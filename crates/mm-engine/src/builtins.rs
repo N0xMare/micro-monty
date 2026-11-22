@@ -3492,7 +3492,7 @@ fn aio_cancel(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         Value::UNDEFINED => Value::NONE,
         m => m,
     };
-    vm.cancel_tree(f, msg).map(Value::from_bool)
+    vm.cancel_start(f, msg)
 }
 
 #[cfg(feature = "asyncio")]

@@ -984,6 +984,10 @@ pub struct Vm {
     /// `asyncio.run` once the run has shut down, as CPython's escapes the
     /// loop (`None` otherwise).
     pub(crate) escape: Value,
+    /// A cancel the scheduler began and has not ended, between tasks
+    /// (`Vm::cancel_sched`): its state, an `nstep::op::CANCEL`'s, or
+    /// `None`. Nothing else runs until it ends.
+    pub(crate) cancelling: Value,
     /// Failed tasks and futures whose exception may never be retrieved
     /// ([`crate::aio::aw::LOG_TB`]), for the end of `asyncio.run`.
     pub(crate) unretrieved: Vec<Value>,
@@ -1334,6 +1338,7 @@ impl Vm {
             task_names: Value::NONE,
             context: Value::NONE,
             escape: Value::NONE,
+            cancelling: Value::NONE,
             unretrieved: Vec::new(),
             loop_flags: 0,
             futures: Vec::new(),
@@ -1849,6 +1854,15 @@ impl Vm {
                 {
                     let r = self.kwarg(a, 1);
                     [Value::UNDEFINED, Value::TRUE, Value::FALSE].contains(&r) || r.is_int()
+                }
+                // A cancel's step in its first pass (`Vm::cancel_step`)
+                // changes nothing, its state included, until it fits.
+                (None, "_more") if n.module() == Some("_prelude") => {
+                    let st = self.arg_o(a, 0);
+                    self.nstate_get::<4, 6>(crate::nstep::op::CANCEL, st)
+                        .is_some_and(|(_, [op, act, ..])| {
+                            op == u64::from(crate::nstep::op::CANCEL) && act == 0
+                        })
                 }
                 _ => false,
             };

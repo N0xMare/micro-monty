@@ -89,6 +89,8 @@ pub(crate) mod op {
     pub const FOLD: u8 = 19;
     /// Chunked: `x in d.values()` (`not in`) over a long dict (`ops.rs`).
     pub const DV_IN: u8 = 20;
+    /// Chunked: a long `cancel()`'s walk (`aio.rs`, `Vm::cancel_start`).
+    pub const CANCEL: u8 = 21;
     /// A finished chunked native's state ([`super::Vm::chunk_step`]): no
     /// step runs it, and restore checks nothing in it.
     pub const DONE: u8 = u8::MAX;
@@ -112,7 +114,7 @@ const KEY_CHUNK: usize = 1 << 12;
 
 /// Each operation's name and state layout (value slots, raw words), in
 /// [`op`] order; part of the build fingerprint.
-pub(crate) const STEPS: [(&str, u32, u32); 21] = [
+pub(crate) const STEPS: [(&str, u32, u32); 22] = [
     ("sort_keys", 4, 1),
     ("sort_done", 4, 1),
     ("seq_in", 2, 3),
@@ -134,6 +136,7 @@ pub(crate) const STEPS: [(&str, u32, u32); 21] = [
     ("str_pct", 5, 6),
     ("fold", 3, 7),
     ("dv_in", 2, 3),
+    ("cancel", 4, 6),
 ];
 
 /// A state's value slots and raw words.
@@ -278,6 +281,7 @@ impl Vm {
             op::STR_PCT => self.pct_step(state),
             op::FOLD => crate::builtins::fold_step(self, state),
             op::DV_IN => self.dv_in_step(state),
+            op::CANCEL => self.cancel_step(state, false),
             _ => Err(self.bad_step()),
         }
     }

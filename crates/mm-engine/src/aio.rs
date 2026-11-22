@@ -16,7 +16,101 @@
 use crate::types::{T, ty};
 use crate::vm::{Exit, HDR, ParkReason, Raised, Ready, State, Task, Vm, fn_slot};
 use alloc::{format, string::String, vec::Vec};
-use mm_core::Value;
+use mm_core::{Ref, Value};
+
+/// One awaitable whose children a cancel walks ([`Vm::cancel_walk`]): a
+/// task (one child, what it waits on), a gather (its children tuple) or,
+/// at the bottom, the cancel's root (`node` `NONE`, its child the root).
+/// A frame's children are as deep in the tree as the frames under it.
+#[derive(Clone, Copy)]
+struct Frame {
+    node: Value,
+    /// A task's waiter, a gather's children, the root.
+    src: Value,
+    /// Its next child.
+    next: usize,
+    /// Second pass: it took the cancel (a gather: a child did).
+    took: bool,
+}
+
+impl Frame {
+    fn root(root: Value) -> Self {
+        Frame {
+            node: Value::NONE,
+            src: root,
+            next: 0,
+            took: false,
+        }
+    }
+}
+
+/// The slots of a [`Frame`] in a cancel's state (`nstep::op::CANCEL`):
+/// node, next, took. Its `src` is read from the tree again.
+const FRAME_WORDS: usize = 3;
+
+/// The work a cancel's step does at most, in visits of an awaitable that
+/// settles nothing costly (about 100 ns each: a millisecond and a half a
+/// step [M]). A visit costs more by what its settle scans
+/// ([`Vm::settle_work`]), so one visit can pass it.
+const CANCEL_STEP: u64 = 1 << 14;
+
+/// A cancel in progress ([`Vm::cancel_walk`]).
+struct CancelWalk {
+    root: Value,
+    msg: Value,
+    /// The second pass.
+    act: bool,
+    frames: Vec<Frame>,
+    /// The callbacks its settles queue into room it reserves: found by the
+    /// first pass, still to queue in the second.
+    callbacks: usize,
+    /// The most frames the first pass held.
+    deepest: usize,
+    /// The work the first pass found for the second ([`CANCEL_STEP`]'s
+    /// unit), at least.
+    rest: u64,
+}
+
+impl CancelWalk {
+    /// The slots its frames need in a state, now and at their deepest.
+    fn room(&self) -> usize {
+        self.deepest
+            .max(self.frames.len())
+            .saturating_mul(FRAME_WORDS)
+    }
+}
+
+/// Where a cancel's walk stopped.
+enum Walked {
+    /// The second pass ended: did the root take the cancel.
+    Done(bool),
+    /// The first pass ended.
+    Counted,
+    /// Its step's work is spent.
+    Spent,
+}
+
+/// Who made a cancel in steps and goes on when it ends: raw word 5 of its
+/// state.
+pub(crate) mod cancel_for {
+    /// The program's `cancel()`: `_steps` runs the steps and gives the
+    /// call its value.
+    pub const CALL: u64 = 0;
+    /// The scheduler, for a task that had a cancel to raise when it
+    /// blocked (`Vm::block_current`): the state's `owner` is that task.
+    pub const AWAIT: u64 = 1;
+    /// The scheduler, for the main task when a `KeyboardInterrupt` or
+    /// `SystemExit` leaves the loop (`Vm::finish_task`).
+    pub const ESCAPE: u64 = 2;
+}
+
+/// How [`Vm::cancel_begin`] left a cancel.
+enum Begun {
+    /// Done: did anything take it.
+    Done(bool),
+    /// In steps: its state.
+    State(Value),
+}
 
 /// Coroutine object slots and states.
 pub(crate) mod coro {
@@ -1075,10 +1169,15 @@ impl Vm {
             .saturating_add(self.callback_slots())
             .saturating_add(callbacks)
             .max(self.ready.capacity());
-        let extra = (tasks - self.tasks.capacity()) as u64 * size_of::<Option<Task>>() as u64
+        // The queue's term saturates: a cancel may ask for more callbacks
+        // than an address space holds (a count a first pass summed, or a
+        // forged one), which the reservation refuses.
+        let queue =
+            ((ready - self.ready.capacity()) as u64).saturating_mul(size_of::<Ready>() as u64);
+        let extra = ((tasks - self.tasks.capacity()) as u64 * size_of::<Option<Task>>() as u64
             + (gathers - self.gathers.capacity()) as u64 * size_of::<Value>() as u64
-            + (blocked - self.blocked.capacity()) as u64 * size_of::<usize>() as u64
-            + (ready - self.ready.capacity()) as u64 * size_of::<Ready>() as u64;
+            + (blocked - self.blocked.capacity()) as u64 * size_of::<usize>() as u64)
+            .saturating_add(queue);
         if extra == 0 {
             return Ok(());
         }
@@ -1162,6 +1261,7 @@ impl Vm {
         self.cb_slots = 0;
         self.task_names = Value::NONE;
         self.escape = Value::NONE;
+        self.cancelling = Value::NONE;
         self.unretrieved.clear();
         self.unretrieved.shrink_to_fit();
         self.loop_flags = 0;
@@ -1274,18 +1374,7 @@ impl Vm {
             .map_or(Value::NONE, |t| t.handle);
         if self.must_cancel(h) {
             let msg = self.vslot_hot(h, aw::RESULT);
-            let exc = self.exc;
-            match self.cancel_tree(a, msg) {
-                Ok(true) => self.set_raw_of_hot(h, aw::MUST_CANCEL, 0),
-                Ok(false) => {}
-                // No room to cancel what it waits on (nothing changed): it
-                // raises `CancelledError` at its `await` at once instead.
-                Err(Raised) => {
-                    self.heap.take_refused();
-                    self.exc = exc;
-                    self.wake_blocked(i);
-                }
-            }
+            self.cancel_sched(a, msg, cancel_for::AWAIT, h);
         }
     }
 
@@ -1336,15 +1425,7 @@ impl Vm {
                 && t.handle.is_obj_kind(ty::TASK as u8)
             {
                 let h = t.handle;
-                let saved = self.exc;
-                if self.cancel_tree(h, Value::NONE).is_err() {
-                    // No room: the main task raises `CancelledError` at its
-                    // `await` at once, and the run raises the escape after.
-                    self.heap.take_refused();
-                    self.set_must_cancel(h, Value::NONE);
-                    self.wake_blocked(0);
-                }
-                self.exc = saved;
+                self.cancel_sched(h, Value::NONE, cancel_for::ESCAPE, Value::NONE);
             }
         }
         if let Some(slot) = self.tasks.get_mut(i) {
@@ -1733,6 +1814,12 @@ impl Vm {
     /// The next task to run, or the host futures everything waits on.
     pub(crate) fn next_task(&mut self) -> Next {
         loop {
+            // A cancel the scheduler began ends before anything else runs.
+            if self.cancelling != Value::NONE
+                && let Some(n) = self.cancel_resume()
+            {
+                return n;
+            }
             // Loop iterations, as CPython's `_run_once` runs the callbacks
             // ready when it starts: `asyncio.run` stops its loop at the end
             // of one, and the main task resumes then (`_aio_stop`).
@@ -2755,6 +2842,7 @@ impl Vm {
 
     /// How many done callbacks wait on `a` (its waiters that are neither a
     /// task's wakeup nor a gather), counted in place.
+    #[cfg(feature = "asyncio")]
     fn done_callbacks(&self, a: Value) -> usize {
         let w = self.vslot(a, aw::WAITERS);
         let callable = |x: Value| x.as_int().is_none() && !x.is_obj_kind(ty::GATHER as u8);
@@ -2791,155 +2879,552 @@ impl Vm {
     /// children, a future, a sleep) and, when that cannot take it, raises
     /// `CancelledError(msg)` at its next step; a future or sleep settles
     /// cancelled and wakes what waits on it; a gather cancels its children.
-    /// Iterative: the awaitables reached, in CPython's call order with
-    /// their parents, act first; then the results flow back to them.
-    /// `false` if nothing took the cancel.
     ///
-    /// Two passes: the first walks the tree and changes nothing, counting
-    /// the done callbacks the settles will queue whose room is not held
-    /// (a loop future's, an earlier cell's); one reservation pays for them
-    /// all, and only then the second acts. So a cancel that raises
-    /// (`MemoryError`, `RecursionError`) has changed nothing, and its cost
-    /// is linear in the tree.
-    #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
-    pub(crate) fn cancel_tree(&mut self, root: Value, msg: Value) -> Result<bool, Raised> {
-        // (awaitable, parent index, depth, took the cancel)
-        let mut nodes: Vec<(Value, usize, u32, bool)> = Vec::new();
-        let mut work: Vec<usize> = Vec::new();
-        // The nodes in the order they act.
-        let mut order: Vec<usize> = Vec::new();
-        let grow = |nodes: &mut Vec<(Value, usize, u32, bool)>,
-                    work: &mut Vec<usize>,
-                    order: &mut Vec<usize>,
-                    n: usize| {
-            nodes.try_reserve(n).is_ok()
-                && work.try_reserve(n).is_ok()
-                && order.try_reserve(n).is_ok()
+    /// Two passes over the tree ([`Vm::cancel_walk`]): the first changes
+    /// nothing, counting the done callbacks the settles will queue whose
+    /// room is not held (a loop future's, an earlier cell's); one
+    /// reservation pays for them all, and only then the second acts. So a
+    /// cancel that raises (`MemoryError`, `RecursionError`) has changed
+    /// nothing, and its fuel is linear in the tree.
+    ///
+    /// Both passes in this step when they fit one ([`CANCEL_STEP`]):
+    /// whether anything took the cancel. Else a state (`nstep::op::CANCEL`)
+    /// for the steps that go on ([`Vm::cancel_step`]), the walk's frames,
+    /// as deep as the tree, in it; nothing has changed yet. `kind`
+    /// ([`cancel_for`]) and `owner` say who goes on when it ends.
+    fn cancel_begin(
+        &mut self,
+        root: Value,
+        msg: Value,
+        kind: u64,
+        owner: Value,
+    ) -> Result<Begun, Raised> {
+        use crate::nstep::op;
+        let mut w = self.cancel_new(root, msg)?;
+        let mut budget = CANCEL_STEP;
+        if let Walked::Counted = self.cancel_walk(&mut w, &mut budget)? {
+            let short = w.rest <= budget;
+            self.cancel_turn(&mut w)?;
+            if short {
+                // The second pass fits what the step has left, by the
+                // first's count: it needs no state.
+                budget = u64::MAX;
+                let done = self.cancel_walk(&mut w, &mut budget)?;
+                return Ok(Begun::Done(matches!(done, Walked::Done(true))));
+            }
+        }
+        let buf = self.alloc_buf(w.room())?;
+        let frames = Value::from_ref(buf, ty::BUF as u8);
+        let raw = [u64::from(op::CANCEL), 0, 0, 0, 0, kind];
+        let state = self.nstate(op::CANCEL, &[root, msg, frames, owner], &raw)?;
+        self.cancel_save(state, buf, &w);
+        Ok(Begun::State(state))
+    }
+
+    /// `cancel(msg)` as the program calls it: its value, or the rest of a
+    /// long one handed to `_steps`, a step a call.
+    pub(crate) fn cancel_start(&mut self, root: Value, msg: Value) -> Result<Value, Raised> {
+        match self.cancel_begin(root, msg, cancel_for::CALL, Value::NONE)? {
+            Begun::Done(took) => Ok(Value::from_bool(took)),
+            Begun::State(state) => {
+                self.prelude_request("_steps", alloc::vec![state], crate::cont::Cont::None)
+            }
+        }
+    }
+
+    /// A cancel the scheduler makes, between tasks (`kind` not
+    /// [`cancel_for::CALL`]): a long one goes on a step at a time before
+    /// the next queue entry runs ([`Vm::cancel_resume`]), and what follows
+    /// it ([`Vm::cancel_end`]) waits for its end. No safepoint comes
+    /// between this first step and the next, so the longest gap is two
+    /// steps.
+    fn cancel_sched(&mut self, root: Value, msg: Value, kind: u64, owner: Value) {
+        let exc = self.exc;
+        let took = match self.cancel_begin(root, msg, kind, owner) {
+            Ok(Begun::Done(took)) => Some(took),
+            Ok(Begun::State(state)) => {
+                self.cancelling = state;
+                return;
+            }
+            Err(Raised) => None,
         };
-        if !grow(&mut nodes, &mut work, &mut order, 1) {
+        self.cancel_end(kind, root, owner, took, exc);
+    }
+
+    /// The scheduler's cancel ended: `took`, or `None` when it raised with
+    /// nothing changed. `exc` is the pending exception as it began.
+    fn cancel_end(&mut self, kind: u64, root: Value, owner: Value, took: Option<bool>, exc: Value) {
+        match (kind, took) {
+            // What the task waits on took the cancel it had to raise.
+            (cancel_for::AWAIT, Some(true)) => self.set_raw_of(owner, aw::MUST_CANCEL, 0),
+            // No room to cancel what it waits on: it raises
+            // `CancelledError` at its `await` at once instead.
+            (cancel_for::AWAIT, None) => {
+                self.heap.take_refused();
+                if let Some(i) = self.task_index(owner) {
+                    self.wake_blocked(i);
+                }
+            }
+            // No room: the main task raises `CancelledError` at its
+            // `await` at once, and the run raises the escape after.
+            (cancel_for::ESCAPE, None) => {
+                self.heap.take_refused();
+                self.set_must_cancel(root, Value::NONE);
+                self.wake_blocked(0);
+            }
+            _ => {}
+        }
+        self.exc = exc;
+    }
+
+    /// The scheduler's cancel in progress ([`Vm::cancelling`]) goes on, a
+    /// safepoint after each step with the trampoline's state (every task
+    /// is suspended): `None` once it has ended, to go on scheduling, or a
+    /// park. The safepoints run no tick, so they charge nothing.
+    fn cancel_resume(&mut self) -> Option<Next> {
+        use crate::nstep::Step;
+        let state = self.cancelling;
+        let exc = self.exc;
+        let took = loop {
+            match self.cancel_step(state, true) {
+                Ok(Step::More) => {
+                    let st = self.idle_state();
+                    if let Some(r) = self.safepoint(&st) {
+                        self.loop_flags |= crate::vm::LOOP_SKIP_PARK;
+                        return Some(Next::Park(r, st));
+                    }
+                }
+                Ok(Step::Done(v)) => break Some(v == Value::TRUE),
+                Err(Raised) => break None,
+            }
+        };
+        self.cancelling = Value::NONE;
+        if took.is_none() && self.exc_type(self.exc) == T::SystemError {
+            // Not a state a cancel wrote (a forged image): the main task
+            // raises it at its `await`.
+            let e = self.exc;
+            return self.raise_at_main(e, false);
+        }
+        if let Some(([root, _, _, owner], raw)) =
+            self.nstate_get::<4, 6>(crate::nstep::op::CANCEL, state)
+        {
+            self.cancel_end(raw[5], root, owner, took, exc);
+        }
+        None
+    }
+
+    /// The next step of a cancel in `state` ([`Vm::cancel_begin`]), the
+    /// scheduler's (`sched`) or a call's: its value once the second pass
+    /// ends. A step of the first pass that raises has changed nothing, its
+    /// state included (a call's runs again after a collection,
+    /// `Vm::oom_retry`); a step of the second does not raise on a state a
+    /// cancel wrote. Every step forces the check that follows it: the
+    /// second pass charges nothing (the first charged each visit, as a
+    /// cancel in one step does), and a first-pass step of a few costly
+    /// visits charges less than the 64 units that force one (`Vm::burn`),
+    /// so a deadline or a park request would wait for the tick period to
+    /// end, hundreds of steps on.
+    pub(crate) fn cancel_step(
+        &mut self,
+        state: Value,
+        sched: bool,
+    ) -> Result<crate::nstep::Step, Raised> {
+        use crate::nstep::Step;
+        let Some(mut w) = self.cancel_load(state, sched) else {
+            return Err(self.bad_step());
+        };
+        if w.act && w.callbacks != 0 {
+            // The room the second pass's settles queue into: a restore
+            // gave the run queue what it held (`Vm::queue_spare`), so
+            // this reserves nothing on a state a cancel wrote.
+            self.reserve_scheduler(self.tasks.len(), self.gathers.len(), w.callbacks)?;
+        }
+        let mut budget = CANCEL_STEP;
+        let walked = self.cancel_walk(&mut w, &mut budget);
+        self.force_check();
+        match walked? {
+            Walked::Done(took) => return Ok(Step::Done(Value::from_bool(took))),
+            Walked::Counted | Walked::Spent => {}
+        }
+        // Room for the frames first: as the first pass ends, for the
+        // deepest the second will hold, so no later step's state can fail
+        // to fit.
+        let held = self
+            .vslot(state, 2)
+            .as_obj()
+            .filter(|&b| self.obj_len(b) as usize >= w.room());
+        let buf = match held {
+            Some(b) => b,
+            None => self.alloc_buf(w.room())?,
+        };
+        if !w.act && w.frames.is_empty() {
+            self.cancel_turn(&mut w)?;
+        }
+        self.cancel_save(state, buf, &w);
+        Ok(Step::More)
+    }
+
+    /// A cancel of `root` before its first pass.
+    fn cancel_new(&mut self, root: Value, msg: Value) -> Result<CancelWalk, Raised> {
+        let mut frames = Vec::new();
+        if frames.try_reserve(1).is_err() {
             return Err(self.err(T::MemoryError, "cancel allocation failed"));
         }
-        nodes.push((root, usize::MAX, 0, false));
-        work.push(0);
-        let limit = self.recursion_limit;
-        let mut callbacks = 0usize;
-        while let Some(k) = work.pop() {
-            order.push(k);
-            let (v, _, depth, _) = nodes[k];
-            self.burn(1);
-            if depth > limit {
-                return Err(self.err(T::RecursionError, "maximum recursion depth exceeded"));
-            }
-            if self.raw_of(v, aw::STATE) != aw::PENDING {
-                continue;
-            }
-            match v.obj_kind().map(u16::from) {
-                Some(ty::TASK) => {
-                    // What it waits on now (`_fut_waiter`): nothing while it
-                    // runs or before it starts.
-                    let w = self
-                        .task_index(v)
-                        .and_then(|i| self.tasks.get(i))
-                        .and_then(Option::as_ref)
-                        .map_or(Value::NONE, |t| t.awaiting);
-                    if matches!(
-                        w.obj_kind().map(u16::from),
-                        Some(ty::TASK | ty::FUTURE | ty::GATHER | ty::SLEEP)
-                    ) {
-                        if !grow(&mut nodes, &mut work, &mut order, 1) {
-                            return Err(self.err(T::MemoryError, "cancel allocation failed"));
-                        }
-                        work.push(nodes.len());
-                        nodes.push((w, k, depth + 1, false));
-                        // Until the second pass: it passes the cancel on.
-                        nodes[k].3 = true;
-                    }
+        frames.push(Frame::root(root));
+        Ok(CancelWalk {
+            root,
+            msg,
+            act: false,
+            frames,
+            callbacks: 0,
+            deepest: 1,
+            rest: 0,
+        })
+    }
+
+    /// The first pass has ended: room for the callbacks the second will
+    /// queue and for its frames, then the second pass from the root.
+    fn cancel_turn(&mut self, w: &mut CancelWalk) -> Result<(), Raised> {
+        if w.frames.try_reserve(w.deepest).is_err() {
+            return Err(self.err(T::MemoryError, "cancel allocation failed"));
+        }
+        if w.callbacks != 0 {
+            self.reserve_scheduler(self.tasks.len(), self.gathers.len(), w.callbacks)?;
+        }
+        w.act = true;
+        w.frames.push(Frame::root(w.root));
+        Ok(())
+    }
+
+    /// Walks `w` on until `budget` is spent, depth first, children in
+    /// order: CPython's call order, an awaitable reached twice visited
+    /// twice. The first pass changes nothing: it charges a fuel unit a
+    /// visit, counts what the settles will queue and checks the depth. The
+    /// second acts on each awaitable before its children, and an awaitable
+    /// reports to its parent once its children have reported to it: a
+    /// gather took the cancel if a child did; a task whose waiter did not
+    /// raises at its next step. Nothing else runs between the passes or
+    /// their steps, and the second pass's settles change no task's waiter
+    /// and no pending gather's children, so both walk the same tree.
+    fn cancel_walk(&mut self, w: &mut CancelWalk, budget: &mut u64) -> Result<Walked, Raised> {
+        let limit = self.recursion_limit as usize;
+        while let Some(&f) = w.frames.last() {
+            let Some(c) = self.cancel_child(&f, f.next) else {
+                w.frames.pop();
+                if !w.act {
+                    continue;
                 }
-                Some(ty::GATHER) if self.raw_of(v, aw::AUX) == FIRST => {}
-                Some(ty::GATHER) => {
-                    let children = self.vslot(v, aw::EXTRA);
-                    let n = self.tuple_len(children);
-                    if !grow(&mut nodes, &mut work, &mut order, n) {
+                if f.took && f.node.is_obj_kind(ty::GATHER as u8) {
+                    let n = self.raw_of(f.node, aw::FAILS);
+                    self.set_raw_of(f.node, aw::FAILS, n | aw::CANCEL_REQUESTED);
+                }
+                match w.frames.last_mut() {
+                    Some(p) => self.cancel_report(p, f.took, w.msg),
+                    None => return Ok(Walked::Done(f.took)),
+                }
+                continue;
+            };
+            if *budget == 0 {
+                return Ok(Walked::Spent);
+            }
+            let pending = self.raw_of(c, aw::STATE) == aw::PENDING;
+            let below = if pending { self.cancel_below(c) } else { None };
+            let (scan, wake, k) = self.settle_work(c, pending);
+            let took = if w.act {
+                // As deep as the first pass went, which checked the depth
+                // and whose count the state's room is: deeper is a state
+                // no cancel wrote. Checked before the visit acts.
+                if below.is_some() && w.frames.len() >= w.deepest {
+                    return Err(self.bad_step());
+                }
+                *budget = budget.saturating_sub(scan.saturating_add(wake));
+                if pending && self.pays_room(c) {
+                    // Its callbacks queue into the room the first pass
+                    // counted; a state that counted less is not a cancel's.
+                    if k > w.callbacks {
+                        return Err(self.bad_step());
+                    }
+                    w.callbacks -= k;
+                }
+                self.cancel_act(c, pending, below.is_some(), w.msg)
+            } else {
+                self.burn(1);
+                if w.frames.len() - 1 > limit {
+                    return Err(self.err(T::RecursionError, "maximum recursion depth exceeded"));
+                }
+                // A future reached twice counts twice: room to spare.
+                if pending && self.pays_room(c) {
+                    w.callbacks = w.callbacks.saturating_add(k);
+                }
+                *budget = budget.saturating_sub(scan);
+                w.rest = w.rest.saturating_add(scan.saturating_add(wake));
+                false
+            };
+            if let Some(top) = w.frames.last_mut() {
+                top.next += 1;
+            }
+            match below {
+                Some(src) => {
+                    if w.frames.try_reserve(1).is_err() {
                         return Err(self.err(T::MemoryError, "cancel allocation failed"));
                     }
-                    // Pushed last first, so they act in order.
-                    let base = nodes.len();
+                    w.frames.push(Frame {
+                        node: c,
+                        src,
+                        next: 0,
+                        took,
+                    });
+                    w.deepest = w.deepest.max(w.frames.len());
+                }
+                None if w.act => {
+                    if let Some(p) = w.frames.last_mut() {
+                        self.cancel_report(p, took, w.msg);
+                    }
+                }
+                None => {}
+            }
+        }
+        Ok(Walked::Counted)
+    }
+
+    /// Child `i` of frame `f`, if it has one.
+    fn cancel_child(&self, f: &Frame, i: usize) -> Option<Value> {
+        if f.node.is_obj_kind(ty::GATHER as u8) {
+            (i < self.tuple_len(f.src)).then(|| self.vslot(f.src, u32::try_from(i).unwrap_or(0)))
+        } else {
+            (i == 0).then_some(f.src)
+        }
+    }
+
+    /// What pending awaitable `c` passes a cancel to: a task what it waits
+    /// on now (`_fut_waiter`: nothing while it runs or before it starts), a
+    /// gather (not `as_completed`'s or `wait_for`'s waiter) its children.
+    fn cancel_below(&self, c: Value) -> Option<Value> {
+        match c.obj_kind().map(u16::from) {
+            Some(ty::TASK) => {
+                let w = self
+                    .task_index(c)
+                    .and_then(|i| self.tasks.get(i))
+                    .and_then(Option::as_ref)
+                    .map_or(Value::NONE, |t| t.awaiting);
+                matches!(
+                    w.obj_kind().map(u16::from),
+                    Some(ty::TASK | ty::FUTURE | ty::GATHER | ty::SLEEP)
+                )
+                .then_some(w)
+            }
+            Some(ty::GATHER) if self.raw_of(c, aw::AUX) != FIRST => Some(self.vslot(c, aw::EXTRA)),
+            _ => None,
+        }
+    }
+
+    /// Whether a cancel settling future `c` queues its done callbacks into
+    /// room the cancel reserves (a loop future's, an earlier cell's).
+    fn pays_room(&self, c: Value) -> bool {
+        c.is_obj_kind(ty::FUTURE as u8)
+            && self.raw_of(c, aw::AUX) != STOP_FUTURE
+            && (self.pays_at_settle(c) || !self.live(c))
+    }
+
+    /// The work of a cancel's visit of `c` (`pending` as it is reached), in
+    /// [`CANCEL_STEP`]'s unit: what either pass reads (one, and the
+    /// waiters of an awaitable the second pass settles, 8 a unit), and
+    /// what the settle then scans besides (`Vm::settle_as`). A sleep's
+    /// looks at every blocked task (5 ns each [M]); a future's or a waiter
+    /// gather's takes each task it wakes out of the blocked list (under
+    /// 1 ns a task blocked [M]) and looks each gather that waits on it up
+    /// among the tracked ones, where a waiter gather is looked up too.
+    fn settle_work(&self, c: Value, pending: bool) -> (u64, u64, usize) {
+        let blocked = self.blocked.len() as u64;
+        let gathers = self.gathers.len() as u64;
+        match c.obj_kind().map(u16::from) {
+            Some(ty::SLEEP) if self.raw_of(c, aw::STATE) == aw::ARMED => (1, blocked / 16, 0),
+            Some(kind @ (ty::FUTURE | ty::GATHER))
+                if pending && (kind == ty::FUTURE || self.raw_of(c, aw::AUX) == FIRST) =>
+            {
+                let w = self.vslot(c, aw::WAITERS);
+                let (mut n, mut wakes, mut listens) = (0, 0, u64::from(kind == ty::GATHER));
+                let mut count = |x: Value| {
+                    wakes += u64::from(x.is_int());
+                    listens += u64::from(x.is_obj_kind(ty::GATHER as u8));
+                };
+                if w.is_obj_kind(ty::TUPLE as u8) {
+                    n = self.tuple_len(w);
                     for i in 0..n {
-                        let c = self.vslot(children, u32::try_from(i).unwrap_or(0));
-                        nodes.push((c, k, depth + 1, false));
+                        count(self.vslot(w, u32::try_from(i).unwrap_or(0)));
                     }
-                    work.extend((base..nodes.len()).rev());
+                } else if w != Value::NONE {
+                    n = 1;
+                    count(w);
                 }
-                Some(ty::FUTURE) if self.raw_of(v, aw::AUX) != STOP_FUTURE => {
-                    // A future reached twice counts twice: room to spare.
-                    if self.pays_at_settle(v) || !self.live(v) {
-                        callbacks = callbacks.saturating_add(self.done_callbacks(v));
-                    }
-                }
-                _ => {}
+                // Its done callbacks too (`Vm::done_callbacks`: the
+                // waiters that neither wake a task nor are a gather), from
+                // the same read: a second one doubled a first pass's time
+                // on a future with many waiters reached many times [M].
+                let waiting = listens - u64::from(kind == ty::GATHER);
+                let callbacks = n - usize::try_from(wakes + waiting).unwrap_or(n);
+                let wake = wakes
+                    .saturating_mul(blocked / 128)
+                    .saturating_add(listens.saturating_mul(gathers / 16));
+                (1 + n as u64 / 8, wake, callbacks)
             }
+            _ => (1, 0, 0),
         }
-        if callbacks != 0 {
-            self.reserve_scheduler(self.tasks.len(), self.gathers.len(), callbacks)?;
+    }
+
+    /// The second pass's act on `c` (`pending` as it was reached;
+    /// `passes_on`: a task whose waiter is in the tree): whether it took
+    /// the cancel.
+    fn cancel_act(&mut self, c: Value, pending: bool, passes_on: bool, msg: Value) -> bool {
+        match c.obj_kind().map(u16::from) {
+            Some(ty::TASK) if pending => {
+                let n = self.raw_of(c, aw::CANCELS);
+                if n & aw::COUNT != aw::COUNT {
+                    self.set_raw_of(c, aw::CANCELS, n + 1);
+                }
+                // A task whose waiter is not in the tree raises at its
+                // next step.
+                if !passes_on {
+                    self.set_must_cancel(c, msg);
+                }
+                true
+            }
+            Some(ty::GATHER) if pending && self.raw_of(c, aw::AUX) == FIRST => {
+                // `as_completed`'s and `wait_for`'s waiter future.
+                self.untrack_gather(c);
+                self.settle_cancelled(c, msg, Value::NONE);
+                true
+            }
+            Some(ty::FUTURE) if pending && self.raw_of(c, aw::AUX) != STOP_FUTURE => {
+                let id = self.raw_of(c, aw::AUX);
+                self.settle_cancelled(c, msg, Value::NONE);
+                if id < STOP_FUTURE {
+                    // The host call it stands for is abandoned.
+                    self.settle_call(id, crate::host::CallStatus::Abandoned);
+                }
+                true
+            }
+            Some(ty::SLEEP) if self.raw_of(c, aw::STATE) == aw::ARMED && !self.sleep_due(c) => {
+                self.settle_cancelled(c, msg, Value::NONE);
+                true
+            }
+            _ => false,
         }
-        for &k in &order {
-            let (v, _, _, passes_on) = nodes[k];
-            let pending = self.raw_of(v, aw::STATE) == aw::PENDING;
-            let took = match v.obj_kind().map(u16::from) {
-                Some(ty::TASK) if pending => {
-                    let n = self.raw_of(v, aw::CANCELS);
-                    if n & aw::COUNT != aw::COUNT {
-                        self.set_raw_of(v, aw::CANCELS, n + 1);
+    }
+
+    /// A child that took the cancel (`took`) or did not reports to its
+    /// parent's frame `p`.
+    fn cancel_report(&mut self, p: &mut Frame, took: bool, msg: Value) {
+        if p.node.is_obj_kind(ty::TASK as u8) {
+            if !took {
+                self.set_must_cancel(p.node, msg);
+            }
+        } else {
+            p.took |= took;
+        }
+    }
+
+    /// Writes `w` to its state: the frames into `buf`, which has their
+    /// room, then the words.
+    fn cancel_save(&mut self, state: Value, buf: Ref, w: &CancelWalk) {
+        for (k, f) in (0u32..).step_by(FRAME_WORDS).zip(&w.frames) {
+            let next = i64::try_from(f.next).ok().and_then(Value::int);
+            let words = [
+                f.node,
+                next.unwrap_or(Value::NONE),
+                Value::from_bool(f.took),
+            ];
+            let _ = self.heap.set_values(buf, k, &words);
+        }
+        if let Some(r) = state.as_obj() {
+            self.set_slot(r, 2, Value::from_ref(buf, ty::BUF as u8));
+        }
+        let raw = [
+            u64::from(w.act),
+            w.callbacks as u64,
+            w.deepest as u64,
+            w.frames.len() as u64,
+        ];
+        self.nstate_put(state, 1, &raw);
+    }
+
+    /// The cancel in `state` (the scheduler's if `sched`), each frame checked against the tree as a
+    /// step left it: the root's first, then each the pending task or
+    /// gather the frame under it visited last, its children read from it.
+    /// `None` for anything a cancel did not write (a forged or stale
+    /// image).
+    fn cancel_load(&self, state: Value, sched: bool) -> Option<CancelWalk> {
+        let ([root, msg, frames, owner], [_, act, callbacks, deepest, n, kind]) =
+            self.nstate_get::<4, 6>(crate::nstep::op::CANCEL, state)?;
+        // Who goes on after it: the scheduler's has a kind of its own, and
+        // only a task that awaits has an owner, that task.
+        let owned = if kind == cancel_for::AWAIT {
+            owner.is_obj_kind(ty::TASK as u8)
+        } else {
+            owner == Value::NONE
+        };
+        if kind > cancel_for::ESCAPE || (kind != cancel_for::CALL) != sched || !owned {
+            return None;
+        }
+        let kind = root.obj_kind().map(u16::from);
+        if act > 1
+            || !matches!(kind, Some(ty::TASK | ty::FUTURE | ty::GATHER | ty::SLEEP))
+            || !frames.is_obj_kind(ty::BUF as u8)
+        {
+            return None;
+        }
+        let n = usize::try_from(n).ok().filter(|&n| n != 0)?;
+        let words = self.heap.slot_words(frames.as_obj()?).ok()?;
+        let words = words.get(..n.checked_mul(FRAME_WORDS)?)?;
+        let mut w = CancelWalk {
+            root,
+            msg,
+            act: act != 0,
+            frames: Vec::new(),
+            // A first pass may count more callbacks than any queue has
+            // room for (a future with many, reached many times): the
+            // reservation refuses them with `MemoryError`, as a cancel in
+            // one step's does.
+            callbacks: usize::try_from(callbacks).unwrap_or(usize::MAX),
+            // A depth past any heap's objects is no cancel's, and sizes
+            // no reservation.
+            deepest: u32::try_from(deepest).ok()? as usize,
+            rest: 0,
+        };
+        w.frames.try_reserve(n.max(w.deepest.min(1 << 16))).ok()?;
+        for f in words.as_chunks::<FRAME_WORDS>().0 {
+            let node = Value::from_bits(f[0])?;
+            let next = usize::try_from(Value::from_bits(f[1])?.as_int()?).ok()?;
+            let took = Value::from_bits(f[2])?;
+            let src = match w.frames.last() {
+                None if node == Value::NONE => root,
+                None => return None,
+                Some(p) => {
+                    let visited = p.next.checked_sub(1)?;
+                    if self.cancel_child(p, visited) != Some(node)
+                        || self.raw_of(node, aw::STATE) != aw::PENDING
+                    {
+                        return None;
                     }
-                    // A task whose waiter is not in the tree raises at its
-                    // next step.
-                    if !passes_on {
-                        self.set_must_cancel(v, msg);
-                    }
-                    true
+                    self.cancel_below(node)?
                 }
-                Some(ty::GATHER) if pending && self.raw_of(v, aw::AUX) == FIRST => {
-                    // `as_completed`'s and `wait_for`'s waiter future.
-                    self.untrack_gather(v);
-                    self.settle_cancelled(v, msg, Value::NONE);
-                    true
-                }
-                Some(ty::FUTURE) if pending && self.raw_of(v, aw::AUX) != STOP_FUTURE => {
-                    let id = self.raw_of(v, aw::AUX);
-                    self.settle_cancelled(v, msg, Value::NONE);
-                    if id < STOP_FUTURE {
-                        // The host call it stands for is abandoned.
-                        self.settle_call(id, crate::host::CallStatus::Abandoned);
-                    }
-                    true
-                }
-                Some(ty::SLEEP) if self.raw_of(v, aw::STATE) == aw::ARMED && !self.sleep_due(v) => {
-                    self.settle_cancelled(v, msg, Value::NONE);
-                    true
-                }
-                _ => false,
             };
-            nodes[k].3 = took;
-        }
-        // Children (later nodes) report to their parents: a gather took the
-        // cancel if a child did; a task whose waiter did not raises at its
-        // next step.
-        for k in (1..nodes.len()).rev() {
-            let (_, p, _, took) = nodes[k];
-            let pv = nodes[p].0;
-            if pv.is_obj_kind(ty::GATHER as u8) {
-                nodes[p].3 |= took;
-            } else if !took {
-                self.set_must_cancel(pv, msg);
+            let len = if node.is_obj_kind(ty::GATHER as u8) {
+                self.tuple_len(src)
+            } else {
+                1
+            };
+            if next > len || ![Value::TRUE, Value::FALSE].contains(&took) {
+                return None;
             }
+            w.frames.push(Frame {
+                node,
+                src,
+                next,
+                took: took == Value::TRUE,
+            });
         }
-        for &(v, _, _, took) in &nodes {
-            if took && v.is_obj_kind(ty::GATHER as u8) && self.raw_of(v, aw::AUX) != FIRST {
-                let f = self.raw_of(v, aw::FAILS);
-                self.set_raw_of(v, aw::FAILS, f | aw::CANCEL_REQUESTED);
-            }
-        }
-        Ok(nodes[0].3)
+        Some(w)
     }
 
     /// Task `h` raises `CancelledError(msg)` at its next step.

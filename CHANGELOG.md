@@ -110,6 +110,22 @@ hashes are pre-release history, kept in the private archive
 
 ### Fixed
 
+- `cancel()` of a large gather or task tree no longer walks it in one
+  native step: past 16,384 units of work (a visit, and more for a settle
+  that scans the blocked tasks or a long waiters tuple) the walk goes on
+  a step at a time, a safepoint after each, also when the loop itself
+  cancels (a task that blocks with a cancel pending, the main task when
+  `SystemExit` leaves a task). On shipped codegen `G.cancel()` of a
+  gather of 1.2M futures was one step of 87 to 187 ms and is now steps
+  of at most 2.5 to 2.6 ms; of 30,000 sleeping tasks one of 1.66 to
+  1.88 s, now 5.1 to 5.6 ms; a task blocking on 1.2M futures with a
+  cancel pending one of 91 to 104 ms, now 3.2 to 3.4 ms [M]. A cancel
+  that fits one step runs as before, at the same fuel; a longer one the
+  program calls charges a unit or two more a step (1,200,295 against
+  1,200,002 units at 1.2M futures [M]), the loop's own the same. A
+  cancel parked part way snapshots and restores; nothing else runs
+  between its steps. The total time of cancelling many blocked tasks is
+  unchanged (quadratic in them). The build id moves [M, own case 579].
 - An `except MemoryError` handler that drops the data that filled memory
   can allocate again. Displays (`[...]`, `(...)`, `{...}`, `x[a:b]`),
   `lambda` and `def`, `str`/`int`/`float` of numbers, strs and bytes,

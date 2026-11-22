@@ -1621,3 +1621,481 @@ fn a_forged_merge_position_raises() {
         );
     }
 }
+
+/// Programs whose cancel is longer than one step of its walk, with few
+/// instructions around it (they run a fuel unit a slice): the program's
+/// own `cancel()` of a gather over a task that waits on another gather;
+/// the scheduler's for a task that blocks with a cancel pending; and the
+/// scheduler's for the main task when `SystemExit` leaves a task (the run
+/// raises the `SystemExit` whatever the main task raised, so the program
+/// raises again what its main task saw).
+/// The scheduler's first two steps have no safepoint between them, so the
+/// nested gather comes last there: the first park is inside it.
+#[cfg(feature = "asyncio")]
+const CANCELS: [&str; 3] = [
+    "\
+import asyncio
+async def wait(a):
+    await a
+async def main():
+    f = asyncio.get_running_loop().create_future()
+    f.add_done_callback(print)
+    inner = asyncio.gather(*[f] * 20_000)
+    t = asyncio.create_task(wait(inner))
+    await asyncio.sleep(0)
+    g = asyncio.gather(t, *[f] * 20_000)
+    g.cancel('m')
+asyncio.run(main())
+",
+    "\
+import asyncio
+async def body(g):
+    asyncio.current_task().cancel()
+    await g
+async def main():
+    f = asyncio.get_running_loop().create_future()
+    f.add_done_callback(print)
+    g = asyncio.gather(*[f] * 20_000, asyncio.gather(*[f] * 20_000))
+    try:
+        await asyncio.create_task(body(g))
+    except asyncio.CancelledError:
+        pass
+asyncio.run(main())
+",
+    "\
+import asyncio
+async def leave():
+    raise SystemExit
+async def main():
+    f = asyncio.get_running_loop().create_future()
+    f.add_done_callback(print)
+    asyncio.create_task(leave())
+    try:
+        await asyncio.gather(*[f] * 20_000, asyncio.gather(*[f] * 20_000))
+    except SystemError as e:
+        seen.append(e)
+        raise
+seen = []
+try:
+    asyncio.run(main())
+except SystemExit:
+    pass
+if seen:
+    raise seen[0]
+",
+];
+
+/// The state of the cancel in progress in `vm`, the program's or the
+/// scheduler's.
+#[cfg(feature = "asyncio")]
+fn cancel_state(vm: &Vm) -> Option<mm_core::Ref> {
+    // The scheduler's own, once ended, is garbage with its kind.
+    vm.cancelling
+        .as_obj()
+        .or_else(|| step_state(vm, crate::nstep::op::CANCEL).filter(|&r| raw(vm, r, 4 + 5) == 0))
+}
+
+/// Images of `src` parked inside its long cancel: after a step of its
+/// first pass, at the turn to its second (one frame, nothing settled yet)
+/// and after a step of its second. The second pass charges no fuel, so
+/// the scheduler's parks between those steps only when asked to.
+#[cfg(feature = "asyncio")]
+fn cancel_images(src: &str) -> [Vec<u8>; 3] {
+    let at = |vm: &Vm, act: u64, deep: bool| {
+        cancel_state(vm)
+            .is_some_and(|r| raw(vm, r, 4 + 1) == act && (raw(vm, r, 4 + 4) > 1) == deep)
+    };
+    let image = |vm: &mut Vm| {
+        let mut image = Vec::new();
+        vm.write_snapshot(&mut image).expect("at a safepoint");
+        image
+    };
+    let mut first = session(src, |vm| at(vm, 0, true));
+    assert!(at(&first, 0, true), "never parked in the first pass");
+    let mut turn = session(src, |vm| at(vm, 1, false));
+    assert!(at(&turn, 1, false), "never parked at the turn");
+    let images = [image(&mut first), image(&mut turn)];
+    turn.park_flag()
+        .store(true, core::sync::atomic::Ordering::SeqCst);
+    turn.set_fuel(Some(1 << 20));
+    let exit = turn.resume();
+    assert!(matches!(exit, Exit::Parked(_)), "{exit:?}");
+    assert!(
+        at(&turn, 1, true),
+        "no park after a step of the second pass"
+    );
+    let [first, at_turn] = images;
+    [first, at_turn, image(&mut turn)]
+}
+
+/// `image` restored.
+#[cfg(feature = "asyncio")]
+fn restore_image(image: &[u8]) -> Vm {
+    let mut no_host_code =
+        |_: &str, _: &HostValue, _: &[String], _: &[u8; 16]| -> Option<Arc<crate::HostProgram>> {
+            None
+        };
+    Vm::read_snapshot(
+        &mut Reader::new(image),
+        bundled(),
+        None,
+        &mut no_host_code,
+        1 << 40,
+    )
+    .expect("the image restores")
+}
+
+/// `image` restored, changed by `corrupt`, written, restored again and
+/// resumed: as [`resume_forged`].
+#[cfg(feature = "asyncio")]
+fn forged_cancel(
+    image: &[u8],
+    corrupt: impl Fn(&mut Vm, mm_core::Ref),
+) -> Option<(String, String)> {
+    let mut vm = restore_image(image);
+    let r = cancel_state(&vm).expect("a cancel in progress");
+    corrupt(&mut vm, r);
+    restore_and_finish(&mut vm)
+}
+
+#[cfg(feature = "asyncio")]
+#[test]
+fn a_cancel_parked_in_either_pass_restores_and_ends() {
+    for src in CANCELS {
+        for (k, image) in cancel_images(src).iter().enumerate() {
+            assert!(
+                cancel_state(&restore_image(image)).is_some(),
+                "image {k}: {src}"
+            );
+            assert_eq!(forged_cancel(image, |_, _| {}), None, "{src}");
+        }
+    }
+}
+
+/// A restored cancel step checks its state against the tree: each word
+/// below is one no step leaves, and the step raises `SystemError` (the
+/// program's at its call, the scheduler's at the main task's `await`).
+#[cfg(feature = "asyncio")]
+#[test]
+fn a_forged_cancel_state_raises() {
+    type Forge = fn(&mut Vm, mm_core::Ref);
+    // Value slots: root, msg, frames, owner; raw words: op, act,
+    // callbacks, deepest, frames held, kind. A frame: node, next, took.
+    fn frames(vm: &Vm, r: mm_core::Ref) -> mm_core::Ref {
+        vm.heap.get(r, 2).expect("slot").as_obj().expect("frames")
+    }
+    let both: [(&str, Forge); 12] = [
+        ("the root is no awaitable", |vm, r| {
+            vm.heap.set(r, 0, Value::TRUE).expect("slot");
+        }),
+        ("the frames are no buffer", |vm, r| {
+            vm.heap.set(r, 2, Value::NONE).expect("slot");
+        }),
+        ("the frames are the root", |vm, r| {
+            let root = vm.heap.get(r, 0).expect("slot");
+            vm.heap.set(r, 2, root).expect("slot");
+        }),
+        ("a pass that is neither", |vm, r| {
+            vm.heap.set_raw(r, 4 + 1, 2).expect("word");
+        }),
+        ("no frame", |vm, r| {
+            vm.heap.set_raw(r, 4 + 4, 0).expect("word");
+        }),
+        ("more frames than the buffer holds", |vm, r| {
+            vm.heap.set_raw(r, 4 + 4, 1 << 40).expect("word");
+        }),
+        ("a count past any heap", |vm, r| {
+            vm.heap.set_raw(r, 4 + 3, 1 << 40).expect("word");
+        }),
+        ("a kind that is none", |vm, r| {
+            vm.heap.set_raw(r, 4 + 5, 3).expect("word");
+        }),
+        ("the bottom frame is not the root's", |vm, r| {
+            let (root, f) = (vm.heap.get(r, 0).expect("slot"), frames(vm, r));
+            vm.heap.set(f, 0, root).expect("slot");
+        }),
+        ("the root visited twice", |vm, r| {
+            let f = frames(vm, r);
+            vm.heap
+                .set(f, 1, Value::int(2).expect("small"))
+                .expect("slot");
+        }),
+        ("a frame that took something else", |vm, r| {
+            let f = frames(vm, r);
+            vm.heap.set(f, 2, Value::NONE).expect("slot");
+        }),
+        ("a second frame that is not the first's child", |vm, r| {
+            let f = frames(vm, r);
+            let msg = vm.heap.get(r, 1).expect("slot");
+            vm.heap.set(f, 3, msg).expect("slot");
+        }),
+    ];
+    // Per program: who goes on after it is another's.
+    let kinds: [[(&str, Forge); 2]; 3] = [
+        [
+            ("a call's cancel as the scheduler's", |vm, r| {
+                vm.heap.set_raw(r, 4 + 5, 2).expect("word");
+            }),
+            ("a call's cancel with an owner", |vm, r| {
+                let root = vm.heap.get(r, 0).expect("slot");
+                vm.heap.set(r, 3, root).expect("slot");
+            }),
+        ],
+        [
+            ("an awaiting task's cancel as a call's", |vm, r| {
+                vm.heap.set_raw(r, 4 + 5, 0).expect("word");
+            }),
+            ("an awaiting task's cancel with no task", |vm, r| {
+                vm.heap.set(r, 3, Value::NONE).expect("slot");
+            }),
+        ],
+        [
+            ("an escape's cancel as a call's", |vm, r| {
+                vm.heap.set_raw(r, 4 + 5, 0).expect("word");
+            }),
+            ("an escape's cancel as an awaiting task's", |vm, r| {
+                vm.heap.set_raw(r, 4 + 5, 1).expect("word");
+            }),
+        ],
+    ];
+    for (src, kinds) in CANCELS.into_iter().zip(kinds) {
+        let images = cancel_images(src);
+        for (pass, image) in [(0, &images[0]), (1, &images[2])] {
+            for (what, forge) in both.iter().chain(&kinds) {
+                let raised = forged_cancel(image, forge).map(|e| e.0);
+                assert_eq!(
+                    raised.as_deref(),
+                    Some("SystemError"),
+                    "pass {pass}, {what}: {src}"
+                );
+            }
+        }
+        // A frame's node the walk went into is still pending: one that
+        // settled since (a stale state) has no children to go on with.
+        // The program's cancel raises it at the call; after the
+        // scheduler's, a task left blocked on a done awaitable may end the
+        // run with the deadlock's `RuntimeError` instead.
+        for image in [&images[0], &images[2]] {
+            let raised = forged_cancel(image, |vm, r| {
+                let f = vm.heap.get(r, 2).expect("slot").as_obj().expect("frames");
+                let node = vm.heap.get(f, 3).expect("slot").as_obj().expect("a node");
+                vm.heap.set_raw(node, 3, 1).expect("state");
+            });
+            let name = raised.map(|e| e.0);
+            let expected: &[&str] = if src == CANCELS[0] {
+                &["SystemError"]
+            } else {
+                &["SystemError", "RuntimeError"]
+            };
+            assert!(
+                name.as_deref().is_some_and(|n| expected.contains(&n)),
+                "{name:?}: {src}"
+            );
+        }
+        // Each frame's node is the child the frame under it visited last:
+        // the second frame as the deepest one's node, a pending gather of
+        // the same tree with children of its own, is another walk's.
+        let deep = |vm: &Vm| {
+            cancel_state(vm).is_some_and(|r| raw(vm, r, 4 + 1) == 0 && raw(vm, r, 4 + 4) >= 3)
+        };
+        let mut vm = session(src, deep);
+        assert!(deep(&vm), "never parked three frames deep: {src}");
+        let mut image = Vec::new();
+        vm.write_snapshot(&mut image).expect("at a safepoint");
+        let raised = forged_cancel(&image, |vm, r| {
+            let f = vm.heap.get(r, 2).expect("slot").as_obj().expect("frames");
+            let n = u32::try_from(raw(vm, r, 4 + 4)).expect("frames held");
+            let deepest = vm.heap.get(f, 3 * (n - 1)).expect("slot");
+            vm.heap.set(f, 3, deepest).expect("slot");
+        });
+        assert_eq!(raised.map(|e| e.0).as_deref(), Some("SystemError"), "{src}");
+        // With the root's frame alone nothing else names the root: one
+        // that is no task, future, gather or sleep is no cancel's.
+        let raised = forged_cancel(&images[1], |vm, r| {
+            vm.heap.set(r, 0, Value::TRUE).expect("slot");
+        });
+        assert_eq!(raised.map(|e| e.0).as_deref(), Some("SystemError"), "{src}");
+        // Nor is a top frame past its children: the root's one visited
+        // twice, with no frame above it to tell.
+        let raised = forged_cancel(&images[1], |vm, r| {
+            let f = vm.heap.get(r, 2).expect("slot").as_obj().expect("frames");
+            let two = Value::int(2).expect("small");
+            vm.heap.set(f, 1, two).expect("slot");
+        });
+        assert_eq!(raised.map(|e| e.0).as_deref(), Some("SystemError"), "{src}");
+        // The second pass goes no deeper than the first did (it checked
+        // the depth, and the state's room is its count).
+        let raised = forged_cancel(&images[1], |vm, r| {
+            vm.heap.set_raw(r, 4 + 3, 1).expect("word");
+        });
+        assert_eq!(raised.map(|e| e.0).as_deref(), Some("SystemError"), "{src}");
+        // The second pass queues callbacks into the room the first
+        // counted: a state that counted fewer is refused before a settle
+        // queues past the run queue's room.
+        let raised = forged_cancel(&images[1], |vm, r| {
+            vm.heap.set_raw(r, 4 + 2, 0).expect("word");
+        });
+        assert_eq!(raised.map(|e| e.0).as_deref(), Some("SystemError"), "{src}");
+    }
+}
+
+/// A count of callbacks past `u32`, in either pass, is not a forged
+/// state's: a first pass reaches it (a loop future with 20,000 done
+/// callbacks, named 250,000 times by a gather: `MemoryError` on 17a2daf
+/// after 25 s, too long to run here [M]), and the reservation at its turn
+/// refuses it with `MemoryError`, nothing cancelled. A second pass's
+/// state that counts more than its tree queues is refused the same way.
+/// Read back as a `u32`, the count made the next step `SystemError`
+/// [M, reviewer, 16040b7].
+#[cfg(feature = "asyncio")]
+#[test]
+fn a_callback_count_past_any_room_raises_memory_error() {
+    let images = cancel_images(CANCELS[0]);
+    for image in &images[..2] {
+        for x in [u64::MAX, 1 << 40] {
+            let raised = forged_cancel(image, |vm, r| {
+                vm.heap.set_raw(r, 4 + 2, x).expect("word");
+            });
+            assert_eq!(raised.map(|e| e.0).as_deref(), Some("MemoryError"), "{x}");
+        }
+    }
+}
+
+/// The second pass queues its callbacks into room its steps reserve
+/// again: an image whose run queue has none to spare (forged; a restore
+/// gives a queue the room it had) gets it at the first step, before a
+/// settle queues anything, and the cancel ends as it would have.
+#[cfg(feature = "asyncio")]
+#[test]
+fn a_restored_second_pass_reserves_the_room_it_counted() {
+    let images = cancel_images(CANCELS[0]);
+    let mut vm = restore_image(&images[1]);
+    vm.ready.shrink_to_fit();
+    let mut vm = restore(&mut vm).expect("restores");
+    let left = |vm: &Vm| {
+        let state = cancel_state(vm).expect("a cancel in progress");
+        usize::try_from(raw(vm, state, 4 + 2)).expect("a count")
+    };
+    assert!(vm.queue_spare() < left(&vm), "the queue kept its room");
+    vm.park_flag()
+        .store(true, core::sync::atomic::Ordering::SeqCst);
+    vm.set_fuel(Some(1 << 20));
+    let exit = vm.resume();
+    assert!(matches!(exit, Exit::Parked(_)), "{exit:?}");
+    assert!(left(&vm) > 0, "nothing left to queue");
+    assert!(vm.queue_spare() >= left(&vm));
+    assert_eq!(restore_and_finish(&mut vm), None);
+}
+
+/// The first pass counts a loop future's done callbacks only: not the
+/// tasks that await it nor the gathers that listen to it, which share its
+/// waiters and queue nothing. Three tasks, one callback and a gather that
+/// names it 20,000 times: one callback a visit.
+#[cfg(feature = "asyncio")]
+#[test]
+fn a_first_pass_counts_done_callbacks_not_tasks_or_gathers() {
+    let src = "\
+import asyncio
+async def wait(a):
+    try:
+        await a
+    except asyncio.CancelledError:
+        pass
+async def main():
+    f = asyncio.get_running_loop().create_future()
+    f.add_done_callback(print)
+    ts = [asyncio.create_task(wait(f)) for _ in range(3)]
+    await asyncio.sleep(0)
+    g = asyncio.gather(*[f] * 20_000)
+    g.cancel('m')
+asyncio.run(main())
+";
+    let at_turn = |vm: &Vm| {
+        cancel_state(vm).is_some_and(|r| raw(vm, r, 4 + 1) == 1 && raw(vm, r, 4 + 4) <= 1)
+    };
+    let vm = session(src, at_turn);
+    assert!(at_turn(&vm), "never parked at the turn");
+    let state = cancel_state(&vm).expect("a cancel in progress");
+    assert_eq!(raw(&vm, state, 4 + 2), 20_000);
+}
+
+/// Every word of a cancel's state and of its frames, forged to every kind
+/// of word, in either pass: the restored session raises or ends; it never
+/// panics (overflow checks on here) and never parks for ever.
+#[cfg(feature = "asyncio")]
+#[test]
+fn a_forged_cancel_word_never_panics() {
+    for src in CANCELS {
+        for image in cancel_images(src) {
+            let words = [
+                0,
+                1,
+                2,
+                u64::MAX,
+                Value::NONE.to_bits(),
+                Value::TRUE.to_bits(),
+                Value::UNDEFINED.to_bits(),
+                Value::int(20_000).expect("small").to_bits(),
+            ];
+            for i in 0..10 {
+                for x in words {
+                    forged_cancel(&image, |vm, r| {
+                        let set = match Value::from_bits(x) {
+                            Some(v) if i < 4 => vm.heap.set(r, i, v),
+                            _ if i < 4 => Ok(()),
+                            _ => vm.heap.set_raw(r, i, x),
+                        };
+                        set.expect("a word of the state");
+                    });
+                }
+                // Each value slot as every other object of the state.
+                for from in 0..4 {
+                    forged_cancel(&image, |vm, r| {
+                        let v = vm.heap.get(r, from).expect("slot");
+                        if i < 4 {
+                            vm.heap.set(r, i, v).expect("slot");
+                        }
+                    });
+                }
+            }
+            // The frames: every slot of the first four.
+            for i in 0..12 {
+                for x in words {
+                    forged_cancel(&image, |vm, r| {
+                        let f = vm.heap.get(r, 2).expect("slot").as_obj().expect("frames");
+                        if let Some(v) = Value::from_bits(x)
+                            && i < vm.heap.header(f).expect("header").len()
+                        {
+                            vm.heap.set(f, i, v).expect("slot");
+                        }
+                    });
+                }
+                for from in 0..6 {
+                    forged_cancel(&image, |vm, r| {
+                        let f = vm.heap.get(r, 2).expect("slot").as_obj().expect("frames");
+                        let n = vm.heap.header(f).expect("header").len();
+                        if i < n && from < n {
+                            let v = vm.heap.get(f, from).expect("slot");
+                            vm.heap.set(f, i, v).expect("slot");
+                        }
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// The scheduler's cancel in progress is a step's state or nothing.
+#[cfg(feature = "asyncio")]
+#[test]
+fn the_schedulers_cancel_is_a_step_state() {
+    let cancelling = |vm: &Vm| vm.cancelling != Value::NONE;
+    refuses(CANCELS[1], cancelling, "run queue", |vm| {
+        vm.cancelling = Value::TRUE;
+    });
+    // An awaitable is no state: the cancel's own root.
+    refuses(CANCELS[1], cancelling, "run queue", |vm| {
+        let state = vm.cancelling.as_obj().expect("a state");
+        vm.cancelling = vm.heap.get(state, 0).expect("root");
+    });
+}

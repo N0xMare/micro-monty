@@ -2840,6 +2840,63 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "for _ in range(1_000_000):\n    loop.call_soon(cb).cancel()\nawait asyncio.sleep(0)",
         1,
     ),
+    // A cancel walks its tree in steps of bounded work
+    // (`nstep::op::CANCEL`): in one step, the cancel of a gather of 1.2M
+    // futures took 87 to 187 ms [M, shipped, 4a3b195].
+    (
+        Row::Bounded,
+        "import asyncio\nawait asyncio.sleep(0)\nloop = asyncio.get_running_loop()\nfs = [loop.create_future() for _ in range(1_200_000)]\nG = asyncio.gather(*fs)",
+        "G.cancel()",
+        1,
+    ),
+    // A settle that wakes a task scans the blocked tasks, so a step's
+    // budget is work, not visits: the cancel of 30,000 sleeping tasks was
+    // one step of 1.66 to 1.88 s, and of 40,000 tasks each waiting on a
+    // future one of 113 to 118 ms [M, shipped, 4a3b195]. The second
+    // gathers its tasks last first, so each wake looks through the whole
+    // list of blocked tasks.
+    (
+        Row::Bounded,
+        "import asyncio\nawait asyncio.sleep(0)\nasync def w():\n    await asyncio.sleep(1000)",
+        "ts = [asyncio.create_task(w()) for _ in range(30_000)]\nawait asyncio.sleep(0)\nG = asyncio.gather(*ts)\nG.cancel()",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "import asyncio\nawait asyncio.sleep(0)\nloop = asyncio.get_running_loop()\nasync def w(f):\n    await f",
+        "ts = [asyncio.create_task(w(loop.create_future())) for _ in range(40_000)]\nawait asyncio.sleep(0)\nG = asyncio.gather(*ts[::-1])\nG.cancel()",
+        1,
+    ),
+    // Each gather that listens to a settled future is looked up among the
+    // tracked ones (those of the running cell): 100,000 gathers of a
+    // future each, cancelled through the gather over them, were one step
+    // of 1,351 ms [M, reviewer, shipped 17a2daf]. 60,000 here: the steps
+    // are bounded, their sum (0.7 s) is not shorter.
+    (
+        Row::Bounded,
+        "import asyncio\nawait asyncio.sleep(0)\nloop = asyncio.get_running_loop()",
+        "G = asyncio.gather(*[asyncio.gather(loop.create_future()) for _ in range(60_000)])\nG.cancel()",
+        1,
+    ),
+    // A visit reads the waiters of the future it reaches, every time it
+    // reaches it: one with 10,000 (gathers that settled since, which
+    // nothing has dropped from it yet) under a gather that names it
+    // 4,000 times, all in one step (0.35 s) were a visit a unit.
+    (
+        Row::Bounded,
+        "import asyncio\nawait asyncio.sleep(0)\nloop = asyncio.get_running_loop()\nf = loop.create_future()\nbad = loop.create_future()\nbad.set_exception(ValueError())\nG = asyncio.gather(*[f] * 4_000)\ngs = [asyncio.gather(f, bad) for _ in range(10_000)]\nawait asyncio.sleep(0)\nn = sum(g.done() for g in gs)",
+        "G.cancel()",
+        1,
+    ),
+    // The scheduler's own cancel, for a task that blocks with a cancel
+    // pending, goes on in the same steps between tasks: on a gather of
+    // 1.2M futures it was one step of 91 to 104 ms [M, shipped, 4a3b195].
+    (
+        Row::Bounded,
+        "import asyncio\nawait asyncio.sleep(0)\nloop = asyncio.get_running_loop()\nfs = [loop.create_future() for _ in range(1_200_000)]\nG = asyncio.gather(*fs)\nasync def w():\n    me.cancel()\n    await G",
+        "me = asyncio.create_task(w())\nawait asyncio.sleep(0)",
+        1,
+    ),
     // One item of a guest-sized tuple, read without copying the tuple: an
     // exception's fields from `args` (an `OSError`'s, a `SyntaxError`'s
     // from its 8M-item location tuple: 73 and 563 ms a read on e54f65f
