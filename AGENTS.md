@@ -270,7 +270,11 @@ each stage logs to
   where blessing would keep HEAD's id it stops, as the commit changes
   what an image means (a `SNAPSHOT_EPOCH` bump is missing), brings a
   scenario blessed elsewhere or changes a scenario itself; `restack
-  --resolved` finishes the pick it stopped at. It copies each commit's
+  --resolved` finishes the pick it stopped at. The golden test compares
+  a fresh run with the committed images, so restack stops as well at a
+  commit whose image moves while the build id does not, and a person
+  decides there whether a `SNAPSHOT_EPOCH` bump or only a re-bless is
+  due. It copies each commit's
   author and committer, and refuses a commit, or a HEAD to stack onto,
   authored or committed by another identity than the one the commits
   rule below names.

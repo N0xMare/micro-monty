@@ -17,9 +17,11 @@
 //! committed transcript (`*.txt`), so blessing never hides a change in
 //! behavior. To change a transcript on purpose, delete it and bless again;
 //! the commit then shows the new one. `cargo xtask check` runs this test
-//! the same way and fails while the images carry another id. Debug builds
-//! skip it: under `cargo test --workspace`, mm-cli's opt-in modules unify
-//! into the facade and give it another id.
+//! the same way and fails while the images carry another id, or while a
+//! fresh run of a scenario writes other bytes than its committed image
+//! (a change that moved an image without moving the id: bless again).
+//! Debug builds skip it: under `cargo test --workspace`, mm-cli's opt-in
+//! modules unify into the facade and give it another id.
 #![allow(clippy::expect_used, clippy::panic, reason = "tests")]
 
 use micro_monty::{
@@ -230,6 +232,32 @@ fn finish(s: &mut Session, mut p: Progress, out: &Mutex<String>) -> String {
     }
 }
 
+/// A scenario run afresh: its image at its first stop for the host, and the
+/// transcript of the session's continuation from there. The same bytes on
+/// every run of one build: the scenarios read no clock and no entropy.
+fn fresh(name: &str, cell: &str) -> (Vec<u8>, String) {
+    let e = engine();
+    let mut s = Session::new(&e).expect("session");
+    s.define(&host()).expect("define");
+    let out = capture(&mut s);
+    let mut p = s.start(&e.compile(cell, &format!("{name}.py")).expect("compile"));
+    while let Progress::HostCall { ref name, .. } = p
+        && name == "fetch"
+    {
+        p = s.resume(Resume::Future).expect("resume");
+    }
+    assert!(
+        matches!(p, Progress::HostCall { .. } | Progress::Waiting { .. }),
+        "{name}: {p:?}"
+    );
+    let image = s.snapshot().expect("snapshot");
+    if let Ok(mut o) = out.lock() {
+        o.clear();
+    }
+    let transcript = finish(&mut s, p, &out);
+    (image, transcript)
+}
+
 /// Writes each scenario's image at its first stop for the host, once the
 /// session that wrote it has continued from there to the committed
 /// transcript in every scenario (a missing transcript is written).
@@ -238,25 +266,7 @@ fn bless() {
     let mut blessed = Vec::new();
     let mut changed = String::new();
     for (name, cell) in SCENARIOS {
-        let e = engine();
-        let mut s = Session::new(&e).expect("session");
-        s.define(&host()).expect("define");
-        let out = capture(&mut s);
-        let mut p = s.start(&e.compile(cell, &format!("{name}.py")).expect("compile"));
-        while let Progress::HostCall { ref name, .. } = p
-            && name == "fetch"
-        {
-            p = s.resume(Resume::Future).expect("resume");
-        }
-        assert!(
-            matches!(p, Progress::HostCall { .. } | Progress::Waiting { .. }),
-            "{name}: {p:?}"
-        );
-        let image = s.snapshot().expect("snapshot");
-        if let Ok(mut o) = out.lock() {
-            o.clear();
-        }
-        let transcript = finish(&mut s, p, &out);
+        let (image, transcript) = fresh(name, cell);
         let txt = dir().join(format!("{name}.txt"));
         if txt.exists() {
             let committed = fs::read_to_string(&txt).expect("transcript");
@@ -298,7 +308,7 @@ fn golden_images_continue_under_the_build_id_that_wrote_them() {
     if std::env::var_os("MM_BLESS").is_some() {
         bless();
     }
-    for (name, _) in SCENARIOS {
+    for (name, cell) in SCENARIOS {
         let (image, id) = golden(name);
         assert!(
             &id == micro_monty::build_id(),
@@ -309,6 +319,21 @@ fn golden_images_continue_under_the_build_id_that_wrote_them() {
              MM_BLESS=1 cargo test --release --locked -p micro-monty --test golden",
             &id[..4],
             &micro_monty::build_id()[..4]
+        );
+        // The committed image is the one this build writes: a change that
+        // moves what a session holds at the stop without moving the id
+        // would otherwise leave an image no build writes any more.
+        let (now, _) = fresh(name, cell);
+        assert!(
+            now == image,
+            "{name}: this build writes another image for the scenario ({} bytes) than \
+             the committed one ({} bytes), under the same build id. Bless again in the \
+             same commit: \
+             MM_BLESS=1 cargo test --release --locked -p micro-monty --test golden; \
+             and if a session restored from the old image would not continue as one \
+             from the new, SNAPSHOT_EPOCH is due too (docs/spec.md §9.3)",
+            now.len(),
+            image.len()
         );
         let expected = fs::read_to_string(dir().join(format!("{name}.txt"))).expect("txt");
         // Restored checked, and instantiated trusted from a template the
