@@ -3345,6 +3345,13 @@ fn aio_get_loop(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 fn aio_add_cb(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (f, cb) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
+    if cb == Value::NONE || cb.as_int().is_some() || cb.is_obj_kind(ty::GATHER as u8) {
+        // What the waiter list would read as an entry of its own (no
+        // callback, a task's wakeup, a gather's child): the prelude wraps
+        // it, so that it is called, and fails, as any callback that is
+        // not callable does.
+        return vm.prelude_request("_aio_add_uncallable", alloc::vec![f, cb], Cont::None);
+    }
     vm.add_done_callback(f, cb)?;
     Ok(Value::NONE)
 }

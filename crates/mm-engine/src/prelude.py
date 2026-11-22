@@ -4528,6 +4528,24 @@ def _aio_cb_name(f):
     return name + '()'
 
 
+class _AioUncallable:
+    # A done callback that is not callable and that an awaitable's waiter
+    # list would take for an entry of its own: an int, `None`, a gather.
+
+    def __init__(self, obj):
+        self.obj = obj
+
+    def __call__(self, fut):
+        self.obj(fut)
+
+    def __repr__(self):
+        return repr(self.obj)
+
+
+def _aio_add_uncallable(fut, obj):
+    fut.add_done_callback(_AioUncallable(obj))
+
+
 def _aio_callback(f, args, h):
     # A loop callback, `h` its handle or `None`: what it raises goes to the
     # exception handler. The scheduler starts it at the call of `f`, with
