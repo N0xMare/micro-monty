@@ -1022,6 +1022,9 @@ impl Vm {
                     self.set_raw_of_hot(a, aw::AWAITED, 1);
                 }
                 match self.raw_of_hot(a, aw::STATE) {
+                    // A task that awaits itself yields to the loop, which
+                    // raises in it at its next step (`Vm::block_current`).
+                    aw::PENDING if self.awaits_itself(a) => Ok(Awaited::Block),
                     aw::PENDING => {
                         // The task's wakeup, in line with the other done
                         // callbacks.
@@ -1527,8 +1530,14 @@ impl Vm {
             t.cleared = false;
             t.copies_cleared = false;
         }
-        // A delegation whose iterator yielded `None` yields to the loop.
-        if (a.is_obj_kind(ty::SLEEP as u8) && self.sleep_due(a)) || a.is_obj_kind(ty::BUF as u8) {
+        // A delegation whose iterator yielded `None` yields to the loop,
+        // and so does a task that awaits itself: its next step raises
+        // (CPython's `__step` schedules itself with the `RuntimeError`), or
+        // raises the `CancelledError` of a cancel that came first.
+        if (a.is_obj_kind(ty::SLEEP as u8) && self.sleep_due(a))
+            || a.is_obj_kind(ty::BUF as u8)
+            || self.awaits_itself(a)
+        {
             self.ready.push_back(Ready::Task(i));
             return;
         }
@@ -1601,6 +1610,46 @@ impl Vm {
             }
             _ => false,
         }
+    }
+
+    /// Is `a` the running task's own handle?
+    fn awaits_itself(&self, a: Value) -> bool {
+        a.is_obj_kind(ty::TASK as u8)
+            && matches!(self.tasks.get(self.cur), Some(Some(t)) if t.handle == a)
+    }
+
+    /// CPython's `RuntimeError` for task `h` awaiting itself, with the
+    /// task's repr as micro-monty prints it (no `coro=`); a name longer
+    /// than 200 bytes is cut, as the text is built outside the arena.
+    fn await_self_error(&mut self, h: Value) -> Value {
+        #[cfg(feature = "asyncio")]
+        let (state, name) = {
+            let state = if self.cancelling(h) == 0 {
+                "pending"
+            } else {
+                "cancelling"
+            };
+            let name = self.task_name(h).map_or_else(
+                |Raised| String::new(),
+                |n| {
+                    let s = self.str_ref(n);
+                    let mut end = s.len().min(200);
+                    while !s.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    crate::text::str_repr(&s[..end])
+                },
+            );
+            (state, name)
+        };
+        #[cfg(not(feature = "asyncio"))]
+        let (state, name) = ("pending", String::new());
+        let _ = h;
+        let _ = self.err(
+            T::RuntimeError,
+            &format!("Task cannot await on itself: <Task {state} name={name}>"),
+        );
+        self.exc
     }
 
     /// Does task handle `h` (or `None`) have a cancel waiting for its next
@@ -2137,9 +2186,12 @@ impl Vm {
                 let exc = if must {
                     let msg = self.vslot_hot(h, aw::RESULT);
                     self.new_cancelled(msg).unwrap_or(self.exc)
+                } else if waited == h && h != Value::NONE {
+                    self.await_self_error(h)
                 } else {
                     Value::NONE
                 };
+                let must = exc != Value::NONE;
                 if must && !started && i != 0 {
                     // Thrown into a coroutine that never started, which
                     // closes it unrun.
@@ -3417,10 +3469,13 @@ impl Vm {
                     .and_then(|i| self.tasks.get(i))
                     .and_then(Option::as_ref)
                     .map_or(Value::NONE, |t| t.awaiting);
-                matches!(
-                    w.obj_kind().map(u16::from),
-                    Some(ty::TASK | ty::FUTURE | ty::GATHER | ty::SLEEP)
-                )
+                // One that awaited itself waits on nothing: its step is
+                // queued, and takes the cancel.
+                (w != c
+                    && matches!(
+                        w.obj_kind().map(u16::from),
+                        Some(ty::TASK | ty::FUTURE | ty::GATHER | ty::SLEEP)
+                    ))
                 .then_some(w)
             }
             Some(ty::GATHER) if self.raw_of(c, aw::AUX) != FIRST => Some(self.vslot(c, aw::EXTRA)),

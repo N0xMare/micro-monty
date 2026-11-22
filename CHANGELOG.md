@@ -550,6 +550,13 @@ hashes are pre-release history, kept in the private archive
     is bound (own case 582). The duplicate-keyword and
     name-and-position `TypeError`s name the method or class called
     (`list.sort()`, not `function`; own cases 580 and 581).
+  - A task that awaits itself gets CPython's `RuntimeError: Task cannot
+    await on itself: <Task …>` at its next step, where it can catch it; it
+    waited on itself for ever, and cancelling it (as the end of
+    `asyncio.run` does) raised `RecursionError` out of the run (own case
+    596). Not copied: after that, CPython's C task raises `await wasn't
+    used with future` at any later `await` of the task while it is
+    pending.
 
 ### Added
 
