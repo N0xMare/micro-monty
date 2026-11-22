@@ -2215,7 +2215,8 @@ a class-slot swap, a renumbered backtrack-frame tag, an epoch bump, a code
 edit in any of the four codecs, a tuning constant, a prelude edit that
 changes bytecode and a host-wrapper generator edit change it [M].
 
-**Restore.** Order: magic, format version, checksum, `build_id`. Lengths
+**Restore.** Order: magic, format version, checksum, `build_id`; a
+template's trusted read (§10.1) skips the checksum. Lengths
 are checked against the remaining input before any allocation; the heap is
 checked against the engine's memory limit (`TooLarge`, §11 "Restore
 admission").
@@ -2448,10 +2449,16 @@ ride in snapshots, and the host-call path gains only a `_host_defs` lookup
 when a host function is built. Binding uses `_mm.signature`; annotation
 checks raise `TypeError` at the call; there is no static checker (§1).
 `Session::stubs()` renders `.pyi` text. `SessionTemplate` is a snapshot
-taken after setup that instantiates by restore. Its image is read without
-the validation walks (the checksum is still compared): `capture` wrote it
-from a live session in this process, and `from_image` restores it checked
-first, as `Engine::restore` always does. `Session::reset_to`
+taken after setup that instantiates by restore. Its image is read trusted:
+without the checksum and without the validation walks. `capture` wrote it
+from a live session in this process, `from_image` restores it checked
+first, as `Engine::restore` always does, and the template keeps the bytes
+private and never writes them again. A trusted read still compares the
+magic, format version and `build_id` and bounds-checks every length; it
+does not detect bytes of the template that change in memory after the
+capture (a hardware fault), which then decode as they are: a typed error,
+a contained panic or wrong state, never memory unsafety (§5). The hash was
+5% of a py-sdk session's instructions [M]. `Session::reset_to`
 restores it into an existing session in place of `reset` and a re-run of
 the setup: the session keeps its host-side settings, park handle, limits,
 fuel state, host arguments and hint overrides, takes the setup's recursion

@@ -99,6 +99,15 @@ hashes are pre-release history, kept in the private archive
   sessions takes 6.5% fewer instructions in all (108.7 G to 101.7 G) [M].
   Charges and fuel do not depend on whether code was decoded yet.
 
+- `SessionTemplate::instantiate` and `Session::reset_to` no longer hash the
+  template's image: a trusted read skips the checksum as it skips the
+  validation walks. The bytes are the template's own, written by `capture`
+  in this process or checked once in full by `from_image`, and never
+  written again. Not detected any more: those bytes changing in memory
+  after the capture (a hardware fault); `Engine::restore` and `from_image`
+  check as before. Over the 79 recorded py-sdk sessions the median falls
+  4.8% in instructions and the best 10.9% [M]; the others do not move.
+
 ### Fixed
 
 - An `except MemoryError` handler that drops the data that filled memory

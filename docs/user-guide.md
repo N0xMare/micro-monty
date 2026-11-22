@@ -809,6 +809,12 @@ session.set_fuel(Some(budget));               // the first cell's budget; then t
 Instances are independent: a change in one is invisible to every other, and
 templates are `Send + Sync`. `image()` and `from_image` store a template
 and load it back in a process of a build with the same build id.
+`from_image` checks the bytes in full, checksum included, as
+`Engine::restore` does; after that, and after `capture`, `instantiate` and
+`reset_to` read the template's own copy without the checksum or the
+validation walks. They do not detect that copy changing in memory later
+(a hardware fault); a host that needs that keeps the image and calls
+`Engine::restore` on it instead.
 
 **Rules for the setup:**
 

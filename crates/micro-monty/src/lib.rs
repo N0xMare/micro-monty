@@ -767,12 +767,13 @@ impl std::error::Error for SnapshotError {}
 #[derive(Clone, Debug)]
 pub struct SessionTemplate {
     engine: Engine,
-    /// Read without the validation walks (the checksum is still
-    /// compared): this build wrote it from a live session
-    /// ([`SessionTemplate::capture`]) or restored it checked
-    /// ([`SessionTemplate::from_image`]). It is private and never changes,
-    /// and what an image's host code resolves against in the engine's
-    /// cache only grows, so the walks would find what they found then.
+    /// Read without the checksum and the validation walks: this build
+    /// wrote it from a live session ([`SessionTemplate::capture`]) or
+    /// restored it checked ([`SessionTemplate::from_image`]). It is
+    /// private and never changes, and what an image's host code resolves
+    /// against in the engine's cache only grows, so the checks would find
+    /// what they found then. Bytes that change in memory after that (a
+    /// hardware fault) are not detected.
     image: Vec<u8>,
     /// The captured session's counters at its last reset and at the
     /// capture: how far its setup moved them ([`Session::reset_to`]).
@@ -824,11 +825,11 @@ impl SessionTemplate {
         })
     }
 
-    /// A new session in the saved state. The restore compares the image's
-    /// checksum but skips the walks by which [`Engine::restore`] validates
-    /// what an image holds: [`SessionTemplate::capture`] wrote it from a
-    /// live session, and [`SessionTemplate::from_image`] restored it
-    /// checked.
+    /// A new session in the saved state. The restore skips the checksum
+    /// and the walks by which [`Engine::restore`] validates what an image
+    /// holds: [`SessionTemplate::capture`] wrote it from a live session,
+    /// and [`SessionTemplate::from_image`] restored it checked. It does
+    /// not detect a change to the template's bytes in memory since then.
     ///
     /// # Errors
     ///
@@ -1043,11 +1044,6 @@ pub mod test_hooks {
     pub fn code_state(session: &crate::Session) -> (u64, u64, usize) {
         let (charge, deferred) = session.vm.code_state();
         (charge, session.vm.heap.available_bytes(), deferred)
-    }
-
-    /// `template`'s image, to corrupt it before an instantiation.
-    pub fn template_image(template: &mut crate::SessionTemplate) -> &mut Vec<u8> {
-        &mut template.image
     }
 
     #[allow(clippy::panic, reason = "the point of the hook")]

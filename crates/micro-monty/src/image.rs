@@ -88,9 +88,13 @@ pub(crate) fn write(s: &mut Session, max_bytes: usize) -> Result<Vec<u8>, Snapsh
 
 /// The session image `bytes` holds, read for `engine` ([`Engine::restore`]):
 /// refused as incompatible unless a build with this build id wrote it.
-/// `trusted` skips the engine's validation walks
+/// `trusted` skips the checksum and the engine's validation walks
 /// ([`Vm::read_snapshot_trusted`]), for a template's image, which this
-/// build wrote or has read checked; the checksum is compared either way.
+/// build wrote or has read checked and which is private and never written
+/// again: hashing it at every instantiation and `reset_to` was 5% of a
+/// py-sdk session's instructions [M]. A change to those bytes in memory
+/// after the capture is therefore not detected; the magic, format and
+/// build id are compared and every length is bounds-checked either way.
 pub(crate) fn read(engine: &Engine, bytes: &[u8], trusted: bool) -> Result<Image, SnapshotError> {
     let corrupt = |what: &str| SnapshotError::Corrupt {
         what: what.to_owned(),
@@ -114,7 +118,7 @@ pub(crate) fn read(engine: &Engine, bytes: &[u8], trusted: bool) -> Result<Image
             build_id: id,
         });
     }
-    if mm_core::xxh64(body, 0) != u64::from_le_bytes(*trailer) {
+    if !trusted && mm_core::xxh64(body, 0) != u64::from_le_bytes(*trailer) {
         return Err(corrupt("checksum"));
     }
     if r.take(32) != Some(build_id().as_slice()) {

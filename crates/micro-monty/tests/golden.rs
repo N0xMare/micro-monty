@@ -470,10 +470,10 @@ fn a_golden_image_under_another_build_id_is_incompatible() {
 }
 
 /// A template's image is read trusted, [`SessionTemplate::capture`]'s
-/// from its first instantiation: the checksum refuses a changed byte at
-/// every instantiation. A change the checksum does not see (resealed
-/// here) is what a checked read refuses, [`Engine::restore`]'s and
-/// [`SessionTemplate::from_image`]'s.
+/// from its first instantiation, without the checksum or the walks. Bytes
+/// that come from outside go through a checked read, [`Engine::restore`]'s
+/// and [`SessionTemplate::from_image`]'s: its walks refuse a change the
+/// checksum does not see (resealed here), its checksum any changed byte.
 #[test]
 fn a_corrupted_captured_template_is_refused() {
     let reseal = |image: &mut Vec<u8>| {
@@ -512,18 +512,15 @@ fn a_corrupted_captured_template_is_refused() {
         "a template from an image is checked"
     );
 
-    // Any changed byte: the checksum.
-    let mut bad = template.clone();
-    bad.instantiate().expect("instantiates");
-    let image = micro_monty::test_hooks::template_image(&mut bad);
+    // Any changed byte: a checked read's checksum.
+    let mut image = template.image().to_vec();
     let n = image.len();
     image[n / 2] ^= 1;
-    assert_eq!(
-        bad.instantiate().err(),
-        Some(SnapshotError::Corrupt {
-            what: "checksum".to_owned()
-        })
-    );
+    let checksum = SnapshotError::Corrupt {
+        what: "checksum".to_owned(),
+    };
+    assert_eq!(e.restore(&image).err(), Some(checksum.clone()));
+    assert_eq!(SessionTemplate::from_image(&e, image).err(), Some(checksum));
     template
         .instantiate()
         .expect("the template itself is intact");
