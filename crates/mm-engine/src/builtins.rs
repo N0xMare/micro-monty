@@ -7019,16 +7019,19 @@ fn exc_str_unbound(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn exc_with_traceback(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    let e = vm.arg_o(&a, 0);
+    let e = own_self(vm, &a, &[ty::EXC], T::BaseException, "with_traceback")?;
     vm.set_traceback(e, vm.arg_o(&a, 1))?;
     Ok(e)
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn exc_add_note(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    let (e, n) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
+    let (e, n) = (
+        own_self(vm, &a, &[ty::EXC], T::BaseException, "add_note")?,
+        vm.arg_o(&a, 1),
+    );
     if !Vm::is_str(n) {
-        let msg = format!("note must be a str, not '{}'", vm.type_name(n));
+        let msg = format!("add_note() argument must be str, not {}", vm.type_name(n));
         return Err(vm.err(T::TypeError, &msg));
     }
     let k = vm.intern("__notes__")?;
@@ -7045,11 +7048,17 @@ fn exc_add_note(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 // ------------------------------------------------------- generators
 
-/// The `self` of method `name` of `owner` (a generator, a coroutine or an
-/// async generator), which the method reads and writes the slots of:
+/// The `self` of method `name` of `owner` (a generator, a coroutine, an
+/// async generator or an exception), which the method reads and writes
+/// the slots of:
 /// one of `kinds`, or the `TypeError` CPython's descriptor raises for any
 /// other object, a generator of another kind included. Without the check
-/// a dict, tuple or instance passed as `self` had its slots overwritten.
+/// a dict, tuple or instance passed as `self` had its slots overwritten:
+/// `BaseException.with_traceback(f, None)` emptied a function's closure
+/// and a class's namespace, which share the traceback's slot, and
+/// `BaseException.add_note` gave any object a `__notes__` list, a host
+/// definition and a `sys` struct sequence included, past what refuses a
+/// cell's writes to them (`Vm::refuse_shared_change`).
 #[cfg_attr(mm_shipped, optimize(size))]
 fn own_self(
     vm: &mut Vm,

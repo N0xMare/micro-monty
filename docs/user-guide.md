@@ -1828,6 +1828,8 @@ differs:
   refuse attribute writes, as CPython's do. Instances, subclasses and
   module attributes (`json.dumps = my_dumps`, gone after a reset) work as
   in CPython; wrap a host function in your own to keep state beside it.
+  The class of a record from the host (a named tuple) refuses them too,
+  which CPython's namedtuple classes do not: subclass it to add to it.
   A reset builds the builtins module's list, dict and record constants
   again, so a cell's change to one in place does not last.
 

@@ -1627,25 +1627,17 @@ impl Vm {
         let (g, modules) = (self.globals, self.modules);
         self.dict_empty(g);
         self.dict_empty(modules);
-        // What the prelude keeps for the program goes back to what its
-        // units bind, in place and allocating nothing (dropped instead,
-        // each reset's next lookup loaded the unit again): the limit
-        // `sys.set_int_max_str_digits` set, and the record classes, which
-        // are the program's to change. The builtins module's constants
-        // that a cell can change in place are unbound, and built again
-        // below.
+        // The limit `sys.set_int_max_str_digits` set goes back to what the
+        // prelude's unit binds, in place and allocating nothing. The
+        // builtins module's constants that a cell can change in place are
+        // unbound, and built again below. The record classes stay: guest
+        // code cannot change them.
         let pg = self.prelude_globals;
         if let Some(k) = self.find_interned("_int_max_str_digits")
             && self.dict_lookup_str(pg, k).is_some()
             && let Some(n) = Value::int(crate::intops::MAX_STR_DIGITS as i64)
         {
             let _ = self.dict_set(pg, k, n);
-        }
-        if let Some(records) = self
-            .find_interned("_host_records")
-            .and_then(|k| self.dict_lookup_str(pg, k))
-        {
-            self.dict_empty(records);
         }
         self.drop_builtin_constants();
         // Released without allocating (`Heap::idle`): the reruns below may
@@ -3425,6 +3417,14 @@ impl Vm {
     /// `type(v).__name__` (a user class's name for its instances).
     pub(crate) fn type_name(&self, v: Value) -> &str {
         if let Some(c) = self.user_class(v) {
+            // A `sys` struct sequence (a prelude instance every reset
+            // shares) is named as CPython's type is: `sys.version_info`.
+            if self.is_marked_shared(v)
+                && let Some(n) = self.find_interned("_n").and_then(|k| self.inst_get(v, k))
+                && Vm::is_str(n)
+            {
+                return self.str_ref_hot(n);
+            }
             if self.uflags(v) & crate::class::f::TPNAME != 0
                 && let Some(k) = self.find_interned("__mm_tpname__")
                 && let Some(n) = self.class_lookup(c, k)
@@ -3433,6 +3433,11 @@ impl Vm {
                 return self.str_ref_hot(n);
             }
             return self.str_ref_hot(self.vslot_hot(c, crate::class::cls::NAME));
+        }
+        // A host's typed function is named as a builtin in every message,
+        // as the refusal of a write to it is (`Vm::refuse_shared_change`).
+        if v.is_obj_kind(ty::FUNC as u8) && self.is_marked_shared(v) {
+            return "builtin_function_or_method";
         }
         self.type_of(v).name()
     }

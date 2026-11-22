@@ -283,8 +283,11 @@ evaluated, matching deferred annotations).
   - the functions and classes the prelude defines (the native modules'
     Python parts: `asyncio.Lock`, `asyncio.Future`, `json.dumps`,
     `sys.exit`, ...) and the host's definitions (typed host functions,
-    host classes and host exception classes, with their methods). Setting
-    or deleting an attribute, also through `setattr`,
+    host classes and host exception classes, with their methods, and the
+    classes made for the host's records, `HostValue::Record`: a
+    namedtuple class is writable in CPython, but a record a host function
+    keeps as a default goes back to the host by its class's name and
+    `_fields`). Setting or deleting an attribute, also through `setattr`,
     `object.__setattr__` or `type.__setattr__`, raises CPython's error
     for a builtin function (`AttributeError: 'builtin_function_or_method'
     object has no attribute 'x' and no __dict__ for setting new
@@ -293,8 +296,14 @@ evaluated, matching deferred annotations).
     function's `__dict__` raises `AttributeError`; a host definition's
     `__defaults__` and `__kwdefaults__` do too, as a builtin function's,
     and a prelude function's `__kwdefaults__` is a copy; a class's
-    `__dict__` and `__annotations__` are copies. An untyped host function
-    refuses attributes as before.
+    `__dict__` and `__annotations__` are copies. A typed host function is
+    named `builtin_function_or_method` in these and every other message,
+    and `dir()` lists a builtin's names for it. An untyped host function
+    refuses attributes as before. A native method called through its type
+    on such an object refuses it as CPython's descriptor does
+    (`BaseException.add_note(read, 'n')`: `TypeError: descriptor
+    'add_note' for 'BaseException' objects doesn't apply to a
+    'builtin_function_or_method' object`).
   - `sys`'s struct sequences (`version_info`, `float_info`, `hash_info`,
     `flags`, `int_info`) refuse attribute writes with CPython's errors
     (`readonly attribute` for a field, `... has no attribute 'x' and no
@@ -306,9 +315,8 @@ evaluated, matching deferred annotations).
   import has the originals. A reset also restores the recursion limit and
   the limit `sys.set_int_max_str_digits` set, builds the builtins
   module's constants that are not scalars again from the host's
-  definition (a list or dict a cell changed in place, a record), and
-  drops the classes made for the host's records (`HostValue::Record`),
-  which are the program's to change. What a reset keeps counting is not
+  definition (a list or dict a cell changed in place, a record a cell
+  set attributes on). What a reset keeps counting is not
   program state: host call ids and `Task-N` numbers continue, the entropy
   source goes on, and code loaded for earlier cells stays loaded (an
   import charges less fuel the second time). `Session::reset_to` and a new

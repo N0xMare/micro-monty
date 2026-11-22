@@ -1929,6 +1929,11 @@ def _object___dir__(args):
         names.update(d)
     c = getattr(o, '__class__', None)
     if c is not None:
+        if c is type(_object___dir__) and _type_name(o) != 'function':
+            # A host's typed function too: it has a builtin's names, not a
+            # Python function's `__defaults__`, `__dict__` or `__code__`.
+            c = object
+            names.update(('__module__', '__name__', '__qualname__'))
         names.update(_type___dir__((c,)))
     return list(names)
 

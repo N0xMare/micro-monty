@@ -2347,10 +2347,10 @@ impl Session {
     /// A boundary for the program: the next cell reports what it reports in
     /// a new session with the same host definitions. Nothing guest code can
     /// change is shared across it (the stdlib's and the host's functions
-    /// and classes refuse attribute writes); the recursion limit and the
-    /// int-to-str digit limit are restored, the builtins module's
-    /// constants that are not scalars are built again from the host's
-    /// definition, and the classes of the host's records are dropped. Host
+    /// and classes, the classes of the host's records included, refuse
+    /// attribute writes); the recursion limit and the int-to-str digit
+    /// limit are restored, and the builtins module's constants that are
+    /// not scalars are built again from the host's definition. Host
     /// call ids and task numbers continue.
     /// The session also keeps what it loaded for earlier cells: the bundled
     /// modules' code and the prelude's parts, charged to its memory limit,

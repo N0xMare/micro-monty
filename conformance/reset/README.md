@@ -25,9 +25,17 @@ JS host (`hosts/js/test/reset.test.ts`).
   check finds the marks, which the native test asserts, so the walk is
   known to reach and write. It is deterministic: `dir()` is sorted and no
   clock or entropy is read.
+- `sweep.py`: the search for native methods that write a `self` they did
+  not check. It calls every callable in `dir()` of the builtin types
+  (CPython's `dir(builtins)` that are types, and the types without a
+  builtin name) with each shared object as `self` and ten argument sets,
+  then a reset, and its check must print what it prints in a new session.
+  With the `self` checks of `BaseException.with_traceback` and `add_note`
+  taken out, the check differs [M]. It tries ten argument sets, not every
+  one: a method that writes only for other arguments is not found.
 - `probes.rs`: the host both Rust tests define (typed and untyped
-  functions, a class, an exception class and list, dict and record
-  constants, in the builtins and in a module), its answers and the
+  functions, a class, an exception class, list, dict and record
+  constants and record defaults, in the builtins and in a module), its answers and the
   comparison. The JS test defines the same.
 
 What the walk cannot see: state only native code reads and no attribute

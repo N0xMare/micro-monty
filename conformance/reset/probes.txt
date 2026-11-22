@@ -7,6 +7,7 @@
 #   >>> Type: message  what A must end in (CPython's error for a refusal)
 #   ---                ends A, starts B
 #   @walk mark|check   walk.py with that MODE
+#   @sweep call|check  sweep.py with that MODE
 
 === typed host function: attribute
 >>> AttributeError: 'builtin_function_or_method' object has no attribute 'leak' and no __dict__ for setting new attributes
@@ -33,7 +34,7 @@ del h.__doc__
 h.__doc__
 
 === typed host function: __dict__
->>> AttributeError: 'function' object has no attribute '__dict__'
+>>> AttributeError: 'builtin_function_or_method' object has no attribute '__dict__'
 h.__dict__['leak'] = 'secret'
 ---
 getattr(h, 'leak', None)
@@ -56,13 +57,13 @@ read.__defaults__ = (['/etc/shadow'],)
 read()
 
 === typed host function: __defaults__ read
->>> AttributeError: 'function' object has no attribute '__defaults__'
+>>> AttributeError: 'builtin_function_or_method' object has no attribute '__defaults__'
 read.__defaults__[0].append('/etc/shadow')
 ---
 read()
 
 === typed host function: __kwdefaults__ read
->>> AttributeError: 'function' object has no attribute '__kwdefaults__'
+>>> AttributeError: 'builtin_function_or_method' object has no attribute '__kwdefaults__'
 read.__kwdefaults__['limit'] = 99
 ---
 read()
@@ -127,6 +128,7 @@ CONFD['a'].append('secret')
 CONFD
 
 === builtins constant: record class changed
+>>> TypeError: cannot set 'leak' attribute of immutable type 'Row'
 type(CONFR).leak = 'secret'
 type(CONFR).__repr__ = lambda self: 'hijacked'
 ---
@@ -240,11 +242,13 @@ import fs
 getattr(fs.FsError, 'leak', None)
 
 === record class: attribute
+>>> TypeError: cannot set 'leak' attribute of immutable type 'Row'
 type(rec()).leak = 'secret'
 ---
 getattr(type(rec()), 'leak', None)
 
 === record class: method replaced
+>>> TypeError: cannot set '__repr__' attribute of immutable type 'Row'
 def steal(self):
     tool(globals().get('secret'))
     return 'Row()'
@@ -456,16 +460,141 @@ def f():
 ---
 [sorted(k for k in globals() if not k.startswith('__')), __name__]
 
+=== typed host function: dir lists what reads
+h.leak = [n for n in dir(h) if not hasattr(h, n)]
+---
+[sorted(set(dir(read)) - set(dir(object))), [n for n in dir(Entry.go) if not hasattr(Entry.go, n)]]
+
+=== record class: its name and fields, which a default's record has
+>>> TypeError: cannot set '__name__' attribute of immutable type 'Row'
+R = type(CONFR)
+R.__name__ = 'Admin'
+R._fields = ('pwn',)
+---
+[readr(), obj().gor(), tool(rec()), tool(CONFR)]
+
+=== record class: its fields
+>>> TypeError: cannot set '_fields' attribute of immutable type 'Row'
+type(rec())._fields = ('pwn',)
+---
+[readr(), obj().gor(), tool(rec())]
+
+=== record class: every route, in one cell
+>>> ["TypeError: cannot set '__name__' attribute of immutable type 'Row'", "TypeError: cannot set '_fields' attribute of immutable type 'Row'", "TypeError: cannot set '__host_class__' attribute of immutable type 'Row'", "TypeError: cannot set '__qualname__' attribute of immutable type 'Row'", "TypeError: cannot set '__bases__' attribute of immutable type 'Row'", "TypeError: cannot set '_fields' attribute of immutable type 'Row'", "TypeError: cannot set '_fields' attribute of immutable type 'Row'", "TypeError: cannot set '_fields' attribute of immutable type 'Row'", "TypeError: cannot set 'a' attribute of immutable type 'Row'", "TypeError: cannot set '__match_args__' attribute of immutable type 'Row'", "TypeError: cannot set '_fields' attribute of immutable type 'tuple'", 'Row', ('a',), 'Row(a=1)', None, None]
+r = rec()
+R = type(r)
+class Other(tuple):
+    _fields = ('pwn',)
+def t(f):
+    try:
+        f()
+        return 'done'
+    except Exception as e:
+        return type(e).__name__ + ': ' + str(e)
+def name(): R.__name__ = 'Admin'
+def fields(): R._fields = ('pwn',)
+def host(): R.__host_class__ = 'Entry'
+def qual(): R.__qualname__ = 'Admin'
+def bases(): R.__bases__ = (Other,)
+def typeset(): type.__setattr__(R, '_fields', ('pwn',))
+def objset(): object.__setattr__(R, '_fields', ('pwn',))
+def builtin(): setattr(R, '_fields', ('pwn',))
+def ns(): R.__dict__['_fields'] = ('pwn',)
+def field(): del R.a
+def match(): type.__delattr__(R, '__match_args__')
+def base(): tuple._fields = ('pwn',)
+# The class's `__dict__` is a copy here (a mappingproxy in CPython): no effect.
+t(ns)
+out = [t(f) for f in (name, fields, host, qual, bases, typeset, objset, builtin, field, match, base)]
+out + [type(r).__name__, r._fields, repr(r), readr(), tool(r)]
+---
+[readr(), obj().gor(), tool(rec())]
+
+=== record class: an instance's class
+r = CONFR
+class Admin(tuple):
+    _fields = ('pwn',)
+try:
+    r.__class__ = Admin
+except TypeError:
+    pass
+try:
+    object.__setattr__(r, '__class__', Admin)
+except TypeError:
+    pass
+tool(r)
+---
+[readr(), obj().gor(), tool(rec()), tool(CONFR)]
+
+=== BaseException.add_note on a struct sequence
+>>> TypeError: descriptor 'add_note' for 'BaseException' objects doesn't apply to a 'sys.version_info' object
+import sys
+def gen():
+    secret = 'A-secret'
+    while True:
+        got = yield secret
+BaseException.add_note(sys.version_info, 'n')
+sys.version_info.__notes__.append(gen())
+---
+import sys
+n = getattr(sys.version_info, '__notes__', None)
+n if n is None else [n[0], next(n[1])]
+
+=== BaseException.add_note on a host class
+>>> TypeError: descriptor 'add_note' for 'BaseException' objects doesn't apply to a 'type' object
+BaseException.add_note(Entry, 'n')
+---
+[getattr(Entry, '__notes__', None), getattr(obj(), '__notes__', None)]
+
+=== BaseException.with_traceback on a typed host function
+>>> TypeError: descriptor 'with_traceback' for 'BaseException' objects doesn't apply to a 'builtin_function_or_method' object
+BaseException.with_traceback(read, None)
+---
+read()
+
+=== BaseException.with_traceback on a host class
+>>> TypeError: descriptor 'with_traceback' for 'BaseException' objects doesn't apply to a 'type' object
+try:
+    1 / 0
+except ZeroDivisionError as e:
+    tb = e.__traceback__
+BaseException.with_traceback(Entry, tb)
+---
+[sorted(Entry.__dict__)[:4], obj().go(), repr(obj())]
+
+=== BaseException.with_traceback on a host method
+>>> TypeError: descriptor 'with_traceback' for 'BaseException' objects doesn't apply to a 'builtin_function_or_method' object
+BaseException.with_traceback(Entry.go, None)
+---
+obj().go()
+
+=== BaseException.with_traceback on a host exception class
+>>> TypeError: descriptor 'with_traceback' for 'BaseException' objects doesn't apply to a 'type' object
+BaseException.with_traceback(ToolError, None)
+---
+try:
+    boom()
+except ToolError as e:
+    r = [e.tool, e.data, ToolError.__module__]
+r
+
+=== BaseException.with_traceback on a stdlib class
+>>> TypeError: descriptor 'with_traceback' for 'BaseException' objects doesn't apply to a 'type' object
+import asyncio
+BaseException.with_traceback(asyncio.Lock, None)
+---
+import asyncio
+sorted(vars(asyncio.Lock))[:3]
+
 === a cell cancelled inside repr
 class Spin:
     def __repr__(self):
         tool('stop')
         return 'x'
-big = [Spin(), 1]
+big = [Spin(), bytearray(40_000_000)]
 repr(big)
 ---
-x = [1, [2]]
-repr(x)
+len([bytearray(1_000_000) for _ in range(40)])
 
 === the reset walk
 @walk mark
@@ -484,3 +613,8 @@ async def f():
 async def m():
     return await asyncio.create_task(f())
 asyncio.run(m())
+
+=== the reset sweep
+@sweep call
+---
+@sweep check

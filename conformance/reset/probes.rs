@@ -47,8 +47,8 @@ fn row() -> HostValue {
 }
 
 /// The host's definitions: typed and untyped functions, a class, an
-/// exception class and constants of every mutable kind in the builtins,
-/// and the same in a module.
+/// exception class, constants of every mutable kind and record defaults
+/// in the builtins, and the same in a module.
 pub fn modules() -> Vec<HostModule> {
     let list = |v: &str| HostValue::List(vec![HostValue::Str(v.to_owned())]);
     let class = |name: &str, methods| HostClass {
@@ -77,6 +77,17 @@ pub fn modules() -> Vec<HostModule> {
             ParamKind::PositionalOrKeyword,
         )],
     );
+    // Record defaults: instances of the record class, which the functions
+    // keep through every reset.
+    let record = |name: &str| {
+        sig(
+            name,
+            vec![
+                param("row", row(), ParamKind::PositionalOrKeyword),
+                param("rows", HostValue::List(vec![row()]), ParamKind::KeywordOnly),
+            ],
+        )
+    };
     vec![
         HostModule {
             name: String::new(),
@@ -86,9 +97,10 @@ pub fn modules() -> Vec<HostModule> {
                 sig("obj", Vec::new()),
                 sig("boom", Vec::new()),
                 read.clone(),
+                record("readr"),
                 HostSignature::any("tool"),
             ],
-            classes: vec![class("Entry", vec![go])],
+            classes: vec![class("Entry", vec![go, record("gor")])],
             constants: vec![
                 ("CONF".to_owned(), list("a")),
                 (
@@ -167,9 +179,9 @@ pub struct Probe {
     pub b: String,
 }
 
-/// The probes of `text` (probes.txt), `@walk` lines replaced by `walk`
-/// (walk.py) in that mode.
-pub fn probes(text: &str, walk: &str) -> Vec<Probe> {
+/// The probes of `text` (probes.txt), `@walk` and `@sweep` lines replaced
+/// by `walk` (walk.py) and `sweep` (sweep.py) in that mode.
+pub fn probes(text: &str, walk: &str, sweep: &str) -> Vec<Probe> {
     let mut probes: Vec<Probe> = Vec::new();
     let mut in_b = false;
     for line in text.lines() {
@@ -191,11 +203,15 @@ pub fn probes(text: &str, walk: &str) -> Vec<Probe> {
             p.a_ends = Some(ends.to_owned());
         } else {
             let part = if in_b { &mut p.b } else { &mut p.a };
-            if let Some(mode) = line.strip_prefix("@walk ") {
+            let script = line
+                .strip_prefix("@walk ")
+                .map(|mode| (mode, walk))
+                .or(line.strip_prefix("@sweep ").map(|mode| (mode, sweep)));
+            if let Some((mode, script)) = script {
                 part.push_str("MODE = '");
                 part.push_str(mode);
                 part.push_str("'\n");
-                part.push_str(walk);
+                part.push_str(script);
             } else {
                 part.push_str(line);
                 part.push('\n');

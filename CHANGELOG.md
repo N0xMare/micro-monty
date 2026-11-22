@@ -249,20 +249,25 @@ hashes are pre-release history, kept in the private archive
   reset shares: the functions and classes the prelude defines
   (`asyncio.Future.leak = 1`, `json.dumps.x = 1`) and the host's
   definitions (typed host functions, host classes and host exception
-  classes, with their methods). It gets CPython's `AttributeError` for a
+  classes, with their methods, and the classes made for the host's
+  records, which CPython's namedtuple classes do not refuse). It gets CPython's `AttributeError` for a
   builtin function or `TypeError` for an immutable type; a host
   function's `__defaults__`, `__kwdefaults__` and `__dict__` raise
   `AttributeError`, a stdlib function's `__kwdefaults__` and a shared
   class's `__annotations__` are copies, and `sys`'s struct sequences
   refuse attribute writes as CPython's do. Instances, subclasses and
   module attributes stay writable. A reset restores the recursion limit
-  and the int-to-str digit limit, builds the builtins module's list, dict
-  and record constants again and drops the classes made for the host's
-  records. Host call ids and `Task-N` numbers continue, and loaded code
+  and the int-to-str digit limit and builds the builtins module's list,
+  dict and record constants again. `BaseException.with_traceback` and
+  `add_note` called through the type on an object that is not an
+  exception raise CPython's `TypeError`: they wrote its slots, emptying
+  a host function's closure or a class's namespace and giving a `sys`
+  struct sequence a `__notes__` list, past every refusal [M]. Host call ids and `Task-N` numbers continue, and loaded code
   stays loaded; `reset_to` and a new session share nothing. A host whose
   cells set attributes on a typed host function (`tool.calls = 0`) now
   gets the `AttributeError`: none of the 3,487 recorded Python cells does
-  [M]. The test is `conformance/reset`: 66 probes and a walk that writes
+  [M]. The test is `conformance/reset`: 79 probes, a sweep that calls every method of the
+  builtin types with each shared object as `self`, and a walk that writes
   to each of the 11,000 objects a cell can reach from the builtins, the
   host's definitions and every importable module, and finds no write
   after a reset (181 on the build before) [M], on the native facade and

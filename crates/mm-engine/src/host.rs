@@ -1386,6 +1386,11 @@ impl Vm {
         let cname = names.first().copied().unwrap_or(Value::NONE);
         let tuple = self.type_obj(T::tuple);
         let c = self.new_class(cname, &[tuple], ns)?;
+        // The host's data, as a host class is: a record a host function
+        // keeps as a default goes back to the host by this class's name
+        // and `_fields`, in every cell after a reset, so guest code
+        // cannot change it (`Vm::refuse_shared_change`).
+        self.mark_shared(c);
         self.dict_set(cache, key, c)?;
         Ok(c)
     }

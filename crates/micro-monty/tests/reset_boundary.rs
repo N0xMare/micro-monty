@@ -71,7 +71,7 @@ fn read(name: &str) -> String {
 
 #[test]
 fn a_cell_after_a_reset_reports_what_it_reports_in_a_new_session() {
-    let probes = probes::probes(&read("probes.txt"), &read("walk.py"));
+    let probes = probes::probes(&read("probes.txt"), &read("walk.py"), &read("sweep.py"));
     match probes::check(&probes, &new) {
         Ok(n) => assert!(n > 60, "{n} probes"),
         Err(failures) => panic!("{failures}"),
@@ -82,7 +82,7 @@ fn a_cell_after_a_reset_reports_what_it_reports_in_a_new_session() {
 /// definitions: an image holds what marks them as shared.
 #[test]
 fn the_same_on_a_restored_session() {
-    let probes = probes::probes(&read("probes.txt"), &read("walk.py"));
+    let probes = probes::probes(&read("probes.txt"), &read("walk.py"), &read("sweep.py"));
     if let Err(failures) = probes::check(&probes, &|out| session(out, true)) {
         panic!("{failures}");
     }
@@ -103,12 +103,7 @@ fn the_walk_reaches_and_marks_what_a_cell_can_write() {
         .expect("the check reports what it reached");
     assert!(reached > 10_000 && marks > 3_000, "{found}");
     assert!(found.contains("limit False"), "{found}");
-    for path in [
-        "'CONF'",
-        "'CONFD'",
-        "'CONFR.__class__'",
-        "'_markupbase.ParserBase'",
-    ] {
+    for path in ["'CONF'", "'CONFD'", "'CONFR'", "'_markupbase.ParserBase'"] {
         assert!(found.contains(path), "{path}: {found}");
     }
 }

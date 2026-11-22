@@ -74,7 +74,7 @@ fn a_cell_after_a_reset_reports_what_it_reports_in_a_new_session() {
         s.set_output(Box::new(move |_, t| sink.lock().unwrap().push_str(t)));
         Box::new(Guest(s))
     };
-    let probes = probes::probes(&read("probes.txt"), &read("walk.py"));
+    let probes = probes::probes(&read("probes.txt"), &read("walk.py"), &read("sweep.py"));
     match probes::check(&probes, &new) {
         Ok(n) => assert!(n > 60, "{n} probes"),
         Err(failures) => panic!("{failures}"),

@@ -39,11 +39,23 @@ function modules(): HostModule[] {
 		{ name: "paths", default: ["/safe"] },
 		{ name: "limit", default: 1, kind: "keyword-only" },
 	]);
+	// Record defaults: instances of the record class, which the functions keep through every reset.
+	const record = (name: string) =>
+		typed(name, [
+			{ name: "row", default: row() },
+			{ name: "rows", default: [row()], kind: "keyword-only" },
+		]);
 	return [
 		{
 			name: "",
-			functions: [typed("h"), typed("rec"), typed("obj"), typed("boom"), read, anySignature("tool")],
-			classes: [{ name: "Entry", fields: [["path", "str"]], methods: [typed("go", [{ name: "n", default: 1 }])] }],
+			functions: [typed("h"), typed("rec"), typed("obj"), typed("boom"), read, record("readr"), anySignature("tool")],
+			classes: [
+				{
+					name: "Entry",
+					fields: [["path", "str"]],
+					methods: [typed("go", [{ name: "n", default: 1 }]), record("gor")],
+				},
+			],
 			constants: [
 				["CONF", ["a"]],
 				["CONFD", new Map<string, HostValue>([["a", ["b"]]])],
@@ -93,7 +105,7 @@ function cell(c: Cells, source: string): [string, string] {
 	let end: string;
 	for (;;) {
 		if (p.kind === "host-call") {
-			calls.push(`${p.name}${JSON.stringify(p.args)}`);
+			calls.push(`${p.name}${JSON.stringify(p.args, (_, v: unknown) => (v instanceof Map ? [...v] : v))}`);
 			const a = answer(p.name, p.args);
 			if (a === undefined) {
 				end = "stopped";
@@ -124,6 +136,7 @@ interface Probe {
 
 function probes(): Probe[] {
 	const walk = reset("walk.py");
+	const sweep = reset("sweep.py");
 	const all: Probe[] = [];
 	let inB = false;
 	for (const line of reset("probes.txt").split("\n")) {
@@ -137,7 +150,11 @@ function probes(): Probe[] {
 		if (line === "---") inB = true;
 		else if (line.startsWith(">>> ")) p.aEnds = line.slice(4);
 		else {
-			const text = line.startsWith("@walk ") ? `MODE = '${line.slice(6)}'\n${walk}` : `${line}\n`;
+			const text = line.startsWith("@walk ")
+				? `MODE = '${line.slice(6)}'\n${walk}`
+				: line.startsWith("@sweep ")
+					? `MODE = '${line.slice(7)}'\n${sweep}`
+					: `${line}\n`;
 			if (inB) p.b += text;
 			else p.a += text;
 		}
