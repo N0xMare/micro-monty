@@ -5729,6 +5729,17 @@ def _union_or(a, b):
     return _union_of((a, b))
 
 
+def _throw_class(g, cls, name):
+    # `g.throw(cls)` for a class with a constructor in Python: CPython
+    # calls it where the exception is raised, inside the generator, so
+    # what the constructor raises is thrown in its place.
+    try:
+        e = cls()
+    except BaseException as x:
+        e = x
+    return getattr(g, name)(e)
+
+
 def _descr_call(d, obj, /, *args, **kwargs):
     # A special method that is a descriptor written in Python.
     return type(d).__get__(d, obj, type(obj))(*args, **kwargs)

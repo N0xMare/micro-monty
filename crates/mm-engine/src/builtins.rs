@@ -7067,6 +7067,9 @@ fn self_iter(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 fn gen_throw(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let g = own_self(vm, &a, &[ty::GEN], T::generator, "throw")?;
     let e = thrown(vm, &a)?;
+    if e == Value::UNDEFINED {
+        return throw_class(vm, &a, "throw");
+    }
     vm.request = Some(Request::Throw {
         gn: g,
         exc: e,
@@ -7075,29 +7078,59 @@ fn gen_throw(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(Value::UNDEFINED)
 }
 
-/// The exception `throw(type[, value[, tb]])` (and `athrow`) raise.
+/// The exception `throw(type[, value[, tb]])` (and `athrow`) raise, or
+/// `UNDEFINED` for a class whose instance Python code makes (an `__init__`,
+/// a `__new__` or a metaclass): [`throw_class`] calls it.
+///
+/// CPython calls a bare class where the exception is raised, inside the
+/// generator, so a constructor that fails throws its error in: here the
+/// constructor's error is the exception thrown.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn thrown(vm: &mut Vm, a: &CallArgs) -> Result<Value, Raised> {
     let (t, v) = (vm.arg_o(a, 1), vm.arg_o(a, 2));
-    Ok(
-        if v != Value::UNDEFINED && v != Value::NONE && v.is_obj_kind(ty::EXC as u8) {
-            v
-        } else if v != Value::UNDEFINED && v != Value::NONE && Vm::is_type(t) {
-            let ex = vm.raisable(t)?;
-            if let Some(r) = ex.as_obj() {
-                let args = vm.alloc_tuple(&[v])?;
-                vm.set_slot(r, crate::vm::exc_slot::ARGS, args);
-            }
-            ex
-        } else if t.is_obj_kind(ty::EXC as u8) || Vm::is_type(t) {
-            vm.raisable(t)?
-        } else {
-            return Err(vm.err(
-                T::TypeError,
-                "exceptions must be classes or instances deriving from BaseException, not str",
-            ));
-        },
-    )
+    let bare = v == Value::UNDEFINED || v == Value::NONE;
+    if !bare && v.is_obj_kind(ty::EXC as u8) {
+        return Ok(v);
+    }
+    if t.is_obj_kind(ty::EXC as u8) {
+        return Ok(t);
+    }
+    let class = Vm::is_class(t) && vm.class_base_t(t).is_exception();
+    if !class && !vm.type_of_typeobj(t).is_some_and(T::is_exception) {
+        let msg = format!(
+            "exceptions must be classes or instances deriving from BaseException, not {}",
+            vm.type_name(t)
+        );
+        return Err(vm.err(T::TypeError, &msg));
+    }
+    if !bare {
+        let ex = vm.raisable(t)?;
+        if let Some(r) = ex.as_obj() {
+            let args = vm.alloc_tuple(&[v])?;
+            vm.set_slot(r, crate::vm::exc_slot::ARGS, args);
+        }
+        return Ok(ex);
+    }
+    let Ok(ex) = vm.raisable(t) else {
+        // A builtin class that takes arguments (`UnicodeDecodeError`).
+        return Ok(vm.exc);
+    };
+    if class
+        && (vm.user_method(ex, Dn::Init).is_some()
+            || vm.user_method(ex, Dn::New).is_some()
+            || vm.meta_of(t).is_some())
+    {
+        return Ok(Value::UNDEFINED);
+    }
+    Ok(ex)
+}
+
+/// `throw(cls)` (`name`) for a class Python code instantiates: the
+/// prelude calls it and throws what it gives, or the error it raised.
+fn throw_class(vm: &mut Vm, a: &CallArgs, name: &str) -> Result<Value, Raised> {
+    let name = vm.new_str(name)?;
+    let args = alloc::vec![vm.arg_o(a, 0), vm.arg_o(a, 1), name];
+    vm.prelude_request("_throw_class", args, Cont::None)
 }
 
 /// `coroutine.send(v)`. A coroutine runs inside `send()` until it returns
@@ -7132,6 +7165,9 @@ fn coro_throw(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let c = own_self(vm, &a, &[ty::CORO, ty::SLEEP], T::coroutine, "throw")?;
     vm.coro_unstarted(c)?;
     let e = thrown(vm, &a)?;
+    if e == Value::UNDEFINED {
+        return throw_class(vm, &a, "throw");
+    }
     if vm.coro_state(c) == crate::aio::coro::SUSPENDED {
         // Raised where it waits, after the iterator it awaits had its turn.
         vm.coro_deliver(c, e, crate::aio::coro::THROW);
@@ -7181,6 +7217,9 @@ fn agen_asend(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 fn agen_athrow(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let g = own_self(vm, &a, &[ty::AGEN], T::async_generator, "athrow")?;
     let e = thrown(vm, &a)?;
+    if e == Value::UNDEFINED {
+        return throw_class(vm, &a, "athrow");
+    }
     vm.new_agen_op(g, ag::THROW, e)
 }
 
