@@ -3001,6 +3001,15 @@ impl Vm {
     /// CPython's `_PyObject_FunctionStr`: `module.qualname()` unless the
     /// module is `builtins`.
     fn callee_name(&self, f: Value) -> String {
+        // A bound method is named as its function.
+        let f = if f.is_obj_kind(ty::BOUND as u8) || f.is_obj_kind(ty::METHOD as u8) {
+            self.vslot(f, 1)
+        } else {
+            f
+        };
+        if f.is_obj_kind(ty::CLASS as u8) {
+            return format!("{}()", self.class_repr_name(f));
+        }
         if f.is_obj_kind(ty::FUNC as u8) {
             let g = self.vslot(f, fn_slot::GLOBALS);
             let m = self
