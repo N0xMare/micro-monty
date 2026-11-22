@@ -1693,7 +1693,12 @@ differs:
   current event loop`, and `gather(coro)` there is
   still accepted. Tasks left at the end of `asyncio.run`, the timers
   behind `call_later` and `wait_for` included, are cancelled in creation
-  order, "Task exception was never retrieved" is reported when it ends, and
+  order (CPython 3.14.7 cancels them in the iteration order of
+  `asyncio.all_tasks()`, a set of tasks hashed by identity, which no rule
+  fixes: `asyncio/runners.py`, `_cancel_all_tasks`, `for task in
+  to_cancel: task.cancel()`; so the order in which their `except
+  CancelledError` blocks run can differ, and differs between CPython runs
+  that lay tasks out differently), "Task exception was never retrieved" is reported when it ends, and
   task reprs and reports have no `coro=<...>` or source locations.
 - A cancel hands its message to the gathers whose last child the
   cancelled task is, which reads the task's waiters. A task with very
