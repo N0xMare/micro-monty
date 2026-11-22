@@ -197,9 +197,9 @@ evaluated, matching deferred annotations).
   async generator expressions) and `aiter`/`anext`, with CPython's
   messages (`conformance/own/322_async_iter_with.py`). An async generator
   runs as a generator frame on the awaiting task's stack, so it parks and
-  snapshots like the rest. As with generators, nothing finalizes one that
-  is abandoned unfinished: `asyncio.run` does not `aclose()` it at the end,
-  and `anext(it, default)` is a `coroutine`, not an `anext_awaitable`.
+  snapshots like the rest. Nothing finalizes one that is abandoned unfinished
+  when it is collected (there are no finalizers); `asyncio.run` closes
+  those it leaves unfinished when it ends (§8.5), and `anext(it, default)` is a `coroutine`, not an `anext_awaitable`.
 - Classes: class bodies, methods, `property`, `staticmethod`, `classmethod`,
   single and multiple inheritance with C3 MRO, `super()`, exception subclasses,
   class decorators, and the core dunder set (`__init__`, simple `__new__`,
@@ -1641,7 +1641,15 @@ steps"); when nothing there takes it, the task keeps
 `__await__` iterator it steps, so `except` and `finally` run in the task.
 `asyncio.run` is prelude Python around the main coroutine: the loop counts
 iterations as CPython's `_run_once` does, and when the coroutine ends the
-remaining tasks are cancelled and run until done. All of it is engine
+remaining tasks are cancelled and run until done; then every async
+generator that took its first step inside the run, has not finished and is
+suspended where a handler covers its `yield` is closed (`_aio_asyncgens`,
+a prelude global; `aclose()` awaited on each, 256 at a time), which
+stands for CPython's `shutdown_asyncgens` and, as the engine has no
+finalizers, for its close at collection too. One suspended where no
+handler covers its `yield` has nothing to run when closed: the list drops
+it, so the run does not hold it. The end of a cell clears the list, so no
+later cell's run closes an earlier cell's generators. All of it is engine
 state, so a cell parks and snapshots in the middle of a cancellation.
 `Semaphore`, `wait_for` (CPython 3.12+'s: the awaitable runs in the calling
 task and a timer task cancels it) and `as_completed` are prelude Python

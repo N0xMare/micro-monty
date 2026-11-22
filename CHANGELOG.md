@@ -14,6 +14,14 @@ hashes are pre-release history, kept in the private archive
 
 ### Added
 
+- `exit()` and `quit()` are `sys.exit`, and `input()` raises
+  `EOFError: input(): there is no stdin in this sandbox; put the value
+  in the code or get it from a tool` after writing its prompt, as
+  CPython does with stdin at its end, so an `except EOFError` fallback
+  is taken; each was a `NameError` that
+  said nothing of what to do [M, own case 590]. With three more builtins
+  to compare, a `NameError`'s name hint a guest formats through
+  `traceback` costs 3 fuel units more [M].
 - A `TypeError` or `AttributeError` over a coroutine, a host future or a
   gather used where a value was expected (`json.loads(fetch())`,
   `len(coro)`, `coro['k']`, `'n: ' + fetch()`, `json.dumps(fetch())`,
@@ -473,6 +481,66 @@ hashes are pre-release history, kept in the private archive
   request for a collection a step that found nothing due where the
   unparked run collected in full, so outcomes and fuel moved with the
   host's fuel slices under incremental marking.
+- Differences from CPython that were silent, each checked against
+  python3.14 by an own case [M]:
+  - A generator or coroutine that entered a handler under one resumption
+    kept that resumption's caller's exception as the one being handled
+    after its own handler ended, and showed a later resumption the
+    earlier caller's inside the handler: `sys.exc_info()`, a bare `raise`
+    and the `__context__` of what it raised read wrongly (0.0.2's known
+    issue, older than 0.0.1). A handler in such a frame now gives back
+    what the current resumption's caller is handling, through `yield
+    from` and `send()` chains and asyncio tasks, parked and restored or
+    not (own case 593; spec §8.5). `SNAPSHOT_EPOCH` moves: a suspended
+    frame inside a handler holds something else than before.
+  - A task's first step and a loop callback start with the exception
+    being handled where `asyncio.run` was called, as the main coroutine
+    did; they read `None` (own case 594).
+  - `asyncio.run` and `Runner.close()` close the async generators the
+    run leaves unfinished, so their `finally` blocks run, after the
+    left-over tasks are cancelled. Without finalizers one that became
+    garbage is closed at the run's end, not at its collection, and
+    nothing is closed for a cell whose top level awaits or a generator
+    driven outside a loop. The run keeps only generators with something
+    to run when closed (a `try`, `with` or `async with` open at their
+    `yield`), closes them 256 at a time, then once more those first
+    stepped during the closes, and no later cell's run closes an earlier
+    cell's. Each `asyncio.run` costs one fuel unit more, and
+    each async generator first stepped inside a run one (own case 591).
+  - `asyncio.create_task` outside a running loop raises `RuntimeError: no
+    running event loop`, CPython's text, followed by a hint CPython does
+    not give (`; await in this cell, or create the task inside
+    asyncio.run()`); it was accepted and the task ran in the next
+    `asyncio.run`. A session that made a task in one cell without `await`
+    and awaited it in a later one gets the error in the first (own case
+    592).
+  - `gen.throw(cls)`, `coroutine.throw(cls)` and `athrow(cls)` with a
+    bare class call it as CPython does and throw in the instance or the
+    error its constructor raises; a user class was thrown in without its
+    `__init__` run, and a builtin's constructor error was raised at the
+    caller (0.0.2's known issue; own case 586). The constructor still
+    runs in `throw()`'s caller's frame.
+  - `asyncio.Semaphore.release()` that raises `MemoryError` adds no
+    permit, so the call can be made again (known issue).
+  - A gather, an int or `None` passed to `add_done_callback` is called
+    when the future is done and reported as not callable; a gather was
+    taken for a child of itself and ended done with `[None, None]`
+    (known issue; own case 587).
+  - `OSError(2, 'x')` is a `FileNotFoundError`, and errnos 1, 13, 17, 20,
+    21 and 110 give their subclasses (own case 588). A dataclass without
+    a doc-string gets its signature as `__doc__`, which costs fuel when
+    the class is made: 17 units for three fields; a default whose repr
+    raises `ValueError` or `TypeError` gives the class name alone, as on
+    CPython (own case 589).
+  - `L.remove(x)` whose `__eq__` shortens `L` returns as CPython does
+    instead of raising `IndexError` (own case 583), and `deque.remove`
+    under the same says `deque mutated during remove().` (own case 584).
+    `math.trunc` of an object whose class has no `__trunc__` raises
+    CPython's `TypeError` (own case 585). A Python descriptor stored as
+    a special method (a `functools.partial`, a callable with `__get__`)
+    is bound (own case 582). The duplicate-keyword and
+    name-and-position `TypeError`s name the method or class called
+    (`list.sort()`, not `function`; own cases 580 and 581).
 
 ### Added
 
@@ -525,6 +593,14 @@ hashes are pre-release history, kept in the private archive
   later collection [M, `--release`]. No collection shrinks it (a guest
   could then grow and shrink it in a loop); `reset()`, `reset_to` and a
   template restore give it back.
+- Differences from CPython older than this release, found by the review
+  of the CPython fixes and not fixed [S, that review; the same on
+  17a2daf]: `gen.throw(exc)` and `gen.close()` overwrite a `__context__`
+  the program set on the exception by hand; `close()` through `yield
+  from` passes the inner generator's `GeneratorExit`, and its context,
+  outward; a `StopIteration` raised by a resumed generator gets a
+  `__context__`; a `call_soon` callback sometimes runs one loop step
+  early; `asyncio.gather(coro)` outside a running loop is accepted.
 - A run that leaves 800,000 or more async generators unfinished with
   something to run when closed (a `try`, `with` or `async with` open at
   their `yield`) has native steps past the 50 ms bound: the list of
@@ -584,28 +660,9 @@ hashes are pre-release history, kept in the private archive
   ms where 71b9c5b stayed under 60 ms [S, the GC design review's b4
   measurements, on an earlier base; not rerun]. Marking each caller
   record cleared instead of each task would bound it.
-- A coroutine whose body enters a handler under one `send()` and is run
-  on by a later one still shows that handler's exception to its body,
-  as the one being handled, until it next returns, raises or is closed
-  (`sys.exc_info()` in its body, a bare `raise`, the `__context__` of
-  what it raises); a generator does the same. Older than 0.0.1.
-- `Semaphore.release()` that raises `MemoryError` (its waiter's callbacks
-  have no room) has already added its permit and woken no one; a guest
-  that retries the call releases twice. A second `release()` reaches
-  CPython's end state.
-- A gather passed to `add_done_callback` as the callback is accepted, and
-  each settle counts as one of its children finishing: registered on two
-  futures, a gather of two pending futures ends done with `[None, None]`.
-  python3.14 reports `TypeError: '_GatheringFuture' object is not
-  callable` for each and the gather waits for its children.
 - A `UnicodeEncodeError` raised by encoding an instance of a `str`
   subclass holds the plain `str` as its `object`, where CPython's holds
   the instance itself (`e.object is s`).
-- `gen.throw(UnicodeDecodeError)`, the class with no arguments, raises
-  its constructor's `TypeError` at the caller, where CPython raises it
-  inside the generator. A user class whose `__init__` needs an argument
-  is thrown in without its `__init__` run, as in 0.0.2.
-
 ## 0.0.2 (2026-11-18)
 
 The second release, from `7e59d6c` (this entry as of 2026-11-18). Every API may have changed since 0.0.1, and images written

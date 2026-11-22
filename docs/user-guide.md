@@ -1636,8 +1636,15 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
   locations in log records. `hmac.compare_digest` is not constant-time.
 - **Codecs** other than UTF-8 (and `utf-8-sig`), UTF-16, UTF-32, ASCII and
   Latin-1 raise `LookupError`.
-- **Missing names:** the builtins `input`, `breakpoint`, `exit`, `quit`,
-  `copyright`, `credits` and `license`; `sys.stdin`; the exceptions
+- **`input()`** raises `EOFError: input(): there is no stdin in this
+  sandbox; put the value in the code or get it from a tool`, where CPython
+  reads stdin: it is the error CPython raises with stdin at its end
+  (`EOF when reading a line`), so an `except EOFError` fallback is taken,
+  and the prompt is written first, as there. `exit()` and `quit()` are `sys.exit`: they raise
+  `SystemExit` with the status given (`exit()` has empty `args`, CPython's
+  `(None,)`; `code=` by keyword is refused).
+- **Missing names:** the builtins `breakpoint`, `copyright`, `credits` and
+  `license`; `sys.stdin`; the exceptions
   `BlockingIOError`, `BrokenPipeError`, `ChildProcessError`,
   `ConnectionError` and its subclasses, `InterruptedError`,
   `ProcessLookupError`, `PythonFinalizationError` and
@@ -1676,8 +1683,15 @@ differs:
   host answer: `while not t.done(): await asyncio.sleep(0)` never ends. A
   host future awaited in a later cell than its own raises the scheduler's
   `RuntimeError`.
-- `create_task` outside a running loop does not raise; the task runs in the
-  next `asyncio.run`. Tasks left at the end of `asyncio.run`, the timers
+- `create_task` outside a running loop raises CPython's `RuntimeError: no
+  running event loop` (a cell whose top level awaits has a running loop
+  from its start), and the text goes on where CPython's ends: `; await in
+  this cell, or create the task inside asyncio.run()`, so at the calls
+  that make a task `str(e) == 'no running event loop'` is false where it
+  is true on CPython; match the start of the text. `ensure_future(coro)`
+  and `shield(coro)` there raise the same text, not CPython's `There is no
+  current event loop`, and `gather(coro)` there is
+  still accepted. Tasks left at the end of `asyncio.run`, the timers
   behind `call_later` and `wait_for` included, are cancelled in creation
   order, "Task exception was never retrieved" is reported when it ends, and
   task reprs and reports have no `coro=<...>` or source locations.
@@ -1704,9 +1718,42 @@ differs:
   gather that cancels one) reserve it first, and with no room left raise
   `MemoryError` with nothing changed, where CPython completes. Free memory
   and settle it again.
-- An unfinished async generator is never finalized; use
-  `contextlib.aclosing`. Coroutines have no `cr_frame`, `cr_await` or
-  `cr_code`.
+- An unfinished async generator is closed, and its `finally` run, by
+  `aclose()` and at the end of the `asyncio.run` (or `Runner`) it first
+  stepped in, after the left-over tasks are cancelled, as CPython's
+  `shutdown_asyncgens` does. There are no finalizers, so one that became
+  garbage during the run is closed at the run's end, not when it is
+  collected, and is kept alive until then; the closes run in order of
+  first iteration, 256 at a time (CPython: all at once), and those first
+  stepped while the others were closed (in a `finally`) are closed in one
+  second pass; one first stepped during that pass is not closed. Where each
+  `finally` steps a new generator, a chain of five, CPython 3.14.7 runs
+  the `finally` of the first four and here the first two run. A close
+  that raises `KeyboardInterrupt` or `SystemExit` stops the closing on
+  CPython; here every `finally` still runs and `asyncio.run` then raises
+  that exception. A generator suspended inside `try`/`except
+  GeneratorExit` that becomes garbage as the main coroutine ends, with no
+  loop iteration left, has its handler run by the run's end here and not
+  on CPython. The run keeps
+  only generators with something to run when closed: one suspended at a
+  `yield` that no `try`, `with` or `async with` covers is dropped from
+  its list, so its memory is freed when the program lets go of it, and if
+  the program still holds it at the run's end it is not closed (it can be
+  iterated on afterwards, where CPython's is finished). Nothing closes one
+  in a cell whose top level awaits (no run ends there), one driven outside
+  a loop, one whose `asyncio.run` the cell left unfinished, or one a cell
+  left on a loop it did not close (`run_until_complete()`, a `Runner`
+  without `close()`): no later cell's run closes an earlier cell's
+  generators. Use `contextlib.aclosing` where the cleanup must run at a
+  known point. Each generator first stepped inside a run costs one fuel
+  unit, and each `asyncio.run` one.
+- A task's first step and a loop callback start with the exception being
+  handled where `asyncio.run` was called, as in CPython (`None` for a
+  cell whose top level awaits).
+- An object that is not callable passed to `add_done_callback` is
+  reported with CPython's `TypeError` when the future is done, but
+  `remove_done_callback` does not find it (0, CPython 1).
+- Coroutines have no `cr_frame`, `cr_await` or `cr_code`.
 
 ### Other differences from CPython
 
@@ -1723,8 +1770,32 @@ differs:
   only `<`. For a total order the result is CPython's, but `__lt__` is
   called on other pairs and a different number of times, and a mixed-type
   list can fail on another pair first.
-- **NaN.** Floats are NaN-boxed with one canonical NaN, so `[x] == [y]` is
-  `True` for two `float('nan')` objects (CPython: `False`).
+- **NaN.** Floats are NaN-boxed and are not objects with an identity of
+  their own: every NaN of one sign is the same object, where on CPython
+  each `float('nan')` call makes another. `x == y` is `False` as in
+  CPython, but everything CPython decides by identity before `==` sees
+  two NaNs as the same one. With `x = float('nan')` and
+  `y = float('nan')` \[M\]:
+  - `x is y` is `True`, and so is `x is math.nan` and `x is x + 1`
+    (CPython: `False` each).
+  - Sequences compare equal and order by what follows: `[x] == [y]` and
+    `(x,) == (y,)` are `True`, `[x] < [y, 1]` and `[x, 1] < [y, 2]` are
+    `True` (CPython: `False`, since the NaNs differ and `x < y` is
+    `False`), and the same for `deque`s and named tuples. So `sorted` of
+    rows that hold NaNs, `max` of tuples and `==` of parsed records can
+    give another answer than CPython, without an error.
+  - Membership finds it: `y in [x]` is `True`, `[x].count(y)` is 1 and
+    `[x].index(y)` is 0 (CPython: `False`, 0 and `ValueError`).
+  - Sets and dicts hold one: `len({float('nan'), float('nan')})` is 1 and
+    `{float('nan'): 1, float('nan'): 2}` is `{nan: 2}` (CPython: 2 and
+    two keys), so counting distinct values or grouping by a key that can
+    be NaN gives one group where CPython gives one per NaN object.
+
+  A NaN with the sign bit set (`-x`, `float('-nan')`, and on x86-64
+  `inf - inf`) is a second object, the same for all of them, and any
+  other payload becomes the canonical one (`struct.unpack` of
+  `7ff8000000000001` packs back as `7ff8000000000000`). Test with
+  `math.isnan`, which is CPython's everywhere.
 - **Deep comparisons** raise `RecursionError` past 1,000 levels whatever
   `Limits::recursion_depth` is.
 - **A generator resumed at the recursion limit.** When `next(g)`,
@@ -1762,8 +1833,10 @@ differs:
   its first, has none, and an encode error of a `str` subclass instance
   holds the plain `str` as its `object`.
 - **SyntaxError text** follows CPython 3.14, except that a misspelt keyword
-  gets no "Did you mean", a missing comma gets no "Perhaps you forgot a
-  comma?", and a few carets differ.
+  gets no "Did you mean", a missing comma between the items of a dict
+  display gets no "Perhaps you forgot a comma?" (`{"a": 1 "b": 2}`; in a
+  list, tuple or set display and in a call it does \[M\]), and a few
+  carets differ.
 - **`MemoryError` beside uncollected garbage.** Most operations whose
   allocation fails wait for a full collection and run once more: copies,
   constructors over a container, slices and list comprehensions succeed
@@ -1788,6 +1861,13 @@ differs:
   identity-hashed objects can differ between runs sliced differently \[M\].
   `id` stays unique among live objects and fixed for an object's life across
   parks and restores; `is` and value-hashed containers are unaffected.
+  An address is not given out again as soon as its object dies, as
+  CPython's reference counting does: `id([]) == id([])` and
+  `id(object()) == id(object())` are `False` (CPython: `True`, the second
+  object takes the first one's block) \[M\]. Two objects whose lives do
+  not overlap can share an `id` only after a collection in between, so
+  code that keeps `id`s of dead objects as keys meets fewer collisions
+  than on CPython, not more.
 - **An `__eq__` that changes the dict or set being searched.** A lookup
   follows CPython's rule: it goes on from where it is, and starts again
   when the compare replaced the table or the key it compared, so it
@@ -1808,9 +1888,24 @@ differs:
   CPython's ("Did you forget 'await'" above).
 - **Smaller ones.** `io.StringIO.seek` accepts a float; a set display of
   constants whose hashes collide can iterate in another order; a
-  dataclass's `__doc__` is `None`; `re`'s ignore-case matching misses a
-  few case folds (`ﬅ`/`ﬆ`, the Kelvin sign in a class range);
-  `OSError(2, 'x')` is not a `FileNotFoundError` \[M\].
+  dataclass's generated `__doc__` shows an annotation as written
+  (`typing.Optional[int]`, CPython's `int | None`; a user class `R`,
+  CPython's `__main__.R`; `typing.Any` written so, CPython's `Any`) and is `None` with `init=False` and a hand-written
+  `__init__`; `re`'s ignore-case matching
+  misses a few case folds (`ﬅ`/`ﬆ`, the Kelvin sign in a class range);
+  `OSError(errno, msg)` gives CPython's subclass for the errnos whose
+  classes exist (1, 2, 13, 17, 20, 21, 110) and stays `OSError` for the
+  others, and its `args` keeps a file name (`OSError(2, 'x', 'f').args`
+  is `(2, 'x', 'f')`, CPython's `(2, 'x')`); `gen.throw(cls)` runs the
+  class's constructor in `throw()`'s caller, so its frames are not under
+  the generator's in a traceback; a Python descriptor stored as a special
+  method is bound, except as `__init__`, as `__index__` under `hex()` and
+  as `__bytes__`, and a `property` there is refused; the
+  duplicate-keyword `TypeError` of a `functools.partial` and of an
+  instance with `__call__` names `function`, where CPython prints the
+  object's repr; a guest that formats a `NameError`'s name hint through
+  `traceback` pays 3 fuel units more than in 0.0.2 for each, for the
+  builtins `exit`, `quit` and `input` \[M\].
 
 ### Code size limits
 
