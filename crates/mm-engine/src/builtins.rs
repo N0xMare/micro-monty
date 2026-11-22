@@ -2634,12 +2634,18 @@ impl Vm {
             if let Some(i) = n.params().iter().position(|p| !p.is_empty() && p == key) {
                 let i = u32::try_from(i).unwrap_or(0);
                 if i < npos {
-                    let q = qualname(n);
+                    // The clinic names a method bare and counts after
+                    // its receiver.
+                    let q = if recv == 1 {
+                        String::from(n.name())
+                    } else {
+                        qualname(n)
+                    };
                     return Err(self.err(
                         T::TypeError,
                         &format!(
                             "argument for {q}() given by name ('{key}') and position ({})",
-                            i + 1
+                            i + 1 - recv
                         ),
                     ));
                 }
@@ -2906,6 +2912,9 @@ impl Vm {
                 }
                 _ => format!("{q}() takes exactly one argument ({got} given)"),
             }
+        } else if min == 0 && max == 0 && method && !n.kwonly().is_empty() {
+            // A clinic method with keyword-only parameters alone (`list.sort`).
+            format!("{}() takes no positional arguments", n.name())
         } else if min == 0 && max == 0 {
             format!("{q}() takes no arguments ({got} given)")
         } else if method && got > max && n.params().iter().any(|p| !p.is_empty()) {
