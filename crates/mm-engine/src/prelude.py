@@ -3659,7 +3659,14 @@ class Semaphore:
 
     def release(self):
         self._value += 1
-        self._wake_up_next()
+        try:
+            self._wake_up_next()
+        except BaseException:
+            # No room to wake the waiter (MemoryError, with nothing
+            # settled): the permit is not added either, so the call can be
+            # made again.
+            self._value -= 1
+            raise
 
     def _wake_up_next(self):
         import _mm

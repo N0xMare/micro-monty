@@ -4730,6 +4730,50 @@ print(fired, errors)
     }
 }
 
+/// `Semaphore.release()` with no room to wake its waiter raises
+/// `MemoryError` and changes nothing: the permit it added is taken back,
+/// so the release a guest retries once memory is freed hands over one
+/// permit, not two. Before, the failed call kept its permit and the retry
+/// left `_value` at 1 beside the woken waiter.
+#[test]
+fn a_semaphore_release_that_fails_adds_no_permit() {
+    let src = "\
+import asyncio
+import gc
+sem = asyncio.Semaphore(0)
+got = []
+async def waiter():
+    await sem.acquire()
+    got.append('acquired')
+t = asyncio.create_task(waiter())
+await asyncio.sleep(0)
+failed = 0
+pad = []
+k = 0
+try:
+    while True:
+        pad.append([k])
+except MemoryError:
+    pass
+while k < 64:
+    try:
+        sem.release()
+        break
+    except MemoryError:
+        failed += 1
+        pad.pop()
+    k += 1
+value = sem._value
+pad = None
+gc.collect()
+await t
+print(failed > 0, value, got, sem._value, sem.locked())
+";
+    let (p, out) = run_with(Limits::new().with_memory(4 << 20), src);
+    assert!(matches!(p, Progress::Complete(_)), "{p:?} {out}");
+    assert_eq!(out, "True 0 ['acquired'] 0 True\n");
+}
+
 /// `MemoryError` raised at the main task's `await` inside a primitive just
 /// after it was handed what it waited for (the start rule's raise at main:
 /// a `call_soon` of 100,000 arguments queued ahead of its wakeup, with no
