@@ -557,7 +557,14 @@ impl Vm {
             }
             c
         };
-        self.std_scratch = self.std_scratch.max(allowance - remaining);
+        // Charged when it grows, not at the next load: an image's restore
+        // computes the code charge from what it holds, and the session that
+        // went on must be charged the same.
+        let used = allowance - remaining;
+        if used > self.std_scratch {
+            self.std_scratch = used;
+            self.reserve_code(0)?;
+        }
         Ok(c)
     }
 

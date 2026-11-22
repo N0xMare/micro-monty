@@ -909,9 +909,9 @@ pub struct Vm {
     pub(crate) codes: Arc<Vec<Arc<CodeObj>>>,
     pub(crate) code_charge: u64,
     /// `code_charge` after the last reclamation between cells, the last
-    /// reset or [`Vm::setup_done`], whichever came last (0 in a new or
-    /// restored session, so its first cell counts all code as
-    /// reclaimable); see [`Vm::prepare_cell`].
+    /// reset or [`Vm::setup_done`], whichever came last (0 in a new
+    /// session; a restored one has its image's debt below its own charge);
+    /// see [`Vm::prepare_cell`].
     pub(crate) code_kept: u64,
     /// `code_bytes`' walk of `codes`, kept as codes are appended: the
     /// number of codes counted, their summed bytes and the largest verify

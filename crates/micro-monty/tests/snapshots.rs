@@ -3057,8 +3057,8 @@ fn a_park_at_a_skipped_handle_restores() {
 /// reached code (a suspended `heapq.merge` generator, `json`, `collections`,
 /// prelude units) and a reclamation of dropped user code; and both print
 /// and burn what the session that wrote the image does. (Their code
-/// charge is below the writer's by its tables' spare capacity, as before
-/// instructions were left out [M].)
+/// charge is the writer's: the image carries the room of each code's
+/// tables.)
 #[test]
 fn a_restore_charges_the_same_whether_bundled_code_is_decoded() {
     use micro_monty::test_hooks::code_state;
@@ -3115,14 +3115,95 @@ def f(x):
             })
             .collect();
         assert_eq!(runs[1], runs[2], "{cell}: restored, then decoded or not");
-        assert_eq!(runs[0].0, runs[1].0, "{cell}: original and restored");
-        assert_eq!(runs[0].1, runs[1].1, "{cell}: fuel");
+        assert_eq!(runs[0], runs[1], "{cell}: original and restored");
     }
     assert!(
         code_state(&lazy).2 > 0,
         "unreached bundled code stays as it was"
     );
     assert!(code_state(&lazy).2 < left_out, "reached code was decoded");
+}
+
+/// A restored session is charged what the session that wrote the image
+/// is, and stays so through further loads: its code charge, the bytes its
+/// limit has left and its next image are the original's after every cell.
+/// The image carries the room of each code's tables (a load grows them as
+/// the original's grows) and the code loaded since the last reclamation
+/// (`Vm::prepare_cell`), so both reclaim the dropped functions at the same
+/// cell: a restore that counted all its code as loaded since would reclaim
+/// `dead` at its first cell, and its image would be the smaller one.
+#[test]
+fn a_restored_session_stays_charged_as_the_original_through_further_loads() {
+    use micro_monty::test_hooks::code_state;
+    let e = engine();
+    let mut original = Session::new(&e).expect("session");
+    let run = |s: &mut Session, src: &str| {
+        let code = s.compile(src, "c.py").expect("compiles");
+        let p = s.start(&code);
+        assert!(matches!(p, Progress::Complete(_)), "{src}: {p:?}");
+    };
+    let defs = |tag: &str, n: usize| {
+        (0..n).fold(String::new(), |mut out, i| {
+            let _ = write!(
+                out,
+                "def {tag}{i}(x, y=1):\n    z = x + y * {i}\n    return [z, '{tag}{i}', (x, y)]\n"
+            );
+            out
+        })
+    };
+    run(&mut original, &format!("import json\n{}", defs("kept", 40)));
+    run(&mut original, "def dead(a):\n    return a + 1\ndel dead");
+    let mut reclaimed_at = None;
+    let mut sessions = Vec::new();
+    for round in 0..12 {
+        let image = original.snapshot().expect("snapshot");
+        sessions.push(e.restore(&image).expect("restore"));
+        if round % 4 == 0 {
+            // A template's trusted instantiation and a reset to it carry
+            // the same count as the checked restore.
+            let template = SessionTemplate::capture(&e, &mut original).expect("captures");
+            sessions.push(template.instantiate().expect("instantiates"));
+            let mut reset = Session::new(&e).expect("session");
+            reset.reset_to(&template).expect("resets to the template");
+            sessions.push(reset);
+        }
+        let before = code_state(&original).0;
+        let cell = format!(
+            "{}\nr{round} = json.dumps([t{round}0(1), kept{round}(2)])\n{}",
+            defs(&format!("t{round}"), 30),
+            (0..30).fold(String::new(), |mut out, i| {
+                let _ = writeln!(out, "del t{round}{i}");
+                out
+            }),
+        );
+        run(&mut original, &cell);
+        if code_state(&original).0 < before && reclaimed_at.is_none() {
+            reclaimed_at = Some(round);
+        }
+        let now = (
+            code_state(&original).0,
+            code_state(&original).1,
+            original.snapshot().expect("snapshot"),
+        );
+        for (from, s) in sessions.iter_mut().enumerate() {
+            run(s, &cell);
+            let (charge, available, _) = code_state(s);
+            assert_eq!(
+                (charge, available),
+                (now.0, now.1),
+                "round {round}, session {from}"
+            );
+            assert!(
+                s.snapshot().expect("snapshot") == now.2,
+                "round {round}, session {from}: images differ"
+            );
+        }
+    }
+    // Sessions restored before and after a reclamation both went on above.
+    assert!(
+        reclaimed_at.is_some_and(|r| (1..11).contains(&r)),
+        "dropped code is reclaimed in a middle round: {reclaimed_at:?}"
+    );
 }
 
 /// A template's trusted instantiation skips the checks that decode the

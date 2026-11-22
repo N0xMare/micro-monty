@@ -93,18 +93,19 @@ GitHub release also attaches the two mm-wasm guests.
   when a cell starts (a full collection once 16 KiB of code, or an eighth
   of the live heap, was loaded since the last one). A setup's code stays
   in use, so counted, it brought that collection forward to a session's
-  first cells, where it frees nothing. The mark is not in an image: a
-  host calls it again after `SessionTemplate::instantiate` and
-  `Session::reset_to`, whose sessions otherwise count all the template's
-  code and collect at their first cell's start, as before.
+  first cells, where it frees nothing. The mark is in an image (the code
+  loaded since it is what an image holds): a template captured after the
+  call makes marked sessions through `SessionTemplate::instantiate` and
+  `Session::reset_to`, and one captured before it makes sessions that
+  count all the template's code and collect at their first cell's start.
   `Session::reset` starts the count anew. The setup's code stays charged
   to the memory limit, and what a cell drops of it is freed by the next
   reclamation. `mm-cell-worker` calls it after each bootstrap it runs or
   resets to. The mm-wasm guest exports it as `mm_setup_done`, a
   required export: `Session::setup_done` on the reference host
   and `session.setupDone()` on the JavaScript host, called after the
-  definitions and the bootstrap cell, after a setup run again following a
-  reset, and after restoring a setup's image.
+  definitions and the bootstrap cell, and after a setup run again
+  following a reset.
   Over the recorded sessions on the replay worker, against the build
   before: the 79 fresh-per-cell (py-sdk) sessions counted take a median
   0.893 of their instructions (collections 1,952 to 362: a session reset
@@ -432,6 +433,17 @@ GitHub release also attaches the two mm-wasm guests.
   one load in a probe of 40 functions [M]). An image grows by about 11
   bytes per stored code. Constant strings are compiled to their exact
   length.
+- An image holds the code loaded since the last reclamation between
+  cells instead of nothing: a restored session reclaims dropped code at
+  the cell the original does, where it used to count all its code as
+  new and reclaim at its first cell. The code charge itself is not in
+  the image: it counts the target's own sizes, so a restore computes it,
+  and an image restores on a target of another pointer width as before.
+- The decoder workspace a prelude chunk's unpacking takes is charged when
+  it grows instead of at the next load, and a restored host module with
+  shared code is charged what its definition was (it counted its recipe's
+  24 bytes a name again): both made a restore's code charge differ from
+  the charge of the session that wrote the image.
 - Growing the mark stack during an incremental mark reserves the
   capacity it charges: it reserved that many slots beyond the entries on
   the stack, up to 4 bytes per object uncharged, and a restored session

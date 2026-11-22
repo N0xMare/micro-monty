@@ -617,11 +617,11 @@ whole session, so counting it only makes that collection run during the
 first few cells and free nothing. `setup_done` takes the code loaded so
 far out of the count. It frees and keeps nothing by itself: the setup's
 code is still charged to the memory limit, and if a cell later drops part
-of it (`del helper`), the next such collection frees it. The mark is not
-part of a snapshot: call it again after restoring a setup (a template's
-`instantiate`, `reset_to`). After `Engine::restore` of a session's
-snapshot it is your choice, since a snapshot taken between cells may hold
-code the cells no longer use.
+of it (`del helper`), the next such collection frees it. The mark is
+part of a snapshot: a session restored from an image taken after the call
+(a template's `instantiate`, `reset_to`, `Engine::restore`) is marked as
+the original was, and needs no call; one restored from an image taken
+before it counts its code as the original did.
 
 ## Parking, deadlines and cancel
 
@@ -880,12 +880,12 @@ instead of draining them. Key them by build id and setup code, not by their
 bytes: captures differ where imports read the clock or entropy. A template
 written natively restores on both wasm targets of the same build id.
 
-**Say the template is the setup.** Call `session.setup_done()` after
-`instantiate()` and after each `reset_to` ("Driving a session"). A
-restored session counts all its code as loaded since it last freed dead
-code, so without the call every session made from the template, and
-every cell after a `reset_to`, starts with a full collection that frees
-nothing.
+**Say the template is the setup.** Call `session.setup_done()` before
+capturing the template ("Driving a session"). The template holds the
+mark, so every session made from it with `instantiate()` and every
+`reset_to` starts marked. A template captured without the call counts
+all its code as loaded since it last freed dead code, and each session
+made from it starts with a full collection that frees nothing.
 
 The wasm hosts offer the same capture, instantiate and reset operations
 within a guest instance; see [WebAssembly hosts](#webassembly-hosts).
@@ -1414,10 +1414,10 @@ that `mm_session_new` and `mm_session_restore` both take.
 
 `mm_setup_done` is `Session::setup_done` ("Driving a session"): a host
 calls it once a session's setup is done, after `mm_define` and the
-bootstrap cell's `mm_start` have finished and before the first cell, again
-after a setup it runs again following `mm_reset`, and after an
-`mm_session_restore` of an image taken right after a setup. The mark is not
-in an image, so a restored session counts all its code until the call. The
+bootstrap cell's `mm_start` have finished and before the first cell, and
+again after a setup it runs again following `mm_reset`. The mark is in an
+image, so an `mm_session_restore` of an image taken after the call needs
+none. The
 reference host has `Session::setup_done`, the JavaScript host
 `session.setupDone()`.
 

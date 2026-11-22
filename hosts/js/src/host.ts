@@ -749,9 +749,9 @@ export class Session {
 	/**
 	 * `Session::setup_done`: the code loaded so far (definitions, a bootstrap cell) is the
 	 * session's setup and does not count toward reclaiming unreachable code when a cell
-	 * starts. Call it after the setup and before the first cell, after a setup run again
-	 * following `reset()`, and after restoring, instantiating or resetting to a setup:
-	 * the mark is not in an image.
+	 * starts. Call it after the setup and before the first cell, and after a setup run
+	 * again following `reset()`. The mark is in an image: restoring one taken after the call
+	 * needs none.
 	 */
 	setupDone(): void {
 		this.call(() => this.f.mm_setup_done(this.sid as never));

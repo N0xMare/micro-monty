@@ -220,9 +220,9 @@ impl CellSession for Native {
         let Some(kept) = &self.kept else {
             return false;
         };
+        // The kept state was captured after `setup_done`, and holds the
+        // mark.
         if self.session.reset_to(kept).is_ok() {
-            // The kept state is a bootstrap's: a setup, as when it ran.
-            self.session.setup_done();
             return true;
         }
         // Not restored (the memory limit, say): the caller resets and

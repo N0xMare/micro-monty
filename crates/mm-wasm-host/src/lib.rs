@@ -1351,10 +1351,9 @@ impl Session {
     /// `Session::setup_done`: the code loaded so far (definitions, a
     /// bootstrap cell) is the session's setup and does not count toward
     /// reclaiming unreachable code when a cell starts. Call it after the
-    /// setup and before the first cell, after a setup run again following
-    /// [`Session::reset`], and after [`Runtime::restore`] of a setup's
-    /// image, [`SessionTemplate::instantiate`], or [`Session::reset_to`]:
-    /// the mark is not in an image.
+    /// setup and before the first cell, and after a setup run again
+    /// following [`Session::reset`]. The mark is in an image: a
+    /// [`Runtime::restore`] of an image taken after the call needs none.
     pub fn setup_done(&mut self) -> Result<(), Error> {
         self.with(|inst, id| {
             inst.call(|s| s.f.setup_done.call(&mut s.store, id))?;

@@ -2470,14 +2470,13 @@ impl Session {
     /// bound (docs/spec.md §11, Session lifetime); a setup's code stays reachable, so
     /// counted, it only brings that collection forward to a session's
     /// first few cells. Call it between cells, after the setup and before
-    /// the first cell, and again whenever the session comes to hold a
-    /// setup anew: after a setup run again ([`Session::reset`] starts the
-    /// count anew), and after [`SessionTemplate::instantiate`],
-    /// [`Session::reset_to`] or an [`Engine::restore`] of a setup's
-    /// image. The mark is not in an image, and a restored session counts
-    /// all its code: a restore cannot tell a setup from a cell's dead
-    /// code, and a template's instantiation continues as a restore of its
-    /// image does.
+    /// the first cell, and again after a setup run again
+    /// ([`Session::reset`] starts the count anew). An image holds the
+    /// count, so a session from [`SessionTemplate::instantiate`],
+    /// [`Session::reset_to`] or [`Engine::restore`] goes on as the
+    /// session the image was taken from: marked when the image was taken
+    /// after this call, and counting all its code when it was taken
+    /// before it.
     ///
     /// The setup's code stays charged to the memory limit. What a later
     /// cell drops of it is freed by the next reclamation, which comes

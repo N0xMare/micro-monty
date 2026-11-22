@@ -287,7 +287,8 @@ test("setupDone: the cell after a setup marked done does not reclaim code, also 
 	// Unmarked, the cell's start reclaimed `extra`'s unit (8 KiB of docstring).
 	assert.ok(marked.after > plain.after + 8192, `${marked.after} and ${plain.after}`);
 	assert.ok(plain.setup.length > plain.after + 8192);
-	// The mark is not in an image: after a restore the host says so again.
+	// Each setup image was taken before the mark, so it holds the unmarked count: a
+	// restored session reclaims unless the host marks it, as the original.
 	assert.equal(scenario(false, plain.setup).after, plain.after);
 	assert.equal(scenario(true, plain.setup).after, marked.after);
 	assert.equal(scenario(false, marked.setup).after, plain.after);

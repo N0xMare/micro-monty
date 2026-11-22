@@ -3245,8 +3245,8 @@ fn setup_source(n: usize) -> String {
 /// count toward the trigger that reclaims unreachable code at a cell's
 /// start, so a short session runs no collection for it; it stays charged
 /// to the memory limit, and the trigger still fires on the code loaded
-/// after it, freeing also what a cell dropped of the setup. The mark is the
-/// host's to repeat after a restore, a template or a reset.
+/// after it, freeing also what a cell dropped of the setup. The mark is in an
+/// image; after a reset the host marks the setup it runs again.
 #[test]
 fn a_setup_marked_done_is_not_counted_toward_code_reclamation() {
     use micro_monty::SessionTemplate;
@@ -3315,30 +3315,40 @@ fn a_setup_marked_done_is_not_counted_toward_code_reclamation() {
     );
     assert_eq!(c.value("tool_63(7)[4]"), "'tool_63'");
 
-    // The mark is not in an image: a session made from a template, reset
-    // to one or restored counts all its code until the host marks it.
+    // The mark is in an image, as the code loaded since it: a session made
+    // from a marked setup's template, reset to it or restored from its
+    // image goes on as the marked session does, with no call of the host's.
     let mut source = Cells::new();
     setup(&mut source);
     source.session.setup_done();
     let template = SessionTemplate::capture(&source.engine, &mut source.session).expect("captures");
     let mut made = Cells::new();
     made.session = template.instantiate().expect("instantiates");
-    assert_eq!(cells(&mut made, 1), 1);
+    assert_eq!(cells(&mut made, 3), 0);
+    made.session
+        .reset_to(&template)
+        .expect("resets to the template");
+    assert_eq!(cells(&mut made, 3), 0);
+    made.session = source.engine.restore(template.image()).expect("restores");
+    assert_eq!(cells(&mut made, 3), 0);
+
+    // And an unmarked setup's image holds its count: the session made from
+    // it collects at its first cell's start, as the original does, until
+    // the host marks it.
+    let mut source = Cells::new();
+    setup(&mut source);
+    let template = SessionTemplate::capture(&source.engine, &mut source.session).expect("captures");
     made.session = template.instantiate().expect("instantiates");
-    made.session.setup_done();
-    assert_eq!(cells(&mut made, 3), 0);
-    made.session
-        .reset_to(&template)
-        .expect("resets to the template");
     assert_eq!(cells(&mut made, 1), 1);
     made.session
         .reset_to(&template)
         .expect("resets to the template");
-    made.session.setup_done();
-    assert_eq!(cells(&mut made, 3), 0);
-    made.session = source.engine.restore(template.image()).expect("restores");
     assert_eq!(cells(&mut made, 1), 1);
     made.session = source.engine.restore(template.image()).expect("restores");
+    assert_eq!(cells(&mut made, 1), 1);
+    made.session
+        .reset_to(&template)
+        .expect("resets to the template");
     made.session.setup_done();
     assert_eq!(cells(&mut made, 3), 0);
 

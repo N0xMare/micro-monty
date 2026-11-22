@@ -2319,7 +2319,9 @@ heap     memory limit, GC ratio and floor, GC statistics, intern table;
          the idle flag
 vm       registers, fuel left, limits, seq / virtual clock, the
          collector's schedule (owed and pending steps, waits), the
-         capacities of the VM's tables and its code charges, frames,
+         capacities of the VM's tables, the code loaded since the last
+         reclamation (in bytes of the writer's charge) and the bytes
+         charged outside the arena, frames,
          continuations, scheduler, tasks and run queue, globals, modules,
          pending host calls and their ids, park reason,
          host modules (definition; for code the Engine shares, its 16-byte
@@ -2893,10 +2895,11 @@ session's setup (host definitions, a bootstrap cell's functions). A setup
 stays reachable, so counted, it brings the first reclamation forward to
 the session's first cells, where the collection frees nothing; a new
 session's count starts at zero, with the prelude's and the host modules'
-records in it. The mark is not in an image: a restored session
-(`Engine::restore`, `SessionTemplate::instantiate`, `Session::reset_to`)
-starts the count at zero, as its image may hold dead code, and a host
-that restored a setup calls `setup_done` again. The mark
+records in it. The count is in an image (§9.3), as the code loaded since
+it last started anew: a restored session (`Engine::restore`,
+`SessionTemplate::instantiate`, `Session::reset_to`) goes on with the
+count of the session the image was taken from, so one restored from a
+marked setup's image is marked. The mark
 changes only when the trigger fires: all code, the setup's too, stays
 charged to the memory limit, and a reclamation frees every dead unit,
 whenever it was loaded. So the dead code a session holds between
@@ -2931,7 +2934,14 @@ bound owned capacities, not an allocator's transient peak or process RSS.
   its buffers' capacities: compiled code keeps the growth slack of its
   bytecode and tables, which an image carries and a restore reserves, so
   a restored session holds and is charged what the session it came from
-  is, and stays so through its next loads. Host
+  is, and stays so through its next loads. The charge is not in the
+  image: a restore computes it from the code and capacities it holds, in
+  its own target's sizes, and the session that went on counts the same
+  (every growth of a charged table or workspace is charged where it
+  happens, not at the next load). The image does hold the code loaded
+  since the last reclamation (Session lifetime), as a count of the
+  writer's bytes; a restore takes it from its own charge, all of it
+  where the count is larger (a 64-bit target's image on wasm32). Host
   signature code has its decode's capacities either way.
 - **The kept stop.** The stop a session keeps for `Session::pending` is
   charged by its length while the host holds it, in the session that

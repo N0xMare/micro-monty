@@ -58,10 +58,11 @@ first cells and free nothing. Call it:
 
 - after the `define` calls and the bootstrap cell have finished, before the
   first cell;
-- again after `reset()` once the setup has run again;
-- after `rt.restore(image)` when the image was taken right after a setup (a
-  template): the mark is not in an image. After restoring a parked session's
-  image it is optional; its cells' dead code is then freed later.
+- again after `reset()` once the setup has run again.
+
+The mark is in an image: after `rt.restore(image)` of an image taken after
+the call (a template) the session is marked already, and one restored from
+an image taken before it counts its code as the original did.
 
 It changes no result, output or fuel, and the setup's code stays charged to
 the memory limit.

@@ -975,8 +975,8 @@ fn the_precompiled_cache_follows_the_module_content_not_its_mtime() {
 /// collections through: the setup dropped one of its compilation units
 /// (`extra`, 8 KiB of docstring), and that unit is still in the image
 /// after a cell when the setup was marked done, and gone when it was not.
-/// The same after a restore of the setup's image, where the mark is the
-/// host's to repeat.
+/// The same after a restore of the setup's image, which was taken before
+/// the mark and so holds the unmarked count.
 #[test]
 fn setup_done_matches_the_native_facade() {
     use std::fmt::Write as _;
@@ -1060,8 +1060,9 @@ fn setup_done_matches_the_native_facade() {
     );
     assert!(n_plain.1.len() > n_plain.2 + 8192);
 
-    // After a restore of the setup's image (each side the other's), the
-    // mark is not there: the host says so again.
+    // After a restore of the setup's image (each side the other's), taken
+    // before the mark, the session counts as the unmarked one did, and
+    // marking it does as on the original.
     let (n_setup, w_setup) = (&n_plain.1, &w_plain.1);
     let restored = [
         native(false, Some(w_setup)),
@@ -1076,4 +1077,88 @@ fn setup_done_matches_the_native_facade() {
         assert_eq!(run.0, n_plain.0);
         assert_eq!(run.2, len);
     }
+}
+
+/// An image crosses pointer widths with what it holds of the code charge:
+/// the room of each code's tables, and the code loaded since the last
+/// reclamation between cells as a count of the writer's bytes. The charge
+/// itself is the restoring target's own. A session restored on the other
+/// target, before or after a reclamation, goes on through further loads
+/// with the results and fuel of the session that ran there from the start,
+/// and writes that session's image: at once when the image was taken after
+/// a reclamation with nothing loaded since, else from the next reclamation
+/// on (until then its count of loaded code is the writer's).
+#[test]
+fn a_session_restored_on_the_other_width_goes_on_as_one_that_ran_there() {
+    fn defs(tag: &str, n: usize) -> String {
+        (0..n)
+            .map(|i| {
+                format!(
+                    "def {tag}{i}(x, y=1):\n    z = x + y * {i}\n    return [z, '{tag}{i}', (x, y)]\n"
+                )
+            })
+            .collect()
+    }
+    fn cell(round: usize) -> String {
+        format!(
+            "{}\nr{round} = json.dumps([t{round}0(1), kept{round}(2)])\n{}r{round}",
+            defs(&format!("t{round}"), 30),
+            (0..30)
+                .map(|i| format!("del t{round}{i}\n"))
+                .collect::<String>(),
+        )
+    }
+    const TOTAL: u64 = 1 << 40;
+    let engine = Engine::new(EngineConfig::new().with_limits(LIMITS));
+    let rt = Runtime::new(&guest(), RuntimeConfig::default()).unwrap();
+    let options = SessionOptions::new().with_limits(LIMITS);
+    let mut n = micro_monty::Session::new(&engine).unwrap();
+    let mut w = rt.session(&options).unwrap();
+    // The settings an image holds, as the guest's options record has them.
+    n.set_host_args(options.host_args);
+    n.set_fuel_total(Some(TOTAL));
+    w.set_fuel_total(Some(TOTAL)).unwrap();
+    let setup = [
+        format!("import json\n{}", defs("kept", 40)),
+        "def dead(a):\n    return a + 1\ndel dead".to_owned(),
+    ];
+    let step = |n: &mut micro_monty::Session, w: &mut mm_wasm_host::Session, src: &str| {
+        let p = n.start(&engine.compile(src, "c.py").unwrap());
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        assert_eq!(w.start(src, "c.py").unwrap(), p);
+        assert_eq!(w.fuel_total().unwrap(), n.fuel_total());
+    };
+    for src in &setup {
+        step(&mut n, &mut w, src);
+    }
+    // (taken before round, restored on wasm, restored natively, the first
+    // round after which each wrote the image of the session beside it)
+    let mut crossed = Vec::new();
+    for round in 0..10 {
+        if round == 0 || round == 4 {
+            let on_wasm = rt.restore(&n.snapshot().unwrap(), &options).unwrap();
+            let on_native = engine.restore(&w.snapshot(None).unwrap()).unwrap();
+            crossed.push((round, on_wasm, on_native, None::<usize>));
+        }
+        let src = cell(round);
+        step(&mut n, &mut w, &src);
+        let (ni, wi) = (n.snapshot().unwrap(), w.snapshot(None).unwrap());
+        for (from, on_wasm, on_native, same_from) in &mut crossed {
+            step(on_native, on_wasm, &src);
+            assert_eq!(on_native.fuel_total(), n.fuel_total(), "round {round}");
+            let same = on_wasm.snapshot(None).unwrap() == wi && on_native.snapshot().unwrap() == ni;
+            if same {
+                same_from.get_or_insert(round);
+            }
+            assert!(
+                same || same_from.is_none(),
+                "round {round}, crossed before round {from}: the images part again"
+            );
+        }
+    }
+    // The first image held code loaded since a reclamation, so its count
+    // was the writer's until the next one; the second was taken after
+    // reclamations had begun, and agrees after one cell.
+    let same_from: Vec<_> = crossed.iter().map(|c| (c.0, c.3)).collect();
+    assert_eq!(same_from, [(0, Some(1)), (4, Some(4))]);
 }

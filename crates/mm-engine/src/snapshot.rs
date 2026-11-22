@@ -819,8 +819,11 @@ impl Vm {
         put_bool(out, self.oom_wait);
         put_u64(out, self.oom_defer_at);
         put_values(out, &self.dunders);
-        put_u64(out, self.code_charge);
-        put_u64(out, self.code_kept);
+        // The code charge is not written: it counts this target's sizes, so
+        // a restore computes its own (`Vm::reserve_code`). What the image
+        // holds of it is the debt reclamation waits on (`Vm::prepare_cell`),
+        // the code loaded since the last reclamation or `Vm::setup_done`.
+        put_u64(out, self.code_charge.saturating_sub(self.code_kept));
         put_u64(out, self.heap.external_bytes());
         // Capacities the charges count (`Vm::code_bytes`,
         // `Vm::execution_bytes`): a restore reserves them again.
@@ -1718,6 +1721,11 @@ impl Vm {
                         .filter(|p| p.key == key && p.code == code),
                     "host code",
                 )?;
+                // The recipe is dropped here, so the room it took is the
+                // lookup's and not the module's: `bytes` is then what
+                // `Vm::define_host_module` counts for the same definition.
+                drop(recipe);
+                budget += n as u64 * size_of::<String>() as u64;
                 Some(p)
             } else {
                 None
@@ -2365,8 +2373,7 @@ impl Vm {
             }
             dunders.push(v);
         }
-        let code_charge = need(r.u64(), "collector")?;
-        let code_kept = need(r.u64(), "collector")?;
+        let code_debt = need(r.u64(), "collector")?;
         let external = need(r.u64(), "collector")?;
         let ncaps = 23 + 2 * tasks.iter().flatten().count() + 2 * shapes.len();
         if r.remaining() != ncaps * 4 {
@@ -2598,8 +2605,12 @@ impl Vm {
         // so the restored one is charged what that one is.
         vm.reserve_capacities(&caps, ics_len, &mut budget)?;
         vm.parked_bytes = vm.tasks.iter().flatten().map(Task::buffer_bytes).sum();
-        vm.code_charge = code_charge;
-        vm.code_kept = code_kept;
+        // The code charge with the capacities reserved above, as the
+        // session that wrote the image counts its own.
+        vm.code_charge = vm.code_bytes();
+        // The debt was counted in the writer's sizes; where this target's
+        // charge is smaller, all of it is debt.
+        vm.code_kept = vm.code_charge.saturating_sub(code_debt);
         vm.heap
             .set_external_bytes(external)
             .map_err(|_| SnapError::TooLarge)?;
