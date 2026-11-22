@@ -388,7 +388,9 @@ impl Heap {
 
     /// [`Heap::read_snapshot`] of an image this process already read with
     /// it (a session template's): the same heap, admitted the same way,
-    /// without the walk that checks every `str` and intern table. Only for
+    /// without the walk that checks every `str` and intern table and
+    /// without the table that checks each listed free block is free and
+    /// listed once. Only for
     /// bytes that passed the checked read and have not changed since.
     ///
     /// # Errors
@@ -418,9 +420,9 @@ impl Heap {
         heap.kept_since_gc = kept;
         let mut avail = config.memory_limit;
         heap.words
-            .read_snapshot(r, &mut avail, |h| h & 0xFFFF != 0)?;
+            .read_snapshot(r, &mut avail, |h| h & 0xFFFF != 0, check)?;
         heap.bytes
-            .read_snapshot(r, &mut avail, |h| h & 0xFFFF == 1)?;
+            .read_snapshot(r, &mut avail, |h| h & 0xFFFF == 1, check)?;
         heap.objects = r.u32().ok_or(e)? as usize;
         heap.objects_at_gc = r.u32().ok_or(e)? as usize;
         heap.read_mark_state(r, avail)?;
@@ -854,6 +856,7 @@ impl<S: Store> Space<S> {
         input: &mut Reader<'_>,
         avail: &mut u64,
         valid: fn(u64) -> bool,
+        check: bool,
     ) -> Result<(), Error> {
         let e = Error::BadSnapshot;
         let nsegs = input.u32().ok_or(e)? as usize;
@@ -946,8 +949,10 @@ impl<S: Store> Space<S> {
                         if large {
                             return bad();
                         }
-                        free.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
-                        free.push(addr_of(idx, at));
+                        if check {
+                            free.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
+                            free.push(addr_of(idx, at));
+                        }
                         if size > 1 {
                             seg.data
                                 .load_units(run_at, stream.get(run_p * 8..(p + 1) * 8).ok_or(e)?);
@@ -1026,13 +1031,17 @@ impl<S: Store> Space<S> {
         // `seen` now holds the pending segments.
         let unswept = |a: u32| crate::space::bit(&seen, split(a).0);
         // A free block of `units` at `a` taken once: by the run, or a list.
+        // A trusted read (`check` off) takes the lists as the checked read
+        // of the same bytes found them, and keeps no table of free blocks.
         let mut listed = alloc::vec![0u64; free.len().div_ceil(64)];
         let mut take = |segs: &[crate::space::Seg<S>], a: u32| -> Option<usize> {
-            let i = free.binary_search(&a).ok()?;
-            if crate::space::bit(&listed, i) || unswept(a) {
-                return None;
+            if check {
+                let i = free.binary_search(&a).ok()?;
+                if crate::space::bit(&listed, i) || unswept(a) {
+                    return None;
+                }
+                crate::space::set_bit(&mut listed, i);
             }
-            crate::space::set_bit(&mut listed, i);
             let (s, o) = split(a);
             Some(S::units_for(header_len(segs.get(s)?.data.read(o)?)))
         };
