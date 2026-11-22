@@ -451,7 +451,7 @@ class deque:
             item = self._items[self._head + i]
             found = item is x or item == x
             if self._state != state or len(self) != n:
-                raise IndexError('deque mutated during remove().')
+                raise IndexError('deque mutated during iteration')
             if found:
                 self._state += 1
                 del self._items[self._head + i]
