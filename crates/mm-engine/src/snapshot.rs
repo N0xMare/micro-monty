@@ -2439,19 +2439,23 @@ impl Vm {
         }
         // The registry names every generator in the heap once, which the
         // walk that checks them lists in address order.
-        let mut walked = generators(
+        let walked = generators(
             &heap,
             Some((&mut codes[..], &mut bundled)),
             check,
             gens.len(),
         )?;
-        let mut listed = gens.clone();
-        listed.sort_unstable_by_key(|v| v.as_obj().map(mm_core::Ref::raw));
-        walked.sort_unstable_by_key(|v| v.as_obj().map(mm_core::Ref::raw));
-        if listed != walked {
+        // The same values, whatever their order: one sort of plain words
+        // serves both lists.
+        let sorted = |values: &[Value]| {
+            let mut bits: Vec<u64> = values.iter().map(|v| v.to_bits()).collect();
+            crate::ops::heap_sort_by(&mut bits, |a, b| a < b);
+            bits
+        };
+        if sorted(&gens) != sorted(&walked) {
             return Err(SnapError::Corrupt("generators"));
         }
-        drop((listed, walked));
+        drop(walked);
         // `HostArgs` setters cap the depth; keep the cap.
         host_args.max_depth = host_args.max_depth.min(1000);
 
