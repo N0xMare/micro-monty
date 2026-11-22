@@ -42,9 +42,9 @@ JS host (`hosts/js/test/reset.test.ts`).
   types, 613 methods, about 3.5 s in a release build [M].
 - `probes.rs`: the host both Rust tests define (typed and untyped
   functions, a class, an exception class, list, dict and record
-  constants, record defaults and a `dict_as_kwargs` function and
-  method, in the builtins and in a module), its answers and the
-  comparison. The JS test defines the same. The `dict_as_kwargs`
+  constants, record defaults, a `dict_as_kwargs` function and method
+  and tools that return the record they were sent, in the builtins and
+  in a module), its answers and the comparison. The JS test defines the same. The `dict_as_kwargs`
   definitions make the host module's code name a wrapper inside a
   function: without the host modules' exemption from the refusals
   (`Vm::writes_shared`) the definitions fail and so does every test [M].

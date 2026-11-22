@@ -105,8 +105,10 @@ pub fn modules() -> Vec<HostModule> {
                 sig("boom", Vec::new()),
                 read.clone(),
                 record("readr"),
+                record("echor"),
                 kwargs("readk"),
                 HostSignature::any("tool"),
+                HostSignature::any("echo"),
             ],
             classes: vec![class("Entry", vec![go, record("gor"), kwargs("gok")])],
             constants: vec![
@@ -135,6 +137,9 @@ fn answer(name: &str, args: &[HostValue]) -> Option<Resume> {
     Some(match name {
         "tool" if args == [HostValue::Str("stop".to_owned())] => return None,
         "rec" => Resume::Value(row()),
+        // What it was sent: a record of any name and fields a cell
+        // chooses (`echo`), or its own record default (`echor`).
+        "echo" | "echor" => Resume::Value(args.first().cloned().unwrap_or(HostValue::None)),
         "obj" => Resume::Value(HostValue::Object {
             class: "Entry".to_owned(),
             fields: vec![("path".to_owned(), HostValue::Str("p".to_owned()))],
@@ -150,7 +155,7 @@ fn answer(name: &str, args: &[HostValue]) -> Option<Resume> {
 
 /// Runs a cell: how it ended (`Type: message`, its value's repr or
 /// `stopped`), then its host calls and its output.
-fn cell(s: &mut dyn Cells, out: &Arc<Mutex<String>>, source: &str) -> (String, String) {
+pub fn cell(s: &mut dyn Cells, out: &Arc<Mutex<String>>, source: &str) -> (String, String) {
     out.lock().expect("output lock").clear();
     let mut calls = Vec::new();
     let mut p = s.start(source);

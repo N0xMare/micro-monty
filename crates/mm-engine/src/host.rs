@@ -1309,6 +1309,10 @@ impl Vm {
             key.push(self.new_str(k)?);
         }
         let key = self.alloc_tuple(&key)?;
+        // A reset drops the cache (`Vm::reset`). A record the host's
+        // definitions hold (a default) keeps its class, which no cell can
+        // reach: it goes to the host by the class's name and fields, as a
+        // record of the next class of that name does.
         let cache = self.prelude_fn("_host_records")?;
         if let Some(c) = self.dict_get(cache, key)? {
             return Ok(c);

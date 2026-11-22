@@ -604,7 +604,14 @@ impl Vm {
         };
         match kind {
             FUNC => self.build_unit_func(first, r),
-            CLASS => self.build_unit_class(name, first, r),
+            CLASS => {
+                let c = self.build_unit_class(name, first, r)?;
+                // Every reset shares it (`Vm::is_shared_class`).
+                if let Some(c) = c {
+                    self.mark_shared(c);
+                }
+                Ok(c)
+            }
             INST => {
                 let Some(class) = r.str() else {
                     return Ok(None);

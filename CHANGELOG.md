@@ -284,7 +284,13 @@ hashes are pre-release history, kept in the private archive
   subclasses cost 2,006 pages [M]. A shared class no longer lists its
   subclasses (it never changes, so it has none to invalidate): the
   next cell has a new session's room within 7 pages, and within 33
-  after 20,000 or 200,000 subclasses [M]. Host call ids and `Task-N` numbers continue, and loaded code
+  after 20,000 or 200,000 subclasses [M]. The classes made for the
+  host's records are dropped at a reset: one is kept per record name and
+  field list, so a tool that returns records a cell names (20,000
+  namedtuples echoed) left the next cell 2,526 pages of 16,307; now its
+  60 MB fit, in 14,765 pages at once after the first reset and 15,887
+  after the third, where the same cell without the echo leaves 15,996
+  [M]. Host call ids and `Task-N` numbers continue, and loaded code
   stays loaded; `reset_to` and a new session share nothing. A host whose
   cells set attributes on a typed host function (`tool.calls = 0`) now
   gets the `AttributeError`: none of the 3,487 recorded Python cells does

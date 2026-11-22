@@ -50,7 +50,7 @@ function modules(): HostModule[] {
 	return [
 		{
 			name: "",
-			functions: [typed("h"), typed("rec"), typed("obj"), typed("boom"), read, record("readr"), kwargs("readk"), anySignature("tool")],
+			functions: [typed("h"), typed("rec"), typed("obj"), typed("boom"), read, record("readr"), record("echor"), kwargs("readk"), anySignature("tool"), anySignature("echo")],
 			classes: [
 				{
 					name: "Entry",
@@ -79,6 +79,8 @@ function modules(): HostModule[] {
 function answer(name: string, args: HostValue[]): Resume | undefined {
 	if (name === "tool" && args.length === 1 && args[0] === "stop") return undefined;
 	if (name === "rec") return { kind: "value", value: row() };
+	// What it was sent: a record of any name and fields a cell chooses (`echo`), or its own record default (`echor`).
+	if (name === "echo" || name === "echor") return { kind: "value", value: args[0] ?? null };
 	if (name === "obj") return { kind: "value", value: new PyObject("Entry", new Map<string, HostValue>([["path", "p"]])) };
 	if (name === "boom") return { kind: "error", error: { kind: "RuntimeError", message: "bad", cls: "ToolError" } };
 	return { kind: "value", value: null };

@@ -741,10 +741,37 @@ impl Vm {
         flagged(self.heap.str_hash(key.as_obj()?).ok()?, name)
     }
 
+    /// Whether `c` is a class every reset shares and some other class in
+    /// the heap, collected or not, has it in its MRO. A walk of the whole
+    /// heap: for [`Vm::class_changed`]'s debug assertion only.
+    #[cfg(debug_assertions)]
+    fn shared_with_subclass(&self, c: Value) -> bool {
+        if !self.is_shared_class(c) {
+            return false;
+        }
+        let mut found = false;
+        self.heap.for_each_object(&mut |r, h| {
+            if h.type_id() != ty::CLASS || Some(r) == c.as_obj() {
+                return;
+            }
+            let mro = self.slot(r, cls::MRO);
+            found |= mro.is_obj_kind(ty::TUPLE as u8) && self.tuple_items(mro).contains(&c);
+        });
+        found
+    }
+
     /// Gives `c` and every subclass new version tags and flags (after a
     /// change to `c`'s entry `name`). The flags are recomputed only when
     /// they depend on `name`.
     pub(crate) fn class_changed(&mut self, c: Value, name: Value) {
+        // A class every reset shares lists no subclasses (`Vm::new_class`),
+        // so a change to one that has any would leave their versions and
+        // flags stale: it is written only before it has one.
+        #[cfg(debug_assertions)]
+        assert!(
+            !self.shared_with_subclass(c),
+            "a shared class changed while a subclass of it exists"
+        );
         let flags = self.flagged_key(name).is_some();
         let mut work = vec![c];
         // Versions only grow: one at least `start` was given by this walk
@@ -2595,5 +2622,49 @@ impl Vm {
             outer: Cont::None,
         });
         Ok(Value::UNDEFINED)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, reason = "tests")]
+    use super::*;
+    use crate::vm::VmConfig;
+
+    /// A class marked as one every reset shares, made here, and a name
+    /// to write on it.
+    fn shared_class(vm: &mut Vm) -> (Value, Value) {
+        let name = vm.intern("Shared").expect("name");
+        let ns = vm.new_dict().expect("namespace");
+        let c = vm.new_class(name, &[], ns).expect("class");
+        vm.mark_shared(c);
+        assert!(vm.is_shared_class(c));
+        (c, vm.intern("x").expect("name"))
+    }
+
+    /// A shared class lists no subclasses, so a write to one that has a
+    /// subclass would leave it stale: debug builds fail on it.
+    #[test]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "a shared class changed while a subclass of it exists")
+    )]
+    fn a_write_to_a_shared_class_with_a_subclass_fails_in_debug_builds() {
+        let mut vm = Vm::new(VmConfig::default()).expect("vm");
+        let (c, x) = shared_class(&mut vm);
+        let sub = vm.intern("Sub").expect("name");
+        let ns = vm.new_dict().expect("namespace");
+        let s = vm.new_class(sub, &[c], ns).expect("subclass");
+        assert_eq!(vm.list_len(vm.vslot(c, cls::SUBS)), 0);
+        assert!(Vm::is_class(s));
+        let _ = vm.class_setattr(c, x, Value::TRUE);
+    }
+
+    /// Before it has a subclass, it is written as any class.
+    #[test]
+    fn a_shared_class_without_a_subclass_is_written() {
+        let mut vm = Vm::new(VmConfig::default()).expect("vm");
+        let (c, x) = shared_class(&mut vm);
+        vm.class_setattr(c, x, Value::TRUE).expect("written");
     }
 }

@@ -1630,8 +1630,10 @@ impl Vm {
         // The limit `sys.set_int_max_str_digits` set goes back to what the
         // prelude's unit binds, in place and allocating nothing. The
         // builtins module's constants that a cell can change in place are
-        // unbound, and built again below. The record classes stay: guest
-        // code cannot change them.
+        // unbound, and built again below. The cache of the host's record
+        // classes is unbound too, without a look at what it holds (a cell
+        // makes as many classes as the host echoes names): the next
+        // record builds it again from its unit (`Vm::record_class`).
         let pg = self.prelude_globals;
         let digits = Value::int(crate::intops::MAX_STR_DIGITS as i64).unwrap_or(Value::NONE);
         for (name, v) in [
@@ -1646,6 +1648,9 @@ impl Vm {
             {
                 let _ = self.dict_set(pg, k, v);
             }
+        }
+        if let Some(k) = self.find_interned("_host_records") {
+            let _ = self.dict_del(pg, k);
         }
         self.drop_builtin_constants();
         // Released without allocating (`Heap::idle`): the reruns below may

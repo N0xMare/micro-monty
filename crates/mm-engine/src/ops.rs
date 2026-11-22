@@ -3726,20 +3726,25 @@ impl Vm {
         Ok(())
     }
 
-    /// Whether class `c` is one every reset shares: a host definition's
-    /// (marked, [`Vm::share_host_def`]) or one the prelude's globals bind
-    /// (`__module__ == '__main__'` is the user's at once).
-    #[cfg_attr(mm_shipped, optimize(size))]
+    /// Whether class `c` is one every reset shares: it carries the mark,
+    /// set when a host definition makes it ([`Vm::share_host_def`]), when
+    /// a host record's class is made (`Vm::record_class`) and when the
+    /// prelude's unit builds it (`Vm::build_unit`).
+    #[inline]
     pub(crate) fn is_shared_class(&self, c: Value) -> bool {
-        if self.is_marked_shared(c) {
-            return true;
-        }
-        let module = self
-            .find_interned("__module__")
-            .and_then(|k| self.dict_lookup_str(self.vslot(c, crate::class::cls::DICT), k));
-        if module.is_some_and(|m| Vm::is_str(m) && self.str_ref(m) == "__main__") {
-            return false;
-        }
+        let shared = self.is_marked_shared(c);
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            shared || !self.prelude_binds_class(c),
+            "a class the prelude's globals bind is not marked shared"
+        );
+        shared
+    }
+
+    /// Whether the prelude's globals bind class `c`: a scan of them, for
+    /// [`Vm::is_shared_class`]'s debug assertion only.
+    #[cfg(debug_assertions)]
+    fn prelude_binds_class(&self, c: Value) -> bool {
         let pg = self.prelude_globals;
         (0..u32::try_from(self.dict_used(pg)).unwrap_or(u32::MAX))
             .any(|e| self.dict_entry_at(pg, e).is_some_and(|(_, v)| v == c))

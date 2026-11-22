@@ -287,7 +287,8 @@ evaluated, matching deferred annotations).
     classes made for the host's records, `HostValue::Record`: a
     namedtuple class is writable in CPython, but a record a host function
     keeps as a default goes back to the host by its class's name and
-    `_fields`). Setting or deleting an attribute, also through `setattr`,
+    `_fields`; a reset drops the classes, so a record after it is of a
+    new class of that name, as in a new session). Setting or deleting an attribute, also through `setattr`,
     `object.__setattr__` or `type.__setattr__`, raises CPython's error
     for a builtin function (`AttributeError: 'builtin_function_or_method'
     object has no attribute 'x' and no __dict__ for setting new

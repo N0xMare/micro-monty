@@ -1830,6 +1830,8 @@ differs:
   in CPython; wrap a host function in your own to keep state beside it.
   The class of a record from the host (a named tuple) refuses them too,
   which CPython's namedtuple classes do not: subclass it to add to it.
+  A reset drops the record classes; the next record of a name gets a new
+  one, as in a new session.
   A reset builds the builtins module's list, dict and record constants
   again, so a cell's change to one in place does not last, and forgets
   the loop `asyncio.set_event_loop` set. A stdlib method called through

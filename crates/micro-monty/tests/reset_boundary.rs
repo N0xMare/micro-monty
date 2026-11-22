@@ -107,3 +107,43 @@ fn the_walk_reaches_and_marks_what_a_cell_can_write() {
         assert!(found.contains(path), "{path}: {found}");
     }
 }
+
+/// A shared class lists no subclasses, so nothing may write one that has
+/// a subclass (debug builds fail on such a write, `Vm::class_changed`). A
+/// second `define` in a session that holds subclasses of the first one's
+/// classes makes new classes and leaves the old ones as they were.
+#[test]
+fn a_second_define_leaves_the_subclasses_of_the_old_classes_working() {
+    let out = Arc::new(Mutex::new(String::new()));
+    let limits = Limits::new().with_memory(64 << 20);
+    let engine = Engine::new(EngineConfig::new().with_limits(limits));
+    let mut session = Session::new(&engine).expect("session");
+    for module in probes::modules() {
+        session.define(&module).expect("defined");
+    }
+    let mut s = Native { engine, session };
+    let (made, _) = probes::cell(
+        &mut s,
+        &out,
+        "class Sub(Entry):\n    def go(self, n=5):\n        return ('sub', n)\n\
+         class SubE(ToolError): pass\n\
+         class SubR(type(CONFR)): pass\n\
+         old = (Entry, ToolError, type(CONFR))\n\
+         s = Sub('p')\n\
+         [s.go(), s.path]",
+    );
+    assert_eq!(made, "[('sub', 5), 'p']");
+    for module in probes::modules() {
+        s.session.define(&module).expect("defined again");
+    }
+    let (after, _) = probes::cell(
+        &mut s,
+        &out,
+        "[s.go(), Sub('q').path, Sub.__mro__[1] is old[0], Entry is old[0], ToolError is old[1], \
+         isinstance(obj(), Entry), isinstance(obj(), old[0]), SubE('m').args, SubR((1,)).a]",
+    );
+    assert_eq!(
+        after,
+        "[('sub', 5), 'q', True, False, False, True, False, ('m',), 1]"
+    );
+}

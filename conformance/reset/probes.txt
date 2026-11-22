@@ -762,6 +762,30 @@ Entry.gok.__name__ = 'evil'
 ---
 [Entry.gok.__name__, Entry.gok.__qualname__, readk.__qualname__]
 
+=== record classes through an echoing host tool: memory
+>>> 20000
+import collections
+for i in range(20000):
+    T = collections.namedtuple('N%d' % i, 'a')
+    echo(T(1))
+i + 1
+---
+len([bytearray(1_000_000) for _ in range(60)])
+
+=== record classes through an echoing host tool: the definitions' classes
+>>> [True, True, True, True, 'Row', 'Evil']
+import collections
+R = collections.namedtuple('Row', 'a')
+E = collections.namedtuple('Evil', 'a')
+r, e = echo(R(5)), echo(E(5))
+[type(r) is type(CONFR), type(r) is type(rec()), type(echor()) is type(r), type(r) is not R, type(r).__name__, type(e).__name__]
+---
+import collections
+E = collections.namedtuple('Evil', 'a')
+e = echo(E(2))
+d = echor()
+[type(d) is type(rec()), type(CONFR) is type(rec()), isinstance(d, type(CONFR)), isinstance(rec(), type(d)), type(e) is type(echo(e)), type(e) is not type(d), repr(e), repr(d), d == rec()]
+
 === the reset walk
 @walk mark
 ---
