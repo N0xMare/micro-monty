@@ -3045,6 +3045,9 @@ def _count(n):
         i += 1
 _ticks = _count(100)
 next(_ticks)
+sys.set_int_max_str_digits(5000)
+_v = [sys.version_info, sys.flags, CONF, repr([1, [2]])]
+CONF.append(1)
 ";
 
 /// Cells that leave behind what a reset keeps counting or keeps: host call
@@ -3180,7 +3183,8 @@ fn run_cell(s: &mut Session, e: &Engine, out: &Arc<Mutex<String>>, src: &str, ru
 fn reset_to_a_template_is_a_fresh_session_and_its_setup() {
     let engine =
         Engine::new(EngineConfig::default().with_limits(Limits::new().with_memory(3 << 20)));
-    let tools = HostModule::untyped("", &["tool"]);
+    let mut tools = HostModule::untyped("", &["tool"]);
+    tools.constants = vec![("CONF".to_owned(), HostValue::List(vec![HostValue::Int(1)]))];
     let setup = |s: &mut Session, out: &Arc<Mutex<String>>| {
         s.define(&tools).expect("defines");
         run_cell(s, &engine, out, SETUP, Run::Plain)
@@ -3310,7 +3314,8 @@ tool(iter(()))
 ";
     let engine =
         Engine::new(EngineConfig::default().with_limits(Limits::new().with_memory(3 << 20)));
-    let tools = HostModule::untyped("", &["tool"]);
+    let mut tools = HostModule::untyped("", &["tool"]);
+    tools.constants = vec![("CONF".to_owned(), HostValue::List(vec![HostValue::Int(1)]))];
     // The template's host side differs from the sessions'.
     let theirs = Arc::new(Mutex::new(String::new()));
     let mut settings = SessionSettings::default();

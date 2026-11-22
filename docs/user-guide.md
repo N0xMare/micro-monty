@@ -117,11 +117,25 @@ entropy, so the driving loop above is the whole integration.
   user `__repr__` runs. `start` cancels a cell that is still stopped.
 - **Reset.** `Session::reset()` clears globals and imported modules, also
   when they fill the memory limit with live data. Host
-  functions and host modules stay. It gives back the memory earlier cells
-  committed and no longer use, so after a cell that filled the heap the
-  session has the room a new one with the same imports has, and an intern
-  table grown for names the cells no longer hold is replaced by a small
-  one. `set_module_dunders` sets `__name__` and
+  functions and host modules stay. It is a boundary: the next cell reports
+  what it reports in a new session with the same definitions, as nothing a
+  cell can change is shared across it ("Other differences from CPython":
+  the stdlib's and the host's functions and classes are read-only). Two
+  things a cell can see continue, host call ids and `Task-N` numbers, and
+  code loaded for earlier cells stays loaded, so an import charges less
+  fuel the second time; `reset_to` a template or a new session shares
+  nothing at all. It gives back the memory earlier cells
+  committed and no longer use, and an intern table grown for names the
+  cells no longer hold is replaced by a small one, so after a cell that
+  filled the heap the session has nearly the room a new one has, and the
+  same after each further reset; the code of the modules earlier cells
+  imported stays loaded (above) and takes room of its own. At a 64 MiB
+  limit the largest `bytearray` that fits was 16,305 pages of 4 KiB in a
+  new session; after cells that filled the heap with a deep copy of
+  100,000 lists, stdlib imports with their defaults written, 20,000
+  echoed records, interned names or 20,000 classes it was 16,094 to
+  16,288 after one reset (at most 1.3% less), and the same after two and
+  three \[M\]. `set_module_dunders` sets `__name__` and
   `__file__` (a new session runs as `__main__`).
 - **Errors.** `CompileError` (a `SyntaxError`, including "micro-monty does not
   support X", or a `RecursionError` for nesting too deep) carries the line,
@@ -1799,14 +1813,23 @@ differs:
 
 ### Other differences from CPython
 
-- **Stdlib functions and classes are read-only.** Setting or deleting an
-  attribute of a function or class defined by the engine's own stdlib code
-  (`asyncio.Lock.x = 1`, `json.dumps.cache = {}`, `del asyncio.Queue.put`)
-  raises CPython's error for a builtin function or an immutable type,
-  where CPython allows it for its Python-level stdlib objects: these
-  objects are shared by every reset of a session, so a change would reach
-  the next cell. Instances, subclasses and module attributes
-  (`json.dumps = my_dumps`, gone after a reset) work as in CPython.
+- **Stdlib and host functions and classes are read-only.** Setting or
+  deleting an attribute of a function or class defined by the engine's own
+  stdlib code (`asyncio.Lock.x = 1`, `json.dumps.cache = {}`,
+  `del asyncio.Queue.put`) or by the host (`Session::define`: a typed host
+  function, a host class or host exception class, their methods:
+  `fetch.calls = 0`, `Entry.__repr__ = f`) raises CPython's error for a
+  builtin function or an immutable type, where CPython allows it for
+  Python-level objects: these objects are shared by every reset of a
+  session, so a change would reach the next cell. For the same reason a
+  host function has no `__defaults__`, `__kwdefaults__` or `__dict__`, a
+  stdlib function's `__kwdefaults__` and a class's `__annotations__` are
+  copies, and `sys.version_info` and the other `sys` struct sequences
+  refuse attribute writes, as CPython's do. Instances, subclasses and
+  module attributes (`json.dumps = my_dumps`, gone after a reset) work as
+  in CPython; wrap a host function in your own to keep state beside it.
+  A reset builds the builtins module's list, dict and record constants
+  again, so a cell's change to one in place does not last.
 
 - **Sorting.** `sorted` and `list.sort` are a stable merge sort that calls
   only `<`. For a total order the result is CPython's, but `__lt__` is

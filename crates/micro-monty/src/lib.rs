@@ -2344,9 +2344,14 @@ impl Session {
 
     /// Cancels any stopped cell and clears globals and imported modules.
     /// Unreachable user code is reclaimed; host functions and host modules stay.
-    /// The old globals and modules are emptied in place, so an object that
-    /// outlives the reset (such as one kept on a host function's attribute)
-    /// sees them empty.
+    /// A boundary for the program: the next cell reports what it reports in
+    /// a new session with the same host definitions. Nothing guest code can
+    /// change is shared across it (the stdlib's and the host's functions
+    /// and classes refuse attribute writes); the recursion limit and the
+    /// int-to-str digit limit are restored, the builtins module's
+    /// constants that are not scalars are built again from the host's
+    /// definition, and the classes of the host's records are dropped. Host
+    /// call ids and task numbers continue.
     /// The session also keeps what it loaded for earlier cells: the bundled
     /// modules' code and the prelude's parts, charged to its memory limit,
     /// so importing a module again after a reset charges less fuel than its
@@ -2358,7 +2363,8 @@ impl Session {
     /// # Errors
     ///
     /// A `MemoryError` if the heap is full even after the old globals were
-    /// released. The session is reset all the same; only `__name__` is unset.
+    /// released. The session is reset all the same; `__name__` is unset, or
+    /// the builtins module's constants that did not fit again are.
     pub fn reset(&mut self) -> Result<(), PyException> {
         self.guarded(|s| {
             s.drop_stop();

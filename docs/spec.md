@@ -275,16 +275,48 @@ evaluated, matching deferred annotations).
   `|=`) raises `TypeError`, so code that relies on writing through
   `globals()` is refused rather than silently diverging
   (`conformance/own/373`). There is no writable `globals()` or `locals()`.
-- Functions and classes the prelude defines (the native modules' Python
-  parts: `asyncio.Lock`, `asyncio.Future`, `json.dumps`, `sys.exit`, ...)
-  are shared by every reset of a session, so guest code cannot set or
-  delete their attributes, nor reach a function's `__dict__`: it gets
-  CPython's error for a builtin function (`AttributeError`) or an immutable
-  type (`TypeError`). CPython allows it for its Python-level stdlib objects.
+- A reset is a boundary: nothing a cell does reaches the cells after
+  `Session::reset`, which report what they report in a new session with
+  the same host definitions. What every reset of a session shares is
+  therefore read-only to guest code, where CPython lets its Python-level
+  objects be changed:
+  - the functions and classes the prelude defines (the native modules'
+    Python parts: `asyncio.Lock`, `asyncio.Future`, `json.dumps`,
+    `sys.exit`, ...) and the host's definitions (typed host functions,
+    host classes and host exception classes, with their methods). Setting
+    or deleting an attribute, also through `setattr`,
+    `object.__setattr__` or `type.__setattr__`, raises CPython's error
+    for a builtin function (`AttributeError: 'builtin_function_or_method'
+    object has no attribute 'x' and no __dict__ for setting new
+    attributes`) or an immutable type (`TypeError: cannot set 'x'
+    attribute of immutable type 'Entry'`), the same for a deletion. A
+    function's `__dict__` raises `AttributeError`; a host definition's
+    `__defaults__` and `__kwdefaults__` do too, as a builtin function's,
+    and a prelude function's `__kwdefaults__` is a copy; a class's
+    `__dict__` and `__annotations__` are copies. An untyped host function
+    refuses attributes as before.
+  - `sys`'s struct sequences (`version_info`, `float_info`, `hash_info`,
+    `flags`, `int_info`) refuse attribute writes with CPython's errors
+    (`readonly attribute` for a field, `... has no attribute 'x' and no
+    __dict__ for setting new attributes` otherwise) and have no
+    `__dict__`.
+
   Their instances, subclasses and the modules' own attributes
-  (`json.dumps = f`) stay writable, as do a typed host function's
-  attributes, which outlive a reset with the function; a reset drops the modules, so the next
-  import has the originals. `reset` also restores the recursion limit.
+  (`json.dumps = f`) stay writable: a reset drops the modules, so the next
+  import has the originals. A reset also restores the recursion limit and
+  the limit `sys.set_int_max_str_digits` set, builds the builtins
+  module's constants that are not scalars again from the host's
+  definition (a list or dict a cell changed in place, a record), and
+  drops the classes made for the host's records (`HostValue::Record`),
+  which are the program's to change. What a reset keeps counting is not
+  program state: host call ids and `Task-N` numbers continue, the entropy
+  source goes on, and code loaded for earlier cells stays loaded (an
+  import charges less fuel the second time). `Session::reset_to` and a new
+  session share nothing with the cells before. Checked by
+  `conformance/reset`: probes, and a walk that writes to everything a cell
+  can reach by attribute and item from the builtins, the host's
+  definitions and every importable module, then looks for the writes
+  after a reset; on the native facade and both mm-wasm hosts.
 - A cell ended where it stood (cancelled, replaced by the next cell or
   reset while stopped or parked) inside a container's `repr` leaves no
   container marked as being rendered.

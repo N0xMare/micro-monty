@@ -140,6 +140,21 @@ pub enum HostValue {
 }
 
 impl HostValue {
+    /// A value with no container or instance in it: what Python gets for
+    /// it is immutable, so cells can share one.
+    fn is_scalar(&self) -> bool {
+        matches!(
+            self,
+            Self::None
+                | Self::Bool(_)
+                | Self::Int(_)
+                | Self::BigInt(_)
+                | Self::Float(_)
+                | Self::Str(_)
+                | Self::Bytes(_)
+        )
+    }
+
     /// Owned buffers after cloning, whose capacities equal their lengths.
     /// Check depth before the derived Clone can recurse on the Rust stack.
     fn clone_bytes(&self, depth: u32, max_depth: &mut u32) -> Option<u64> {
@@ -1479,8 +1494,88 @@ impl Vm {
         }
         for (k, v) in self.dict_items_vec(made) {
             self.dict_set(defs, k, v)?;
+            self.share_host_def(v);
         }
         Ok(())
+    }
+
+    /// Marks host definition `v` (a typed host function, a host class or a
+    /// host exception class) as shared by every reset of the session, with
+    /// the functions `_mm.signature` made for a class's methods, plain or
+    /// wrapped: guest code cannot change them
+    /// ([`Vm::refuse_shared_change`]). The mark is a header flag, so an
+    /// image holds it. The other functions of a class are known by their
+    /// code ([`Vm::is_host_fn`]).
+    #[cfg_attr(mm_shipped, optimize(size))]
+    fn share_host_def(&mut self, v: Value) {
+        if v.is_obj_kind(ty::FUNC as u8) {
+            self.mark_shared(v);
+        }
+        if !Vm::is_class(v) {
+            return;
+        }
+        self.mark_shared(v);
+        let d = self.vslot(v, crate::class::cls::DICT);
+        for (_, m) in self.dict_items_vec(d) {
+            let wrapped = m.is_obj_kind(ty::CLASSMETHOD as u8)
+                || m.is_obj_kind(ty::STATICMETHOD as u8)
+                || m.is_obj_kind(ty::PROPERTY as u8);
+            let f = if wrapped { self.vslot(m, 0) } else { m };
+            if f.is_obj_kind(ty::FUNC as u8) {
+                self.mark_shared(f);
+            }
+        }
+    }
+
+    /// Sets the shared mark on engine object `v` (a function, a class or
+    /// an instance), keeping its other flags.
+    pub(crate) fn mark_shared(&mut self, v: Value) {
+        if let Some(r) = v.as_obj()
+            && let Ok(h) = self.heap.header(r)
+        {
+            let _ = self.heap.set_flags(
+                r,
+                (h.flags() & !mm_core::flags::CORE) | mm_core::flags::FROZEN,
+            );
+        }
+    }
+
+    /// Builds the builtins module's constants again, those that hold more
+    /// than a scalar: a list or dict a cell changed in place, or a record
+    /// whose class a cell changed, would reach the cells after a `reset`.
+    /// [`Vm::drop_builtin_constants`] unbound them.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub(crate) fn rebuild_builtin_constants(&mut self) -> Result<(), Raised> {
+        let Some(m) = self.host_modules.iter().find(|m| m.name.is_empty()) else {
+            return Ok(());
+        };
+        let m = Arc::clone(m);
+        let b = self.builtins;
+        for (k, h) in m.constants.iter().filter(|(_, h)| !h.is_scalar()) {
+            let k = self.intern(k)?;
+            // A rerun after a collection skips those already built.
+            if self.dict_get_str(b, k).is_none() {
+                let v = self.py_value(h)?;
+                self.dict_set(b, k, v)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Unbinds the constants [`Vm::rebuild_builtin_constants`] builds
+    /// again, allocating nothing.
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub(crate) fn drop_builtin_constants(&mut self) {
+        let Some(m) = self.host_modules.iter().find(|m| m.name.is_empty()) else {
+            return;
+        };
+        let m = Arc::clone(m);
+        let b = self.builtins;
+        for (k, _) in m.constants.iter().filter(|(_, h)| !h.is_scalar()) {
+            if let Some(k) = self.find_interned(k) {
+                let _ = self.dict_del(b, k);
+            }
+        }
     }
 
     /// Whether `other` defines the same host modules, by name, functions,

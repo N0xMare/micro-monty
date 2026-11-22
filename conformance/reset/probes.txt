@@ -1,0 +1,486 @@
+# Reset probes (README.md here). Each probe is a cell A, a `reset()` and a
+# cell B: B must report what it reports in a new session with the same host
+# definitions (its value or error, its output and its host calls).
+#
+#   === label          B after A and a reset equals B in a new session
+#   !== label          a documented difference: B must differ
+#   >>> Type: message  what A must end in (CPython's error for a refusal)
+#   ---                ends A, starts B
+#   @walk mark|check   walk.py with that MODE
+
+=== typed host function: attribute
+>>> AttributeError: 'builtin_function_or_method' object has no attribute 'leak' and no __dict__ for setting new attributes
+h.leak = 'secret'
+---
+getattr(h, 'leak', None)
+
+=== typed host function: setattr
+>>> AttributeError: 'builtin_function_or_method' object has no attribute 'leak' and no __dict__ for setting new attributes
+setattr(h, 'leak', 'secret')
+---
+getattr(h, 'leak', None)
+
+=== typed host function: object.__setattr__
+>>> AttributeError: 'builtin_function_or_method' object has no attribute 'leak' and no __dict__ for setting new attributes
+object.__setattr__(h, 'leak', 'secret')
+---
+getattr(h, 'leak', None)
+
+=== typed host function: delete
+>>> AttributeError: 'builtin_function_or_method' object has no attribute '__doc__' and no __dict__ for setting new attributes
+del h.__doc__
+---
+h.__doc__
+
+=== typed host function: __dict__
+>>> AttributeError: 'function' object has no attribute '__dict__'
+h.__dict__['leak'] = 'secret'
+---
+getattr(h, 'leak', None)
+
+=== typed host function: __name__
+>>> AttributeError: 'builtin_function_or_method' object has no attribute '__name__' and no __dict__ for setting new attributes
+h.__name__ = 'evil'
+---
+h.__name__
+
+=== typed host function: __doc__
+h.__doc__ = 'evil'
+---
+h.__doc__
+
+=== typed host function: __defaults__ replaced
+>>> AttributeError: 'builtin_function_or_method' object has no attribute '__defaults__' and no __dict__ for setting new attributes
+read.__defaults__ = (['/etc/shadow'],)
+---
+read()
+
+=== typed host function: __defaults__ read
+>>> AttributeError: 'function' object has no attribute '__defaults__'
+read.__defaults__[0].append('/etc/shadow')
+---
+read()
+
+=== typed host function: __kwdefaults__ read
+>>> AttributeError: 'function' object has no attribute '__kwdefaults__'
+read.__kwdefaults__['limit'] = 99
+---
+read()
+
+=== typed host function: __kwdefaults__ replaced
+read.__kwdefaults__ = {'limit': 99}
+---
+read()
+
+=== typed host function: __wrapped__
+h.__wrapped__ = len
+---
+getattr(h, '__wrapped__', None)
+
+=== typed host function in a module
+import fs
+fs.read.leak = 'secret'
+---
+import fs
+getattr(fs.read, 'leak', None)
+
+=== untyped host function
+>>> AttributeError: micro-monty does not support setting function attributes ('leak')
+tool.leak = 'secret'
+---
+getattr(tool, 'leak', None)
+
+=== host module: attribute
+import fs
+fs.leak = 'secret'
+---
+import fs
+getattr(fs, 'leak', None)
+
+=== host module: function replaced
+import fs
+fs.read = len
+---
+import fs
+fs.read is len
+
+=== host module: constant changed in place
+import fs
+fs.ROOTS.append('secret')
+---
+import fs
+fs.ROOTS
+
+=== builtins constant: list changed in place
+CONF.append('secret')
+---
+CONF
+
+=== builtins constant: dict changed in place
+CONFD['leak'] = 'secret'
+---
+CONFD
+
+=== builtins constant: nested list changed in place
+CONFD['a'].append('secret')
+---
+CONFD
+
+=== builtins constant: record class changed
+type(CONFR).leak = 'secret'
+type(CONFR).__repr__ = lambda self: 'hijacked'
+---
+[getattr(type(CONFR), 'leak', None), repr(CONFR)]
+
+=== host class: attribute
+>>> TypeError: cannot set 'leak' attribute of immutable type 'Entry'
+Entry.leak = 'secret'
+---
+getattr(Entry, 'leak', None)
+
+=== host class: method replaced
+>>> TypeError: cannot set '__repr__' attribute of immutable type 'Entry'
+def steal(self):
+    tool(globals().get('secret'))
+    return 'Entry()'
+Entry.__repr__ = steal
+---
+secret = 'B-token'
+print(obj())
+
+=== host class: method deleted
+>>> TypeError: cannot set 'go' attribute of immutable type 'Entry'
+del Entry.go
+---
+hasattr(Entry, 'go')
+
+=== host class: type.__setattr__
+>>> TypeError: cannot set 'leak' attribute of immutable type 'Entry'
+type.__setattr__(Entry, 'leak', 'secret')
+---
+getattr(Entry, 'leak', None)
+
+=== host class: through an instance
+>>> TypeError: cannot set 'leak' attribute of immutable type 'Entry'
+type(obj()).leak = 'secret'
+---
+getattr(type(obj()), 'leak', None)
+
+=== host class: method attribute
+>>> AttributeError: 'builtin_function_or_method' object has no attribute 'leak' and no __dict__ for setting new attributes
+Entry.go.leak = 'secret'
+---
+getattr(Entry.go, 'leak', None)
+
+=== host class: method defaults
+>>> AttributeError: 'builtin_function_or_method' object has no attribute '__defaults__' and no __dict__ for setting new attributes
+Entry.go.__defaults__ = (99,)
+---
+obj().go()
+
+=== host class: __new__ and property attributes
+for f in (Entry.__new__, Entry.__repr__, Entry.__setattr__):
+    try:
+        f.leak = 'secret'
+    except AttributeError:
+        pass
+---
+[getattr(f, 'leak', None) for f in (Entry.__new__, Entry.__repr__, Entry.__setattr__)]
+
+=== host class: __annotations__
+Entry.__annotations__['leak'] = 'secret'
+---
+Entry.__annotations__
+
+=== host class: __dict__ and vars
+Entry.__dict__['leak'] = 1
+vars(Entry)['leak'] = 1
+---
+[getattr(Entry, 'leak', None), 'leak' in Entry.__dict__]
+
+=== host class: __name__ and __qualname__
+>>> TypeError: cannot set '__name__' attribute of immutable type 'Entry'
+Entry.__name__ = 'Evil'
+---
+[Entry.__name__, Entry.__qualname__, repr(obj())]
+
+=== host class in a module
+>>> TypeError: cannot set 'leak' attribute of immutable type 'Node'
+import fs
+fs.Node.leak = 'secret'
+---
+import fs
+getattr(fs.Node, 'leak', None)
+
+=== host exception class: attribute
+>>> TypeError: cannot set 'leak' attribute of immutable type 'ToolError'
+ToolError.leak = 'secret'
+---
+getattr(ToolError, 'leak', None)
+
+=== host exception class: method replaced
+>>> TypeError: cannot set '__str__' attribute of immutable type 'ToolError'
+def steal(self):
+    tool(globals().get('secret'))
+    return 'x'
+ToolError.__str__ = steal
+---
+secret = 'B-token'
+try:
+    boom()
+except ToolError as e:
+    print(e)
+
+=== host exception class in a module
+>>> TypeError: cannot set 'leak' attribute of immutable type 'FsError'
+import fs
+fs.FsError.leak = 'secret'
+---
+import fs
+getattr(fs.FsError, 'leak', None)
+
+=== record class: attribute
+type(rec()).leak = 'secret'
+---
+getattr(type(rec()), 'leak', None)
+
+=== record class: method replaced
+def steal(self):
+    tool(globals().get('secret'))
+    return 'Row()'
+type(rec()).__repr__ = steal
+---
+secret = 'B-token'
+print(rec())
+
+=== builtin types
+>>> TypeError: cannot set 'leak' attribute of immutable type 'int'
+int.leak = 1
+---
+getattr(int, 'leak', None)
+
+=== exception types
+>>> TypeError: cannot set 'leak' attribute of immutable type 'ValueError'
+ValueError.leak = 1
+---
+getattr(ValueError, 'leak', None)
+
+=== the MemoryError singleton
+try:
+    x = [0] * (1 << 40)
+except MemoryError as e:
+    e.leak = 'secret'
+    e.add_note('secret note')
+---
+try:
+    x = [0] * (1 << 40)
+except MemoryError as e:
+    r = (getattr(e, 'leak', None), getattr(e, '__notes__', None))
+r
+
+=== sys.set_int_max_str_digits
+import sys
+sys.set_int_max_str_digits(640)
+---
+import sys
+try:
+    r = len(str(10 ** 1000))
+except ValueError:
+    r = 'ValueError'
+[r, sys.get_int_max_str_digits(), sys.flags.int_max_str_digits]
+
+=== sys.setrecursionlimit
+import sys
+sys.setrecursionlimit(77)
+---
+import sys
+sys.getrecursionlimit()
+
+=== sys struct sequence: new attribute
+>>> AttributeError: 'sys.version_info' object has no attribute 'leak' and no __dict__ for setting new attributes
+import sys
+sys.version_info.leak = 1
+---
+import sys
+getattr(sys.version_info, 'leak', None)
+
+=== sys struct sequence: field
+>>> AttributeError: readonly attribute
+import sys
+sys.version_info.major = 2
+---
+import sys
+sys.version_info.major
+
+=== sys struct sequence: its tuple
+>>> AttributeError: 'sys.version_info' object has no attribute '_t' and no __dict__ for setting new attributes
+import sys
+sys.version_info._t = (2, 7, 18, 'final', 0)
+---
+import sys
+[sys.version_info.major, sys.version_info >= (3, 8)]
+
+=== sys struct sequence: object.__setattr__
+>>> AttributeError: 'sys.version_info' object has no attribute '_t' and no __dict__ for setting new attributes
+import sys
+object.__setattr__(sys.version_info, '_t', (2, 7, 18, 'final', 0))
+---
+import sys
+[sys.version_info.major, sys.version_info >= (3, 8)]
+
+=== sys struct sequence: __dict__
+>>> AttributeError: 'sys.float_info' object has no attribute '__dict__'
+import sys
+sys.float_info.__dict__['_t'] = ()
+---
+import sys
+sys.float_info.dig
+
+=== sys struct sequence: delete
+>>> AttributeError: readonly attribute
+import sys
+del sys.hash_info.width
+---
+import sys
+sys.hash_info.width
+
+=== sys struct sequence: delete its tuple
+>>> AttributeError: 'sys.version_info' object has no attribute '_t' and no __dict__ for setting new attributes
+import sys
+del sys.version_info._t
+---
+import sys
+[sys.version_info.major, sys.version_info >= (3, 8)]
+
+=== sys struct sequence: object.__delattr__
+>>> AttributeError: 'sys.version_info' object has no attribute '_t' and no __dict__ for setting new attributes
+import sys
+object.__delattr__(sys.version_info, '_t')
+---
+import sys
+[sys.version_info.major, sys.version_info >= (3, 8)]
+
+=== sys struct sequence: delattr
+>>> AttributeError: 'sys.int_info' object has no attribute '_f' and no __dict__ for setting new attributes
+import sys
+delattr(sys.int_info, '_f')
+---
+import sys
+sys.int_info.bits_per_digit
+
+=== sys struct sequence: its class
+>>> TypeError: cannot set '__getitem__' attribute of immutable type 'structseq'
+import sys
+type(sys.version_info).__getitem__ = lambda self, i: 2
+---
+import sys
+sys.version_info[0]
+
+=== sys module attributes
+import sys
+sys.leak = 1
+sys.path.append('leak')
+sys.argv.append('leak')
+---
+import sys
+[getattr(sys, 'leak', None), sys.path, sys.argv]
+
+=== stdlib function: attribute
+>>> AttributeError: 'builtin_function_or_method' object has no attribute 'leak' and no __dict__ for setting new attributes
+import json
+json.dumps.leak = 1
+---
+import json
+getattr(json.dumps, 'leak', None)
+
+=== stdlib function: __kwdefaults__ changed in place
+import json
+json.dumps.__kwdefaults__['sort_keys'] = True
+json.dumps.__kwdefaults__['indent'] = 1
+---
+import json
+json.dumps({'b': 1, 'a': 2})
+
+=== stdlib function: __kwdefaults__ replaced
+>>> AttributeError: 'builtin_function_or_method' object has no attribute '__kwdefaults__' and no __dict__ for setting new attributes
+import json
+json.dumps.__kwdefaults__ = {'sort_keys': True}
+---
+import json
+json.dumps({'b': 1, 'a': 2})
+
+=== stdlib class: attribute
+>>> TypeError: cannot set 'leak' attribute of immutable type 'Lock'
+import asyncio
+asyncio.Lock.leak = 1
+---
+import asyncio
+hasattr(asyncio.Lock, 'leak')
+
+=== stdlib class: __annotations__
+import asyncio
+asyncio.Lock.__annotations__['leak'] = 1
+---
+import asyncio
+asyncio.Lock.__annotations__
+
+=== stdlib class: __dict__
+import asyncio
+vars(asyncio.Lock)['leak'] = 1
+---
+import asyncio
+hasattr(asyncio.Lock, 'leak')
+
+=== stdlib module attribute
+import json
+json.dumps = len
+json.leak = 1
+---
+import json
+[json.dumps([1, 2]), getattr(json, 'leak', None)]
+
+=== gc, decimal and random seed
+import gc, decimal, random
+gc.disable()
+decimal.getcontext().prec = 5
+random.seed(7)
+---
+import gc, decimal, random
+random.seed(7)
+[gc.isenabled(), decimal.getcontext().prec, random.random()]
+
+=== globals
+x = 'A'
+def f():
+    return x
+---
+[sorted(k for k in globals() if not k.startswith('__')), __name__]
+
+=== a cell cancelled inside repr
+class Spin:
+    def __repr__(self):
+        tool('stop')
+        return 'x'
+big = [Spin(), 1]
+repr(big)
+---
+x = [1, [2]]
+repr(x)
+
+=== the reset walk
+@walk mark
+---
+@walk check
+
+!== task numbers continue
+import asyncio
+async def m():
+    return [await asyncio.create_task(asyncio.sleep(0)) for _ in range(5)]
+asyncio.run(m())
+---
+import asyncio
+async def f():
+    return asyncio.current_task().get_name()
+async def m():
+    return await asyncio.create_task(f())
+asyncio.run(m())

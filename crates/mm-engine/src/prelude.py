@@ -5204,7 +5204,26 @@ def _ss_items(o):
     return o._t if isinstance(o, _StructSeq) else o
 
 
+def _ss_refuse(o, a):
+    if a in o._f:
+        raise AttributeError('readonly attribute')
+    raise AttributeError(
+        f"'{o._n}' object has no attribute '{a}' and no __dict__ for setting new attributes")
+
+
+def _ss_new(name, fields, t):
+    o = object.__new__(_StructSeq)
+    object.__setattr__(o, '_n', name)
+    object.__setattr__(o, '_f', fields)
+    object.__setattr__(o, '_t', t)
+    return o
+
+
 class _StructSeq:
+    # Read-only, as CPython's: the instances `sys` holds are shared by
+    # every reset of a session, so nothing a cell does to one may stay.
+    # The prelude's units are built without `__setattr__`; `_ss_new` makes
+    # the others.
     def __init__(self, name, fields, t):
         self._n = name
         self._f = fields
@@ -5215,6 +5234,13 @@ class _StructSeq:
         if a in f:
             return self._t[f.index(a)]
         raise AttributeError(f"'{self._n}' object has no attribute '{a}'")
+
+    # A deletion comes here too (`Vm::guest_delattr`): every session that
+    # reads `sys` loads this class, and each method is allocations there.
+    # Its messages are in `_ss_refuse`, a unit of its own, loaded by the
+    # first refusal.
+    def __setattr__(self, a, v):
+        _ss_refuse(self, a)
 
     def __repr__(self):
         parts = [f'{k}={v!r}' for k, v in zip(self._f, self._t)]
@@ -5333,7 +5359,7 @@ def set_int_max_str_digits(maxdigits):
         raise ValueError('maxdigits must be >= 640 or 0 for unlimited')
     _int_max_str_digits = n
     import sys
-    sys.flags = _StructSeq('sys.flags', _flags._f, _flags._t[:-1] + (n,))
+    sys.flags = _ss_new('sys.flags', _flags._f, _flags._t[:-1] + (n,))
 
 
 # ------------------------------------------------------- slot wrappers

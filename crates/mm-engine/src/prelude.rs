@@ -617,6 +617,9 @@ impl Vm {
                 if !self.set_attrs(o, r)? {
                     return Ok(None);
                 }
+                // Every reset shares it: `object.__setattr__` refuses it
+                // (`Vm::refuse_shared_change`), and its class the rest.
+                self.mark_shared(o);
                 Ok(Some(o))
             }
             VALUE => self.read_literal(r),
@@ -747,7 +750,14 @@ impl Vm {
             let Some(v) = self.read_literal(r)? else {
                 return Ok(false);
             };
-            self.setattr(o, k, v)?;
+            if Vm::is_class(o) {
+                self.setattr(o, k, v)?;
+            } else {
+                // An instance, as `object.__setattr__` sets it: a class
+                // that refuses attribute writes (`_StructSeq`) is built
+                // all the same.
+                self.generic_setattr(o, k, v)?;
+            }
         }
         Ok(true)
     }

@@ -3538,14 +3538,25 @@ impl Vm {
         let data = match (t, n) {
             (T::function, "__name__") => Some(self.vslot_hot(obj, fn_slot::NAME)),
             (T::function, "__qualname__") => Some(self.vslot_hot(obj, fn_slot::QUALNAME)),
+            // What a host definition's defaults hold is the next cell's
+            // too ([`Vm::refuse_shared_change`]): it has none to read, as
+            // a builtin function.
+            (T::function, "__defaults__" | "__kwdefaults__") if self.is_host_fn(obj) => None,
             (T::function, "__defaults__") => Some(self.vslot_hot(obj, fn_slot::DEFAULTS)),
             (T::function, "__kwdefaults__") if obj.is_obj_kind(ty::FUNC as u8) => {
-                Some(self.vslot_hot(obj, fn_slot::KWDEFAULTS))
+                let d = self.vslot_hot(obj, fn_slot::KWDEFAULTS);
+                // A prelude function's own dict would let a cell change
+                // the defaults of the session's later cells: a copy.
+                if d != Value::NONE && self.is_prelude_fn(obj) {
+                    Some(self.dict_copy(d)?)
+                } else {
+                    Some(d)
+                }
             }
-            // A prelude function's would let a cell change it for the
-            // session's later cells ([`Vm::refuse_prelude_change`]).
+            // A shared function's would let a cell change it for the
+            // session's later cells ([`Vm::refuse_shared_change`]).
             (T::function, "__dict__")
-                if obj.is_obj_kind(ty::FUNC as u8) && !self.is_prelude_fn(obj) =>
+                if obj.is_obj_kind(ty::FUNC as u8) && !self.is_shared_fn(obj) =>
             {
                 Some(self.func_dict(obj)?)
             }
@@ -3687,49 +3698,26 @@ impl Vm {
     }
 
     /// Refuses guest code's change to an attribute of a function or class
-    /// the prelude defined: those outlive `reset`, so a change would reach
-    /// every later cell of the session. Its own code (the prelude's) may.
-    /// A function is the prelude's when its code is; a class, when the
-    /// prelude's globals bind it (`__module__ == '__main__'` is the user's
-    /// at once). CPython's errors for a builtin function and an immutable
-    /// type.
+    /// every reset of the session shares, so that nothing a cell does
+    /// reaches the cells after a `reset`: the prelude's (its own code may)
+    /// and the host definitions' (typed host functions, host classes and
+    /// host exception classes, with their methods). CPython's errors for
+    /// a builtin function and an immutable type, the same for a deletion.
     #[cfg_attr(mm_shipped, optimize(size))]
-    pub(crate) fn refuse_prelude_change(
-        &mut self,
-        obj: Value,
-        name: Value,
-        delete: bool,
-    ) -> Result<(), Raised> {
+    pub(crate) fn refuse_shared_change(&mut self, obj: Value, name: Value) -> Result<(), Raised> {
         if obj.is_obj_kind(ty::FUNC as u8) {
-            if self.is_prelude_fn(obj) {
-                let n = self.str_ref(name);
-                let msg = if delete {
-                    format!("'builtin_function_or_method' object has no attribute '{n}'")
-                } else {
-                    format!(
-                        "'builtin_function_or_method' object has no attribute '{n}' and no __dict__ for setting new attributes"
-                    )
-                };
+            if self.is_shared_fn(obj) {
+                let msg = format!(
+                    "'builtin_function_or_method' object has no attribute '{}' and no __dict__ for setting new attributes",
+                    self.str_ref(name)
+                );
                 return Err(self.err(T::AttributeError, &msg));
             }
             return Ok(());
         }
-        if !Vm::is_class(obj) {
-            return Ok(());
-        }
-        let module = self
-            .find_interned("__module__")
-            .and_then(|k| self.dict_lookup_str(self.vslot(obj, crate::class::cls::DICT), k));
-        if module.is_some_and(|m| Vm::is_str(m) && self.str_ref(m) == "__main__") {
-            return Ok(());
-        }
-        let pg = self.prelude_globals;
-        let bound = (0..u32::try_from(self.dict_used(pg)).unwrap_or(u32::MAX))
-            .any(|e| self.dict_entry_at(pg, e).is_some_and(|(_, v)| v == obj));
-        if bound {
+        if Vm::is_class(obj) && self.is_shared_class(obj) {
             let msg = format!(
-                "cannot {} '{}' attribute of immutable type '{}'",
-                if delete { "delete" } else { "set" },
+                "cannot set '{}' attribute of immutable type '{}'",
                 self.str_ref(name),
                 self.class_name(obj)
             );
@@ -3738,41 +3726,87 @@ impl Vm {
         Ok(())
     }
 
+    /// Whether class `c` is one every reset shares: a host definition's
+    /// (marked, [`Vm::share_host_def`]) or one the prelude's globals bind
+    /// (`__module__ == '__main__'` is the user's at once).
+    #[cfg_attr(mm_shipped, optimize(size))]
+    pub(crate) fn is_shared_class(&self, c: Value) -> bool {
+        if self.is_marked_shared(c) {
+            return true;
+        }
+        let module = self
+            .find_interned("__module__")
+            .and_then(|k| self.dict_lookup_str(self.vslot(c, crate::class::cls::DICT), k));
+        if module.is_some_and(|m| Vm::is_str(m) && self.str_ref(m) == "__main__") {
+            return false;
+        }
+        let pg = self.prelude_globals;
+        (0..u32::try_from(self.dict_used(pg)).unwrap_or(u32::MAX))
+            .any(|e| self.dict_entry_at(pg, e).is_some_and(|(_, v)| v == c))
+    }
+
     /// Whether function `f`'s code is the prelude's: loaded from its
     /// source. Two kinds run in the prelude's globals and are not: a typed
     /// host module's (`Vm::run_host_defs`) and what `_mm.signature` made
     /// (`Vm::add_code`: a typed host function, a dataclass's `__init__`,
-    /// a namedtuple's `__new__`). Those are the session's or the guest's
-    /// own, so their attributes stay the guest's to set, and a typed host
-    /// function's outlive a reset as the function does.
+    /// a namedtuple's `__new__`).
     pub(crate) fn is_prelude_fn(&self, f: Value) -> bool {
-        let ci = self.vslot_raw_of(f, fn_slot::CODE);
-        usize::try_from(ci)
-            .ok()
-            .and_then(|i| self.codes.get(i))
-            .is_some_and(|c| {
-                c.gslot == GSLOT_PRELUDE
-                    && self
-                        .sources
-                        .get(c.source as usize)
-                        .is_some_and(|s| s.host.is_none())
-            })
+        self.fn_source(f).is_some_and(|s| s.host.is_none())
     }
 
-    /// `obj.name = v` by guest code ([`Vm::refuse_prelude_change`]).
+    /// Whether function `f` is a host definition's: its code is a typed
+    /// host module's, or it is one `_mm.signature` made for it (marked,
+    /// [`Vm::share_host_def`]). A dataclass's `__init__` and a
+    /// namedtuple's `__new__` are neither: they are the guest's own.
+    pub(crate) fn is_host_fn(&self, f: Value) -> bool {
+        f.is_obj_kind(ty::FUNC as u8)
+            && (self.is_marked_shared(f) || self.fn_source(f).is_some_and(|s| s.host.is_some()))
+    }
+
+    /// Whether every reset of the session shares function `f`.
+    pub(crate) fn is_shared_fn(&self, f: Value) -> bool {
+        self.is_marked_shared(f) || self.fn_source(f).is_some()
+    }
+
+    /// The source of function `f`'s code, if it runs in the prelude's
+    /// globals and was loaded from one.
+    fn fn_source(&self, f: Value) -> Option<&crate::vm::Source> {
+        let ci = self.vslot_raw_of(f, fn_slot::CODE);
+        let c = self.codes.get(usize::try_from(ci).ok()?)?;
+        if c.gslot != GSLOT_PRELUDE {
+            return None;
+        }
+        self.sources.get(c.source as usize)
+    }
+
+    /// Whether `v` carries the mark of a host definition
+    /// ([`Vm::share_host_def`]).
+    pub(crate) fn is_marked_shared(&self, v: Value) -> bool {
+        v.as_obj()
+            .and_then(|r| self.heap.header(r).ok())
+            .is_some_and(|h| h.flags() & mm_core::flags::FROZEN != 0)
+    }
+
+    /// `obj.name = v` by guest code ([`Vm::refuse_shared_change`]).
     pub(crate) fn guest_setattr(
         &mut self,
         obj: Value,
         name: Value,
         v: Value,
     ) -> Result<(), Raised> {
-        self.refuse_prelude_change(obj, name, false)?;
+        self.refuse_shared_change(obj, name)?;
         self.setattr(obj, name, v)
     }
 
-    /// `del obj.name` by guest code ([`Vm::refuse_prelude_change`]).
+    /// `del obj.name` by guest code ([`Vm::refuse_shared_change`]).
+    /// A prelude instance every reset shares (a `sys` struct sequence)
+    /// refuses it as it refuses a write, through its class's
+    /// `__setattr__`, which has CPython's errors for both.
     pub(crate) fn guest_delattr(&mut self, obj: Value, name: Value) -> Result<(), Raised> {
-        self.refuse_prelude_change(obj, name, true)?;
+        if self.is_marked_shared(obj) && self.user_class(obj).is_some() {
+            return self.setattr(obj, name, Value::NONE);
+        }
+        self.refuse_shared_change(obj, name)?;
         self.delattr(obj, name)
     }
 

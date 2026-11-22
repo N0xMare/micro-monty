@@ -234,13 +234,39 @@ hashes are pre-release history, kept in the private archive
   and a 200 KB fill fit 4 buffers against a new session's 15; now 1 MB
   and 2 MB fit and the fill fits 15, also across a snapshot and restore
   [M].
-- A reset session is a new one to the program: `sys.setrecursionlimit`
-  no longer survives `reset()`, and guest code can no longer set or
-  delete attributes of the functions and classes the prelude defines
-  (`asyncio.Future.leak = 1`, `json.dumps.x = 1`), which every reset of a
-  session shares. It gets CPython's `AttributeError` for a builtin
-  function or `TypeError` for an immutable type; instances, subclasses
-  and module attributes stay writable.
+- `Session::reset` is a boundary: a cell after it reports what it
+  reports in a new session with the same host definitions. Before, a cell
+  could leave state and code for the cells after a reset [M]:
+  `read.__defaults__ = ('/etc/shadow',)` on a typed host function changed
+  what the next cell's `read()` sent to the host; `Entry.__repr__ = f` on
+  a host class (or a host exception class's `__str__`, or a record's
+  class) ran `f` in the next cell, in its globals and with its host
+  functions; a list or dict constant of the builtins module kept what was
+  appended; `json.dumps.__kwdefaults__['sort_keys'] = True`,
+  `sys.set_int_max_str_digits(640)`, `sys.version_info._t = (2, 7)` and
+  `sys.setrecursionlimit` reached it; and 40 MB left on any of them stayed
+  charged. Now guest code cannot set or delete attributes of what every
+  reset shares: the functions and classes the prelude defines
+  (`asyncio.Future.leak = 1`, `json.dumps.x = 1`) and the host's
+  definitions (typed host functions, host classes and host exception
+  classes, with their methods). It gets CPython's `AttributeError` for a
+  builtin function or `TypeError` for an immutable type; a host
+  function's `__defaults__`, `__kwdefaults__` and `__dict__` raise
+  `AttributeError`, a stdlib function's `__kwdefaults__` and a shared
+  class's `__annotations__` are copies, and `sys`'s struct sequences
+  refuse attribute writes as CPython's do. Instances, subclasses and
+  module attributes stay writable. A reset restores the recursion limit
+  and the int-to-str digit limit, builds the builtins module's list, dict
+  and record constants again and drops the classes made for the host's
+  records. Host call ids and `Task-N` numbers continue, and loaded code
+  stays loaded; `reset_to` and a new session share nothing. A host whose
+  cells set attributes on a typed host function (`tool.calls = 0`) now
+  gets the `AttributeError`: none of the 3,487 recorded Python cells does
+  [M]. The test is `conformance/reset`: 66 probes and a walk that writes
+  to each of the 11,000 objects a cell can reach from the builtins, the
+  host's definitions and every importable module, and finds no write
+  after a reset (181 on the build before) [M], on the native facade and
+  through both mm-wasm hosts.
 - A cell ended inside a container's `repr` (stopped at a host call or out
   of fuel there, then cancelled, replaced by the next cell or reset) no
   longer leaves the container marked as being rendered: the prelude held
@@ -323,13 +349,9 @@ hashes are pre-release history, kept in the private archive
   returned `MemoryError` and reset nothing, as its new globals were refused
   while the old ones still held the data. The old globals and modules are
   now emptied in place first, allocating nothing (6 and 64 MiB, a kept
-  list of strs filling the heap) [M]. An object that outlives the reset
-  through the host, such as one kept on a host function's attribute, sees
-  them emptied: a kept `globals()` view shows only `__name__`, an iterator
-  over it stopped part way raises `RuntimeError: dictionary changed size
-  during iteration`, and a kept `NameError` raised again loses its "Did
-  you mean" suggestion. A `MemoryError` from `reset` now means the
-  session was reset with only `__name__` unset.
+  list of strs filling the heap) [M]. A `MemoryError` from `reset` now
+  means the session was reset with only `__name__`, or a constant of the
+  builtins module that did not fit again, unset.
 - The dead-register regression listed in 0.0.2's known issues is fixed
   for every shape but a suspended generator's, which the last entry
   below covers: a register is a root only from the store that fills it

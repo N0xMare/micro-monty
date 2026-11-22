@@ -1820,7 +1820,14 @@ impl Vm {
         let s = self.str_ref_hot(name);
         match s {
             "__class__" => return Ok(Got::Value(c)),
-            "__dict__" if obj.is_obj_kind(ty::INST as u8) && Vm::is_class(c) => {
+            // A prelude instance every reset shares has none to hand out
+            // (`Vm::refuse_shared_change`): its class's `__getattr__`
+            // answers.
+            "__dict__"
+                if obj.is_obj_kind(ty::INST as u8)
+                    && Vm::is_class(c)
+                    && !self.is_marked_shared(obj) =>
+            {
                 return Ok(Got::Value(self.inst_dict(obj)?));
             }
             _ => {}
@@ -2020,10 +2027,20 @@ impl Vm {
                 self.dict_copy(d)?
             }
             // The class's own (stringized) annotations, never a base's; an
-            // empty dict, kept, when the body had none (as in 3.14).
+            // empty dict, kept, when the body had none (as in 3.14). A
+            // class every reset shares gives a copy, and keeps none: its
+            // own dict would carry what a cell put in it to the cells
+            // after a `reset` ([`Vm::refuse_shared_change`]).
             "__annotations__" => {
                 let d = self.vslot_hot(c, cls::DICT);
-                if let Some(v) = self.dict_get_str(d, name) {
+                let own = self.dict_get_str(d, name);
+                if self.is_shared_class(c) {
+                    match own {
+                        Some(v) if v.is_obj_kind(ty::DICT as u8) => self.dict_copy(v)?,
+                        Some(v) => v,
+                        None => self.new_dict_hot()?,
+                    }
+                } else if let Some(v) = own {
                     v
                 } else {
                     let v = self.new_dict_hot()?;

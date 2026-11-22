@@ -6683,10 +6683,14 @@ fn object_setattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         let msg = format!("attribute name must be string, not '{}'", vm.type_name(n));
         return Err(vm.err(T::TypeError, &msg));
     }
-    if vm.user_class(o).is_some() {
+    if vm.is_marked_shared(o) && vm.user_class(o).is_some() {
+        // An instance every reset shares (a `sys` struct sequence): its
+        // class's `__setattr__` refuses, and this is no way past it.
+        vm.setattr(o, n, v)?;
+    } else if vm.user_class(o).is_some() {
         vm.generic_setattr(o, n, v)?;
     } else if Vm::is_class(o) {
-        vm.refuse_prelude_change(o, n, false)?;
+        vm.refuse_shared_change(o, n)?;
         vm.class_setattr(o, n, v)?;
     } else {
         vm.guest_setattr(o, n, v)?;
@@ -6707,10 +6711,12 @@ fn object_getattribute(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 fn object_delattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (o, n) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
-    if vm.user_class(o).is_some() {
+    if vm.is_marked_shared(o) && vm.user_class(o).is_some() {
+        vm.guest_delattr(o, n)?;
+    } else if vm.user_class(o).is_some() {
         vm.generic_delattr(o, n)?;
     } else if Vm::is_class(o) {
-        vm.refuse_prelude_change(o, n, true)?;
+        vm.refuse_shared_change(o, n)?;
         vm.class_delattr(o, n)?;
     } else {
         vm.guest_delattr(o, n)?;

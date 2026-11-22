@@ -1627,6 +1627,27 @@ impl Vm {
         let (g, modules) = (self.globals, self.modules);
         self.dict_empty(g);
         self.dict_empty(modules);
+        // What the prelude keeps for the program goes back to what its
+        // units bind, in place and allocating nothing (dropped instead,
+        // each reset's next lookup loaded the unit again): the limit
+        // `sys.set_int_max_str_digits` set, and the record classes, which
+        // are the program's to change. The builtins module's constants
+        // that a cell can change in place are unbound, and built again
+        // below.
+        let pg = self.prelude_globals;
+        if let Some(k) = self.find_interned("_int_max_str_digits")
+            && self.dict_lookup_str(pg, k).is_some()
+            && let Some(n) = Value::int(crate::intops::MAX_STR_DIGITS as i64)
+        {
+            let _ = self.dict_set(pg, k, n);
+        }
+        if let Some(records) = self
+            .find_interned("_host_records")
+            .and_then(|k| self.dict_lookup_str(pg, k))
+        {
+            self.dict_empty(records);
+        }
+        self.drop_builtin_constants();
         // Released without allocating (`Heap::idle`): the reruns below may
         // collect it.
         self.heap.idle_collected = false;
@@ -1644,12 +1665,6 @@ impl Vm {
             let m = vm.intern("__main__")?;
             vm.dict_set(g, n, m)
         })?;
-        // New tables as a new session's when they fit, after a collection
-        // if they did not: else the emptied ones, as big as the old, stay.
-        let _ = self.between_cells(Vm::fresh_globals);
-        self.exc = Value::NONE;
-        // The emptied tables, if new ones replaced them, are released.
-        self.heap.idle_collected = false;
         self.reclaim_code();
         // A reclamation: the trigger counts what is loaded from here on,
         // not from wherever the count stood before the code went.
@@ -1665,8 +1680,22 @@ impl Vm {
         if self.heap.shrink_interned() {
             self.collect_now();
         }
+        // New tables as a new session's when they fit, after a collection
+        // if they did not: else the emptied ones, as big as the old, stay.
+        // Built after the old data is collected and the intern table
+        // shrunk, so they take pages the cells freed instead of pinning
+        // pages among the cells' garbage that `shrink` cannot give back.
+        let _ = self.between_cells(Vm::fresh_globals);
+        // Refused (the session's own tables fill the limit), the constants
+        // not built stay unbound; the reset goes on and reports it.
+        let constants = self.between_cells(Vm::rebuild_builtin_constants);
+        if constants.is_ok() {
+            self.exc = Value::NONE;
+        }
+        // The emptied tables, if new ones replaced them, are released.
+        self.heap.idle_collected = false;
         self.heap.shrink();
-        Ok(())
+        constants
     }
 
     /// Sets the callback that receives `print` and stream output.
