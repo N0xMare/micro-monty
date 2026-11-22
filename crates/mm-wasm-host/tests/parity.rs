@@ -700,12 +700,22 @@ fn a_park_request_during_a_long_collection_does_not_trap() {
     assert!(parks > 0);
 }
 
-/// The grace still bounds a guest that runs without parking, in time it
-/// runs: with a 1 ms grace (one tick), the first tick that finds a request
-/// pending for 1 ms interrupts the loop over a nearly full heap. With 50
-/// or 100 ms it parks within 5 to 12 ms of each request and never traps
-/// [M, reviewer], so this shows the one-tick case only; the unit tests of
-/// `ParkClock` hold the rule for a grace of many ticks.
+/// The grace still bounds a guest that runs without parking: with a 1 ms
+/// grace (one tick), a request pending while the guest copies 64 MB, one
+/// `memory.copy` of about 50 ms [M] that reaches no safepoint and no epoch
+/// check, is at least a tick and the grace old at the guest's next epoch
+/// check, which interrupts it: in the first copy, at most 57 ms into the
+/// cell idle [M]. Without the interrupt every copy ends in a park and the cell
+/// completes. (With 50 or 100 ms the guest parks within 5 to 12 ms of each
+/// request and never traps [M, reviewer]; the unit tests of `ParkClock`
+/// hold the rule for a grace of many ticks.)
+///
+/// The guest must run past the grace by more than a tick for that. A loop
+/// that parks 0 to 1.8 ms after each request, as this test's cell did, is
+/// interrupted only if a tick happens to land in a request's second
+/// millisecond: on a loaded machine the asker and the ticker wake on the
+/// same timer grid, every tick found a request under 0.6 ms old, and the
+/// cell completed in 9 of 60 runs [M].
 #[test]
 fn a_guest_running_past_the_grace_is_still_interrupted() {
     let config = RuntimeConfig {
@@ -715,7 +725,7 @@ fn a_guest_running_past_the_grace_is_still_interrupted() {
     };
     let rt = Runtime::new(&guest(), config).expect("guest");
     let mut s = rt.session(&SessionOptions::default()).expect("session");
-    let fill = "big = [[i, str(i)] for i in range(2_000_000)]";
+    let fill = "a = bytearray(64_000_000)";
     assert!(matches!(s.start(fill, "<f>"), Ok(Progress::Complete(_))));
     let handle = s.park_handle();
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -726,7 +736,8 @@ fn a_guest_running_past_the_grace_is_still_interrupted() {
             handle.request();
         }
     });
-    let mut p = s.start("for i in range(1_500_000):\n    y = [i]", "<l>");
+    // Twenty copies: each alone is long enough to be interrupted.
+    let mut p = s.start("for i in range(20):\n    b = bytes(a)", "<l>");
     while let Ok(Progress::Parked { .. }) = p {
         p = s.resume(&Resume::Continue);
     }
