@@ -416,6 +416,78 @@ fn a_reset_over_a_heap_full_of_live_globals_resets_the_session() {
     assert_eq!(wall_cell(&engine, &mut session, check), "ok");
 }
 
+/// A cell ended inside a container's `repr` (stopped at a host call or
+/// out of fuel there, then cancelled, replaced by the next cell or reset)
+/// leaves the container marked as being rendered nowhere: the walk's
+/// `finally` never ran, and the prelude kept the container for good, 40 MB
+/// here, and showed it as `[...]` in every later `repr` [M].
+#[test]
+fn a_cell_ended_inside_a_repr_leaves_no_container_marked_or_held() {
+    const SETUP: &str = "\
+class Stop:
+    def __repr__(self):
+        if stop == 'call':
+            tool()
+        while stop == 'fuel':
+            pass
+        return 'Stop()'
+class Blob:
+    def __init__(self):
+        self.data = bytearray(40_000_000)
+    def __repr__(self):
+        return 'Blob()'
+big = [Stop(), Blob()]";
+    const FITS: &str = "ys = [bytearray(1_000_000) for _ in range(40)]\nlen(ys)";
+    let engine = wall_engine(64);
+    let value = |session: &mut Session, src: &str| {
+        let code = engine.compile(src, "cell.py").expect("compiles");
+        match session.start(&code) {
+            Progress::Complete(Some(c)) => c.repr,
+            p => panic!("{src}: {p:?}"),
+        }
+    };
+    for stop in ["call", "fuel"] {
+        for end in ["cancel", "next cell", "reset"] {
+            let mut session = Session::new(&engine).expect("session");
+            session
+                .define(&HostModule::untyped("", &["tool"]))
+                .expect("defined");
+            assert_eq!(wall_cell(&engine, &mut session, SETUP), "ok");
+            let cell = format!("stop = '{stop}'\nrepr(big)");
+            // Past the 40 MB list's own charges, then out inside the loop.
+            session.set_fuel(Some(100_000));
+            let p = session.start(&engine.compile(&cell, "cell.py").expect("compiles"));
+            match stop {
+                "call" => assert!(matches!(p, Progress::HostCall { .. }), "{p:?}"),
+                _ => assert!(
+                    matches!(
+                        p,
+                        Progress::Parked {
+                            reason: ParkReason::Fuel
+                        }
+                    ),
+                    "{p:?}"
+                ),
+            }
+            match end {
+                "cancel" => assert!(session.cancel()),
+                "reset" => session.reset().expect("reset"),
+                _ => {}
+            }
+            if end != "reset" {
+                // The container the walk had entered renders whole again.
+                assert_eq!(
+                    value(&mut session, "stop = None\nrepr(big)"),
+                    "'[Stop(), Blob()]'",
+                    "{stop}, {end}"
+                );
+                assert_eq!(wall_cell(&engine, &mut session, "del big"), "ok");
+            }
+            assert_eq!(value(&mut session, FITS), "40", "{stop}, {end}");
+        }
+    }
+}
+
 /// A generator that outlives a `reset` on a typed host function's attribute
 /// keeps the dead temporary its yield saved no longer than without the
 /// reset: the reset's collections clear it from the generator registry,

@@ -241,6 +241,11 @@ hashes are pre-release history, kept in the private archive
   session shares. It gets CPython's `AttributeError` for a builtin
   function or `TypeError` for an immutable type; instances, subclasses
   and module attributes stay writable.
+- A cell ended inside a container's `repr` (stopped at a host call or out
+  of fuel there, then cancelled, replaced by the next cell or reset) no
+  longer leaves the container marked as being rendered: the prelude held
+  it for good (40 MB in the test, also across a reset) and every later
+  `repr` showed it as `[...]` [M].
 - The scratch counter's own 24 bytes are charged from a session's start,
   not from its first scratch reservation, which a restored session had
   not made: a parked session had 24 bytes less room than one restored

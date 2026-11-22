@@ -1383,6 +1383,22 @@ impl Vm {
         self.end_cell();
     }
 
+    /// Forgets the containers a `repr` was rendering when its cell was
+    /// ended where it stood: no `finally` of the prelude's walk ran, so
+    /// they stayed in its `_REPR_IDS`, held for good and shown as `[...]`
+    /// by every later `repr`. A cell that completes or raises unwinds the
+    /// walk and leaves none. Emptied in place, allocating nothing.
+    pub(crate) fn drop_repr_marks(&mut self) {
+        let marks = self
+            .find_interned("_REPR_IDS")
+            .and_then(|k| self.dict_get_str(self.prelude_globals, k));
+        if let Some(d) = marks {
+            self.dict_empty(d);
+            // Released without allocating (`Heap::idle`).
+            self.heap.idle_collected = false;
+        }
+    }
+
     /// Drops every frame, task and future of the running cell; host calls
     /// it left unanswered are abandoned.
     pub(crate) fn end_cell(&mut self) {

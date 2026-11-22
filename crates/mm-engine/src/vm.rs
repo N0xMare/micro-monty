@@ -1613,7 +1613,7 @@ impl Vm {
     /// Ends any running cell and clears globals and imported modules.
     /// Unreachable user code is reclaimed; host functions and modules stay.
     pub fn reset(&mut self) -> Result<(), Raised> {
-        self.end_cell();
+        self.cancel();
         // `sys.setrecursionlimit` is the session's program state too.
         self.recursion_limit = self.recursion_ceiling;
         self.handled = Value::NONE;

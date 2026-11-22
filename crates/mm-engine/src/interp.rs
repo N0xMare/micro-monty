@@ -505,6 +505,9 @@ impl Vm {
     pub fn cancel(&mut self) -> bool {
         let active = !self.tasks.is_empty();
         self.end_cell();
+        if active {
+            self.drop_repr_marks();
+        }
         active
     }
 

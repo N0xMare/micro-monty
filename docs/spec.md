@@ -285,6 +285,9 @@ evaluated, matching deferred annotations).
   (`json.dumps = f`) stay writable, as do a typed host function's
   attributes, which outlive a reset with the function; a reset drops the modules, so the next
   import has the originals. `reset` also restores the recursion limit.
+- A cell ended where it stood (cancelled, replaced by the next cell or
+  reset while stopped or parked) inside a container's `repr` leaves no
+  container marked as being rendered.
 - Code-mode stdlib: `json.loads` takes all five hooks (with one, the
   native scanner keeps number and constant literals as text and objects as
   flat pairs, and a prelude pass calls the hooks children first in document
