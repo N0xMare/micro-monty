@@ -494,6 +494,48 @@ fn a_golden_image_under_another_build_id_is_incompatible() {
     );
 }
 
+/// A capture collects the session first: what the setup dropped is not in
+/// the template, which every session made from it reads whole.
+#[test]
+fn a_template_is_captured_from_a_collected_session() {
+    let e = engine();
+    let mut s = Session::new(&e).expect("session");
+    // The previous collection's live count selects lazy sweeping. Keep
+    // enough reachable bytes across both collections to exercise that path.
+    assert!(run_to_end(
+        &mut s,
+        &e,
+        "ballast = 'x' * (34 << 20)",
+        "big.py"
+    ));
+    let initial = SessionTemplate::capture(&e, &mut s).expect("large setup");
+    assert!(initial.image().len() > 32 << 20);
+    drop(initial);
+    assert!(run_to_end(
+        &mut s,
+        &e,
+        "mark = ''.join(['qzqz', 'dropped', 'qzqz'])\npairs = [(mark * 400 + str(i), 'keep' * 400 + str(i)) for i in range(512)]\nkept = [p[1] for p in pairs]\ndel pairs, mark",
+        "m.py"
+    ));
+    let before = s.snapshot().expect("snapshot");
+    assert!(before.windows(15).any(|w| w == b"qzqzdroppedqzqz"));
+    let collections = s.gc_collections();
+    let template = SessionTemplate::capture(&e, &mut s).expect("captured");
+    assert_eq!(s.gc_collections(), collections + 1);
+    assert!(!s.gc_sweeping());
+    assert!(
+        !template
+            .image()
+            .windows(15)
+            .any(|w| w == b"qzqzdroppedqzqz")
+    );
+    assert!(template.image().len() + 512 * 6000 < before.len());
+    // The captured session goes on as the template's sessions do.
+    assert!(s.snapshot().expect("snapshot") == template.image());
+    let mut made = template.instantiate().expect("instantiates");
+    assert!(made.snapshot().expect("snapshot") == template.image());
+}
+
 /// A template's image is read trusted, [`SessionTemplate::capture`]'s
 /// from its first instantiation, without the checksum or the walks. Bytes
 /// that come from outside go through a checked read, [`Engine::restore`]'s

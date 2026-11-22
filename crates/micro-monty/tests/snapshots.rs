@@ -3156,17 +3156,26 @@ fn a_restored_session_stays_charged_as_the_original_through_further_loads() {
     let mut reclaimed_at = None;
     let mut sessions = Vec::new();
     for round in 0..12 {
-        let image = original.snapshot().expect("snapshot");
-        sessions.push(e.restore(&image).expect("restore"));
         if round % 4 == 0 {
             // A template's trusted instantiation and a reset to it carry
-            // the same count as the checked restore.
+            // the same count as the checked restore. A capture collects
+            // its session, so the sessions that follow the original are
+            // captured as it is, and their templates are the same.
             let template = SessionTemplate::capture(&e, &mut original).expect("captures");
+            for (from, s) in sessions.iter_mut().enumerate() {
+                let theirs = SessionTemplate::capture(&e, s).expect("captures");
+                assert!(
+                    theirs.image() == template.image(),
+                    "round {round}, session {from}: templates differ"
+                );
+            }
             sessions.push(template.instantiate().expect("instantiates"));
             let mut reset = Session::new(&e).expect("session");
             reset.reset_to(&template).expect("resets to the template");
             sessions.push(reset);
         }
+        let image = original.snapshot().expect("snapshot");
+        sessions.push(e.restore(&image).expect("restore"));
         let before = code_state(&original).0;
         let cell = format!(
             "{}\nr{round} = json.dumps([t{round}0(1), kept{round}(2)])\n{}",

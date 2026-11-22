@@ -880,6 +880,10 @@ instead of draining them. Key them by build id and setup code, not by their
 bytes: captures differ where imports read the clock or entropy. A template
 written natively restores on both wasm targets of the same build id.
 
+`capture` collects the setup session first (in full, uncharged), so the
+template holds none of the garbage the setup left: every session made from
+it reads the whole image.
+
 **Say the template is the setup.** Call `session.setup_done()` before
 capturing the template ("Driving a session"). The template holds the
 mark, so every session made from it with `instantiate()` and every

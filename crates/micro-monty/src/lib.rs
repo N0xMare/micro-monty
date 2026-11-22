@@ -785,7 +785,10 @@ pub struct SessionTemplate {
 
 impl SessionTemplate {
     /// Saves `session` (between cells) as a template for `engine`, the
-    /// engine it was created with.
+    /// engine it was created with. The session is collected first, in
+    /// full and uncharged as every collection between cells is: every
+    /// session made from the template reads the whole image, so what the
+    /// setup dropped is freed once here and not copied each time.
     ///
     /// # Errors
     ///
@@ -798,6 +801,8 @@ impl SessionTemplate {
         if session.phase() != Phase::Idle {
             return Err(SnapshotError::Busy);
         }
+        session.vm.collect_now();
+        session.vm.heap.finish_sweep();
         Ok(SessionTemplate {
             engine: engine.clone(),
             image: session.snapshot()?,
