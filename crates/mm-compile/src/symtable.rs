@@ -287,11 +287,15 @@ impl Builder {
         s.flags[i].used = true;
     }
 
-    /// A walrus target binds in the nearest enclosing non-comprehension scope.
+    /// A walrus target binds in the nearest enclosing scope that is not a
+    /// comprehension or a generator expression (a function scope here, so
+    /// the name is free in it and a cell of the scope it binds in).
     #[cfg_attr(mm_shipped, optimize(size))]
     fn walrus_target(&mut self, name: &str, pos: Pos) -> Result<(), CompileError> {
         let mut id = self.cur;
-        while self.scopes[id].kind == ScopeKind::Comprehension {
+        while self.scopes[id].kind == ScopeKind::Comprehension
+            || self.scopes[id].name == "<genexpr>"
+        {
             let s = &mut self.scopes[id];
             let i = s.slot(name);
             if s.flags[i].assigned {
@@ -308,6 +312,13 @@ impl Builder {
                 Some(p) => id = p,
                 None => break,
             }
+        }
+        if id != self.cur && self.scopes[id].kind == ScopeKind::Class {
+            return Err(err(
+                "assignment expression within a comprehension cannot be used in a class body"
+                    .into(),
+                pos,
+            ));
         }
         let saved = self.cur;
         self.cur = id;

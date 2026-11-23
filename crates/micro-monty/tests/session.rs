@@ -2966,6 +2966,30 @@ fn symbol_table_and_compiler_errors_match_cpython() {
             2,
         ),
         (
+            "((j := 0) for i in [1] for j in [2])",
+            "assignment expression cannot rebind comprehension iteration variable 'j'",
+            1,
+            3,
+        ),
+        (
+            "[((i := 0) for _ in [1]) for i in [1]]",
+            "assignment expression cannot rebind comprehension iteration variable 'i'",
+            1,
+            4,
+        ),
+        (
+            "class C:\n    list((y := 1) for x in [1])",
+            "assignment expression within a comprehension cannot be used in a class body",
+            2,
+            11,
+        ),
+        (
+            "class C:\n    {(y := 1): 1 for x in [1]}",
+            "assignment expression within a comprehension cannot be used in a class body",
+            2,
+            7,
+        ),
+        (
             "[x for y in [1] for x in (w := [1])]",
             "assignment expression cannot be used in a comprehension iterable expression",
             1,
