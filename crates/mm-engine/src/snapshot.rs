@@ -467,7 +467,20 @@ impl Vm {
         let fits = len <= limit && out.try_reserve_exact(len).is_ok();
         if fits {
             out.extend_from_slice(header);
-            self.emit_snapshot(&mut |b| out.extend_from_slice(b));
+            self.emit_snapshot(&mut |bytes| {
+                // Scalar fields are cheaper as fixed-size stores than a call to musl's memcpy.
+                #[cfg(target_env = "musl")]
+                match bytes {
+                    [a] => return out.push(*a),
+                    [a, b] => return out.extend_from_slice(&[*a, *b]),
+                    [a, b, c, d] => return out.extend_from_slice(&[*a, *b, *c, *d]),
+                    [a, b, c, d, e, f, g, h] => {
+                        return out.extend_from_slice(&[*a, *b, *c, *d, *e, *f, *g, *h]);
+                    }
+                    _ => {}
+                }
+                out.extend_from_slice(bytes);
+            });
         }
         self.place_gathers(true);
         Ok(fits.then_some(out))
