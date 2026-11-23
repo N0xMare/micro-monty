@@ -842,8 +842,9 @@ impl Task {
 pub(crate) enum Ready {
     /// Step the task in this slot.
     Task(usize),
-    /// A child of this gather settled: check it (gather's done callback).
-    Gather(Value),
+    /// This child of this gather settled: check the gather (its done
+    /// callback for that child).
+    Gather(Value, Value),
     /// Call this function with this argument: a done callback.
     Call(Value, Value),
     /// Run this `asyncio.Handle` (`loop.call_soon`, a timer that is due).

@@ -1685,7 +1685,20 @@ The other primitives (`Lock`, `Event`, `Condition`, the queues,
 prelude, over three engine pieces. A pending task, future or gather keeps
 an ordered list of what waits on it (a gather, a task's wakeup, or a done
 callback), woken in that order when it settles, which gives CPython's FIFO
-release and callback order. A callback (`add_done_callback`,
+release and callback order. A gather is done in its children's done callbacks,
+as with CPython's `_done_callback`: a child's settle queues one
+notification that names it, and the gather counts them as they run
+(`aw::LEFT`: its distinct children still pending, and its notifications
+not yet run), so it settles in its last child's notification or, without
+`return_exceptions`, in that of the first failed or cancelled child to
+run, not when that child settles. A restore checks each tracked gather's
+counts against its entries in the run queue, and that each entry names a
+settled task, future or gather (one naming the gather itself, which is
+pending, is refused). It does not check that the child is one of the
+gather's: an image naming another settled awaitable there, which only a
+forged one can, runs it as one of the gather's notifications, so the
+gather fails with that awaitable's error, or settles a notification
+early, a Python result and never a panic. A callback (`add_done_callback`,
 `call_soon`, a timer's) runs in a task slot of its own, with no `Task`
 handle, through the prelude's `_aio_callback` from the bottom of the slot's
 stack, so a callback that raises goes to the loop's exception handler and a

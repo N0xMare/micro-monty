@@ -1038,8 +1038,8 @@ impl Vm {
             t.values(&self.unretrieved);
             for r in &self.ready {
                 match *r {
-                    Ready::Gather(g) | Ready::Handle(g) => t.value(g),
-                    Ready::Call(f, a) => t.values(&[f, a]),
+                    Ready::Handle(g) => t.value(g),
+                    Ready::Gather(f, a) | Ready::Call(f, a) => t.values(&[f, a]),
                     Ready::Task(_) => {}
                 }
             }

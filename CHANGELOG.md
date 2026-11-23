@@ -143,6 +143,14 @@ hashes are pre-release history, kept in the private archive
   a future took 631 ms in all, now 86 ms [M]. Results, the order tasks
   resume in and fuel are unchanged, and an image holds what it held (the
   places are kept in memory only). The build id moves [M, own case 595].
+- A gather is done when its last child's done callback runs or, without
+  `return_exceptions`, that of its first failed or cancelled child, as
+  CPython 3.14's `_done_callback` counts, and no longer one loop
+  iteration earlier when a child settled while another child's
+  notification was still queued; its waiters and done callbacks run
+  then [M, own case 601]. A queued notification names its child and a
+  gather keeps two counts, so an image holds more: `SNAPSHOT_EPOCH` 16
+  and the build id moves.
 - An `except MemoryError` handler that drops the data that filled memory
   can allocate again. Displays (`[...]`, `(...)`, `{...}`, `x[a:b]`),
   `lambda` and `def`, `str`/`int`/`float` of numbers, strs and bytes,

@@ -2337,3 +2337,168 @@ fn the_schedulers_cancel_is_a_step_state() {
         vm.cancelling = vm.heap.get(state, 0).expect("root");
     });
 }
+
+/// A gather of two tasks parked with the notification of the one that
+/// settled first in the run queue, the other still pending: the gather's
+/// counts are one pending and two not run.
+#[cfg(feature = "asyncio")]
+const GATHER_NOTIFIED: &str = "\
+import asyncio
+async def child(n):
+    for _ in range(n):
+        await asyncio.sleep(0)
+    return n
+async def main():
+    loop = asyncio.get_running_loop()
+    other = loop.create_future()
+    other.set_exception(KeyError('other'))
+    other.exception()
+    tb = asyncio.create_task(child(3))
+    ta = asyncio.create_task(child(1))
+    assert await asyncio.gather(ta, tb) == [1, 3]
+    return other
+asyncio.run(main())
+";
+
+/// The gather and the child of its queued notification, at a park of
+/// [`GATHER_NOTIFIED`].
+#[cfg(feature = "asyncio")]
+fn gather_entry(vm: &Vm) -> Option<(usize, Value, Value)> {
+    vm.ready.iter().enumerate().find_map(|(k, e)| match *e {
+        Ready::Gather(g, c) if vm.tracked(g) => Some((k, g, c)),
+        _ => None,
+    })
+}
+
+/// [`GATHER_NOTIFIED`] parked with its notification queued, changed by
+/// `forge`.
+#[cfg(feature = "asyncio")]
+fn forged_gather(forge: impl Fn(&mut Vm, usize, Value, Value)) -> Vm {
+    let mut vm = session(GATHER_NOTIFIED, |vm| gather_entry(vm).is_some());
+    let (k, g, c) = gather_entry(&vm).expect("a notification queued");
+    let left = raw(&vm, g.as_obj().expect("a gather"), crate::aio::aw::LEFT);
+    assert_eq!(left, 2 << 32 | 1, "two notifications not run, one pending");
+    forge(&mut vm, k, g, c);
+    vm
+}
+
+/// `vm` written and read back without the restore's checks, as a
+/// session template's image is, and resumed to its end: what a forged
+/// gather does when nothing refuses it.
+#[cfg(feature = "asyncio")]
+fn finish_unchecked(vm: &mut Vm) {
+    let mut image = Vec::new();
+    vm.write_snapshot(&mut image).expect("at a safepoint");
+    let mut no_host_code =
+        |_: &str, _: &HostValue, _: &[String], _: &[u8; 16]| -> Option<Arc<crate::HostProgram>> {
+            None
+        };
+    let mut vm = Vm::read_snapshot_trusted(
+        &mut Reader::new(&image),
+        bundled(),
+        None,
+        &mut no_host_code,
+        1 << 40,
+    )
+    .expect("reads");
+    for _ in 0..64 {
+        vm.set_fuel(Some(1 << 20));
+        match vm.resume() {
+            Exit::Parked(_) => {}
+            Exit::Complete(_) | Exit::Error => return,
+            other => panic!("{other:?}"),
+        }
+    }
+    panic!("still parked without an error");
+}
+
+/// A queued notification names its child, which the gather does not
+/// look up among its children: an image naming another settled
+/// awaitable there (forged) restores, and the notification fails the
+/// gather with that awaitable's error, as docs/spec.md says.
+#[cfg(feature = "asyncio")]
+#[test]
+fn a_gather_notified_by_an_awaitable_not_its_child_takes_its_error() {
+    let mut vm = forged_gather(|vm, k, _, _| {
+        let other = objects(vm, ty::FUTURE)
+            .into_iter()
+            .find(|&r| raw(vm, r, crate::aio::aw::STATE) == crate::aio::aw::FAILED)
+            .expect("the failed future");
+        let Ready::Gather(_, c) = &mut vm.ready[k] else {
+            unreachable!()
+        };
+        *c = Value::from_ref(other, ty::FUTURE as u8);
+    });
+    assert_eq!(
+        restore_and_finish(&mut vm),
+        Some(("KeyError".into(), "'other'".into()))
+    );
+    let mut vm = forged_gather(|_, _, _, _| {});
+    assert_eq!(restore_and_finish(&mut vm), None);
+}
+
+/// A restore checks each tracked gather's counts against its entries in
+/// the run queue, and that an entry names a settled awaitable: each image
+/// below is refused, and read without the checks it ends or raises, never
+/// panicking (overflow checks on here) or parking for ever.
+#[cfg(feature = "asyncio")]
+#[test]
+fn a_forged_gather_count_or_notification_is_refused() {
+    type Forge = fn(&mut Vm, usize, Value, Value);
+    fn child(vm: &mut Vm, k: usize, c: Value) {
+        let Ready::Gather(_, slot) = &mut vm.ready[k] else {
+            unreachable!()
+        };
+        *slot = c;
+    }
+    fn left(vm: &mut Vm, g: Value, w: u64) {
+        let r = g.as_obj().expect("a gather");
+        vm.heap.set_raw(r, crate::aio::aw::LEFT, w).expect("word");
+        vm.callback_queue = vm.count_callback_queue();
+    }
+    let forged: [(&str, &str, Forge); 8] = [
+        ("run queue", "the gather itself", |vm, k, g, _| {
+            child(vm, k, g);
+        }),
+        ("run queue", "a pending child", |vm, k, _, _| {
+            let pending = objects(vm, ty::TASK)
+                .into_iter()
+                .map(|r| Value::from_ref(r, ty::TASK as u8))
+                .find(|&t| {
+                    let r = t.as_obj().expect("a task");
+                    raw(vm, r, crate::aio::aw::STATE) == crate::aio::aw::PENDING
+                })
+                .expect("a pending task");
+            child(vm, k, pending);
+        }),
+        ("run queue", "no awaitable", |vm, k, _, _| {
+            child(vm, k, Value::TRUE);
+        }),
+        ("gathers", "more pending than not run", |vm, _, g, _| {
+            left(vm, g, 1 << 32 | 2);
+        }),
+        ("gathers", "more not run than children", |vm, _, g, _| {
+            left(vm, g, 3 << 32 | 2);
+        }),
+        ("gathers", "no entry for a notification", |vm, _, g, _| {
+            left(vm, g, 1 << 32 | 1);
+        }),
+        ("gathers", "none run, none pending", |vm, _, g, _| {
+            left(vm, g, 0);
+        }),
+        ("gathers", "an entry too many", |vm, k, _, _| {
+            let e = vm.ready[k];
+            vm.ready.push_back(e);
+            vm.callback_queue += 1;
+        }),
+    ];
+    for (what, name, forge) in forged {
+        let mut vm = forged_gather(forge);
+        assert_eq!(
+            restore(&mut vm).err(),
+            Some(SnapError::Corrupt(what)),
+            "{name}"
+        );
+        finish_unchecked(&mut vm);
+    }
+}

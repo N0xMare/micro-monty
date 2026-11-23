@@ -79,7 +79,7 @@ const STACK_SLACK: usize = 1 << 16;
 ///   set tables;
 /// - what an opcode's operands mean, with the same format;
 /// - how frames, generators or coroutines keep their state.
-pub(crate) const SNAPSHOT_EPOCH: u32 = 15;
+pub(crate) const SNAPSHOT_EPOCH: u32 = 16;
 
 /// This build's engine fingerprint for snapshot build ids: what an image
 /// written by this engine means. The layout epoch; the codecs and every
@@ -770,9 +770,10 @@ impl Vm {
                     put_u8(out, 0);
                     put_u64(out, i as u64);
                 }
-                Ready::Gather(g) => {
+                Ready::Gather(g, c) => {
                     put_u8(out, 1);
                     put_value(out, g);
+                    put_value(out, c);
                 }
                 Ready::Call(f, a) => {
                     put_u8(out, 2);
@@ -2068,7 +2069,7 @@ impl Vm {
                     let i = need(r.u64(), "run queue")?;
                     Ready::Task(need(usize::try_from(i).ok(), "run queue")?)
                 }
-                1 => Ready::Gather(need(r.value(), "run queue")?),
+                1 => Ready::Gather(need(r.value(), "run queue")?, need(r.value(), "run queue")?),
                 2 => Ready::Call(need(r.value(), "run queue")?, need(r.value(), "run queue")?),
                 3 => Ready::Handle(need(r.value(), "run queue")?),
                 _ => return Err(SnapError::Corrupt("run queue")),
@@ -2278,7 +2279,7 @@ impl Vm {
             || !blocked.iter().all(|&i| task_ok(i))
             || !ready.iter().all(|e| match e {
                 Ready::Task(i) => task_ok(*i),
-                Ready::Gather(_) | Ready::Call(..) | Ready::Handle(_) => true,
+                Ready::Gather(..) | Ready::Call(..) | Ready::Handle(_) => true,
             })
         {
             return Err(SnapError::Corrupt("tasks"));
@@ -2451,9 +2452,52 @@ impl Vm {
         vm.place_gathers(true);
         if check {
             check_steps(&vm)?;
+            check_gathers(&vm)?;
         }
         Ok(vm)
     }
+}
+
+/// Each tracked gather's counts (`aw::LEFT`) against the run queue:
+/// its children still pending are at most its notifications not run,
+/// those at most its children, and its entries in the queue number the
+/// difference; each entry's child is a settled task, future or gather.
+/// Whether that child is one of the gather's is not checked (a pass over
+/// the children for each entry): an entry naming another settled
+/// awaitable runs as one of the gather's notifications, and fails it
+/// with that awaitable's error, as a Python result, never a panic.
+fn check_gathers(vm: &Vm) -> Res<()> {
+    use crate::aio::aw;
+    let word = |v: Value, i: u32| v.as_obj().map_or(0, |r| vm.raw(r, i));
+    let place = |g: Value| (word(g, aw::FAILS) >> aw::PLACE_SHIFT) as usize - 1;
+    let mut queued = vec![0u64; vm.gathers.len()];
+    for e in &vm.ready {
+        let Ready::Gather(g, c) = *e else {
+            continue;
+        };
+        let awaitable = matches!(
+            c.obj_kind().map(u16::from),
+            Some(ty::TASK | ty::FUTURE | ty::GATHER)
+        );
+        if !awaitable || word(c, aw::STATE) == aw::PENDING {
+            return Err(SnapError::Corrupt("run queue"));
+        }
+        if vm.tracked(g) {
+            queued[place(g)] += 1;
+        }
+    }
+    for (k, &g) in vm.gathers.iter().enumerate() {
+        if !vm.tracked(g) || place(g) != k {
+            continue;
+        }
+        let left = word(g, aw::LEFT);
+        let (pending, unrun) = (left & aw::LEFT_MASK, left >> aw::UNRUN_SHIFT);
+        let children = vm.tuple_len(vm.vslot(g, aw::EXTRA)) as u64;
+        if pending > unrun || unrun > children || unrun - pending != queued[k] {
+            return Err(SnapError::Corrupt("gathers"));
+        }
+    }
+    Ok(())
 }
 
 /// The signature index (`Vm::synth`): each entry a signature code exactly

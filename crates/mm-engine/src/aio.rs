@@ -174,8 +174,15 @@ pub(crate) mod aw {
     pub const STATE: u32 = 3;
     pub const SEQ: u32 = 4;
     pub const AUX: u32 = 5;
-    /// A gather's distinct children still pending.
+    /// A gather's two counts: its distinct children still pending, in
+    /// the low 32 bits ([`LEFT_MASK`], a term of `Vm::callback_queue`),
+    /// and above [`UNRUN_SHIFT`] its children's notifications that have
+    /// not run (CPython's `nfuts - nfinished`). It settles in the
+    /// notification of its last child, or of its first failed one. A
+    /// children tuple holds far fewer than 2^32 (`MAX_OBJECT_BYTES`).
     pub const LEFT: u32 = 6;
+    pub const LEFT_MASK: u64 = 0xFFFF_FFFF;
+    pub const UNRUN_SHIFT: u32 = 32;
     /// The same word of a task: its cancel requests (`cancelling()`, the
     /// low [`COUNT`] bits), [`INTERNAL`], and its `Task-N` number above.
     pub const CANCELS: u32 = 6;
@@ -186,7 +193,7 @@ pub(crate) mod aw {
     pub const INTERNAL: u64 = 1 << 31;
     #[cfg(feature = "asyncio")]
     pub const NUMBER_SHIFT: u32 = 32;
-    /// A gather's flags: [`FAILED_CHILD`], [`CANCEL_REQUESTED`].
+    /// A gather's flags: [`CANCEL_REQUESTED`].
     pub const FAILS: u32 = 7;
     /// The same word of a pending host future: something awaited or
     /// gathered it (nonzero).
@@ -194,7 +201,6 @@ pub(crate) mod aw {
     /// The same word of a pending task: a cancel waits for its next step
     /// (`_must_cancel`, nonzero); of a cancelled awaitable, [`HELD`] or 0.
     pub const MUST_CANCEL: u32 = 7;
-    pub const FAILED_CHILD: u64 = 1;
     /// A cancel reached a child (`_cancel_requested`).
     pub const CANCEL_REQUESTED: u64 = 2;
     /// Set only inside [`super::Vm::pending_ids`], on the gathers its walk
@@ -580,7 +586,6 @@ impl Vm {
 
     fn settle_as(&mut self, v: Value, state: u64, result: Value) {
         self.seq += 1;
-        let ok = state == aw::DONE;
         let was_pending = self.raw_of_hot(v, aw::STATE) == aw::PENDING;
         if let Some(r) = v.as_obj() {
             self.set_slot_hot(r, aw::RESULT, result);
@@ -608,8 +613,8 @@ impl Vm {
                 }
             }
         }
-        // Gathers keep their own pending count and failure flag, so their
-        // callbacks need not rescan every child.
+        // Gathers keep their own counts, and each notification names its
+        // child, so their callbacks need not rescan every child.
         let waiters = self.vslot_hot(v, aw::WAITERS);
         if let Some(r) = v.as_obj() {
             self.set_slot_hot(r, aw::WAITERS, Value::NONE);
@@ -653,22 +658,17 @@ impl Vm {
                 continue;
             }
             // Gathers dropped with their `asyncio.run` no longer listen.
-            if !self.tracked(g) {
+            // A child notifies once: at the settle that ends its pending.
+            if !was_pending || !self.tracked(g) {
                 continue;
             }
-            if was_pending {
-                let left = self.raw_of_hot(g, aw::LEFT);
-                self.set_raw_of_hot(g, aw::LEFT, left.saturating_sub(1));
-                // The notification it waited for is now in the queue.
-                if left != 0 {
-                    self.callback_queue -= 1;
-                }
-                if !ok {
-                    let f = self.raw_of_hot(g, aw::FAILS);
-                    self.set_raw_of_hot(g, aw::FAILS, f | aw::FAILED_CHILD);
-                }
+            let left = self.raw_of_hot(g, aw::LEFT);
+            // The notification it waited for is now in the queue.
+            if left & aw::LEFT_MASK != 0 {
+                self.set_raw_of_hot(g, aw::LEFT, left - 1);
+                self.callback_queue -= 1;
             }
-            self.ready.push_back(Ready::Gather(g));
+            self.ready.push_back(Ready::Gather(g, v));
             self.callback_queue += 1;
         }
     }
@@ -1133,7 +1133,7 @@ impl Vm {
 
     /// [`Vm::callback_queue`] counted: the queue's entries that are not a
     /// task's step, and the notifications each tracked gather still waits
-    /// for (one per distinct pending child, `LEFT`).
+    /// for (one per distinct pending child, `LEFT`'s low count).
     pub(crate) fn count_callback_queue(&self) -> usize {
         let queued = self
             .ready
@@ -1141,7 +1141,7 @@ impl Vm {
             .filter(|r| !matches!(r, Ready::Task(_)))
             .count();
         self.gathers.iter().fold(queued, |n, &g| {
-            n.saturating_add(usize::try_from(self.raw_of(g, aw::LEFT)).unwrap_or(usize::MAX))
+            n.saturating_add((self.raw_of(g, aw::LEFT) & aw::LEFT_MASK) as usize)
         })
     }
 
@@ -1158,7 +1158,7 @@ impl Vm {
         self.gathers[k] = Value::UNDEFINED;
         self.gathers_holes += 1;
         self.set_raw_of(g, aw::FAILS, flags & ((1 << aw::PLACE_SHIFT) - 1));
-        let left = usize::try_from(self.raw_of(g, aw::LEFT)).unwrap_or(usize::MAX);
+        let left = (self.raw_of(g, aw::LEFT) & aw::LEFT_MASK) as usize;
         self.callback_queue = self.callback_queue.saturating_sub(left);
     }
 
@@ -1982,45 +1982,56 @@ impl Vm {
         }))
     }
 
-    /// A gather's done callback: settles it if its children allow.
-    fn check_gather(&mut self, g: Value) {
-        if self.raw_of_hot(g, aw::STATE) != aw::PENDING {
+    /// A gather's done callback for settled `child` (CPython's
+    /// `_done_callback`): settles the gather if its children allow.
+    fn check_gather(&mut self, g: Value, child: Value) {
+        // The gather's state, kind and counts in one read of its words,
+        // which proves `LEFT` a raw word of it for the write: this runs
+        // for each child's notification. An object without them (a forged
+        // entry's) has nothing to settle.
+        let Some(r) = g.as_obj() else {
+            return;
+        };
+        let Ok((h, w)) = self.heap.object_words(r) else {
+            return;
+        };
+        let raw = |i: u32| w.get(i as usize).copied().filter(|_| i >= h.nvals());
+        let (Some(state), Some(aux), Some(left)) = (raw(aw::STATE), raw(aw::AUX), raw(aw::LEFT))
+        else {
+            return;
+        };
+        if state != aw::PENDING {
             return;
         }
-        if self.raw_of_hot(g, aw::AUX) == FIRST {
+        // This notification has run (`nfinished += 1`).
+        let unrun = (left >> aw::UNRUN_SHIFT).saturating_sub(1);
+        let left = unrun << aw::UNRUN_SHIFT | left & aw::LEFT_MASK;
+        self.heap.set_raw_guarded(r, aw::LEFT, left);
+        if aux == FIRST {
             if let Some(c) = self.first_done(g) {
                 self.untrack_gather(g);
                 self.settle(g, true, c);
             }
             return;
         }
-        let keep_errors = self.raw_of_hot(g, aw::AUX) != 0;
-        let flags = self.raw_of_hot(g, aw::FAILS);
-        let fails = !keep_errors && flags & aw::FAILED_CHILD != 0;
-        if !fails && self.raw_of_hot(g, aw::LEFT) != 0 {
+        let keep_errors = aux != 0;
+        let failed = matches!(
+            self.raw_of_hot(child, aw::STATE),
+            aw::FAILED | aw::CANCELLED
+        );
+        if !keep_errors && failed {
+            self.untrack_gather(g);
+            let e = self.child_error(child);
+            self.settle(g, false, e);
+            return;
+        }
+        if unrun != 0 {
             return;
         }
         // The gather settles now: one pass over its children.
         let children = self.tuple_items(self.vslot_hot(g, aw::EXTRA));
-        if fails {
-            let mut first: Option<(u64, Value)> = None;
-            for &c in &children {
-                if matches!(self.raw_of_hot(c, aw::STATE), aw::FAILED | aw::CANCELLED) {
-                    let s = self.raw_of_hot(c, aw::SEQ);
-                    if first.is_none_or(|(f, _)| s < f) {
-                        first = Some((s, c));
-                    }
-                }
-            }
-            if let Some((_, c)) = first {
-                self.untrack_gather(g);
-                let e = self.child_error(c);
-                self.settle(g, false, e);
-                return;
-            }
-        }
         self.untrack_gather(g);
-        if flags & aw::CANCEL_REQUESTED != 0 {
+        if self.raw_of_hot(g, aw::FAILS) & aw::CANCEL_REQUESTED != 0 {
             // `gather(..., return_exceptions=True)` cancelled still raises:
             // CPython's `_make_cancelled_error()` of the last child, which
             // for one that did not end cancelled is a new error with the
@@ -2117,8 +2128,8 @@ impl Vm {
                 self.loop_flags &= !crate::vm::LOOP_START_WAIT;
                 let i = match entry {
                     Ready::Task(i) => i,
-                    Ready::Gather(g) => {
-                        self.check_gather(g);
+                    Ready::Gather(g, c) => {
+                        self.check_gather(g, c);
                         continue;
                     }
                     Ready::Call(..) | Ready::Handle(_) => {
@@ -2526,18 +2537,22 @@ impl Vm {
             }
             self.add_waiter(c, g)?;
         }
-        self.set_raw_of_hot(g, aw::LEFT, left);
         // CPython 3.14's `gather` runs the done callbacks of the children
         // already done before it returns, in argument order: the first of
         // them that failed, or every child done, settles it at once. Its
-        // pending children's later callbacks find it untracked.
+        // pending children's later callbacks find it untracked. So only
+        // the pending children's notifications are left to run.
+        self.set_raw_of_hot(g, aw::LEFT, left << aw::UNRUN_SHIFT | left);
         if let Some(c) = failed.filter(|_| !keep_errors) {
             let e = self.child_error(c);
             self.settle(g, false, e);
             return Ok(g);
         }
         if left == 0 {
-            self.check_gather(g);
+            // The last done child's callback, which runs with every child
+            // done: no failure is its to take here.
+            self.set_raw_of_hot(g, aw::LEFT, 1 << aw::UNRUN_SHIFT);
+            self.check_gather(g, Value::NONE);
             return Ok(g);
         }
         let capacity = self.gathers_room();
@@ -2778,7 +2793,7 @@ impl Vm {
                 }
                 (f, args, h, context)
             }
-            Ready::Task(_) | Ready::Gather(_) => return Ok(None),
+            Ready::Task(_) | Ready::Gather(..) => return Ok(None),
         };
         // A method of a Python function: its function, called with the
         // receiver first.
@@ -3020,8 +3035,10 @@ impl Vm {
         let capacity = self.gathers_room();
         self.reserve_scheduler(self.tasks.len(), capacity, items.len())?;
         // Every item is pending and holds one waiter entry per place it
-        // has in `items`: what the gather waits for (`callback_queue`).
-        self.set_raw_of(g, aw::LEFT, items.len() as u64);
+        // has in `items`: what the gather waits for (`callback_queue`),
+        // and the notifications it has to run.
+        let n = items.len() as u64;
+        self.set_raw_of(g, aw::LEFT, n << aw::UNRUN_SHIFT | n);
         self.track_gather(g);
         self.callback_queue += items.len();
         Ok(g)
