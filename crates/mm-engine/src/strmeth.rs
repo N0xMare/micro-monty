@@ -3197,13 +3197,10 @@ fn split_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
             };
             let a0 = k.at(5) - 1;
             let end = half.min(a0 + k.left(vm) * 8);
-            for a in a0..end {
-                let b = (n - 1 - a) as u32;
-                if let (Ok(x), Ok(y)) = (vm.heap.get(buf, a as u32), vm.heap.get(buf, b)) {
-                    let _ = vm.heap.set_values(buf, a as u32, &[y]);
-                    let _ = vm.heap.set_values(buf, b, &[x]);
-                }
-            }
+            // In place, each slot swapped with its mirror in one pass: an
+            // item at a time, four lookups of the buffer a swap, made the
+            // reversal of 6.7M pieces 25 to 41 ms a step on musl [M].
+            let _ = vm.heap.swap_mirrored(buf, a0 as u32, end as u32, n as u32);
             k.owed += (end.saturating_sub(a0) / 8) as u64 + 1;
             if end >= half {
                 return Ok(Some(list));

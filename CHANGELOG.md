@@ -554,6 +554,10 @@ hashes are pre-release history, kept in the private archive
   text was a libc `memcpy` call. Appends of 64 bytes or less now copy at
   fixed sizes on musl: 25 to 46 ms against limits of 53 to 58 [M].
   Elsewhere they stay on the libc path.
+- `str.rsplit` with 1M pieces or more reversed its list an item at a
+  time in its last steps: 25 to 41 ms a step on musl and 13 to 28 on
+  glibc. It now swaps each item with its mirror in place in one pass,
+  3 to 7 ms a step, with the same fuel [M].
 - `mm-cell-worker` on musl: an abort (`std::process::abort`, a failed
   allocation) killed the worker with the seccomp filter's `SIGSYS`
   instead of `SIGABRT`, as musl's `abort` signals with `tkill` where
@@ -794,6 +798,13 @@ hashes are pre-release history, kept in the private archive
   judged with that allocator; with glibc and with musl's `malloc` it
   is, and passes. A dict of 2^20 colliding keys filled beside a 46 MiB bytearray:
   36.9 to 61.3 ms against 52.5 to 53.2, over in 4 of 8 [M].
+- With mimalloc on musl, a native that builds a list past 4M items
+  doubles its buffer in one step: a new 64 MiB block and a 32 MiB copy,
+  20 to 22 ms or, when mimalloc maps the block's pages fresh, 45 to 47
+  ms [M], past the limits of 38 to 41 ms a release gate's machine set
+  [S]. The step oracle's row for it (`V.rsplit(P)` of 60M chars) is not
+  judged with mimalloc; with glibc and with musl's `malloc` it passes
+  [M].
 - On musl, recorded agent sessions take 54% more engine time in memory
   and 82% more with a snapshot and restore on a fresh `Engine` at every
   host call (snapshot 2.8×, restore 1.7×) than on glibc on the same

@@ -2565,8 +2565,14 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "t = V.split(P)",
         1,
     ),
+    // Its last steps reversed the 6.7M pieces an item at a time: 25 to 41
+    // ms a step on musl, 13 to 28 on glibc; swapped in place in one pass,
+    // 3 to 7 [M]. With mimalloc the step that doubles the list from 4M to
+    // 8M items (a new 64 MiB buffer, 32 MiB copied) reads 20 to 22 ms or 45
+    // to 47 when its pages are new, against limits of 38 to 56 (CHANGELOG,
+    // Known issues).
     (
-        Row::Bounded,
+        Row::OpenOnMimalloc,
         "P = 'a' * 9\nV = 'a' * 60_000_000",
         "t = V.rsplit(P)",
         1,

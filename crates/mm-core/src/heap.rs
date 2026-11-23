@@ -772,6 +772,31 @@ impl Heap {
         Ok(())
     }
 
+    /// Swaps value slot `i` of engine object `r` with slot `n - 1 - i` for
+    /// each `i` in `from..to` (`to <= n / 2`), validated once (write
+    /// barrier): a list of `n` items reversed in place a stretch a step.
+    pub fn swap_mirrored(&mut self, r: Ref, from: u32, to: u32, n: u32) -> Result<(), Error> {
+        let (s, off) = self.words.block_mut(r.0).ok_or(Error::BadRef)?;
+        let h = Header(s.data.read(off).ok_or(Error::BadRef)?);
+        if h.type_id() < types::FIRST_ENGINE {
+            return Err(Error::BadType);
+        }
+        if from > to || to > n / 2 || n > h.nvals() {
+            return Err(Error::BadSlot);
+        }
+        let (from, to, n) = (from as usize, to as usize, n as usize);
+        let slots = s.data.get_mut(off + 1..off + 1 + n).ok_or(Error::BadSlot)?;
+        let (lo, hi) = slots.split_at_mut(n - to);
+        for (x, y) in lo[from..to]
+            .iter_mut()
+            .zip(hi[..to - from].iter_mut().rev())
+        {
+            core::mem::swap(x, y);
+        }
+        s.dirty = space::DIRTY_REFS;
+        Ok(())
+    }
+
     /// The raw slots of object `r` (slots `nvals..len`) as one slice,
     /// validated once, for loops over many of them.
     pub fn raw_words(&self, r: Ref) -> Result<&[u64], Error> {
