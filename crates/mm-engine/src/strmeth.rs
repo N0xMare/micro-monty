@@ -444,8 +444,15 @@ pub(crate) fn split(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         None => None,
         Some(sep) => {
             let sep = str_arg_value(vm, sep, "sep")?;
-            if vm.str_bytes_hot(sep).is_empty() {
+            let bytes = vm.str_bytes_hot(sep);
+            if bytes.is_empty() {
                 return Err(vm.err(T::ValueError, "empty separator"));
+            }
+            if let &[b] = bytes
+                && b.is_ascii()
+                && let Some(r) = split_short_ascii_sep(vm, s, b, max)
+            {
+                return r;
             }
             Some(sep)
         }
@@ -506,6 +513,40 @@ pub(crate) fn split(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
     vm.burn(vm.str_bytes_hot(s).len() as u64 / 64);
     list_of_ranges(vm, s, &out, sep.is_some() || max > 0)
+}
+
+/// A short split with at most one cut needs no scratch vectors. An ASCII
+/// separator cannot match inside a UTF-8 code point, even in mixed text.
+/// Below 64 bytes the scan has no fuel charge.
+#[inline(never)]
+fn split_short_ascii_sep(
+    vm: &mut Vm,
+    s: Value,
+    sep: u8,
+    max: usize,
+) -> Option<Result<Value, Raised>> {
+    let r = s.as_obj()?;
+    let bytes = vm.str_bytes(s);
+    let len = bytes.len();
+    if len >= 64 {
+        return None;
+    }
+    let cut = if max == 0 {
+        None
+    } else {
+        bytes.iter().position(|&b| b == sep)
+    };
+    let Some(end) = cut else {
+        return Some(vm.new_list(&[s]));
+    };
+    if max > 1 && bytes[end + 1..].contains(&sep) {
+        return None;
+    }
+    Some((|| {
+        let left = str_slice(vm, r, 0, end)?;
+        let right = str_slice(vm, r, end + 1, len)?;
+        vm.new_list(&[left, right])
+    })())
 }
 
 pub(crate) fn rsplit(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {

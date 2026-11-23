@@ -27,3 +27,27 @@ assert 'AZ[az\x00'.lower() == 'az[az\x00'
 assert ('A' * 62 + 'Z').lower() == 'a' * 62 + 'z'
 assert ('A' * 63 + 'Z').lower() == 'a' * 63 + 'z'
 assert 'AİΣ!'.lower() == 'ai\u0307ς!'
+
+assert 'a,é'.split(',') == ['a', 'é']
+assert ',é'.split(',') == ['', 'é']
+assert 'é,'.split(',') == ['é', '']
+assert ',é,,z,'.split(',') == ['', 'é', '', 'z', '']
+assert ',é,,z,'.split(',', maxsplit=2) == ['', 'é', ',z,']
+assert ',é,,z,'.split(',', maxsplit=1) == ['', 'é,,z,']
+assert ',é,,z,'.split(',', 0) == [',é,,z,']
+assert ',é,,z,'.split(',', -2) == ['', 'é', '', 'z', '']
+assert 'abc'.split(',') == ['abc']
+assert ''.split(',') == ['']
+assert ('a' * 62 + ',').split(',') == ['a' * 62, '']
+assert ('a' * 63 + ',').split(',') == ['a' * 63, '']
+assert 'é::x::::y'.split('::', 2) == ['é', 'x', '::y']
+assert 'xé yé'.split('é', 1) == ['x', ' yé']
+assert '\x1c\tAB\x1f cd \r'.split() == ['AB', 'cd']
+assert '\x1c\tAB\x1f cd \r'.split(None, 0) == ['AB\x1f cd \r']
+assert '\u2003é\xa0 x '.split(None, 1) == ['é', 'x ']
+try:
+    'abc'.split('')
+except ValueError as e:
+    assert str(e) == 'empty separator'
+else:
+    assert False
