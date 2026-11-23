@@ -246,6 +246,30 @@ pub fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
     }
 }
 
+/// Appends `b` to `data`. On musl a short `b` (64 bytes or less) goes as
+/// 8-byte copies and single bytes: a copy of a run-time length is a libc
+/// `memcpy` call there, whose `rep movsq` start-up dominated a short
+/// append, and `json.dumps` of a million-key dict, a few short appends an
+/// item, took 50 to 57 ms a step on musl against 27 to 31 on glibc; 26 to
+/// 46 with these copies \[M, the step oracle's row of it\]. Elsewhere the
+/// libc's `memcpy` (or the guest's) is as fast.
+#[inline]
+fn append(data: &mut Vec<u8>, b: &[u8]) {
+    #[cfg(target_env = "musl")]
+    if b.len() <= 64 {
+        data.reserve(b.len());
+        let (words, tail) = b.as_chunks::<8>();
+        for w in words {
+            data.extend_from_slice(w);
+        }
+        for &x in tail {
+            data.push(x);
+        }
+        return;
+    }
+    data.extend_from_slice(b);
+}
+
 /// Lead bytes in `b`: the chars that start in it.
 fn count_leads(b: &[u8]) -> usize {
     let (chunks, rest) = b.as_chunks::<8>();
@@ -380,7 +404,7 @@ impl StrBuf {
 
     /// Appends `s`.
     pub fn push_str(&mut self, s: &str) {
-        self.data.extend_from_slice(s.as_bytes());
+        append(&mut self.data, s.as_bytes());
         self.chars += char_count(s);
     }
 
@@ -395,7 +419,7 @@ impl StrBuf {
     /// Appends the whole of `str` `r`.
     pub fn push_ref(&mut self, heap: &Heap, r: Ref) -> Result<(), Error> {
         let (bytes, chars) = heap.str_data(r)?;
-        self.data.extend_from_slice(bytes);
+        append(&mut self.data, bytes);
         self.chars += usize::try_from(chars).map_err(|_| Error::BadType)?;
         Ok(())
     }
@@ -406,7 +430,7 @@ impl StrBuf {
         if !bytes.is_ascii() {
             return Err(Error::BadType);
         }
-        self.data.extend_from_slice(bytes);
+        append(&mut self.data, bytes);
         self.chars += bytes.len();
         Ok(())
     }
@@ -427,7 +451,7 @@ impl StrBuf {
             return Err(Error::BadSlot);
         }
         let piece = data.get(start..end).ok_or(Error::BadSlot)?;
-        self.data.extend_from_slice(piece);
+        append(&mut self.data, piece);
         self.chars += if ascii {
             piece.len()
         } else {

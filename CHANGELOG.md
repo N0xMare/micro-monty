@@ -548,6 +548,12 @@ hashes are pre-release history, kept in the private archive
   musl the tail now moves in pieces that copy forward: 49 to 50 ms, as
   on glibc (47 to 48 ms against 50) [M], which is still at the limit
   (Known issues).
+- On musl, `json.dumps` of a million-key dict under `sort_keys` and
+  `indent` ran steps of 50 to 57 ms, past the bound, with musl's
+  `malloc` and with mimalloc: each of an item's short appends to the
+  text was a libc `memcpy` call. Appends of 64 bytes or less now copy at
+  fixed sizes on musl: 25 to 46 ms against limits of 53 to 58 [M].
+  Elsewhere they stay on the libc path.
 - `mm-cell-worker` on musl: an abort (`std::process::abort`, a failed
   allocation) killed the worker with the seccomp filter's `SIGSYS`
   instead of `SIGABRT`, as musl's `abort` signals with `tkill` where
@@ -784,11 +790,9 @@ hashes are pre-release history, kept in the private archive
   `Open`. The fix, moving the tail a step at a time, is not in this
   release.
 - With mimalloc on musl (what `mm` and `mm-cell-worker` register there),
-  two rows of the step oracle exceed the bound on some runs and are not
-  judged with that allocator; with glibc and with musl's `malloc` they
-  are, and pass. `json.dumps(d, sort_keys=True, indent=1)` of a million
-  keys: 53.1 to 65.4 ms against a limit of 52.5 to 52.9, over in 8 of 8
-  runs. A dict of 2^20 colliding keys filled beside a 46 MiB bytearray:
+  a row of the step oracle exceeds the bound on some runs and is not
+  judged with that allocator; with glibc and with musl's `malloc` it
+  is, and passes. A dict of 2^20 colliding keys filled beside a 46 MiB bytearray:
   36.9 to 61.3 ms against 52.5 to 53.2, over in 4 of 8 [M].
 - On musl, recorded agent sessions take 54% more engine time in memory
   and 82% more with a snapshot and restore on a fresh `Engine` at every

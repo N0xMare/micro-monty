@@ -1816,10 +1816,13 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "s = json.dumps(xs, indent=2)",
         1,
     ),
-    // With mimalloc on musl: 53.1 to 65.4 ms against 52.5 to 52.9, over in
-    // 8 of 8 runs [M, the musl review's probe].
+    // On musl its last steps, writing the sorted keys a few short appends
+    // an item, took 47 to 56 ms against 27 to 30 on glibc: each append
+    // was a libc `memcpy` call there (`StrBuf::push_str`). With fixed-size
+    // copies, 25 to 46 ms on musl's `malloc` and 29 to 39 with mimalloc,
+    // against limits of 53 to 58 [M, 12 alternated runs each].
     (
-        Row::OpenOnMimalloc,
+        Row::Bounded,
         "import json\nd = {str(i): i for i in range(1_000_000)}",
         "s = json.dumps(d, sort_keys=True, indent=1)",
         1,
