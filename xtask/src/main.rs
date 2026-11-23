@@ -866,7 +866,8 @@ fn check(args: &[String]) -> Result<(), String> {
         // Twice: on musl's `malloc` (`steps`), what an embedder without
         // an allocator gets, and on mimalloc (`steps_mimalloc`), which `mm`
         // and the worker register there. Their rows differ by up to 36 ms
-        // either way [M].
+        // either way [M]. `--no-fail-fast`: a failure on one allocator still
+        // leaves the other judged in the same run.
         let mut musl_steps: Vec<&str> = steps
             .iter()
             .map(|&a| if a == host { musl.as_str() } else { a })
@@ -889,7 +890,13 @@ fn check(args: &[String]) -> Result<(), String> {
                     &musl_dir,
                     &[
                         &musl_steps[..],
-                        &["--", "--skip", "slice_charges", "--test-threads=1"],
+                        &[
+                            "--no-fail-fast",
+                            "--",
+                            "--skip",
+                            "slice_charges",
+                            "--test-threads=1",
+                        ],
                     ]
                     .concat(),
                 )),

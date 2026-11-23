@@ -3571,7 +3571,7 @@ opens a draft release.
   the step-time oracle's wall-time half there, alone, twice: on musl's
   `malloc` (`tests/steps.rs`) and on mimalloc
   (`tests/steps_mimalloc.rs`), the allocator `mm` and the worker
-  register on musl.
+  register on musl; a failure on one still runs the other.
 - **GC stress** (not in `check`): `cargo xtask gc-stress` reruns the own
   cases, the corpus and durability collecting at every safepoint
   (`--incremental`: an incremental mark in tiny slices at every safepoint,
