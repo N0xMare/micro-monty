@@ -1,6 +1,7 @@
 //! Exceptions: context chaining, tracebacks as `(code, pc)` pairs, "Did you
 //! mean" hints, and CPython 3.14's traceback text with `~~^~~` carets.
 
+use crate::hints::HintGroup;
 use crate::scratch::{NativeIds, NativeText};
 use crate::text::char_len;
 use crate::types::{T, ty};
@@ -43,81 +44,6 @@ const MAX_CANDIDATES: usize = 750;
 const MAX_STRING: usize = 40;
 const MOVE_COST: usize = 2;
 const CASE_COST: usize = 1;
-
-/// Common stdlib module names, for "Did you forget to import 'x'?".
-const STDLIB: &[&str] = &[
-    "abc",
-    "argparse",
-    "array",
-    "asyncio",
-    "base64",
-    "bisect",
-    "builtins",
-    "calendar",
-    "cmath",
-    "codecs",
-    "collections",
-    "contextlib",
-    "copy",
-    "csv",
-    "dataclasses",
-    "datetime",
-    "decimal",
-    "difflib",
-    "enum",
-    "fractions",
-    "functools",
-    "glob",
-    "gzip",
-    "hashlib",
-    "heapq",
-    "hmac",
-    "html",
-    "http",
-    "inspect",
-    "io",
-    "itertools",
-    "json",
-    "logging",
-    "math",
-    "operator",
-    "os",
-    "pathlib",
-    "pickle",
-    "platform",
-    "pprint",
-    "queue",
-    "random",
-    "re",
-    "secrets",
-    "shlex",
-    "shutil",
-    "signal",
-    "socket",
-    "sqlite3",
-    "statistics",
-    "string",
-    "struct",
-    "subprocess",
-    "sys",
-    "tempfile",
-    "textwrap",
-    "threading",
-    "time",
-    "timeit",
-    "traceback",
-    "types",
-    "typing",
-    "unicodedata",
-    "unittest",
-    "urllib",
-    "uuid",
-    "warnings",
-    "weakref",
-    "xml",
-    "zipfile",
-    "zlib",
-];
 
 fn sub_cost(a: char, b: char) -> usize {
     if a == b {
@@ -1193,7 +1119,10 @@ impl Vm {
     }
 
     /// A `NameError`'s hint: the suggestion from the raising frame's
-    /// `(globals, locals)`, when given, then the stdlib module note.
+    /// `(globals, locals)`, when given, then the module note: "forget to
+    /// import" for a module this build imports, the redirect sentence for
+    /// one the sandbox leaves out (docs/user-guide.md, "Did you forget to
+    /// import").
     #[cfg_attr(mm_shipped, optimize(size))]
     fn name_hint_text(&mut self, name: &str, frame: Option<(Value, Value)>) -> Option<String> {
         let mut hint = String::new();
@@ -1226,11 +1155,29 @@ impl Vm {
                 }
             }
         }
-        if STDLIB.contains(&name) {
+        // CPython hints any of `sys.stdlib_module_names`. Here only a module
+        // `import` finds in this build is named, so the hint never leads to
+        // a failing import; a module the sandbox leaves out gets the
+        // sentence its import would add, and any other name nothing.
+        let importable = name != "_mm"
+            && (crate::BUNDLED.contains(&name) || self.stdlib.iter().any(|m| m.name == name));
+        if importable {
             if s.is_some() {
                 let _ = write!(hint, " Or did you forget to import '{name}'?");
             } else {
                 let _ = write!(hint, ". Did you forget to import '{name}'?");
+            }
+        } else if let Some(g) = [
+            HintGroup::Network,
+            HintGroup::Processes,
+            HintGroup::Filesystem,
+        ]
+        .into_iter()
+        .find(|g| g.modules().contains(&name))
+        {
+            let text = self.hint_text(g, name);
+            if !text.is_empty() {
+                let _ = write!(hint, "{} {text}", if s.is_some() { "" } else { "." });
             }
         }
         (!hint.is_empty()).then_some(hint)
@@ -1918,5 +1865,63 @@ impl Vm {
             row.push('\n');
         }
         row
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::panic, reason = "tests")]
+    use super::*;
+    use crate::vm::{Exit, StdModule, VmConfig};
+    use alloc::boxed::Box;
+
+    /// The last line of the report of `src`'s uncaught exception, run on a
+    /// VM whose stdlib is `stdlib`.
+    fn report(stdlib: &'static [StdModule], src: &str) -> String {
+        let compile = |src: &str| {
+            mm_compile::compile(
+                &mm_parse::parse(src).expect("parses"),
+                mm_compile::Options::default(),
+            )
+            .expect("compiles")
+        };
+        let mut vm = Vm::new(VmConfig {
+            stdlib,
+            ..VmConfig::default()
+        })
+        .expect("vm");
+        let entry = vm.load(&compile(src), "t.py", src).expect("loads");
+        let exit = vm.run(entry);
+        assert!(matches!(exit, Exit::Error), "{src}: {exit:?}");
+        let exc = vm.exception();
+        let text = vm.render_exception(exc);
+        String::from(text.lines().last().unwrap_or_default())
+    }
+
+    /// The hint names a module `import` finds in this session: one the
+    /// session's stdlib adds is named, the same name without it is not.
+    #[test]
+    fn a_name_error_names_a_module_only_where_it_imports() {
+        let program = mm_compile::compile(
+            &mm_parse::parse("x = 1\n").expect("parses"),
+            mm_compile::Options::default(),
+        )
+        .expect("compiles");
+        let stdlib: &'static [StdModule] = Box::leak(Box::new([StdModule {
+            name: "cmd",
+            code: Box::leak(mm_compile::pack::pack(&program.encode()).into_boxed_slice()),
+            packing: None,
+        }]));
+        assert_eq!(report(&[], "cmd"), "NameError: name 'cmd' is not defined");
+        assert_eq!(
+            report(stdlib, "cmd"),
+            "NameError: name 'cmd' is not defined. Did you forget to import 'cmd'?"
+        );
+        // `math` is the engine's own, in every build.
+        assert_eq!(
+            report(&[], "math"),
+            "NameError: name 'math' is not defined. Did you forget to import 'math'?"
+        );
+        assert_eq!(report(&[], "_mm"), "NameError: name '_mm' is not defined");
     }
 }

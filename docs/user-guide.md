@@ -692,6 +692,24 @@ suggestion (`AttributeError: module 'json' has no attribute 'lods'. Did
 you mean: 'loads'?`), for bundled and host modules alike, and so does
 `from json import lods`.
 
+**Did you forget to import.** A `NameError` for the name of a module
+`import` finds in this build (a bundled module whose feature is on, or one
+the session's stdlib adds) ends its report with CPython 3.14's `. Did you
+forget to import 'json'?`, after its "Did you mean" when one applies
+(`Did you mean: 'jsons'? Or did you forget to import 'json'?`). A name of
+a module the sandbox leaves out (the `Network`, `Processes` and
+`Filesystem` groups above) gets the sentence its import would add instead
+(`NameError: name 'subprocess' is not defined. There are no processes or
+threads in this sandbox; ...`), as the host set or blanked it; the
+third-party clients of `Network` (`requests`, `httpx`, `aiohttp`,
+`urllib3`, `websockets`) get it too, where CPython adds nothing. Any other
+name gets no module sentence, so a hint never leads to an import that
+fails: CPython names every one of its 297 `sys.stdlib_module_names`, and
+the ones micro-monty cannot import and does not redirect (`cmd`,
+`argparse`, `weakref`, `inspect`, ...) get none here: 213 with the default
+module set, which leaves out `ast`, `unicodedata` and `uuid`, and 210 with
+`mm`'s \[M\]. Nor does a bundled module whose feature is off.
+
 **Did you forget 'await'.** A `TypeError` or `AttributeError` raised
 because a coroutine, a host future or an `asyncio.gather` was used where a
 value was expected keeps CPython's message and adds `. Did you forget
@@ -1977,6 +1995,10 @@ differs:
   whose table mm keeps in another form, and a table that grows at other
   sizes than CPython's (mm grows a small table fourfold), so an insert by
   `__eq__` replaces it at other points \[M\].
+- **A `NameError`'s import hint** names only a module this build
+  imports; one the sandbox leaves out gets its redirect sentence instead,
+  and the other stdlib module names CPython hints (213 with the default
+  modules) get none ("Did you forget to import" above).
 - **Did you forget 'await'.** A `TypeError` or `AttributeError` over a
   coroutine, a host future or a gather ends its report with `. Did you forget
   'await'?`, which CPython does not print; `str(e)` and `e.args` are

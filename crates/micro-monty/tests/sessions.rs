@@ -2324,6 +2324,115 @@ fn unsupported_imports_keep_cpython_text_and_add_a_replaceable_hint() {
 }
 
 #[test]
+fn a_name_error_for_a_module_hints_only_an_import_that_works() {
+    let mut c = Cells::new();
+    let bare = |n: &str| format!("NameError: name '{n}' is not defined");
+    // A module this build imports: CPython's sentence.
+    for n in ["json", "math", "tomllib", "fnmatch"] {
+        assert_eq!(
+            c.report(n),
+            format!("{}. Did you forget to import '{n}'?", bare(n))
+        );
+    }
+    // One the sandbox leaves out: the sentence its import adds, after a
+    // "Did you mean" when one applies.
+    let processes = "There are no processes or threads in this sandbox; run commands with a \
+                     tool, and run tool calls concurrently with asyncio.gather";
+    assert_eq!(
+        c.report("subprocess"),
+        format!("{}. {processes}", bare("subprocess"))
+    );
+    assert_eq!(
+        c.report("shutil"),
+        format!(
+            "{}. There is no filesystem in this sandbox; read and write files with a tool",
+            bare("shutil")
+        )
+    );
+    assert_eq!(
+        c.report("sockets = 1\nsocket"),
+        format!(
+            "{}. Did you mean: 'sockets'? There is no network in this sandbox; call a tool to \
+             fetch data",
+            bare("socket")
+        )
+    );
+    // Third-party network clients share their group's sentence.
+    assert!(c.report("requests").ends_with("call a tool to fetch data"));
+    // Any other name, a stdlib module CPython hints included: nothing, as
+    // `import cmd` would fail.
+    for n in ["cmd", "argparse", "weakref", "numpy", "not_a_module"] {
+        assert_eq!(c.report(n), bare(n));
+    }
+    // A module this build leaves out, when it leaves one out (the
+    // workspace build unifies mm-cli's features; tests/features.rs covers
+    // a build without `asyncio` and `json`).
+    let env = c.engine.environment();
+    if let Some(off) = env
+        .lines()
+        .find_map(|l| l.strip_prefix("Not enabled in this build: "))
+        .and_then(|l| l.trim_end_matches('.').split(", ").next())
+    {
+        assert_eq!(c.report(off), bare(off));
+    }
+    // A blanked group blanks the NameError's sentence too.
+    c.session
+        .set_hint(HintGroup::Processes, Some(""))
+        .expect("set");
+    assert_eq!(c.report("subprocess"), bare("subprocess"));
+    c.session
+        .set_hint(HintGroup::Processes, Some("Use proc.run, not '{module}'"))
+        .expect("set");
+    assert_eq!(
+        c.report("subprocess"),
+        format!("{}. Use proc.run, not 'subprocess'", bare("subprocess"))
+    );
+}
+
+/// The hint is made while the report renders: at the memory limit and
+/// deep in a recursion it is the same line, and no second error.
+#[test]
+fn a_name_error_hint_renders_at_the_memory_limit_and_deep_in_a_recursion() {
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(8 << 20)));
+    let mut session = Session::new(&engine).expect("session");
+    let fill = "keep = []\ntry:\n    while True:\n        keep.append(bytearray(1024))\n\
+                except MemoryError:\n    pass\n";
+    for (n, end) in [
+        ("json", ". Did you forget to import 'json'?"),
+        (
+            "subprocess",
+            ". There are no processes or threads in this sandbox",
+        ),
+    ] {
+        let src = format!("{fill}{n}\n");
+        let code = engine.compile(&src, "cell.py").expect("compiles");
+        let Progress::Error(e) = session.start(&code) else {
+            panic!("{n}")
+        };
+        let last = e.traceback.lines().last().unwrap_or_default();
+        assert!(
+            last.starts_with(&format!("NameError: name '{n}' is not defined{end}")),
+            "{n}: {}",
+            e.traceback
+        );
+        assert!(!e.traceback.contains("During handling"), "{}", e.traceback);
+        session.reset().expect("reset");
+    }
+    let src = "import sys\ndef down(n):\n    return down(n - 1) if n else json\n\
+               down(sys.getrecursionlimit() - 10)\n";
+    let code = engine.compile(src, "cell.py").expect("compiles");
+    let Progress::Error(e) = session.start(&code) else {
+        panic!("deep")
+    };
+    assert_eq!(
+        e.traceback.lines().last(),
+        Some("NameError: name 'json' is not defined. Did you forget to import 'json'?"),
+        "{}",
+        e.traceback
+    );
+}
+
+#[test]
 fn the_environment_summary_comes_from_the_build() {
     let engine = Engine::new(
         EngineConfig::new().with_limits(

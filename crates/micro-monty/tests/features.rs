@@ -1,7 +1,7 @@
 //! What the facade's module features keep and refuse: coroutines, async
 //! generators, `async with` and awaited host futures work without the
 //! `asyncio` module, and a module whose feature is off raises
-//! `ModuleNotFoundError`, while `math`, `cmath` and `sys` have no feature
+//! `ModuleNotFoundError` (and a `NameError` for it no import hint), while `math`, `cmath` and `sys` have no feature
 //! and always import. `cargo xtask check` also runs this file on a build
 //! that opts out of `asyncio` and `json` and into `ast` (`cargo test -p
 //! micro-monty --no-default-features --features mod-ast`); the
@@ -102,6 +102,26 @@ fn a_module_imports_exactly_when_its_feature_is_on() {
                 "{module}: {got}"
             );
             assert!(env.contains("Not enabled in this build: "), "{env}");
+        }
+        // A NameError for the module says to import it only where that works.
+        if module == top {
+            let mut s = Session::new(&engine).expect("session");
+            let code = engine.compile(module, "test.py").expect("compiles");
+            let Progress::Error(e) = s.start(&code) else {
+                panic!("{module}")
+            };
+            let hint = format!(". Did you forget to import '{module}'?");
+            assert_eq!(
+                e.traceback.lines().last(),
+                Some(
+                    format!(
+                        "NameError: name '{module}' is not defined{}",
+                        if on { hint.as_str() } else { "" }
+                    )
+                    .as_str()
+                ),
+                "{module}"
+            );
         }
     }
 }

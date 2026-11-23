@@ -14,6 +14,17 @@ hashes are pre-release history, kept in the private archive
 
 ### Added
 
+- A `NameError` for a module name says "Did you forget to import 'x'?"
+  for every module `import` finds in the build, `tomllib`, `fnmatch`,
+  `binascii`, `numbers` and others newly, and no longer for one it
+  cannot import (`argparse`, `array`, `builtins`, `inspect`, `queue`,
+  `secrets`, `timeit`, `unittest`, `weakref`, or a bundled module whose
+  feature is off). A module the sandbox leaves out (`subprocess`,
+  `socket`, `shutil`, ...) gets its redirect sentence instead of an
+  import hint, and the other names of CPython's 297
+  `sys.stdlib_module_names` get none (213 with the default modules, 210
+  with `mm`'s) [M, own case 603]. The engine's
+  list of 71 names is gone: `hello` is 2,512 bytes smaller [M].
 - `exit()` and `quit()` are `sys.exit`, and `input()` raises
   `EOFError: input(): there is no stdin in this sandbox; put the value
   in the code or get it from a tool` after writing its prompt, as
