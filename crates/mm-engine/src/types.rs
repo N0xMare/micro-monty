@@ -185,6 +185,9 @@ types! {
     dict_itemiterator = "dict_itemiterator", object;
     set_iterator = "set_iterator", object;
     list_reverseiterator = "list_reverseiterator", object;
+    dict_reversekeyiterator = "dict_reversekeyiterator", object;
+    dict_reversevalueiterator = "dict_reversevalueiterator", object;
+    dict_reverseitemiterator = "dict_reverseitemiterator", object;
     enumerate = "enumerate", object;
     zip = "zip", object;
     dict_keys = "dict_keys", object;

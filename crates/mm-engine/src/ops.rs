@@ -26,6 +26,11 @@ pub(crate) mod it {
     /// A `str` of ASCII chars only (`str_ascii_iterator`).
     pub const STR_ASCII: u64 = 9;
     pub const BYTEARRAY: u64 = 10;
+    /// `reversed()` of a dict or a dict view: its raw position is the
+    /// number of entries not yet scanned from the end.
+    pub const DICT_KEYS_REV: u64 = 11;
+    pub const DICT_VALUES_REV: u64 = 12;
+    pub const DICT_ITEMS_REV: u64 = 13;
 }
 
 /// Why an order could not be decided natively.
@@ -61,6 +66,9 @@ pub(crate) fn iter_type(k: u64) -> T {
         it::DICT_KEYS => T::dict_keyiterator,
         it::DICT_VALUES => T::dict_valueiterator,
         it::DICT_ITEMS => T::dict_itemiterator,
+        it::DICT_KEYS_REV => T::dict_reversekeyiterator,
+        it::DICT_VALUES_REV => T::dict_reversevalueiterator,
+        it::DICT_ITEMS_REV => T::dict_reverseitemiterator,
         it::BYTES => T::bytes_iterator,
         it::BYTEARRAY => T::bytearray_iterator,
         _ => T::set_iterator,
@@ -1371,6 +1379,9 @@ impl Vm {
             | T::dict_keyiterator
             | T::dict_valueiterator
             | T::dict_itemiterator
+            | T::dict_reversekeyiterator
+            | T::dict_reversevalueiterator
+            | T::dict_reverseitemiterator
             | T::set_iterator
             | T::enumerate
             | T::zip
@@ -2829,7 +2840,14 @@ impl Vm {
 
     // -------------------------------------------------------- iteration
 
-    fn new_iter(&mut self, seq: Value, kind: u64, a: u64, b: u64, c: u64) -> Result<Value, Raised> {
+    pub(crate) fn new_iter(
+        &mut self,
+        seq: Value,
+        kind: u64,
+        a: u64,
+        b: u64,
+        c: u64,
+    ) -> Result<Value, Raised> {
         let r = {
             let res = self.heap.alloc_init(ty::ITER, 0, &[seq], &[kind, a, b, c]);
             self.hx_hot(res)
@@ -2885,6 +2903,9 @@ impl Vm {
             | T::dict_keyiterator
             | T::dict_valueiterator
             | T::dict_itemiterator
+            | T::dict_reversekeyiterator
+            | T::dict_reversevalueiterator
+            | T::dict_reverseitemiterator
             | T::set_iterator
             | T::enumerate
             | T::zip
@@ -3040,6 +3061,40 @@ impl Vm {
                     }
                     self.burn((i.saturating_sub(a as usize)) as u64 / 8);
                     // Exhausted iterators stay exhausted.
+                    self.set_raw_hot(r, 2, DEAD);
+                    self.iter_drop(r);
+                    return Ok(None);
+                }
+                it::DICT_KEYS_REV | it::DICT_VALUES_REV | it::DICT_ITEMS_REV => {
+                    if a == DEAD {
+                        return Ok(None);
+                    }
+                    // CPython's reverse iterator checks the size only.
+                    if self.dict_len(seq) as u64 != self.raw_hot(r, 3) {
+                        self.set_raw_hot(r, 3, u64::MAX);
+                        return Err(
+                            self.err(T::RuntimeError, "dictionary changed size during iteration")
+                        );
+                    }
+                    let top = usize::try_from(a)
+                        .unwrap_or(usize::MAX)
+                        .min(self.dict_used(seq));
+                    let mut i = top;
+                    while i > 0 {
+                        i -= 1;
+                        if let Some((k, v)) = self.dict_entry(seq, i) {
+                            if top - i >= 64 {
+                                self.burn((top - i) as u64 / 8);
+                            }
+                            self.set_raw_hot(r, 2, i as u64);
+                            return Ok(Some(match kind {
+                                it::DICT_KEYS_REV => k,
+                                it::DICT_VALUES_REV => v,
+                                _ => self.alloc_tuple_hot(&[k, v])?,
+                            }));
+                        }
+                    }
+                    self.burn(top as u64 / 8);
                     self.set_raw_hot(r, 2, DEAD);
                     self.iter_drop(r);
                     return Ok(None);

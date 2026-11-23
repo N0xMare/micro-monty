@@ -2303,6 +2303,9 @@ pub(crate) fn method_index(owner: T, name: &[u8]) -> Option<u32> {
                     | T::dict_keyiterator
                     | T::dict_valueiterator
                     | T::dict_itemiterator
+                    | T::dict_reversekeyiterator
+                    | T::dict_reversevalueiterator
+                    | T::dict_reverseitemiterator
                     | T::set_iterator
                     | T::enumerate
                     | T::zip
@@ -5375,13 +5378,18 @@ fn reversed_of(vm: &mut Vm, v: Value) -> Result<Value, Raised> {
             Ok(Value::from_ref(r, ty::REVERSED as u8))
         }
         T::range => vm.range_iter(v, true),
-        T::str
-        | T::dict
-        | T::dict_keys
-        | T::dict_values
-        | T::dict_items
-        | T::bytes
-        | T::bytearray => {
+        T::dict | T::dict_keys | T::dict_values | T::dict_items => {
+            use crate::ops::it;
+            let (d, kind) = match vm.type_of(v) {
+                T::dict => (v, it::DICT_KEYS_REV),
+                T::dict_keys => (vm.vslot(v, 0), it::DICT_KEYS_REV),
+                T::dict_values => (vm.vslot(v, 0), it::DICT_VALUES_REV),
+                _ => (vm.vslot(v, 0), it::DICT_ITEMS_REV),
+            };
+            let (used, n) = (vm.dict_used(d) as u64, vm.dict_len(d) as u64);
+            vm.new_iter(d, kind, used, n, 0)
+        }
+        T::str | T::bytes | T::bytearray => {
             let mut items = vm.collect(v)?;
             items.reverse();
             let l = vm.new_list(&items)?;
