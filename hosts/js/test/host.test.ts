@@ -635,7 +635,19 @@ test("the driver: awaited calls, a fan-out answered out of order, sync tools, er
 	s.setOutput((_, t) => {
 		out += t;
 	});
+	// The fan-out's five calls are answered only once all five are in flight, last
+	// first: the order shows they ran at once, with no timers to race on a loaded
+	// machine. A driver that awaited them one at a time would leave the first
+	// waiting; 10 s after it, every call is let through, and the order shows that.
 	const order: number[] = [];
+	const held = new Map<number, () => void>();
+	let fallback: ReturnType<typeof setTimeout> | undefined;
+	let letThrough = false;
+	const answer = () => {
+		letThrough = true;
+		clearTimeout(fallback);
+		for (const i of [...held.keys()].sort((a, b) => b - a)) held.get(i)?.();
+	};
 	const r = await run(
 		s,
 		`import asyncio
@@ -652,7 +664,14 @@ print(a, xs, now())
 			tools: {
 				slow: async (c) => {
 					const i = c.args[0] as number;
-					await new Promise((res) => setTimeout(res, 30 - i * 5));
+					if (i > 0 && !letThrough) {
+						await new Promise<void>((res) => {
+							held.set(i, res);
+							fallback ??= setTimeout(answer, 10_000);
+							// After this call's own await is attached, so it resumes first.
+							if (held.size === 5) queueMicrotask(answer);
+						});
+					}
 					order.push(i);
 					return i * 10;
 				},
