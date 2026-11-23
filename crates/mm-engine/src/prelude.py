@@ -864,9 +864,7 @@ def _percent(fmt, args):
         elif c == 'a':
             x = ascii(v)
         elif c == 'b':
-            x = type(v).__bytes__(v)
-            if not isinstance(x, bytes):
-                raise TypeError('__bytes__ returned non-bytes (type ' + _type_name(x) + ')')
+            x = _call_bytes(type(v).__bytes__, v)
         elif c == 'i':
             # PyNumber_Long: `__int__` before `__index__`.
             x = int(v)
@@ -1286,11 +1284,28 @@ def _mreal(x):
 _MATH_INTS = ('math.factorial', 'math.gcd', 'math.lcm', 'math.isqrt', 'math.comb', 'math.perm')
 
 
+def _call_bytes(f, x):
+    # `f(x)` for `x`'s class's `__bytes__` `f`, as CPython's `PyObject_Bytes`.
+    b = f(x)
+    if not isinstance(b, bytes):
+        raise TypeError('__bytes__ returned non-bytes (type ' + _type_name(b) + ')')
+    return b
+
+
 def _mcall(f, args, kw):
     new = []
     changed = False
     # math's functions of reals take what __float__ (else __index__) gives.
     name = _native_name(f)
+    if (name == 'bytes' or name == 'bytearray') and args:
+        # `bytes(x)` asks `__bytes__` before anything else, as CPython's;
+        # an object with no way to give bytes gets CPython's TypeError.
+        t = type(args[0])
+        g = getattr(t, '__bytes__', None) if name == 'bytes' else None
+        if g is not None:
+            return _call_bytes(g, args[0])
+        if not _has_index(args[0]) and getattr(t, '__iter__', None) is None and getattr(t, '__getitem__', None) is None:
+            raise TypeError("cannot convert '" + _type_name(args[0]) + "' object to " + name)
     # prod and sumprod of user numbers (Fraction, Decimal) run their
     # operators; dist takes what __float__ gives.
     if name == 'math.prod':
@@ -2609,12 +2624,7 @@ def _int_from_bytes(a, signed):
     # class, maybe a subclass.
     b = a[1]
     f = getattr(type(b), '__bytes__', None)
-    if f is None:
-        b = bytes(b)
-    else:
-        b = f(b)
-        if not isinstance(b, bytes):
-            raise TypeError('__bytes__ returned non-bytes (type ' + _type_name(b) + ')')
+    b = bytes(b) if f is None else _call_bytes(f, b)
     return a[0].from_bytes(b, *a[2:], signed=False if signed is _MISSING else signed)
 
 

@@ -889,6 +889,11 @@ fn construct(vm: &mut Vm, a: &CallArgs, ba: bool) -> Result<Value, Raised> {
     if Vm::is_bytes(src) && !ba {
         return Ok(src);
     }
+    // `bytes()` asks a class's `__bytes__` before it reads the object as a
+    // count, text or items, as CPython's (`_mcall`); `bytearray()` never.
+    if !ba && vm.user_method(src, crate::class::Dn::Bytes).is_some() {
+        return Err(vm.need_py());
+    }
     if Vm::is_bytes_like(src) {
         return vm.bytes_copy(src, ba);
     }
