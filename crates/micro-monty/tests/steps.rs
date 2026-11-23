@@ -45,10 +45,24 @@ const REF_SCAN: Duration = Duration::from_micros(11_600);
 /// run up to twice as long on such an orb as on one with 64 ns loads.
 const REF_LOADS: Duration = Duration::from_millis(144);
 
+/// The slowest machine the oracle judges, as a ratio of the reference's
+/// time: the limit stops scaling here, so a step over it on a slower
+/// machine says nothing about the code.
+const SLOWEST: f64 = 2.0;
+
+/// How long the oracle waits in all for a machine past [`SLOWEST`] to come
+/// back, probing again every [`REPROBE`]: before the first row runs and
+/// before each retry. A gate's host can stay past it for a whole run, or
+/// drift there after the limit was set (1.52 at the start, past 2 at the
+/// retries) [S, the 0.0.3 release gates], so a machine still past it then
+/// is refused as unable to judge, at once and with no row's verdict.
+const PATIENCE: Duration = Duration::from_secs(300);
+const REPROBE: Duration = Duration::from_secs(15);
+
 /// How much slower than the reference this machine is: the largest ratio
 /// of its probe times to [`REF_FRESH`], [`REF_SCAN`] and [`REF_LOADS`],
-/// each the least of 5, clamped to 0.5..=2 (a machine slower than that
-/// cannot judge the bound, and is reported). `fresh` allocates and fills
+/// each the least of 5; the limits clamp it to 0.5..=[`SLOWEST`]
+/// ([`settled`]). `fresh` allocates and fills
 /// 64 MiB, the cost of a step that allocates an object at the cap; `scan`
 /// runs four chunked steps of `STEP_WORK` units (`-1 in xs`), the cost of
 /// native work; `loads` is memory latency ([`latency`]).
@@ -106,6 +120,46 @@ fn latency() -> Duration {
     }
     std::hint::black_box(p);
     best
+}
+
+/// [`speed`], probed again every [`REPROBE`] while it is past [`SLOWEST`]
+/// and `waited` is under [`PATIENCE`]; `waited` grows by the time spent.
+/// The probe returned is the last, past [`SLOWEST`] only once patience is
+/// spent.
+fn settled(engine: &Engine, waited: &mut Duration) -> (f64, Duration, Duration, Duration) {
+    loop {
+        let t = Instant::now();
+        let probe = speed(engine);
+        if probe.0 <= SLOWEST || *waited >= PATIENCE {
+            *waited += t.elapsed();
+            return probe;
+        }
+        println!(
+            "steps: this machine runs at {:.2} of the reference's time, past {SLOWEST}: \
+             probing again in {REPROBE:?} ({waited:.0?} of {PATIENCE:?} waited)",
+            probe.0
+        );
+        std::thread::sleep(REPROBE);
+        *waited += t.elapsed();
+    }
+}
+
+/// [`settled`], or the test fails at once if the machine is still past
+/// [`SLOWEST`]: it cannot judge a step there.
+fn judging(engine: &Engine, waited: &mut Duration) -> (f64, Duration, Duration, Duration) {
+    let probe = settled(engine, waited);
+    if probe.0 > SLOWEST {
+        // A failing test aborts without its panic message (`cargo xtask
+        // check` builds it with `-Zpanic-abort-tests`), so print it too.
+        let refused = format!(
+            "this machine takes {:.2} times the reference's time after {waited:.0?} of probing; \
+             the step oracle cannot judge it",
+            probe.0
+        );
+        println!("steps: {refused}");
+        panic!("{refused}");
+    }
+    probe
 }
 
 /// Frees a chunk just under 32 MiB that glibc mmapped, which raises its
@@ -3254,19 +3308,28 @@ impl<'a> Timed<'a> {
 /// the faster of the probes on either side of it, as the first runs are
 /// against the faster of the probes before and after them all (a load
 /// spike can only slow a probe). A row passes if any run is under its
-/// limit.
-fn retry(engine: &Engine, runs: &mut [Timed<'_>]) {
+/// limit. A retry runs only after a probe at or under [`SLOWEST`]
+/// ([`settled`]), so each one is judged; once `waited` spends the
+/// patience with the machine still past it, the retries stop and this
+/// returns that probe's ratio: the rows still over are not judged.
+fn retry(engine: &Engine, runs: &mut [Timed<'_>], waited: &mut Duration) -> Option<f64> {
     let mut probe = None;
     for _ in 0..RETRIES {
         if !runs.iter().any(Timed::over) {
-            return;
+            return None;
         }
         for run in runs.iter_mut().filter(|run| run.over()) {
-            let before = probe.unwrap_or_else(|| speed(engine).0);
+            let before = match probe {
+                Some(ratio) if ratio <= SLOWEST => ratio,
+                _ => settled(engine, waited).0,
+            };
+            if before > SLOWEST {
+                return Some(before);
+            }
             let (worst, parks, _) = gaps(engine, run.setup, &run.src);
             let after = speed(engine).0;
             probe = Some(after);
-            let limit = LIMIT.mul_f64(before.min(after).clamp(0.5, 2.0));
+            let limit = LIMIT.mul_f64(before.min(after).clamp(0.5, SLOWEST));
             run.tries.push((worst, limit));
             if worst.as_secs_f64() / limit.as_secs_f64()
                 < run.worst.as_secs_f64() / run.limit.as_secs_f64()
@@ -3275,15 +3338,19 @@ fn retry(engine: &Engine, runs: &mut [Timed<'_>]) {
             }
         }
     }
+    None
 }
 
 /// Prints each row's verdict and fails on a bounded row over its limit,
-/// naming its index, setup and program, and every run it took.
-fn report(runs: &[Timed<'_>]) {
+/// naming its index, setup and program, and every run it took. With
+/// `unjudged`, the ratio at which [`retry`] stopped, a row still over is
+/// not judged, and the test fails as unable to judge this machine.
+fn report(runs: &[Timed<'_>], unjudged: Option<f64>) {
     let mut over = Vec::new();
     for run in runs {
         let tag = match (run.row, run.worst <= run.limit) {
             (Row::Bounded | Row::OpenOnMimalloc, true) => "ok",
+            (Row::Bounded | Row::OpenOnMimalloc, false) if unjudged.is_some() => "unjudged",
             (Row::Bounded | Row::OpenOnMimalloc, false) => "OVER",
             (Row::Open, true) => "open (under the limit now: mark it Bounded)",
             (Row::Open, false) => "open",
@@ -3304,11 +3371,21 @@ fn report(runs: &[Timed<'_>]) {
             ));
         }
     }
-    if !over.is_empty() {
-        let over = over.join("\n\n");
-        println!("steps: rows over the limit:\n{over}");
-        panic!("native steps over the limit:\n{over}");
+    if over.is_empty() {
+        return;
     }
+    let over = over.join("\n\n");
+    if let Some(ratio) = unjudged {
+        let refused = format!(
+            "this machine took {ratio:.2} times the reference's time after {PATIENCE:?} of \
+             probing, so the step oracle cannot judge the rows still over the limit; \
+             not judged:\n{over}"
+        );
+        println!("steps: {refused}");
+        panic!("{refused}");
+    }
+    println!("steps: rows over the limit:\n{over}");
+    panic!("native steps over the limit:\n{over}");
 }
 
 #[test]
@@ -3317,8 +3394,15 @@ fn no_native_step_runs_longer_than_the_limit() {
     raise_mmap_threshold();
     let engine = Engine::new(EngineConfig::default());
     // The probes run before and after the rows and the faster counts: a
-    // load spike can only slow a probe, which would loosen the limit.
-    let before = speed(&engine);
+    // load spike can only slow a probe, which would loosen the limit. The
+    // first one fails the test at once on a machine too slow to judge,
+    // before the rows' quarter of an hour.
+    let mut waited = Duration::ZERO;
+    let before = judging(&engine, &mut waited);
+    println!(
+        "steps: this machine runs at {:.2} of the reference's time before the rows",
+        before.0
+    );
     let mut runs: Vec<_> = SITES
         .iter()
         .enumerate()
@@ -3329,21 +3413,18 @@ fn no_native_step_runs_longer_than_the_limit() {
         .collect();
     let after = speed(&engine);
     let (ratio, fresh, scan, loads) = if after.0 < before.0 { after } else { before };
-    let limit = LIMIT.mul_f64(ratio.clamp(0.5, 2.0));
+    // At most `before`, which `judging` holds to `SLOWEST`.
+    let limit = LIMIT.mul_f64(ratio.max(0.5));
     println!(
         "steps: limit {limit:.1?}: this machine runs at {ratio:.2} of the reference's time \
          (fresh 64 MiB {fresh:.1?}, scan {scan:.1?}, loads {loads:.1?}; before {:.2}, after {:.2})",
         before.0, after.0
     );
-    assert!(
-        ratio <= 2.0,
-        "this machine takes {ratio:.2} times the reference's time; the step oracle cannot judge it"
-    );
     for run in &mut runs {
         run.limit = limit;
     }
-    retry(&engine, &mut runs);
-    report(&runs);
+    let unjudged = retry(&engine, &mut runs, &mut waited);
+    report(&runs, unjudged);
 }
 
 /// The fuel half of [`no_native_step_runs_longer_than_the_limit`]: on the
@@ -3415,7 +3496,7 @@ const QUEUES: &[(&str, &str, Duration, Option<u64>)] = &[
 #[cfg_attr(debug_assertions, ignore = "release only: cargo xtask check runs it")]
 fn queue_loops_run_at_cpython_speed() {
     let engine = Engine::new(EngineConfig::default());
-    let ratio = speed(&engine).0.clamp(0.5, 2.0);
+    let ratio = judging(&engine, &mut Duration::default()).0.max(0.5);
     let mut slow = Vec::new();
     for &(setup, src, budget, most) in QUEUES {
         let code = engine.compile(src, "queue.py").expect("compiles");
@@ -3518,7 +3599,8 @@ const OPT_IN: &[(Row, &str, &str)] = &[
 fn no_opt_in_module_step_runs_longer_than_the_limit() {
     raise_mmap_threshold();
     let engine = Engine::new(EngineConfig::default());
-    let limit = LIMIT.mul_f64(speed(&engine).0.clamp(0.5, 2.0));
+    let mut waited = Duration::ZERO;
+    let limit = LIMIT.mul_f64(judging(&engine, &mut waited).0.max(0.5));
     let mut runs: Vec<_> = OPT_IN
         .iter()
         .enumerate()
@@ -3529,8 +3611,8 @@ fn no_opt_in_module_step_runs_longer_than_the_limit() {
     for run in &mut runs {
         run.limit = limit;
     }
-    retry(&engine, &mut runs);
-    report(&runs);
+    let unjudged = retry(&engine, &mut runs, &mut waited);
+    report(&runs, unjudged);
 }
 
 /// [`no_slice_charges_more_than_one_step_past_its_fuel`] on the opt-in
@@ -3564,11 +3646,8 @@ fn no_opt_in_module_slice_charges_more_than_one_step_past_its_fuel() {
 #[test]
 #[cfg_attr(debug_assertions, ignore = "release only: cargo xtask check runs it")]
 fn no_first_run_of_restored_bundled_code_runs_longer_than_the_limit() {
-    let limit = LIMIT.mul_f64(
-        speed(&Engine::new(EngineConfig::default()))
-            .0
-            .clamp(0.5, 2.0),
-    );
+    let engine = Engine::new(EngineConfig::default());
+    let limit = LIMIT.mul_f64(judging(&engine, &mut Duration::default()).0.max(0.5));
     // The longest step of `src` in `s`, parking at every safepoint that
     // reads the clock.
     let worst_step = |s: &mut Session, src: &str| {

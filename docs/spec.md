@@ -901,13 +901,21 @@ are the rules above. Where the code falls short, the clause says so under
    table (rows took twice as long on a machine with 144 ns loads as on one
    with 64 ns [M]). The limit is 50 ms times the largest ratio of a probe's
    time to the reference's (28.1 ms, 11.6 ms and 144 ms [M]), clamped to
-   0.5–2; a machine past 2 fails the oracle as unable to judge it. A
+   0.5–2. The first probe runs before any row: a machine past 2 is probed
+   again every 15 s, and if it is still past 2 once the oracle has waited
+   5 minutes in all, the oracle fails at once as unable to judge it, before
+   the rows' quarter of an hour. A
    `Bounded` row over that limit runs again after every other row has run,
    once a round for up to six rounds, so its retries spread over the host's
    slow phases (1.6–2 times, outlasting three runs back to back [M]). A
    probe runs between retries, each retry is judged against the limit from
    the faster probe beside it, and the row passes if any run is under its
-   limit: a load spike only lengthens a step.
+   limit: a load spike only lengthens a step. A retry runs only after a
+   probe at or under 2, waiting as at the start, so a machine that slows
+   past 2 after the limit was set judges no retry against a limit it
+   cannot scale to; if the wait runs out, the rows still over are reported
+   as not judged and the oracle fails as unable to judge the machine, not
+   on a row.
 
    A collection the heap starts itself is not a native step: over 32 MiB
    live it marks a slice per safepoint, and under it it runs in full over
