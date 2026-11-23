@@ -740,8 +740,9 @@ impl Session {
     /// The engine has no ambient I/O: the stdlib's OS operations call
     /// untyped builtins (functions of module `""`) under these names, and
     /// raise a `PermissionError` (filesystem) or `RuntimeError` (anything
-    /// else) naming the function when none is defined. Arguments are path
-    /// strings unless noted: `open(path, mode, ...)`; `Path.exists`,
+    /// else) naming the function when none is defined, except
+    /// `os.getcwd()`, which then returns `'/'`. Arguments are path strings
+    /// unless noted: `open(path, mode, ...)`; `Path.exists`,
     /// `Path.is_file`, `Path.is_dir`, `Path.is_symlink`, `Path.read_text`,
     /// `Path.read_bytes`, `Path.stat` (a 10-item `os.stat_result`
     /// sequence), `Path.iterdir` (paths), `Path.resolve`, `Path.unlink`,
@@ -751,9 +752,10 @@ impl Session {
     /// matching paths; `walk`: `(dirpath, dirnames, filenames)` triples;
     /// `scandir`: entries), `os.path.ismount`; `os.getenv(key, default)`,
     /// `os.environ()` (a dict), `os.putenv`, `os.unsetenv`, `os.getcwd()`,
-    /// `os.chdir`, `os.system`. Defining `os.urandom(n)`, `time.sleep(secs)`
-    /// or `asyncio.sleep(delay[, result])` replaces the built-in entropy,
-    /// virtual sleep and virtual async sleep.
+    /// `os.chdir`, `os.system`. Defining `os.getcwd()`, `os.urandom(n)`,
+    /// `time.sleep(secs)` or `asyncio.sleep(delay[, result])` replaces the
+    /// built-in default: the root `'/'`, entropy, virtual sleep and virtual
+    /// async sleep.
     ///
     /// Returns a [`HostFunctionRef`] per host function: its call name (what
     /// [`crate::Progress::HostCall`] reports) and id, functions first, then

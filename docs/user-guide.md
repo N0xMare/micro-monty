@@ -519,9 +519,12 @@ documents the full list and argument shapes. When none is defined the
 operation raises `PermissionError` (filesystem) or `RuntimeError` naming it:
 `open() is not available: this sandbox has no ambient filesystem. Use a
 tool for files, environment variables and commands` (the second sentence is
-the `HintGroup::OsHooks` hint). Defining `os.urandom`, `time.sleep` or
-`asyncio.sleep` replaces the built-in entropy, virtual sleep and virtual
-async sleep.
+the `HintGroup::OsHooks` hint). Four have a built-in default instead, which
+defining the hook replaces: `os.getcwd()` returns `'/'` (so `Path.cwd()`,
+`os.path.abspath` and `os.path.relpath` of relative paths compute against
+the root, as CPython-written code expects a working directory to exist),
+and `os.urandom`, `time.sleep` and `asyncio.sleep` use the built-in
+entropy, virtual sleep and virtual async sleep.
 
 The remaining ambient state is configurable:
 
@@ -1332,8 +1335,9 @@ mm resume --json DIR
 `TZ` sets the local time zone (a zoneinfo name, a path, or a POSIX rule; UTC
 without it), and `zoneinfo` reads `$TZDIR` or `/usr/share/zoneinfo`. `mm`
 defines no other host functions, so `open()`, `os.getenv` and the like
-raise. The `MM_GC_STRESS`, `MM_GC_YIELD` and `MM_STEP_MS` variables are for
-the engine's own test gates.
+raise, and `os.getcwd()` returns its default, `'/'`. The `MM_GC_STRESS`,
+`MM_GC_YIELD` and `MM_STEP_MS` variables are for the engine's own test
+gates.
 
 ## WebAssembly hosts
 
