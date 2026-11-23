@@ -1705,6 +1705,34 @@ differs:
   many done callbacks, cancelled very many times by separate `cancel()`
   calls, takes about 3.4 times as long as before for those calls, at the
   same fuel; no single step is long.
+- A task that awaits itself gets CPython's `RuntimeError: Task cannot
+  await on itself: <Task …>` at its next step. Two things differ after
+  it. On CPython 3.14.7 any later `await` of that task while it is
+  pending, by itself or by another task, raises `RuntimeError: await
+  wasn't used with future`; here a second self-await raises the
+  self-await error again and another task awaits it normally and gets
+  its result. And the task's repr in the message lists no callbacks
+  (CPython adds `cb=[…]` when the task has done callbacks), as it has no
+  `coro=`.
+- A `SystemExit` or `KeyboardInterrupt` that leaves a task ends the run
+  and `asyncio.run` raises it, as on CPython, with two differences in
+  what the other tasks see. CPython then cancels every pending task
+  directly as well as through the main task, so a task that the main
+  task's cancel also reaches counts two cancels (`cancelling()` is 2
+  where it is 1 here). And when the exception leaves in the loop
+  iteration where the main coroutine ends, with another task pending,
+  CPython 3.14.7 raises `RuntimeError: Event loop stopped before Future
+  completed.` in place of it; here `asyncio.run` raises the
+  `SystemExit` or `KeyboardInterrupt`.
+- When `asyncio.run`'s main coroutine has ended with no task left and
+  an async generator to close, the run makes fewer loop iterations
+  than CPython before it stops: a `call_soon` callback that queues the
+  next one runs links 0 to 3 here and 0 to 7 on CPython 3.14.7, so a
+  callback queued that late is dropped here.
+- A cancelled gather raises the `CancelledError` of its last listed
+  child. When that child is a task that cancelled itself with a
+  message, caught it and returned before the gather was made, CPython
+  3.14.7 gives the error that message; here it is `CancelledError()`.
 - Near the memory limit the loop drops nothing it accepted. A done
   callback, a `call_soon` or timer callback, or a task's first step that
   has no room to start waits for one collection and is tried again; if it

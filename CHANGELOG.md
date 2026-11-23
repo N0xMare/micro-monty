@@ -644,6 +644,41 @@ hashes are pre-release history, kept in the private archive
   reads count toward its step's work, so no step is long. Remembering
   which gathers already hold the message would need image state and is
   not built.
+- A `SystemExit` or `KeyboardInterrupt` that leaves a task: two
+  differences from CPython remain, found by the asyncio review and not
+  fixed (owner's ruling). `asyncio.run` still raises the exception in
+  both. CPython cancels every pending task directly at the escape as
+  well as through the main task, so `cancelling()` reads 2 on a task
+  the main task's cancel also reaches, and 1 here. And when the
+  exception leaves in the loop iteration where the main coroutine ends,
+  with another task pending, CPython 3.14.7 raises `RuntimeError: Event
+  loop stopped before Future completed.` instead; here the exception
+  itself is raised. Why not: cancelling every task at the escape is one
+  native step with no bound. A prototype of it (nine lines, a cancel of
+  each other task at the escape) made 36,000 tasks in 40 chains of 900
+  one step 487 to 495 ms past the deadline, against 129 ms without it
+  [M, release build, `MM_STEP_MS=50`], and the two differences go
+  together: the first alone makes the second's counts worse.
+- After a task awaited itself, CPython 3.14.7 raises `RuntimeError:
+  await wasn't used with future` at any later `await` of that task
+  while it is pending; here a second self-await raises `Task cannot
+  await on itself` again and another task awaits it normally. The
+  task's repr in the message lists no callbacks.
+- With an async generator to close and no task left, the end of
+  `asyncio.run` makes fewer loop iterations than CPython: a `call_soon`
+  chain runs links 0 to 3 here and 0 to 7 on CPython 3.14.7, so a
+  callback queued late there is dropped. Not new with the fix for
+  callbacks queued as the main coroutine ends (own case 597) [S, the
+  review].
+- A gather made after its last listed child, a task that cancelled
+  itself with a message and caught it, had already returned: when the
+  gather is cancelled, CPython 3.14.7 raises `CancelledError` with that
+  message (the task's `_cancel_message`, kept after it is done); here
+  the message is gone once the task's result is set, and the gather
+  raises `CancelledError()`. A gather pending at the cancel gets the
+  message (own case 598). Keeping a done task's message is image state
+  and is not built [M, rv seeds 1029, 1656 and 1697 reduced; 1020 and
+  2068 read as the same, E].
 - Differences from CPython older than this release, found by the review
   of the CPython fixes and not fixed [S, that review; the same on
   17a2daf]: `gen.throw(exc)` and `gen.close()` overwrite a `__context__`
