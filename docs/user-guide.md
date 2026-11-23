@@ -912,6 +912,53 @@ have the limits, host definitions and local time zone the template was
 captured with; otherwise `reset_to` returns `SnapshotError::Mismatch`.
 Every error leaves the session as it was.
 
+**Recipe: keep one template per tool set.** Define the host functions and
+run the helper cell once, then capture the setup; the wasm hosts have the
+same template API (ABI 3, "Session templates in wasm"). Reuse a session
+with `reset_to` before each isolated cell. In a native code-mode fixture,
+`instantiate` from the configured template instead of rebuilding the setup
+took setup from 56.8 to 20.6 µs \[M\].
+
+```rust
+# use micro_monty::*; fn main() -> Result<(), Box<dyn std::error::Error>> {
+# let engine = Engine::new(EngineConfig::default());
+let mut setup = Session::new(&engine)?;
+setup.define(&HostModule::untyped("fs", &["read"]))?;
+let helper = engine.compile(
+    "def read_config():\n    import fs\n    return fs.read('config')\n",
+    "setup.py",
+)?;
+assert!(matches!(setup.start(&helper), Progress::Complete(_)));
+let template = SessionTemplate::capture(&engine, &mut setup)?;
+
+let mut session = template.instantiate()?; // once per reusable session
+// Before each isolated cell:
+session.reset_to(&template)?;
+session.setup_done();
+# let cell = engine.compile("read_config()", "cell.py")?;
+# assert!(matches!(session.start(&cell), Progress::HostCall { .. }));
+# Ok(()) }
+```
+
+**Recipe: warm only what the profile uses.** For a native tool set that
+runs awaited calls, run a no-op event loop in the helper cell before
+capture rather than just importing `asyncio`:
+
+```python
+import asyncio
+async def _warm():
+    pass
+asyncio.run(_warm())
+del _warm, asyncio
+```
+
+In the awaited-call fixture, the sequential and fan-out cells took 27.7
+and 33.6 µs after the no-op run, vs. 63.9 and 69.1 µs after import alone;
+resetting to the warmed template added about 39 µs \[M\]. For a JSON-heavy
+profile, `import json` before capture took the fresh JSON fixture from
+346.7 to 254.6 µs end to end, but added 13,494 B to the template and
+11.2 µs to its restore \[M\]. Leave it out of profiles that rarely use JSON.
+
 **When it pays.** With a warm module cache, instantiating a template that
 imported json, asyncio, re, collections and datetime takes about 1.1 ms,
 and one with decimal, statistics, zoneinfo, html.parser and tomllib about
@@ -987,9 +1034,19 @@ them small where you store them:
    3.6× and large heaps of small dicts 17–19× \[M\]; the base prefix makes
    small parked sessions another 1.3–1.4× smaller (code-mode parks' median
    102.8 KB → 19.7 KB) \[M\].
-3. **Store with each blob:** the build id (`micro_monty::build_id()`,
-   `mm_build_id`), which names the base, and how it was compressed. A
-   raw-prefix frame does not record its prefix.
+   For parks from a native tool set, use the configured template's
+   `image()` as the shared prefix instead. One fixture's park went from
+   69,578 to 9,454 B (excluding the shared base and envelope), at about
+   120 µs to compress and 41 µs to decompress \[M\].
+3. **Store with each blob:** the codec, the engine build id
+   (`micro_monty::build_id()`, `mm_build_id`) and the hash of the exact
+   base bytes, plus the full-image length. A raw-prefix frame does not
+   record its base, and the build id alone does not identify a configured
+   template. Verify the base hash, bound the decoded length before
+   allocating, and check the resulting length against the stored length.
+   Pass the decoded bytes to the normal checked restore (`Engine::restore`
+   natively) so the checksum, structure and limits of the full image are
+   still checked.
 4. **Optional:** a zstd dictionary trained on your own parks, used together
    with the base, reached 8.1× against the full image on held-out code-mode
    parks, against 4.0× for zstd-1 alone \[M\]. Version it per build like
