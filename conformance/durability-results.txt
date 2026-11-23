@@ -43,8 +43,14 @@
 # Causes and the steps that close them:
 #   snapshot collection: a snapshot collects in full and drops caches
 #     (`prepare_snapshot`), so the session differs from the unparked one
-#     (step 5); on a large heap a lazy sweep or a mark in flight at the
-#     snapshot is lost too (step 6);
+#     (step 5). It also moves where a fill's large results ask for a
+#     collection, so `Vm::collect_for_result` tops up fewer or more of
+#     them, 1,032,192 units each at a 256 MiB limit: `keep = []`, then
+#     `keep.append(bytearray(1 << 20))` until `MemoryError`, charges
+#     2,064,384 units less with a snapshot every 100,000 units and the
+#     same room, on cd5913e [M] (own 535's `snapshot` fuel); on a large
+#     heap a lazy sweep or a mark in flight at the snapshot is lost too
+#     (step 6);
 #   char cache: the char-position cache is cleared by every collection and
 #     absent from the image (step 3);
 #   accounting: bytes charged outside the arena, the VM's vectors among
@@ -1509,7 +1515,7 @@
 535_task_peak_then_fill.py	cross	refused	accounting across targets: a park near the limit does not fit on the target that charges more (steps 4, 5)
 535_task_peak_then_fill.py	restore	fuel,digest	VM vector capacity and the snapshot's collection: a restore charges what the image holds (steps 4, 5)
 535_task_peak_then_fill.py	restore-vs-snapshot	fuel,digest	VM vector capacity: a restore charges what the image holds, not the capacity a peak left (step 4)
-535_task_peak_then_fill.py	snapshot	fuel,digest	snapshot collection: the snapshot collects in full and drops caches, so the fill to the limit, whose count follows the bytes left, runs one 1 KiB block less (step 5)
+535_task_peak_then_fill.py	snapshot	fuel,digest	snapshot collection: the snapshot collects in full and drops caches, so the fill to the limit, whose count follows the bytes left, runs one 1 KiB block less and tops up one result's collection fewer (step 5)
 535_task_peak_then_fill.py	wasm	fuel,digest	accounting: the final state follows the target (step 4)
 535_task_peak_then_fill.py	wasm-parks	fuel,digest	accounting: the final state follows the target (step 4)
 535_task_peak_then_fill.py	wasm-snapshot	fuel,digest	accounting across targets and the snapshot's collection (steps 4, 5)

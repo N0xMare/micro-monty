@@ -401,8 +401,16 @@ impl Vm {
     /// program in the corpus makes one) brings what the step charges for
     /// its result up to [`Vm::collection_charge`], as a retry after
     /// `MemoryError` pays: a constant of the session and the result's
-    /// size, not of the heap, so the charge does not depend on slicing or
-    /// snapshots. Topped up, not added, and only by the request that
+    /// size, not of the heap, so a top-up's amount does not depend on
+    /// slicing or snapshots. How many requests are topped up does depend
+    /// on snapshots: a snapshot's full collection resets the trigger's
+    /// count and frees garbage early, so the requests fall elsewhere in a
+    /// fill and the 1/64 test can come out the other way (a fill to the
+    /// limit in 1 MiB results charged 2,064,384 units less with a snapshot
+    /// every 100,000 units, the room the same [M];
+    /// conformance/durability-results.txt's snapshot-collection cause,
+    /// step 5). Parks without a snapshot move nothing. Topped up, not
+    /// added, and only by the request that
     /// starts a wait: a native building many results asks for the same
     /// collection again for each, and a top-up per result charged
     /// `big.split(',')` into 61 parts of 70 KB 32.6 million units past a
