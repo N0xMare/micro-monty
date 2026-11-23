@@ -2241,6 +2241,9 @@ impl Vm {
             self.next_request(n)?;
             return Ok(None);
         }
+        if self.str_ref_hot(name) == "__class__" {
+            return self.assign_class(obj, v).map(|()| None);
+        }
         if !Vm::is_class(c) {
             let n = String::from(self.str_ref_hot(name));
             let msg = format!(
@@ -2292,10 +2295,57 @@ impl Vm {
             self.next_request(n)?;
             return Ok(());
         }
+        if self.str_ref(name) == "__class__" {
+            return self.assign_class(obj, Value::UNDEFINED);
+        }
         if self.inst_del(obj, name)? {
             return Ok(());
         }
         Err(self.attr_error(obj, name))
+    }
+
+    /// `obj.__class__ = v` (`del obj.__class__` for `v` undefined) past any
+    /// property or `__setattr__`. CPython's TypeError where it raises one;
+    /// micro-monty never changes an object's class, so an assignment
+    /// CPython makes is refused, except one to the class it already has.
+    /// Two user classes laid out on different builtin bases differ in
+    /// layout, as in CPython, except two exception bases: those may share
+    /// CPython's layout, so they get micro-monty's message.
+    pub(crate) fn assign_class(&mut self, obj: Value, v: Value) -> Result<(), Raised> {
+        if v == Value::UNDEFINED {
+            return Err(self.err(T::TypeError, "can't delete __class__ attribute"));
+        }
+        if !Vm::is_class(v) && self.type_of_typeobj(v).is_none() {
+            let msg = format!(
+                "__class__ must be set to a class, not '{}' object",
+                self.type_name(v)
+            );
+            return Err(self.err(T::TypeError, &msg));
+        }
+        let old = self.class_of(obj);
+        if !Vm::is_class(old) || !Vm::is_class(v) {
+            return Err(self.err(
+                T::TypeError,
+                "__class__ assignment only supported for mutable types or ModuleType subclasses",
+            ));
+        }
+        if old == v {
+            return Ok(());
+        }
+        let (bo, bn) = (self.class_base_t(old), self.class_base_t(v));
+        let msg = if bo != bn && !(bo.is_exception() && bn.is_exception()) {
+            format!(
+                "__class__ assignment: '{}' object layout differs from '{}'",
+                self.class_name(v),
+                self.class_name(old)
+            )
+        } else {
+            format!(
+                "micro-monty does not support __class__ assignment: create an instance of '{}' instead",
+                self.class_name(v)
+            )
+        };
+        Err(self.err(T::TypeError, &msg))
     }
 
     /// Calls the Python method `name` (dunder flag `flag`) of class `c`'s

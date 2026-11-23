@@ -3890,10 +3890,13 @@ impl Vm {
         if self.user_class(obj).is_some() {
             return self.inst_delattr(obj, name);
         }
+        if Vm::is_class(obj) && self.meta_hook(obj, "__delattr__", f::DELATTR, vec![name])? {
+            return Ok(());
+        }
+        if self.str_ref(name) == "__class__" {
+            return self.assign_class(obj, Value::UNDEFINED);
+        }
         if Vm::is_class(obj) {
-            if self.meta_hook(obj, "__delattr__", f::DELATTR, vec![name])? {
-                return Ok(());
-            }
             return self.class_delattr(obj, name);
         }
         if obj.is_obj_kind(ty::EXC as u8) && self.inst_del(obj, name)? {
@@ -3933,16 +3936,19 @@ impl Vm {
     /// `obj.name = v` (a call request may be left: a property setter,
     /// `__setattr__`).
     pub(crate) fn setattr(&mut self, obj: Value, name: Value, v: Value) -> Result<(), Raised> {
-        if obj.is_obj_kind(ty::MODULE as u8) {
-            return self.module_setattr(obj, name, v);
-        }
         if self.user_class(obj).is_some() {
             return self.inst_setattr(obj, name, v).map(|_| ());
         }
+        if Vm::is_class(obj) && self.meta_hook(obj, "__setattr__", f::SETATTR, vec![name, v])? {
+            return Ok(());
+        }
+        if self.str_ref_hot(name) == "__class__" {
+            return self.assign_class(obj, v);
+        }
+        if obj.is_obj_kind(ty::MODULE as u8) {
+            return self.module_setattr(obj, name, v);
+        }
         if Vm::is_class(obj) {
-            if self.meta_hook(obj, "__setattr__", f::SETATTR, vec![name, v])? {
-                return Ok(());
-            }
             return self.class_setattr(obj, name, v);
         }
         if obj.is_obj_kind(ty::EXC as u8) && self.exc_set_special(obj, name, v)? {
