@@ -21,7 +21,7 @@ use micro_monty::{
     HostModule, HostParam, HostSignature, HostValue, Limits, ParamKind, ParkReason, Phase,
     Progress, Resume, ResumeError, SessionSettings, SnapshotError, TextCut,
 };
-use mm_wasm_host::{Error, Runtime, RuntimeConfig, SessionOptions};
+use mm_wasm_host::{Error, Runtime, RuntimeConfig, SessionOptions, SessionTemplate};
 
 fn guest() -> PathBuf {
     std::env::var_os("MM_WASM_GUEST").map_or_else(
@@ -102,6 +102,101 @@ const LIMITS: Limits = Limits::new()
     .with_memory(64 << 20)
     .with_recursion_depth(200)
     .with_fuel(None);
+
+#[test]
+fn template_resets_match_native_and_a_fresh_session() {
+    const SETUP: &str = "state = [3, 7]";
+    const DIRTY: &str = "import json\nstate.append(11)\nleak = 23";
+    const CELL: &str = "import tools\nprint(state)\n(state[:], 'leak' in globals(), tools.VERSION)";
+    const BUDGET: u64 = 10_000;
+    let engine = Engine::new(EngineConfig::new().with_limits(LIMITS));
+    let mut native = micro_monty::Session::new(&engine).unwrap();
+    native.define(&module()).unwrap();
+    let native_run = |s: &mut micro_monty::Session, src| {
+        let code = s.compile(src, "cell.py").unwrap();
+        s.start(&code)
+    };
+    native_run(&mut native, SETUP);
+    let native_template = micro_monty::SessionTemplate::capture(&engine, &mut native).unwrap();
+
+    let rt = Runtime::new(&guest(), RuntimeConfig::default()).unwrap();
+    let options = SessionOptions::new().with_limits(LIMITS);
+    let mut wasm = rt.session(&options).unwrap();
+    wasm.define(&module()).unwrap();
+    wasm.start(SETUP, "cell.py").unwrap();
+    let saved = SessionTemplate::capture(&mut wasm).unwrap();
+    let mut fresh = saved.instantiate().unwrap();
+    let output = Arc::new(Mutex::new(String::new()));
+    let sink = Arc::clone(&output);
+    wasm.set_output(Box::new(move |_, text| sink.lock().unwrap().push_str(text)));
+
+    let mut other = rt.session(&options).unwrap();
+    other.define(&module()).unwrap();
+    assert_eq!(
+        other.reset_to(&saved),
+        Err(Error::Snapshot(SnapshotError::Mismatch))
+    );
+    other.start(SETUP, "cell.py").unwrap();
+    other.set_fuel(Some(BUDGET)).unwrap();
+    other.setup_done().unwrap();
+
+    native_run(&mut native, DIRTY);
+    wasm.start(DIRTY, "cell.py").unwrap();
+    native.set_fuel(Some(BUDGET));
+    wasm.set_fuel(Some(BUDGET)).unwrap();
+    fresh.set_fuel(Some(BUDGET)).unwrap();
+    native.reset_to(&native_template).unwrap();
+    wasm.reset_to(&saved).unwrap();
+    native.setup_done();
+    wasm.setup_done().unwrap();
+    fresh.setup_done().unwrap();
+
+    let expected = native_run(&mut native, CELL);
+    assert!(matches!(&expected, Progress::Complete(Some(c)) if c.repr == "([3, 7], False, 3)"));
+    assert_eq!(other.start(CELL, "cell.py").unwrap(), expected);
+    assert_eq!(other.fuel().unwrap(), native.fuel());
+    assert_eq!(fresh.start(CELL, "cell.py").unwrap(), expected);
+    assert!(output.lock().unwrap().is_empty());
+    assert_eq!(wasm.start(CELL, "cell.py").unwrap(), expected);
+    assert_eq!(*output.lock().unwrap(), "[3, 7]\n");
+    assert_eq!(wasm.fuel().unwrap(), native.fuel());
+    assert_eq!(fresh.fuel().unwrap(), native.fuel());
+
+    wasm.start("tools.fetch('busy')", "cell.py").unwrap();
+    assert!(matches!(
+        SessionTemplate::capture(&mut wasm),
+        Err(Error::Snapshot(SnapshotError::Busy))
+    ));
+    drop(wasm);
+    let mut again = saved.instantiate().unwrap();
+    drop(saved);
+    assert_eq!(again.start(CELL, "cell.py").unwrap(), expected);
+}
+
+#[test]
+fn a_trap_invalidates_templates_and_siblings_in_that_instance() {
+    let config = RuntimeConfig {
+        call_budget: Some(std::time::Duration::from_millis(250)),
+        ..RuntimeConfig::default()
+    };
+    let rt = Runtime::new(&guest(), config).unwrap();
+    let options = SessionOptions::new().with_limits(LIMITS);
+    let mut wasm = rt.session(&options).unwrap();
+    let saved = SessionTemplate::capture(&mut wasm).unwrap();
+    let mut sibling = saved.instantiate().unwrap();
+    let mut other = rt.session(&options).unwrap();
+
+    assert!(matches!(
+        wasm.start("while True: pass", "trap.py"),
+        Err(Error::Trap(_))
+    ));
+    assert!(matches!(sibling.reset_to(&saved), Err(Error::Trap(_))));
+    assert!(matches!(saved.instantiate(), Err(Error::Trap(_))));
+    assert!(matches!(
+        other.start("3", "cell.py"),
+        Ok(Progress::Complete(Some(_)))
+    ));
+}
 
 #[test]
 fn the_guest_matches_the_native_facade() {
@@ -607,11 +702,17 @@ fn a_requested_park_stays_requested_in_pending_and_in_its_image() {
     assert_eq!(p, parked);
     assert_eq!(w.pending().unwrap().as_ref(), Some(&parked));
     let image = w.snapshot(None).unwrap();
-    assert_eq!(engine.restore(&image).unwrap().pending().as_ref(), Some(&parked));
+    assert_eq!(
+        engine.restore(&image).unwrap().pending().as_ref(),
+        Some(&parked)
+    );
     let mut r = rt.restore(&image, &options).unwrap();
     assert_eq!(r.pending().unwrap().as_ref(), Some(&parked));
     let p = w.resume(&Resume::Continue).unwrap();
-    assert!(matches!(p, Progress::Complete(Some(ref v)) if v.repr == "7"), "{p:?}");
+    assert!(
+        matches!(p, Progress::Complete(Some(ref v)) if v.repr == "7"),
+        "{p:?}"
+    );
 }
 
 /// A park request no running cell consumed (the cell completed, or waits at

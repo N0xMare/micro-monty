@@ -49,7 +49,7 @@ use micro_monty::{
 };
 
 /// What [`export::ABI_VERSION`] returns. A host refuses other versions.
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 /// The tag an encoder writes for a variant this version has no code for;
 /// every decoder refuses it.
@@ -60,7 +60,8 @@ pub const IMPORT_MODULE: &str = "mm_host";
 
 /// The guest's exports. All are `extern "C"`; `u32` and `i32` are wasm
 /// `i32`, `u64` is `i64`, and `s` is a session id. The module also exports
-/// `memory`.
+/// `memory`. Session and template ids are local to an instance and may be
+/// reused after a drop; hosts must not use a dropped id again.
 pub mod export {
     /// `() -> u32`: [`super::ABI_VERSION`].
     pub const ABI_VERSION: &str = "mm_abi_version";
@@ -94,6 +95,16 @@ pub mod export {
     pub const CANCEL: &str = "mm_cancel";
     /// `(s) -> u32`: `Session::reset`; a `PyException` on failure.
     pub const RESET: &str = "mm_reset";
+    /// `(s) -> i32`: captures an idle session; the instance-local template
+    /// id, `-1` with a `SnapshotError`, or `-2` with a bad-request string.
+    pub const TEMPLATE_CAPTURE: &str = "mm_template_capture";
+    /// `(t: u32) -> i32`: instantiates template `t` with host settings
+    /// from the input options record. Return codes as [`SESSION_RESTORE`].
+    pub const TEMPLATE_INSTANTIATE: &str = "mm_template_instantiate";
+    /// `(s, t: u32) -> u32`: `Session::reset_to`; a `SnapshotError` on failure.
+    pub const RESET_TO: &str = "mm_reset_to";
+    /// `(t: u32) -> u32`: drops the template.
+    pub const TEMPLATE_DROP: &str = "mm_template_drop";
     /// `(s) -> u32`: `Session::setup_done`: the code loaded so far is the
     /// session's setup and does not count toward reclaiming unreachable
     /// code. Not in an image: a host calls it again after
@@ -163,7 +174,7 @@ pub mod export {
 
     /// Every export a host may rely on (all but [`SET_GC_YIELD`] and
     /// [`TEST_PANIC`]).
-    pub const REQUIRED: [&str; 33] = [
+    pub const REQUIRED: [&str; 37] = [
         ABI_VERSION,
         BUILD_ID,
         INPUT,
@@ -176,6 +187,10 @@ pub mod export {
         RESUME,
         CANCEL,
         RESET,
+        TEMPLATE_CAPTURE,
+        TEMPLATE_INSTANTIATE,
+        RESET_TO,
+        TEMPLATE_DROP,
         SETUP_DONE,
         SNAPSHOT,
         SET_FUEL,

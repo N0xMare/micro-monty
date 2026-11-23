@@ -1,9 +1,8 @@
 //! The reference wasmtime host for the `mm-wasm` guest
 //! (`crates/mm-wasm-guest`, docs/spec.md §10.3), with an API
-//! close to `micro_monty::Session`: one [`Session`] owns one wasmtime store
-//! and instance, so a trap loses that session only (one session per
-//! instance, owner decision 2026-11-05). It is synchronous; an async host
-//! is a separate piece of work.
+//! close to `micro_monty::Session`. A session has its own instance unless
+//! instantiated from a template; a trap loses every session and template
+//! of that instance. Calls into a shared instance must not overlap.
 //!
 //! Stopping a running cell from another thread ([`ParkHandle::request`])
 //! does not trap: the guest polls `mm_host.park` at every engine safepoint
@@ -35,7 +34,7 @@ use std::{
     hash::{BuildHasher, Hasher, RandomState},
     path::Path,
     sync::{
-        Arc,
+        Arc, Mutex, MutexGuard, OnceLock, TryLockError,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -318,22 +317,42 @@ pub type Output = Box<dyn FnMut(Stream, &str) + Send>;
 pub struct Ctx {
     wasi: WasiP1Ctx,
     limits: StoreLimits,
-    park: Arc<ParkState>,
+    active: HostState,
     /// The current export call's start and its count of ticks toward a
     /// requested park's grace.
     clock: ParkClock,
     /// False during a call that cannot park (a snapshot): a park request
     /// does not interrupt it.
     parkable: bool,
-    output: Option<Output>,
-    zones: Option<ZoneSource>,
-    /// The last zone the source answered, so the guest's second call (for
-    /// data larger than its buffer) gets the same bytes.
-    zone_cache: Option<(String, Option<Vec<u8>>)>,
     rng: (RandomState, u64),
     /// The bundle guest's custom sections, served to
     /// `mm_host.bundle_read` (empty for the default guest).
     bundle: Bundle,
+}
+
+/// The active session's host settings, selected before entering wasm.
+struct HostState {
+    park: ParkHandle,
+    grace: Grace,
+    output: Option<Output>,
+    zones: Option<ZoneSource>,
+    /// The last zone, so the guest's second call for larger data sees it again.
+    zone_cache: Option<(String, Option<Vec<u8>>)>,
+}
+
+impl HostState {
+    fn new(grace: Grace) -> Self {
+        Self {
+            park: ParkHandle(Arc::new(ParkState {
+                base: Instant::now(),
+                requested: AtomicU64::new(0),
+            })),
+            grace,
+            output: None,
+            zones: None,
+            zone_cache: None,
+        }
+    }
 }
 
 /// The bundle guest's regions: its `mm.prelude` and `mm.stdlib` custom
@@ -438,14 +457,14 @@ fn linker(engine: &Engine) -> Result<Linker<Ctx>, Error> {
     wasmtime_wasi::p1::add_to_linker_sync(&mut l, |c: &mut Ctx| &mut c.wasi).map_err(abi)?;
     let m = mm_wasm_abi::IMPORT_MODULE;
     l.func_wrap(m, import::NOW_NS, |c: Caller<'_, Ctx>, _s: u32| -> i64 {
-        i64::try_from(c.data().park.base.elapsed().as_nanos()).unwrap_or(i64::MAX - 2)
+        i64::try_from(c.data().active.park.0.base.elapsed().as_nanos()).unwrap_or(i64::MAX - 2)
     })
     .map_err(abi)?;
     l.func_wrap(
         m,
         import::PARK,
         |c: Caller<'_, Ctx>, _s: u32, clear: u32| -> u32 {
-            let r = &c.data().park.requested;
+            let r = &c.data().active.park.0.requested;
             let v = if clear != 0 {
                 r.swap(0, Ordering::SeqCst)
             } else {
@@ -494,9 +513,10 @@ fn linker(engine: &Engine) -> Result<Linker<Ctx>, Error> {
                 return 0;
             };
             let (data, ctx) = mem.data_and_store_mut(&mut c);
-            let src = ctx.bundle.get(region as usize).and_then(|r| {
-                r.get(offset as usize..(offset as usize).checked_add(len as usize)?)
-            });
+            let src = ctx
+                .bundle
+                .get(region as usize)
+                .and_then(|r| r.get(offset as usize..(offset as usize).checked_add(len as usize)?));
             let dst = data.get_mut(ptr as usize..(ptr as usize).saturating_add(len as usize));
             match (src, dst) {
                 (Some(s), Some(d)) => {
@@ -519,7 +539,7 @@ fn linker(engine: &Engine) -> Result<Linker<Ctx>, Error> {
             let text = data
                 .get(ptr as usize..(ptr as usize).saturating_add(len as usize))
                 .and_then(|b| std::str::from_utf8(b).ok());
-            if let (Some(text), Some(out)) = (text, ctx.output.as_mut()) {
+            if let (Some(text), Some(out)) = (text, ctx.active.output.as_mut()) {
                 out(
                     if stream == 1 {
                         Stream::Stderr
@@ -544,12 +564,12 @@ fn linker(engine: &Engine) -> Result<Linker<Ctx>, Error> {
             else {
                 return -1;
             };
-            let cached = ctx.zone_cache.as_ref().filter(|(k, _)| k == key);
+            let cached = ctx.active.zone_cache.as_ref().filter(|(k, _)| k == key);
             let tzif = match cached {
                 Some((_, tzif)) => tzif.clone(),
                 None => {
-                    let tzif = ctx.zones.as_mut().and_then(|source| source(key));
-                    ctx.zone_cache = Some((key.to_owned(), tzif.clone()));
+                    let tzif = ctx.active.zones.as_mut().and_then(|source| source(key));
+                    ctx.active.zone_cache = Some((key.to_owned(), tzif.clone()));
                     tzif
                 }
             };
@@ -786,7 +806,8 @@ impl Runtime {
         put_options(&mut input, options);
         s.write(&input)?;
         let id = s.call(|s| s.f.session_new.call(&mut s.store, ()))?;
-        s.adopt(id, false)
+        let id = s.created(id, false)?;
+        Ok(s.into_session(id))
     }
 
     /// A session restored from `image` in a new instance of the module
@@ -810,7 +831,8 @@ impl Runtime {
         input.extend_from_slice(image);
         s.write(&input)?;
         let id = s.call(|s| s.f.session_restore.call(&mut s.store, ()))?;
-        s.adopt(id, true)
+        let id = s.created(id, true)?;
+        Ok(s.into_session(id))
     }
 
     /// A new instance for a session whose memory limit is `memory` bytes.
@@ -819,36 +841,29 @@ impl Runtime {
         pre: &InstancePre<Ctx>,
         bundle: &Bundle,
         memory: u64,
-    ) -> Result<Session, Error> {
-        let park = Arc::new(ParkState {
-            base: Instant::now(),
-            requested: AtomicU64::new(0),
-        });
+    ) -> Result<Instance, Error> {
+        let grace = self.config.park_grace.as_nanos().saturating_add(
+            self.config
+                .park_grace_per_mib
+                .as_nanos()
+                .saturating_mul(u128::from(memory >> 20)),
+        );
+        let grace = Grace::new(grace, self.config.epoch_tick.as_nanos());
         let ctx = Ctx {
             wasi: WasiCtxBuilder::new().build_p1(),
             limits: StoreLimitsBuilder::new()
                 .memory_size(clamp(self.config.memory_limit))
                 .instances(1)
                 .build(),
-            park: Arc::clone(&park),
+            active: HostState::new(grace),
             clock: ParkClock::default(),
             parkable: true,
-            output: None,
-            zones: None,
-            zone_cache: None,
             rng: (RandomState::new(), 0),
             bundle: Arc::clone(bundle),
         };
         let mut store = Store::new(&self.engine, ctx);
         store.limiter(|c| &mut c.limits);
         store.set_epoch_deadline(1);
-        let per_mib = self.config.park_grace_per_mib.as_nanos();
-        let grace = self
-            .config
-            .park_grace
-            .as_nanos()
-            .saturating_add(per_mib.saturating_mul(u128::from(memory >> 20)));
-        let grace = Grace::new(grace, self.config.epoch_tick.as_nanos());
         let budget = self
             .config
             .call_budget
@@ -858,10 +873,10 @@ impl Runtime {
         // (`ParkClock::tick`), or a call past its budget (wall time).
         store.epoch_deadline_callback(move |mut state| {
             let c = state.data_mut();
-            let now = c.park.now();
-            let asked = c.park.requested.load(Ordering::SeqCst);
+            let now = c.active.park.0.now();
+            let asked = c.active.park.0.requested.load(Ordering::SeqCst);
             let pending = (c.parkable && asked != 0).then_some(asked);
-            if c.clock.tick(now, pending, grace)
+            if c.clock.tick(now, pending, c.active.grace)
                 || budget.is_some_and(|b| now.saturating_sub(c.clock.started) >= b)
             {
                 Ok(UpdateDeadline::Interrupt)
@@ -909,6 +924,11 @@ impl Runtime {
             build_id: f!(export::BUILD_ID),
             session_new: f!(export::SESSION_NEW),
             session_restore: f!(export::SESSION_RESTORE),
+            session_drop: f!(export::SESSION_DROP),
+            template_capture: f!(export::TEMPLATE_CAPTURE),
+            template_instantiate: f!(export::TEMPLATE_INSTANTIATE),
+            template_drop: f!(export::TEMPLATE_DROP),
+            reset_to: f!(export::RESET_TO),
             define: f!(export::DEFINE),
             start: f!(export::START),
             resume: f!(export::RESUME),
@@ -942,13 +962,11 @@ impl Runtime {
         let memory = instance
             .get_memory(&mut store, "memory")
             .ok_or_else(|| abi("no memory export"))?;
-        Ok(Session {
+        Ok(Instance {
             store,
             f,
             memory,
-            id: 0,
-            dead: None,
-            park: ParkHandle(park),
+            dead: Arc::new(OnceLock::new()),
             stack_top,
         })
     }
@@ -960,6 +978,11 @@ struct Funcs {
     build_id: TypedFunc<(), u32>,
     session_new: TypedFunc<(), i32>,
     session_restore: TypedFunc<(), i32>,
+    session_drop: TypedFunc<u32, u32>,
+    template_capture: TypedFunc<u32, i32>,
+    template_instantiate: TypedFunc<u32, i32>,
+    template_drop: TypedFunc<u32, u32>,
+    reset_to: TypedFunc<(u32, u32), u32>,
     define: TypedFunc<u32, u32>,
     start: TypedFunc<u32, u32>,
     resume: TypedFunc<u32, u32>,
@@ -989,31 +1012,31 @@ struct Funcs {
     test_panic: Option<TypedFunc<u32, u32>>,
 }
 
-/// One micro-monty session in its own wasm instance.
-pub struct Session {
+struct Instance {
     store: Store<Ctx>,
     f: Funcs,
     memory: Memory,
-    id: u32,
-    dead: Option<String>,
-    park: ParkHandle,
+    dead: Arc<OnceLock<String>>,
     /// The shadow stack's top, when it was painted.
     stack_top: Option<usize>,
 }
 
-impl Session {
-    fn call<T>(&mut self, f: impl FnOnce(&mut Session) -> wasmtime::Result<T>) -> Result<T, Error> {
-        if let Some(d) = &self.dead {
+impl Instance {
+    fn call<T>(
+        &mut self,
+        f: impl FnOnce(&mut Instance) -> wasmtime::Result<T>,
+    ) -> Result<T, Error> {
+        if let Some(d) = self.dead.get() {
             return Err(Error::Trap(d.clone()));
         }
-        let now = self.store.data().park.now();
+        let now = self.store.data().active.park.0.now();
         self.store.data_mut().clock.start(now);
         f(self).map_err(|e| {
             let message = match e.downcast_ref::<wasmtime::Trap>() {
                 Some(trap) => trap.to_string(),
                 None => format!("{e:#}"),
             };
-            self.dead = Some(message.clone());
+            let _ = self.dead.set(message.clone());
             Error::Trap(message)
         })
     }
@@ -1036,10 +1059,9 @@ impl Session {
             .ok_or_else(|| abi("output out of bounds"))
     }
 
-    fn adopt(mut self, id: i32, restore: bool) -> Result<Session, Error> {
+    fn created(&mut self, id: i32, restore: bool) -> Result<u32, Error> {
         if id >= 0 {
-            self.id = id.cast_unsigned();
-            return Ok(self);
+            return Ok(id.cast_unsigned());
         }
         let out = self.read()?;
         let r = &mut Reader::new(&out);
@@ -1078,73 +1100,231 @@ impl Session {
         }
     }
 
-    /// Whether a trap ended this session.
+    fn build_id(&mut self) -> Result<Vec<u8>, Error> {
+        self.call(|s| s.f.build_id.call(&mut s.store, ()))?;
+        self.read()
+    }
+
+    fn into_session(mut self, id: u32) -> Session {
+        let grace = self.store.data().active.grace;
+        let host = std::mem::replace(&mut self.store.data_mut().active, HostState::new(grace));
+        let shared = Arc::new(Shared {
+            dead: Arc::clone(&self.dead),
+            instance: Mutex::new(self),
+            dropped: Mutex::new(Vec::new()),
+        });
+        Session { shared, id, host }
+    }
+}
+
+struct Shared {
+    instance: Mutex<Instance>,
+    dead: Arc<OnceLock<String>>,
+    dropped: Mutex<Vec<Dropped>>,
+}
+
+enum Dropped {
+    Session(u32),
+    Template(u32),
+}
+
+impl Shared {
+    fn lock(&self) -> Result<MutexGuard<'_, Instance>, Error> {
+        match self.instance.try_lock() {
+            Ok(mut inst) => {
+                self.collect(&mut inst);
+                Ok(inst)
+            }
+            Err(TryLockError::WouldBlock) => Err(abi("the instance is already running")),
+            Err(TryLockError::Poisoned(_)) => Err(Error::Trap("host callback panicked".into())),
+        }
+    }
+
+    fn collect(&self, inst: &mut Instance) {
+        let mut dropped = self.dropped.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for handle in dropped.drain(..) {
+            let _ = inst.call(|s| match handle {
+                Dropped::Session(id) => s.f.session_drop.call(&mut s.store, id),
+                Dropped::Template(id) => s.f.template_drop.call(&mut s.store, id),
+            });
+        }
+    }
+
+    fn release(&self, handle: Dropped) {
+        // A host callback may drop another handle of the active instance.
+        self.dropped.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(handle);
+        if let Ok(mut inst) = self.instance.try_lock() {
+            self.collect(&mut inst);
+        }
+    }
+}
+
+/// A saved idle session. It and the sessions it instantiates share an instance
+/// and its traps. Dropping it releases the saved state, not those sessions.
+pub struct SessionTemplate {
+    shared: Arc<Shared>,
+    id: u32,
+    grace: Grace,
+}
+
+impl SessionTemplate {
+    /// Captures the session's state between cells (otherwise `SnapshotError::Busy`).
+    pub fn capture(session: &mut Session) -> Result<Self, Error> {
+        let id = session.with(|inst, sid| {
+            inst.store.data_mut().parkable = false;
+            let result = inst.call(|s| s.f.template_capture.call(&mut s.store, sid));
+            inst.store.data_mut().parkable = true;
+            inst.created(result?, true)
+        })?;
+        Ok(Self {
+            id,
+            shared: Arc::clone(&session.shared),
+            grace: session.host.grace,
+        })
+    }
+
+    /// Instantiates with default host settings, keeping the template's limits.
+    pub fn instantiate(&self) -> Result<Session, Error> {
+        self.instantiate_with(&SessionOptions::new())
+    }
+
+    /// Instantiates with the host-side settings of `options`; limits and Python
+    /// state come from the template. Call `setup_done` before the first cell.
+    pub fn instantiate_with(&self, options: &SessionOptions) -> Result<Session, Error> {
+        let mut inst = self.shared.lock()?;
+        let mut input = Vec::new();
+        put_options(&mut input, options);
+        inst.write(&input)?;
+        let id = inst.call(|s| s.f.template_instantiate.call(&mut s.store, self.id))?;
+        let id = inst.created(id, true)?;
+        Ok(Session {
+            shared: Arc::clone(&self.shared),
+            id,
+            host: HostState::new(self.grace),
+        })
+    }
+}
+
+impl Drop for SessionTemplate {
+    fn drop(&mut self) {
+        self.shared.release(Dropped::Template(self.id));
+    }
+}
+
+/// One micro-monty session. Only sessions made from a template share a store.
+pub struct Session {
+    shared: Arc<Shared>,
+    id: u32,
+    host: HostState,
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.shared) > 1 {
+            self.shared.release(Dropped::Session(self.id));
+        }
+    }
+}
+
+impl Session {
+    fn with<T>(
+        &mut self,
+        f: impl FnOnce(&mut Instance, u32) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        let mut inst = self.shared.lock()?;
+        std::mem::swap(&mut self.host, &mut inst.store.data_mut().active);
+        let result = f(&mut inst, self.id);
+        std::mem::swap(&mut self.host, &mut inst.store.data_mut().active);
+        self.shared.collect(&mut inst);
+        result
+    }
+
+    /// Whether a trap ended the shared instance.
     #[must_use]
     pub fn is_dead(&self) -> bool {
-        self.dead.is_some()
+        self.shared.dead.get().is_some() || self.shared.instance.is_poisoned()
     }
 
     /// The guest's snapshot build id.
     pub fn build_id(&mut self) -> Result<Vec<u8>, Error> {
-        self.call(|s| s.f.build_id.call(&mut s.store, ()))?;
-        self.read()
+        self.shared.lock()?.build_id()
     }
 
     /// Where `print` and `sys.stdout`/`stderr` writes go. Host-side, so
     /// set it again after a restore.
     pub fn set_output(&mut self, out: Output) {
-        self.store.data_mut().output = Some(out);
+        self.host.output = Some(out);
     }
 
     /// `Session::define`.
     pub fn define(&mut self, module: &HostModule) -> Result<Vec<HostFunctionRef>, Error> {
-        let mut input = Vec::new();
-        put_module(&mut input, module);
-        self.write(&input)?;
-        let id = self.id;
-        match self.call(|s| s.f.define.call(&mut s.store, id))? {
-            status::OK => {
-                let out = self.read()?;
-                get_function_refs(&mut Reader::new(&out)).map_err(|e| abi(e.0))
+        self.with(|inst, id| {
+            let mut input = Vec::new();
+            put_module(&mut input, module);
+            inst.write(&input)?;
+            match inst.call(|s| s.f.define.call(&mut s.store, id))? {
+                status::OK => {
+                    let out = inst.read()?;
+                    get_function_refs(&mut Reader::new(&out)).map_err(|e| abi(e.0))
+                }
+                code => Err(inst.failure(code)),
             }
-            code => Err(self.failure(code)),
-        }
+        })
     }
 
     /// Compiles `source` in the guest and starts it (compile + `start`).
     pub fn start(&mut self, source: &str, filename: &str) -> Result<Progress, Error> {
-        let mut input = Vec::with_capacity(source.len() + filename.len() + 8);
-        put_str(&mut input, filename);
-        put_str(&mut input, source);
-        self.write(&input)?;
-        let id = self.id;
-        let code = self.call(|s| s.f.start.call(&mut s.store, id))?;
-        self.progress(code)
+        self.with(|inst, id| {
+            let mut input = Vec::with_capacity(source.len() + filename.len() + 8);
+            put_str(&mut input, filename);
+            put_str(&mut input, source);
+            inst.write(&input)?;
+            let code = inst.call(|s| s.f.start.call(&mut s.store, id))?;
+            inst.progress(code)
+        })
     }
 
     /// `Session::resume`.
     pub fn resume(&mut self, resume: &Resume) -> Result<Progress, Error> {
-        let mut input = Vec::new();
-        put_resume(&mut input, resume);
-        self.write(&input)?;
-        let id = self.id;
-        let code = self.call(|s| s.f.resume.call(&mut s.store, id))?;
-        self.progress(code)
+        self.with(|inst, id| {
+            let mut input = Vec::new();
+            put_resume(&mut input, resume);
+            inst.write(&input)?;
+            let code = inst.call(|s| s.f.resume.call(&mut s.store, id))?;
+            inst.progress(code)
+        })
     }
 
     /// `Session::cancel`.
     pub fn cancel(&mut self) -> Result<bool, Error> {
-        let id = self.id;
-        Ok(self.call(|s| s.f.cancel.call(&mut s.store, id))? != 0)
+        self.with(|inst, id| Ok(inst.call(|s| s.f.cancel.call(&mut s.store, id))? != 0))
     }
 
     /// `Session::reset`.
     pub fn reset(&mut self) -> Result<(), Error> {
-        let id = self.id;
-        match self.call(|s| s.f.reset.call(&mut s.store, id))? {
-            status::OK => Ok(()),
-            code => Err(self.failure(code)),
+        self.with(
+            |inst, id| match inst.call(|s| s.f.reset.call(&mut s.store, id))? {
+                status::OK => Ok(()),
+                code => Err(inst.failure(code)),
+            },
+        )
+    }
+
+    /// Resets Python state to `template`, keeping this session's host settings.
+    /// A template from another instance is a `SnapshotError::Mismatch`.
+    pub fn reset_to(&mut self, template: &SessionTemplate) -> Result<(), Error> {
+        if !Arc::ptr_eq(&self.shared, &template.shared) {
+            return Err(Error::Snapshot(SnapshotError::Mismatch));
         }
+        self.with(|inst, id| {
+            inst.store.data_mut().parkable = false;
+            let result = inst.call(|s| s.f.reset_to.call(&mut s.store, (id, template.id)));
+            inst.store.data_mut().parkable = true;
+            match result? {
+                status::OK => Ok(()),
+                code => Err(inst.failure(code)),
+            }
+        })
     }
 
     /// `Session::setup_done`: the code loaded so far (definitions, a
@@ -1152,37 +1332,44 @@ impl Session {
     /// reclaiming unreachable code when a cell starts. Call it after the
     /// setup and before the first cell, after a setup run again following
     /// [`Session::reset`], and after [`Runtime::restore`] of a setup's
-    /// image: the mark is not in an image.
+    /// image, [`SessionTemplate::instantiate`], or [`Session::reset_to`]:
+    /// the mark is not in an image.
     pub fn setup_done(&mut self) -> Result<(), Error> {
-        let id = self.id;
-        self.call(|s| s.f.setup_done.call(&mut s.store, id))?;
-        Ok(())
+        self.with(|inst, id| {
+            inst.call(|s| s.f.setup_done.call(&mut s.store, id))?;
+            Ok(())
+        })
     }
 
     /// `Session::snapshot` (`max_bytes` `None`: capped at the memory limit).
     pub fn snapshot(&mut self, max_bytes: Option<u64>) -> Result<Vec<u8>, Error> {
-        let (id, max) = (self.id, max_bytes.unwrap_or(u64::MAX));
-        // A snapshot cannot park: a request waits for the next call.
-        self.store.data_mut().parkable = false;
-        let r = self.call(|s| s.f.snapshot.call(&mut s.store, (id, max)));
-        self.store.data_mut().parkable = true;
-        match r? {
-            status::OK => self.read(),
-            code => Err(self.failure(code)),
-        }
+        self.with(|inst, sid| {
+            let (id, max) = (sid, max_bytes.unwrap_or(u64::MAX));
+            // A snapshot cannot park: a request waits for the next call.
+            inst.store.data_mut().parkable = false;
+            let r = inst.call(|s| s.f.snapshot.call(&mut s.store, (id, max)));
+            inst.store.data_mut().parkable = true;
+            match r? {
+                status::OK => inst.read(),
+                code => Err(inst.failure(code)),
+            }
+        })
     }
 
     /// `Session::set_fuel`.
     pub fn set_fuel(&mut self, fuel: Option<u64>) -> Result<(), Error> {
-        let (id, f) = (self.id, fuel.unwrap_or(u64::MAX));
-        self.call(|s| s.f.set_fuel.call(&mut s.store, (id, f)))?;
-        Ok(())
+        self.with(|inst, sid| {
+            let (id, f) = (sid, fuel.unwrap_or(u64::MAX));
+            inst.call(|s| s.f.set_fuel.call(&mut s.store, (id, f)))?;
+            Ok(())
+        })
     }
 
     /// `Session::fuel`.
     pub fn fuel(&mut self) -> Result<Option<u64>, Error> {
-        let id = self.id;
-        Ok(Some(self.call(|s| s.f.fuel.call(&mut s.store, id))?).filter(|f| *f != u64::MAX))
+        self.with(|inst, id| {
+            Ok(Some(inst.call(|s| s.f.fuel.call(&mut s.store, id))?).filter(|f| *f != u64::MAX))
+        })
     }
 
     /// `Session::fuel_wanted`: after `Parked { reason: Fuel }`, the fuel
@@ -1190,109 +1377,121 @@ impl Session {
     /// left (0 after an ordinary fuel park). Check it before granting
     /// another fuel slice.
     pub fn fuel_wanted(&mut self) -> Result<u64, Error> {
-        let id = self.id;
-        self.call(|s| s.f.fuel_wanted.call(&mut s.store, id))
+        self.with(|inst, id| inst.call(|s| s.f.fuel_wanted.call(&mut s.store, id)))
     }
 
     /// `Session::set_fuel_total`.
     pub fn set_fuel_total(&mut self, total: Option<u64>) -> Result<(), Error> {
-        let (id, t) = (self.id, total.unwrap_or(u64::MAX));
-        self.call(|s| s.f.set_fuel_total.call(&mut s.store, (id, t)))?;
-        Ok(())
+        self.with(|inst, sid| {
+            let (id, t) = (sid, total.unwrap_or(u64::MAX));
+            inst.call(|s| s.f.set_fuel_total.call(&mut s.store, (id, t)))?;
+            Ok(())
+        })
     }
 
     /// `Session::fuel_total`.
     pub fn fuel_total(&mut self) -> Result<Option<u64>, Error> {
-        let id = self.id;
-        Ok(Some(self.call(|s| s.f.fuel_total.call(&mut s.store, id))?).filter(|t| *t != u64::MAX))
+        self.with(|inst, id| {
+            Ok(Some(inst.call(|s| s.f.fuel_total.call(&mut s.store, id))?)
+                .filter(|t| *t != u64::MAX))
+        })
     }
 
     /// `Session::pending`: the stop the session is at, as it was reported
     /// (a restored session's too).
     pub fn pending(&mut self) -> Result<Option<Progress>, Error> {
-        let id = self.id;
-        let code = self.call(|s| s.f.pending.call(&mut s.store, id))?;
-        match self.progress(code)? {
-            Progress::Complete(None) => Ok(None),
-            p => Ok(Some(p)),
-        }
+        self.with(|inst, id| {
+            let code = inst.call(|s| s.f.pending.call(&mut s.store, id))?;
+            match inst.progress(code)? {
+                Progress::Complete(None) => Ok(None),
+                p => Ok(Some(p)),
+            }
+        })
     }
 
     /// `Session::phase`.
     pub fn phase(&mut self) -> Result<Phase, Error> {
-        let id = self.id;
-        let code = self.call(|s| s.f.phase.call(&mut s.store, id))?;
-        phase_from_code(code).map_err(|e| abi(e.0))
+        self.with(|inst, id| {
+            let code = inst.call(|s| s.f.phase.call(&mut s.store, id))?;
+            phase_from_code(code).map_err(|e| abi(e.0))
+        })
     }
 
     /// `Session::set_hint`.
     pub fn set_hint(&mut self, group: HintGroup, text: Option<&str>) -> Result<(), Error> {
-        let mut input = Vec::new();
-        put_str(&mut input, group.key());
-        put_opt_str(&mut input, text);
-        self.write(&input)?;
-        let id = self.id;
-        match self.call(|s| s.f.set_hint.call(&mut s.store, id))? {
-            status::OK => Ok(()),
-            code => Err(self.failure(code)),
-        }
+        self.with(|inst, id| {
+            let mut input = Vec::new();
+            put_str(&mut input, group.key());
+            put_opt_str(&mut input, text);
+            inst.write(&input)?;
+            match inst.call(|s| s.f.set_hint.call(&mut s.store, id))? {
+                status::OK => Ok(()),
+                code => Err(inst.failure(code)),
+            }
+        })
     }
 
     /// `Session::set_text_cut`.
     pub fn set_text_cut(&mut self, cut: TextCut) -> Result<(), Error> {
-        let (id, code) = (self.id, text_cut_code(cut));
-        self.call(|s| s.f.set_text_cut.call(&mut s.store, (id, code)))?;
-        Ok(())
+        self.with(|inst, sid| {
+            let (id, code) = (sid, text_cut_code(cut));
+            inst.call(|s| s.f.set_text_cut.call(&mut s.store, (id, code)))?;
+            Ok(())
+        })
     }
 
     /// `Session::set_local_timezone` (session state: snapshots carry it).
     pub fn set_local_timezone(&mut self, tzif: Option<&[u8]>) -> Result<(), Error> {
-        let mut input = Vec::new();
-        put_opt_bytes(&mut input, tzif);
-        self.write(&input)?;
-        let id = self.id;
-        self.call(|s| s.f.set_local_timezone.call(&mut s.store, id))?;
-        Ok(())
+        self.with(|inst, id| {
+            let mut input = Vec::new();
+            put_opt_bytes(&mut input, tzif);
+            inst.write(&input)?;
+            inst.call(|s| s.f.set_local_timezone.call(&mut s.store, id))?;
+            Ok(())
+        })
     }
 
     /// `Session::set_zone_source`. Host-side, so set it again after a
     /// restore; it answers only when [`SessionOptions::zone_source`] was on.
     pub fn set_zone_source(&mut self, source: Option<ZoneSource>) {
-        let ctx = self.store.data_mut();
-        ctx.zones = source;
-        ctx.zone_cache = None;
+        self.host.zones = source;
+        self.host.zone_cache = None;
     }
 
     /// `Session::call_log`.
     pub fn call_log(&mut self) -> Result<Vec<HostCallRecord>, Error> {
-        let id = self.id;
-        self.call(|s| s.f.call_log.call(&mut s.store, id))?;
-        let out = self.read()?;
-        get_call_log(&mut Reader::new(&out)).map_err(|e| abi(e.0))
+        self.with(|inst, id| {
+            inst.call(|s| s.f.call_log.call(&mut s.store, id))?;
+            let out = inst.read()?;
+            get_call_log(&mut Reader::new(&out)).map_err(|e| abi(e.0))
+        })
     }
 
     /// `Session::environment`: this session's limits and fuel total.
     pub fn environment(&mut self) -> Result<String, Error> {
-        let id = self.id;
-        self.call(|s| s.f.environment.call(&mut s.store, id))?;
-        let out = self.read()?;
-        Reader::new(&out).string().map_err(|e| abi(e.0))
+        self.with(|inst, id| {
+            inst.call(|s| s.f.environment.call(&mut s.store, id))?;
+            let out = inst.read()?;
+            Reader::new(&out).string().map_err(|e| abi(e.0))
+        })
     }
 
     /// `Session::stubs`.
     pub fn stubs(&mut self) -> Result<Vec<(String, String)>, Error> {
-        let id = self.id;
-        self.call(|s| s.f.stubs.call(&mut s.store, id))?;
-        let out = self.read()?;
-        get_stubs(&mut Reader::new(&out)).map_err(|e| abi(e.0))
+        self.with(|inst, id| {
+            inst.call(|s| s.f.stubs.call(&mut s.store, id))?;
+            let out = inst.read()?;
+            get_stubs(&mut Reader::new(&out)).map_err(|e| abi(e.0))
+        })
     }
 
     /// `Session::host_modules`.
     pub fn host_modules(&mut self) -> Result<Vec<HostModule>, Error> {
-        let id = self.id;
-        self.call(|s| s.f.host_modules.call(&mut s.store, id))?;
-        let out = self.read()?;
-        get_modules(&mut Reader::new(&out)).map_err(|e| abi(e.0))
+        self.with(|inst, id| {
+            inst.call(|s| s.f.host_modules.call(&mut s.store, id))?;
+            let out = inst.read()?;
+            get_modules(&mut Reader::new(&out)).map_err(|e| abi(e.0))
+        })
     }
 
     /// `Session::set_module_dunders`.
@@ -1301,85 +1500,98 @@ impl Session {
         name: Option<&str>,
         file: Option<&str>,
     ) -> Result<(), Error> {
-        let mut input = Vec::new();
-        put_opt_str(&mut input, name);
-        put_opt_str(&mut input, file);
-        self.write(&input)?;
-        let id = self.id;
-        match self.call(|s| s.f.set_module_dunders.call(&mut s.store, id))? {
-            status::OK => Ok(()),
-            code => Err(self.failure(code)),
-        }
+        self.with(|inst, id| {
+            let mut input = Vec::new();
+            put_opt_str(&mut input, name);
+            put_opt_str(&mut input, file);
+            inst.write(&input)?;
+            match inst.call(|s| s.f.set_module_dunders.call(&mut s.store, id))? {
+                status::OK => Ok(()),
+                code => Err(inst.failure(code)),
+            }
+        })
     }
 
     /// `Session::set_int_bits_text`.
     pub fn set_int_bits_text(&mut self, on: bool) -> Result<(), Error> {
-        let (id, on) = (self.id, u32::from(on));
-        self.call(|s| s.f.set_int_bits_text.call(&mut s.store, (id, on)))?;
-        Ok(())
+        self.with(|inst, sid| {
+            let (id, on) = (sid, u32::from(on));
+            inst.call(|s| s.f.set_int_bits_text.call(&mut s.store, (id, on)))?;
+            Ok(())
+        })
     }
 
     /// `Session::set_gc_stress` (engine testing; very slow).
     pub fn set_gc_stress(&mut self, on: bool) -> Result<(), Error> {
-        let (id, on) = (self.id, u32::from(on));
-        self.call(|s| s.f.set_gc_stress.call(&mut s.store, (id, on)))?;
-        Ok(())
+        self.with(|inst, sid| {
+            let (id, on) = (sid, u32::from(on));
+            inst.call(|s| s.f.set_gc_stress.call(&mut s.store, (id, on)))?;
+            Ok(())
+        })
     }
 
     /// `Session::set_gc_yield`, when the guest has the optional export;
     /// whether it has it.
     pub fn set_gc_yield(&mut self, on: bool) -> Result<bool, Error> {
-        let Some(f) = self.f.set_gc_yield.clone() else {
-            return Ok(false);
-        };
-        let (id, on) = (self.id, u32::from(on));
-        self.call(|s| f.call(&mut s.store, (id, on)))?;
-        Ok(true)
+        self.with(|inst, sid| {
+            let Some(f) = inst.f.set_gc_yield.clone() else {
+                return Ok(false);
+            };
+            let (id, on) = (sid, u32::from(on));
+            inst.call(|s| f.call(&mut s.store, (id, on)))?;
+            Ok(true)
+        })
     }
 
     /// Parks with `Deadline` at the first safepoint `after` from now
     /// (`None` clears it). One-shot, as `Session::set_deadline`.
     pub fn set_deadline(&mut self, after: Option<Duration>) -> Result<(), Error> {
-        let at = after.map_or(u64::MAX, |d| {
-            let now = self.store.data().park.base.elapsed() + d;
-            u64::try_from(now.as_nanos()).unwrap_or(u64::MAX - 1)
-        });
-        let id = self.id;
-        self.call(|s| s.f.set_deadline.call(&mut s.store, (id, at)))?;
-        Ok(())
+        self.with(|inst, id| {
+            let at = after.map_or(u64::MAX, |d| {
+                let now = inst.store.data().active.park.0.base.elapsed() + d;
+                u64::try_from(now.as_nanos()).unwrap_or(u64::MAX - 1)
+            });
+            inst.call(|s| s.f.set_deadline.call(&mut s.store, (id, at)))?;
+            Ok(())
+        })
     }
 
     /// A handle that parks the running cell from another thread.
     #[must_use]
     pub fn park_handle(&self) -> ParkHandle {
-        self.park.clone()
+        self.host.park.clone()
     }
 
     /// The deepest shadow-stack use since the instance started and the
     /// stack's size, in bytes, with [`RuntimeConfig::paint_stack`]: the
     /// stack below the lowest byte that no longer holds the paint. `None`
-    /// without it.
+    /// without it or while another session is using the instance.
     #[must_use]
     pub fn stack_high_water(&self) -> Option<(u64, u64)> {
-        let top = self.stack_top?;
-        let stack = self.memory.data(&self.store).get(..top)?;
+        let inst = self.shared.instance.try_lock().ok()?;
+        let top = inst.stack_top?;
+        let stack = inst.memory.data(&inst.store).get(..top)?;
         let untouched = stack.iter().take_while(|&&b| b == STACK_PAINT).count();
         Some((top.checked_sub(untouched)? as u64, top as u64))
     }
 
-    /// Linear memory in bytes.
+    /// Instance linear memory in bytes, or zero while the store is in use.
     #[must_use]
     pub fn memory_bytes(&self) -> u64 {
-        u64::try_from(self.memory.data_size(&self.store)).unwrap_or(u64::MAX)
+        self.shared.instance.try_lock().map_or(0, |inst| {
+            u64::try_from(inst.memory.data_size(&inst.store)).unwrap_or(u64::MAX)
+        })
     }
 
     /// Fault injection, when the guest was built with `test-hooks`.
     pub fn test_panic(&mut self, op: u32) -> Result<(), Error> {
-        let Some(f) = self.f.test_panic.clone() else {
-            return Err(abi("guest built without test-hooks"));
-        };
-        self.call(|s| f.call(&mut s.store, op))?;
-        Ok(())
+        self.with(|inst, _| {
+            let Some(f) = inst.f.test_panic.clone() else {
+                return Err(abi("guest built without test-hooks"));
+            };
+            inst.call(|s| f.call(&mut s.store, op))?;
+            Ok(())
+        })
     }
 }
 

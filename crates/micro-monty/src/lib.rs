@@ -2322,6 +2322,13 @@ impl Session {
         self.snapshot_with_limit(self.vm.heap.memory_limit())
     }
 
+    /// The wasm guest stores compiled host code in exported snapshots,
+    /// but can refer to its own engine's cache in instance-local templates.
+    #[doc(hidden)]
+    pub fn set_host_code_in_snapshots(&mut self, on: bool) {
+        self.vm.set_host_code_in_snapshots(on);
+    }
+
     /// Like [`Session::snapshot`], with an explicit output-buffer capacity cap
     /// including the header and checksum. Growth checks before allocating.
     /// A failed snapshot leaves the session usable, although GC may have run.
@@ -2473,7 +2480,9 @@ impl Session {
     }
 
     /// The limits the session was made or restored with.
-    fn limits(&self) -> Limits {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn limits(&self) -> Limits {
         Limits {
             memory: self.vm.heap.memory_limit(),
             recursion_depth: self.vm.recursion_ceiling(),

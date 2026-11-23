@@ -11,10 +11,10 @@
 //! `#[unsafe(no_mangle)]` ([`exports`]), the exception docs/spec.md §5
 //! records for this crate.
 //!
-//! An instance can hold several sessions (`u32` ids). The reference host
-//! gives each session an instance of its own, as hosts/js does unless told
-//! to share (`sessionsPerInstance`): a trap loses the instance, so sessions
-//! that share one share its faults and its memory.
+//! An instance can hold several sessions and templates (`u32` ids). The
+//! hosts place sessions in separate instances by default, and instantiate
+//! a template in its own instance. A trap loses the instance and everything
+//! it holds.
 //!
 //! On other targets the imports are stubs, so the workspace's tests and
 //! clippy cover the crate; only a wasm build is a usable guest.
@@ -22,7 +22,8 @@
 use std::cell::RefCell;
 
 use micro_monty::{
-    Engine, EngineConfig, ParkReason, Progress, Session, SessionSettings, Stream, ZoneSource,
+    Engine, EngineConfig, ParkReason, Progress, Session, SessionSettings, SessionTemplate, Stream,
+    ZoneSource,
 };
 use mm_wasm_abi::{ARMED, Bad, Reader, SessionOptions, get_options, put_progress, put_str, status};
 
@@ -95,7 +96,9 @@ struct Slot {
 }
 
 thread_local! {
-    static SESSIONS: RefCell<Vec<Option<Slot>>> = const { RefCell::new(Vec::new()) };
+    static ENGINE: Engine = instance_engine();
+    static SESSIONS: RefCell<Vec<Option<Box<Slot>>>> = const { RefCell::new(Vec::new()) };
+    static TEMPLATES: RefCell<Vec<Option<SessionTemplate>>> = const { RefCell::new(Vec::new()) };
     static INPUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static OUTPUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
@@ -142,6 +145,7 @@ fn output(f: impl FnOnce(&mut Vec<u8>)) {
     });
 }
 
+#[inline(never)] // Share error output across the ABI exports.
 fn bad(what: &str) -> u32 {
     output(|o| put_str(o, what));
     status::BAD_REQUEST
@@ -149,7 +153,7 @@ fn bad(what: &str) -> u32 {
 
 fn with_slot(s: u32, f: impl FnOnce(&mut Slot) -> u32) -> u32 {
     SESSIONS.with_borrow_mut(
-        |all| match all.get_mut(s as usize).and_then(Option::as_mut) {
+        |all| match all.get_mut(s as usize).and_then(Option::as_deref_mut) {
             Some(slot) => f(slot),
             None => bad("no such session"),
         },
@@ -166,12 +170,9 @@ fn py_status(result: Result<(), micro_monty::PyException>) -> u32 {
     }
 }
 
-/// One engine per session: it shares decoded modules within the session,
-/// but not unpacked prelude chunks, which would stay in the instance's
-/// memory for its whole life (192 KiB for five modules [M]). Its
-/// images store their host-module code, since each restore lands on a new
-/// instance's engine, which would compile it again.
-fn engine(o: &SessionOptions) -> Engine {
+/// Share decoded modules and compiled host code without retaining unpacked
+/// prelude chunks. Public images carry host code for cold restores.
+fn instance_engine() -> Engine {
     // The bundle guest: the bytecode is in the module's `mm.prelude` and
     // `mm.stdlib` custom sections, which wasm never copies into linear
     // memory; the host serves them.
@@ -179,8 +180,7 @@ fn engine(o: &SessionOptions) -> Engine {
     micro_monty::set_bundle_reader(|region, offset, out| {
         host::bundle_read(region, offset, out.as_mut_ptr(), out.len()) == 1
     });
-    Engine::without_prelude_chunk_cache(EngineConfig::new().with_limits(o.limits))
-        .with_host_code_in_snapshots(true)
+    Engine::without_prelude_chunk_cache(EngineConfig::new())
 }
 
 /// Zone `key` from the host: asks with a 4 KiB buffer (most `TZif` files
@@ -268,15 +268,36 @@ fn report(id: u32, slot: &mut Slot, progress: &Progress) -> u32 {
     code
 }
 
-fn push(slot: Slot) -> u32 {
-    SESSIONS.with_borrow_mut(|all| {
-        all.push(Some(slot));
-        u32::try_from(all.len() - 1).unwrap_or(u32::MAX)
-    })
+fn insert<T>(all: &mut Vec<Option<T>>, id: usize, value: T) {
+    if let Some(place) = all.get_mut(id) {
+        *place = Some(value);
+    } else {
+        all.push(Some(value));
+    }
 }
 
+fn vacant<T>(all: &[Option<T>]) -> usize {
+    all.iter().position(Option::is_none).unwrap_or(all.len())
+}
+
+#[inline(never)] // Share placement of the large Slot across all three constructors.
+fn push(id: u32, session: Session) -> i32 {
+    SESSIONS.with_borrow_mut(|all| {
+        insert(
+            all,
+            id as usize,
+            Box::new(Slot {
+                session,
+                deadline: None,
+            }),
+        );
+    });
+    id.cast_signed()
+}
+
+#[inline(never)]
 fn next_id() -> u32 {
-    SESSIONS.with_borrow(|all| u32::try_from(all.len()).unwrap_or(u32::MAX))
+    SESSIONS.with_borrow(|all| u32::try_from(vacant(all)).unwrap_or(u32::MAX))
 }
 
 /// The exports (`mm_wasm_abi::export` documents each).
@@ -285,7 +306,7 @@ fn next_id() -> u32 {
     reason = "`#[unsafe(no_mangle)]` on the exports; docs/spec.md §5"
 )]
 pub mod exports {
-    use micro_monty::{Progress, Session, TextCut};
+    use micro_monty::{Progress, Session, SessionTemplate, SnapshotError, TextCut};
     use mm_wasm_abi::{
         ABI_VERSION, Reader, event, get_module, get_resume, hint_group, phase_code, put_call_log,
         put_compile_error, put_define_error, put_exception, put_function_refs, put_modules,
@@ -294,9 +315,15 @@ pub mod exports {
     };
 
     use super::{
-        INPUT, OUTPUT, SESSIONS, Slot, address, arm, bad, decode, engine, get_options, input,
-        next_id, output, push, py_status, recycle, report, settings, with_slot,
+        ENGINE, INPUT, OUTPUT, SESSIONS, TEMPLATES, address, arm, bad, decode, get_options, input,
+        insert, next_id, output, push, py_status, recycle, report, settings, vacant, with_slot,
     };
+
+    #[inline(never)]
+    fn snapshot_failure(e: &SnapshotError) -> u32 {
+        output(|out| put_snapshot_error(out, e));
+        status::SNAPSHOT_ERROR
+    }
 
     /// The interface version.
     #[unsafe(no_mangle)]
@@ -334,19 +361,16 @@ pub mod exports {
             bad("session options");
             return -2;
         };
-        let engine = engine(&o);
-        match Session::new_with(&engine, settings(next_id(), &o)) {
+        let engine = ENGINE.with(|e| e.with_limits(o.limits));
+        let id = next_id();
+        match Session::new_with(&engine, settings(id, &o)) {
             Ok(mut session) => {
                 session.set_host_args(o.host_args);
                 session.set_last_expr_value(o.last_expr_value);
                 if let Some(t) = o.text_limit {
                     session.set_text_limit(t);
                 }
-                push(Slot {
-                    session,
-                    deadline: None,
-                })
-                .cast_signed()
+                push(id, session)
             }
             Err(e) => {
                 output(|out| put_exception(out, &e));
@@ -359,11 +383,12 @@ pub mod exports {
     /// image.
     #[unsafe(no_mangle)]
     pub extern "C" fn mm_session_restore() -> i32 {
+        let id = next_id();
         let restored = input(|i| {
             let mut r = Reader::new(i);
             let o = get_options(&mut r)?;
-            let engine = engine(&o);
-            Ok::<_, mm_wasm_abi::Bad>(engine.restore_with(r.rest(), settings(next_id(), &o)))
+            let engine = ENGINE.with(|e| e.with_limits(o.limits));
+            Ok::<_, mm_wasm_abi::Bad>(engine.restore_with(r.rest(), settings(id, &o)))
         });
         // The image is in the session now.
         INPUT.with_borrow_mut(|i| recycle(i, 0));
@@ -372,13 +397,9 @@ pub mod exports {
                 bad("restore options");
                 -2
             }
-            Ok(Ok(session)) => push(Slot {
-                session,
-                deadline: None,
-            })
-            .cast_signed(),
+            Ok(Ok(session)) => push(id, session),
             Ok(Err(e)) => {
-                output(|out| put_snapshot_error(out, &e));
+                snapshot_failure(&e);
                 -1
             }
         }
@@ -464,6 +485,77 @@ pub mod exports {
         with_slot(s, |slot| py_status(slot.session.reset()))
     }
 
+    /// Captures an idle session as an instance-local template.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn mm_template_capture(s: u32) -> i32 {
+        SESSIONS.with_borrow_mut(|all| {
+            let Some(slot) = all.get_mut(s as usize).and_then(Option::as_mut) else {
+                bad("no such session");
+                return -2;
+            };
+            let engine = ENGINE.with(|e| e.with_limits(slot.session.limits()));
+            match SessionTemplate::capture(&engine, &mut slot.session) {
+                Ok(template) => TEMPLATES.with_borrow_mut(|all| {
+                    let id = vacant(all);
+                    insert(all, id, template);
+                    i32::try_from(id).unwrap_or(-2)
+                }),
+                Err(e) => {
+                    snapshot_failure(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    /// A new session in the template's state, with host settings from the input.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn mm_template_instantiate(t: u32) -> i32 {
+        let Ok(o) = decode(get_options) else {
+            bad("template options");
+            return -2;
+        };
+        TEMPLATES.with_borrow(|all| {
+            let Some(template) = all.get(t as usize).and_then(Option::as_ref) else {
+                bad("no such template");
+                return -2;
+            };
+            let id = next_id();
+            match template.instantiate_with(settings(id, &o)) {
+                Ok(session) => push(id, session),
+                Err(e) => {
+                    snapshot_failure(&e);
+                    -1
+                }
+            }
+        })
+    }
+
+    /// Replaces Python state while retaining the session's host settings.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn mm_reset_to(s: u32, t: u32) -> u32 {
+        with_slot(s, |slot| {
+            TEMPLATES.with_borrow(|all| {
+                let Some(template) = all.get(t as usize).and_then(Option::as_ref) else {
+                    return bad("no such template");
+                };
+                match slot.session.reset_to(template) {
+                    Ok(()) => status::OK,
+                    Err(e) => snapshot_failure(&e),
+                }
+            })
+        })
+    }
+
+    /// Drops an instance-local template.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn mm_template_drop(t: u32) -> u32 {
+        TEMPLATES.with_borrow_mut(|all| match all.get_mut(t as usize).and_then(Option::take) {
+            Some(_) => status::OK,
+            None => bad("no such template"),
+        })
+    }
+
     /// `Session::setup_done`.
     #[unsafe(no_mangle)]
     pub extern "C" fn mm_setup_done(s: u32) -> u32 {
@@ -478,21 +570,20 @@ pub mod exports {
     #[unsafe(no_mangle)]
     pub extern "C" fn mm_snapshot(s: u32, max_bytes: u64) -> u32 {
         with_slot(s, |slot| {
+            slot.session.set_host_code_in_snapshots(true);
             let result = if max_bytes == u64::MAX {
                 slot.session.snapshot()
             } else {
                 slot.session.snapshot_with_limit(max_bytes)
             };
+            slot.session.set_host_code_in_snapshots(false);
             match result {
                 Ok(image) => {
                     // Freed by the next call that writes output.
                     OUTPUT.with_borrow_mut(|o| *o = image);
                     status::OK
                 }
-                Err(e) => {
-                    output(|o| put_snapshot_error(o, &e));
-                    status::SNAPSHOT_ERROR
-                }
+                Err(e) => snapshot_failure(&e),
             }
         })
     }

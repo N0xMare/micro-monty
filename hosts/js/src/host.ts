@@ -259,7 +259,7 @@ export class Runtime {
 		const inst = this.slot(this.current());
 		const w = new Writer();
 		putOptions(w, options);
-		return this.place(inst, w.bytes(), false);
+		return inst.open(w.bytes(), () => inst.f.mm_session_new() as number, false);
 	}
 
 	/**
@@ -287,7 +287,7 @@ export class Runtime {
 		const w = new Writer(64 + image.length);
 		putOptions(w, options);
 		w.raw(image);
-		return this.place(inst, w.bytes(), true);
+		return inst.open(w.bytes(), () => inst.f.mm_session_restore() as number, true);
 	}
 
 	/** Live instances, their sessions and their linear memory in bytes. */
@@ -312,18 +312,7 @@ export class Runtime {
 				if (inst.dead === undefined && inst.sessions.size < this.perInstance) return inst;
 			}
 		}
-		return new Instance(guest, this.config);
-	}
-
-	/** Opens a session in `inst` from `input` (options, and the image for a restore). */
-	private place(inst: Instance, input: Uint8Array, restore: boolean): Session {
-		const s = new Session(inst, this.config, (gone) => this.track(gone.inst));
-		try {
-			inst.write(input);
-			return inst.open(s, () => (restore ? inst.f.mm_session_restore() : inst.f.mm_session_new()) as number, restore);
-		} finally {
-			this.track(inst);
-		}
+		return new Instance(guest, this.config, (inst) => this.track(inst));
 	}
 
 	/** Keeps the live set and the free slots current after `inst` gained or lost a session. */
@@ -378,9 +367,13 @@ class Instance {
 	/** The session `mm_session_new`/`mm_session_restore` is creating, before its id is known. */
 	creating: Session | undefined;
 	readonly w = new Writer();
+	private readonly config: RuntimeConfig;
+	readonly changed?: (inst: Instance) => void;
 
-	constructor(guest: Guest, config: RuntimeConfig) {
+	constructor(guest: Guest, config: RuntimeConfig, changed?: (inst: Instance) => void) {
 		this.guest = guest;
+		this.config = config;
+		this.changed = changed;
 		const module = guest.module;
 		const now = config.now ?? (() => performance.now());
 		const wall = config.wallClock ?? (() => Date.now() / 1000);
@@ -524,10 +517,11 @@ class Instance {
 	}
 
 	/**
-	 * Creates a session with `create` (`mm_session_new` or `mm_session_restore`, after
-	 * the input was written) and registers it; a failure leaves the instance as it was.
+	 * Writes the options (and image for a restore), calls `create`, and registers the new session.
 	 */
-	open(session: Session, create: () => number, restore: boolean): Session {
+	open(input: Uint8Array, create: () => number, restore: boolean): Session {
+		this.write(input);
+		const session = new Session(this, this.config);
 		this.creating = session;
 		let id: number;
 		try {
@@ -538,6 +532,7 @@ class Instance {
 		if (id >= 0) {
 			session.sid = id;
 			this.sessions.set(id, session);
+			this.changed?.(this);
 			return session;
 		}
 		if (id === -1 && !restore) {
@@ -549,6 +544,49 @@ class Instance {
 			throw new MmError("snapshot", snapshotMessage(e), e);
 		}
 		throw new MmError("abi", this.decode((r) => r.string()));
+	}
+}
+
+/** An idle setup captured inside one instance. A trap invalidates it along with that instance's sessions. */
+export class SessionTemplate {
+	private inst: Instance | undefined;
+	private readonly id: number;
+	private constructor(inst: Instance, id: number) {
+		this.inst = inst;
+		this.id = id;
+	}
+
+	static capture(session: Session): SessionTemplate {
+		const inst = session.inst;
+		const id = session.call(() => inst.f.mm_template_capture(session.sid as never) as number);
+		if (id === -1) {
+			const e = inst.decode(getSnapshotError);
+			throw new MmError("snapshot", snapshotMessage(e), e);
+		}
+		if (id < 0) throw new MmError("abi", inst.decode((r) => r.string()));
+		return new SessionTemplate(inst, id);
+	}
+
+	/** Restores the saved state in the same instance, with new host-side settings. */
+	instantiate(options: SessionOptions = sessionOptions()): Session {
+		const inst = this.inst;
+		if (!inst) throw new MmError("abi", "the template was disposed");
+		const w = new Writer();
+		putOptions(w, options);
+		return inst.open(w.bytes(), () => inst.f.mm_template_instantiate(this.id as never) as number, true);
+	}
+
+	/** @internal */
+	idFor(inst: Instance): number {
+		if (!this.inst) throw new MmError("abi", "the template was disposed");
+		if (this.inst !== inst) throw new MmError("snapshot", "the template belongs to another instance", { kind: "mismatch" });
+		return this.id;
+	}
+
+	dispose(): void {
+		const inst = this.inst;
+		this.inst = undefined;
+		if (inst && inst.dead === undefined) inst.call(() => inst.f.mm_template_drop(this.id as never));
 	}
 }
 
@@ -565,15 +603,13 @@ export class Session {
 	/** @internal */ out: Output | undefined;
 	private disposed = false;
 	private readonly config: RuntimeConfig;
-	private readonly release: (s: Session) => void;
 	private zones: ZoneSource | undefined;
 	private zoneCache: [string, Uint8Array | undefined] | undefined;
 
 	/** @internal Use {@link Runtime.session} or {@link Runtime.restore}. */
-	constructor(inst: Instance, config: RuntimeConfig, release: (s: Session) => void) {
+	constructor(inst: Instance, config: RuntimeConfig) {
 		this.inst = inst;
 		this.config = config;
-		this.release = release;
 		this.base = (config.now ?? (() => performance.now()))();
 	}
 
@@ -693,11 +729,19 @@ export class Session {
 		if (code !== status.OK) throw this.failure(code);
 	}
 
+	/** `Session::reset_to`: resets Python state to this instance's saved setup. */
+	resetTo(template: SessionTemplate): void {
+		const id = template.idFor(this.inst);
+		const code = this.call(() => this.f.mm_reset_to(this.sid as never, id as never) as number);
+		if (code !== status.OK) throw this.failure(code);
+	}
+
 	/**
 	 * `Session::setup_done`: the code loaded so far (definitions, a bootstrap cell) is the
 	 * session's setup and does not count toward reclaiming unreachable code when a cell
 	 * starts. Call it after the setup and before the first cell, after a setup run again
-	 * following `reset()`, and after restoring a setup's image: the mark is not in an image.
+	 * following `reset()`, and after restoring, instantiating or resetting to a setup:
+	 * the mark is not in an image.
 	 */
 	setupDone(): void {
 		this.call(() => this.f.mm_setup_done(this.sid as never));
@@ -887,7 +931,7 @@ export class Session {
 		if (this.disposed) return;
 		if (this.inst.dead === undefined) {
 			try {
-				this.inst.f.mm_session_drop(this.sid as never);
+				this.inst.call(() => this.inst.f.mm_session_drop(this.sid as never));
 			} catch {
 				// The instance is unusable anyway.
 			}
@@ -896,7 +940,7 @@ export class Session {
 		this.out = undefined;
 		this.zones = undefined;
 		this.inst.sessions.delete(this.sid);
-		this.release(this);
+		this.inst.changed?.(this.inst);
 	}
 }
 

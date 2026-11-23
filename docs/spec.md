@@ -1074,7 +1074,7 @@ each other with `=` requirements, as one engine, and the five internal
 crates have no API of their own to keep.
 
 **The `mm-wasm` interface.** A host checks `ABI_VERSION` (`mm-wasm-abi`,
-currently 2) and the required export list before it runs anything, and
+currently 3) and the required export list before it runs anything, and
 refuses a guest of another version. A change to the interface, a new
 option tag or optional export included, bumps `ABI_VERSION`, with
 `crates/mm-wasm-host` and `hosts/js` updated in the same change; the tag
@@ -2782,6 +2782,19 @@ collections and datetime a warm restore takes 9.95M instructions against
 23.75M uncached, and RSS per session with 40 held is 1.2 MB against
 1.85 MB [M]. For fully hostile code, process or wasm isolation
 remains the stronger boundary.
+
+Each mm-wasm instance keeps one such engine, with a shared cache and
+limits set separately for each session. An idle session can be captured
+as an instance-local template. Instantiation starts an independent session
+in that same instance, with the captured limits and fresh host-side settings;
+`reset_to` replaces Python state by the native facade's rules, retaining
+the destination's host-side settings and continuing its counters. An
+instance's templates can refer to its cached host code. Exported snapshots
+still carry compiled host code and restore on any guest of their build.
+The reference hosts reject a template from another instance as a mismatch.
+A trap invalidates all templates and sessions of its instance, but not
+snapshots already copied out. Dropping a template frees its saved state,
+not the sessions made from it.
 
 Durability guarantees are pause-anywhere and same-build snapshots. Work after
 the last snapshot is redone on restore, and an in-flight host call's outcome is

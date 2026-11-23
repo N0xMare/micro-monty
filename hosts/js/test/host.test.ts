@@ -28,6 +28,7 @@ import {
 	type Session,
 	type SessionOptions,
 	sessionOptions,
+	SessionTemplate,
 	Tuple,
 	Unconverted,
 	untypedModule,
@@ -69,6 +70,46 @@ const zones = (key: string) => {
 		return undefined;
 	}
 };
+
+test("templates reset to a fresh cell boundary, with instance-local ownership", () => {
+	const setup = rt.session(options);
+	setup.define(module());
+	setup.start("state = [3, 7]", "cell.py");
+	const saved = SessionTemplate.capture(setup);
+	const fresh = saved.instantiate();
+	const other = rt.session(options);
+	other.define(module());
+	assert.throws(() => other.resetTo(saved), { kind: "snapshot", detail: { kind: "mismatch" } });
+	other.start("state = [3, 7]", "cell.py");
+	other.setFuel(10_000);
+	other.setupDone();
+	let out = "";
+	setup.setOutput((_, text) => { out += text; });
+	setup.start("import json\nstate.append(11)\nleak = 23", "cell.py");
+	setup.setFuel(10_000);
+	fresh.setFuel(10_000);
+	setup.resetTo(saved);
+	setup.setupDone();
+	fresh.setupDone();
+	const cell = "import tools\nprint(state)\n(state[:], 'leak' in globals(), tools.VERSION)";
+	const expected = fresh.start(cell, "cell.py");
+	assert.deepEqual(other.start(cell, "cell.py"), expected);
+	assert.equal(other.fuel(), fresh.fuel());
+	other.dispose();
+	assert.equal(out, "");
+	assert.deepEqual(setup.start(cell, "cell.py"), expected);
+	assert.ok(expected.kind === "complete" && expected.completion?.repr === "([3, 7], False, 3)");
+	assert.equal(out, "[3, 7]\n");
+	assert.equal(setup.fuel(), fresh.fuel());
+	setup.start("tools.fetch('busy')", "cell.py");
+	assert.throws(() => SessionTemplate.capture(setup), { kind: "snapshot", detail: { kind: "busy" } });
+	setup.dispose();
+	const again = saved.instantiate();
+	saved.dispose();
+	assert.deepEqual(again.start(cell, "cell.py"), expected);
+	again.dispose();
+	fresh.dispose();
+});
 
 test("host errors, kwargs, call log, hints, text cut, zones, fuel_wanted, stubs", () => {
 	const CELL = `import tools
@@ -714,6 +755,7 @@ test("K sessions per instance: a trap loses every session of that instance and n
 	const [a, b, c] = [krt.session(), krt.session(), krt.session()] as [Session, Session, Session];
 	assert.equal(krt.stats().instances, 2);
 	for (const s of [a, b, c]) assert.equal(s.start("x = 1").kind, "complete");
+	const saved = SessionTemplate.capture(a);
 	// A host callback that throws unwinds through the guest: a trap.
 	a.setOutput(() => {
 		throw new Error("host bug");
@@ -721,6 +763,9 @@ test("K sessions per instance: a trap loses every session of that instance and n
 	assert.throws(() => a.start("print('boom')"), (e: unknown) => e instanceof MmError && e.kind === "trap");
 	assert.deepEqual([a.isDead, b.isDead, c.isDead], [true, true, false]);
 	assert.throws(() => b.start("x"), (e: unknown) => e instanceof MmError && e.kind === "trap");
+	assert.throws(() => b.resetTo(saved), { kind: "trap" });
+	assert.throws(() => saved.instantiate(), { kind: "trap" });
+	saved.dispose();
 	const pc = c.start("x + 1");
 	assert.ok(pc.kind === "complete" && pc.completion?.repr === "2");
 	// The dead instance takes no new sessions: the next one fills c's instance.

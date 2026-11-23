@@ -22,7 +22,7 @@
  * any bundler (Wrangler's esbuild) strips the types.
  */
 
-export const ABI_VERSION = 2;
+export const ABI_VERSION = 3;
 export const RESERVED = 0xff;
 export const IMPORT_MODULE = "mm_host";
 /** What the deadline import is compared against when no deadline is set. */
@@ -43,6 +43,10 @@ export const exportName = {
 	RESUME: "mm_resume",
 	CANCEL: "mm_cancel",
 	RESET: "mm_reset",
+	TEMPLATE_CAPTURE: "mm_template_capture",
+	TEMPLATE_INSTANTIATE: "mm_template_instantiate",
+	RESET_TO: "mm_reset_to",
+	TEMPLATE_DROP: "mm_template_drop",
 	SETUP_DONE: "mm_setup_done",
 	SNAPSHOT: "mm_snapshot",
 	SET_FUEL: "mm_set_fuel",

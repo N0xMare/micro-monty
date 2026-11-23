@@ -866,6 +866,9 @@ code, so without the call every session made from the template, and
 every cell after a `reset_to`, starts with a full collection that frees
 nothing.
 
+The wasm hosts offer the same capture, instantiate and reset operations
+within a guest instance; see [WebAssembly hosts](#webassembly-hosts).
+
 **Resetting to a template.** A host that resets a session and runs the same
 setup before every cell (a presentation whose cells start fresh) calls
 `session.reset_to(&template)` instead: the setup's state is restored into
@@ -1316,7 +1319,7 @@ the engine's own test gates.
 
 `crates/mm-wasm-guest` builds micro-monty as a wasm module for
 `wasm32-unknown-unknown` or `wasm32-wasip1` speaking the `mm-wasm` interface
-(`crates/mm-wasm-abi`, `ABI_VERSION` 2): a host sizes an input buffer, calls
+(`crates/mm-wasm-abi`, `ABI_VERSION` 3): a host sizes an input buffer, calls
 exports such as `mm_session_new`, `mm_define`, `mm_start`, `mm_resume` and
 `mm_snapshot`, and answers the `mm_host` imports (clock, park poll, wall
 clock, entropy, output, time zones). The guest reads no WASI clock,
@@ -1361,10 +1364,10 @@ under `target/wasm32-unknown-unknown/shipped/` and
 `target/mm-wasm-bundle/wasm32-unknown-unknown/shipped/`.
 
 **wasmtime: `crates/mm-wasm-host`.** A synchronous reference host with an
-API close to `Session`: one `Session` owns one wasmtime store and instance,
-so a trap loses that session only. It is its own cargo workspace and not
-published; depend on it by path or git. `cargo xtask wasm-host` tests it
-against both shipped guests.
+API close to `Session`: sessions start in their own wasmtime store and
+instance unless explicitly instantiated from a template. It is its own
+cargo workspace and not published; depend on it by path or git.
+`cargo xtask wasm-host` tests it against both shipped guests.
 
 ```rust ignore
 use mm_wasm_host::{Runtime, RuntimeConfig, SessionOptions};
@@ -1434,28 +1437,30 @@ while wasm runs, so deadlines fire only after I/O; use fuel there.
 about 0.1 MB as one more in a shared one \[M\]), but a trap then loses all
 of them, and the instance's memory must hold the sum of their bounds.
 
-**Typed definitions: define once, then restore.** The guest has one Engine
-per session, so it has no warm `define`: every new session that defines
-typed functions or classes compiles their code again, also with several
-sessions in one instance. A host with many short sessions defines its
-modules once on a setup session, snapshots it, and starts each new session
-with a restore of that image, in any instance or isolate of the build: the
-guest's images hold the compiled code, so a restore only decodes it. Keep
-the image per build id, as any snapshot, and call `setup_done` on each
-restored session (the mark is not in an image). A session the host keeps can
-`reset()` instead, which keeps its definitions. For 10 / 100 / 500 typed
-functions of two checked parameters, on shipped builds, the default guest
-(the bundle guest is the same within noise) \[M\]:
+**Session templates in wasm.** Define host modules and run the bootstrap once,
+then, between cells, capture the setup with `SessionTemplate::capture(&mut s)`
+in Rust or `SessionTemplate.capture(s)` in JavaScript. `s.reset_to(&template)`
+(`s.resetTo(template)`) returns the existing session to the captured Python
+state, keeping its host-side settings. Or use `template.instantiate()` to get
+an independent session in the same instance. Rust's `instantiate_with(&options)`
+and JavaScript's `instantiate(options)` accept fresh host-side options; limits
+come from the captured session. Call `setup_done` (`setupDone`) again after
+either operation. The setup and reset rules are the same as for native templates.
 
-| | Node (`hosts/js`) | wasmtime (`mm-wasm-host`) |
-|---|---:|---:|
-| `define` in a new session | 2.4 / 13 / 66 ms | 2.1 / 21 / 107 ms |
-| Restore the image taken after the defines | 1.5 / 3.7 / 15 ms | 0.9 / 4.3 / 20 ms |
-| `reset()` of a kept session | 0.1 / 0.3 / 1.4 ms | 0.1 / 0.3 / 1.6 ms |
-| That image | 83 KB / 407 KB / 1.9 MB | the same |
+The guest's engine keeps its compiled host code across sessions in the same
+instance. Capture fails with `SnapshotError::Busy` while a cell is stopped;
+using a template in another instance is `SnapshotError::Mismatch` (JavaScript
+reports `kind: "snapshot"`, `detail.kind: "mismatch"`). A trap invalidates every
+session and template in the instance. Drop the template in Rust or call
+`template.dispose()` in JavaScript when finished with it; already instantiated
+sessions stay alive. Calls into a shared instance must not overlap; account
+for the combined linear memory and shared trap boundary even when the runtime
+would otherwise give each session its own instance.
 
-Untyped functions (`HostSignature::any`, `HostModule::untyped`) generate no
-code and cost none of this.
+The guest exports `mm_template_capture`, `mm_template_instantiate`,
+`mm_reset_to`, and `mm_template_drop`. Template ids are not portable.
+For another instance or isolate, use a snapshot instead: it still carries
+compiled typed definitions and restores on any guest of the same build id.
 
 ## Binary size
 
