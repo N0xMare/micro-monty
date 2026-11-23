@@ -1761,6 +1761,9 @@ const DEFS: &[Def] = &[
     #[cfg(feature = "re")]
     n!("__deepcopy__", MA, 2, 2, NO, NO, crate::re::match_copy),
     p!("_dict_probe", 5, 5, pl_dict_probe),
+    // Not `_prelude`, which a session start binds: a host record class
+    // holds it by its index (`REC_NEW`).
+    m!("_mm", "rec_new", 1, VAR, NO, &["**"], crate::host::rec_new),
     p!("_pct", 3, 3, crate::percent::pl_pct),
     #[cfg(feature = "json")]
     p!("_json_encode", 10, 10, crate::json::pl_json_encode),
@@ -1916,6 +1919,32 @@ struct Packed {
     prelude_fns: [u16; COUNT],
     prelude_fns_len: usize,
 }
+
+/// [`NATIVES`]' index of the function `name` of module `module`, found at
+/// compile time (`u32::MAX` if none): [`pack`] puts the functions first,
+/// in [`DEFS`]' order.
+const fn function_index(module: &str, name: &str) -> u32 {
+    let mut k = 0;
+    let mut i = 0;
+    while i < COUNT {
+        let d = &DEFS[i];
+        if d.owner.is_none() || is_unbound(d) {
+            if let Some(m) = d.module
+                && str_eq(m, module)
+                && str_eq(d.name, name)
+            {
+                return k;
+            }
+            k += 1;
+        }
+        i += 1;
+    }
+    u32::MAX
+}
+
+/// `_mm.rec_new`, a host record class's `__new__` (`Vm::record_class`).
+pub(crate) const REC_NEW: u32 = function_index("_mm", "rec_new");
+const _: () = assert!(REC_NEW != u32::MAX, "no native _mm.rec_new");
 
 /// How many methods have an unbound twin ([`UNBOUND`]).
 const TWINS: usize = 2;

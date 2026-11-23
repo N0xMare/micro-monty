@@ -424,6 +424,132 @@ R(count=3, index=1, total=7)
     );
 }
 
+/// A host record's class makes instances as a `namedtuple`'s does: the
+/// fields by position and keyword, the same errors, a subclass and
+/// `__new__` called by hand. The cell probes the host's class and a guest
+/// `namedtuple` alike, so the expected text is what python3.14 prints with
+/// `namedtuple('Row', 'a')` and `namedtuple('P', 'x y z')` in their place.
+/// The class outlives a reset: the same object, with the same `__new__`.
+#[test]
+#[allow(clippy::too_many_lines, reason = "one probe, quoted whole")]
+fn host_record_classes_make_records_as_namedtuples_do() {
+    let out = Arc::new(Mutex::new(String::new()));
+    let (engine, mut s) = session(&out);
+    s.define(&HostModule::untyped("", &["echo"]))
+        .expect("defined");
+    let row = || HostValue::Record {
+        name: "Row".into(),
+        fields: vec![("a".into(), HostValue::Int(1))],
+    };
+    let p3 = HostValue::Record {
+        name: "P".into(),
+        fields: ["x", "y", "z"]
+            .iter()
+            .map(|f| ((*f).into(), HostValue::Int(0)))
+            .collect(),
+    };
+    let mut p = start(&engine, &mut s, "from collections import namedtuple
+def probe(R):
+    def t(label, f):
+        try:
+            print(label, repr(f()))
+        except Exception as e:
+            print(label, type(e).__name__, e)
+    t('pos', lambda: R(4))
+    t('kw', lambda: R(a=5))
+    t('tuple', lambda: R((4,)))
+    t('none', lambda: R())
+    t('many', lambda: R(1, 2))
+    t('badkw', lambda: R(1, z=1))
+    t('dup', lambda: R(1, a=2))
+    t('_cls', lambda: R(_cls=1))
+    t('__new__', lambda: R.__new__(R, 7))
+    t('type', lambda: (type(R(1)) is R, isinstance(R(1), tuple), R(1) == (1,)))
+    t('_make', lambda: R._make([8]))
+    class Sub(R):
+        pass
+    t('subclass', lambda: (type(Sub(2)).__name__, tuple(Sub(2))))
+    t('subclass none', lambda: Sub())
+probe(type(echo()))
+probe(namedtuple('Row', 'a'))
+P = type(echo())
+for f in (lambda: P(), lambda: P(1), lambda: P(1, 2), lambda: P(1, 2, 3, 4), lambda: P(z=3, x=1, y=2)):
+    try:
+        print(repr(f()))
+    except TypeError as e:
+        print('TypeError', e)
+");
+    for answer in [row(), p3] {
+        assert!(matches!(p, Progress::HostCall { .. }), "{p:?}");
+        p = s.resume(Resume::Value(answer)).expect("resumes");
+    }
+    assert_eq!(p, Progress::Complete(None));
+    assert_eq!(
+        out.lock().expect("output lock").as_str(),
+        "pos Row(a=4)
+kw Row(a=5)
+tuple Row(a=(4,))
+none TypeError Row.__new__() missing 1 required positional argument: 'a'
+many TypeError Row.__new__() takes 2 positional arguments but 3 were given
+badkw TypeError Row.__new__() got an unexpected keyword argument 'z'
+dup TypeError Row.__new__() got multiple values for argument 'a'
+_cls TypeError Row.__new__() got multiple values for argument '_cls'
+__new__ Row(a=7)
+type (True, True, True)
+_make Row(a=8)
+subclass ('Sub', (2,))
+subclass none TypeError Row.__new__() missing 1 required positional argument: 'a'
+pos Row(a=4)
+kw Row(a=5)
+tuple Row(a=(4,))
+none TypeError Row.__new__() missing 1 required positional argument: 'a'
+many TypeError Row.__new__() takes 2 positional arguments but 3 were given
+badkw TypeError Row.__new__() got an unexpected keyword argument 'z'
+dup TypeError Row.__new__() got multiple values for argument 'a'
+_cls TypeError Row.__new__() got multiple values for argument '_cls'
+__new__ Row(a=7)
+type (True, True, True)
+_make Row(a=8)
+subclass ('Sub', (2,))
+subclass none TypeError Row.__new__() missing 1 required positional argument: 'a'
+TypeError P.__new__() missing 3 required positional arguments: 'x', 'y', and 'z'
+TypeError P.__new__() missing 2 required positional arguments: 'y' and 'z'
+TypeError P.__new__() missing 1 required positional argument: 'z'
+TypeError P.__new__() takes 4 positional arguments but 5 were given
+P(x=1, y=2, z=3)
+"
+    );
+    out.lock().expect("output lock").clear();
+    // The class is shared, so a cell can neither replace nor delete its
+    // `__new__`: CPython's error for an immutable type, "set" for a
+    // deletion too (a guest namedtuple's `__new__` can be written, as in
+    // CPython). A reset drops the cache (`Vm::reset`), and the class built
+    // again after it behaves the same.
+    let cell = "R = type(echo())
+for f in (lambda: setattr(R, '__new__', lambda *a: 0), lambda: delattr(R, '__new__')):
+    try:
+        f()
+    except TypeError as e:
+        print('TypeError', e)
+print(R(4), R(a=5), R.__new__(R, 6), R._fields)";
+    for reset in [false, true] {
+        if reset {
+            s.reset().expect("reset");
+        }
+        let p = start(&engine, &mut s, cell);
+        assert!(matches!(p, Progress::HostCall { .. }), "{p:?}");
+        let p = s.resume(Resume::Value(row())).expect("resumes");
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    }
+    let text = out.lock().expect("output lock").clone();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 6, "{text}");
+    assert_eq!(lines[..3], lines[3..]);
+    let refused = "TypeError cannot set '__new__' attribute of immutable type 'Row'";
+    assert_eq!(lines[..2], [refused, refused], "{text}");
+    assert_eq!(lines[2], "Row(a=4) Row(a=5) Row(a=6) ('a',)", "{text}");
+}
+
 #[test]
 fn host_values_convert_both_ways() {
     let out = Arc::new(Mutex::new(String::new()));

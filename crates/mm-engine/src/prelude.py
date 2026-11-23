@@ -5459,6 +5459,37 @@ def _rec_replace(self, /, **kwds):
     return tuple.__new__(type(self), values)
 
 
+# What the native `_rec_new`, a record class's `__new__` bound to `(name,
+# fields)`, calls: a namedtuple's, taking the fields by position and
+# keyword, with CPython's errors.
+def _rec_new_py(spec, *args, **kwds):
+    name, fields = spec
+    q = name + '.__new__()'
+    n = len(fields) + 1
+    if len(args) > n:
+        s = '' if n == 1 else 's'
+        raise TypeError(f'{q} takes {n} positional argument{s} but {len(args)} were given')
+    values = list(args[1:]) + [_MISSING] * (n - len(args))
+    for k, v in kwds.items():
+        if k == '_cls' and args:
+            raise TypeError(f"{q} got multiple values for argument '_cls'")
+        if k not in fields:
+            raise TypeError(f"{q} got an unexpected keyword argument '{k}'")
+        i = fields.index(k)
+        if values[i] is not _MISSING:
+            raise TypeError(f"{q} got multiple values for argument '{k}'")
+        values[i] = v
+    missing = [repr(f) for f, v in zip(fields, values) if v is _MISSING]
+    if not args:
+        missing.insert(0, "'_cls'")
+    if missing:
+        s = '' if len(missing) == 1 else 's'
+        names = missing[0] if len(missing) == 1 else (
+            ', '.join(missing[:-1]) + (',' if len(missing) > 2 else '') + ' and ' + missing[-1])
+        raise TypeError(f'{q} missing {len(missing)} required positional argument{s}: {names}')
+    return tuple.__new__(args[0], values)
+
+
 def _rec_make(cls, iterable):
     result = tuple.__new__(cls, iterable)
     if len(result) != len(cls._fields):

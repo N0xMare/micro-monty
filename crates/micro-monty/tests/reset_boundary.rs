@@ -140,7 +140,7 @@ fn a_second_define_leaves_the_subclasses_of_the_old_classes_working() {
         &mut s,
         &out,
         "[s.go(), Sub('q').path, Sub.__mro__[1] is old[0], Entry is old[0], ToolError is old[1], \
-         isinstance(obj(), Entry), isinstance(obj(), old[0]), SubE('m').args, SubR((1,)).a]",
+         isinstance(obj(), Entry), isinstance(obj(), old[0]), SubE('m').args, SubR(1).a]",
     );
     assert_eq!(
         after,

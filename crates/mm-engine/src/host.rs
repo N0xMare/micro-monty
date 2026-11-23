@@ -9,8 +9,9 @@
 //! so the call can happen at any depth.
 
 use crate::Exit;
+use crate::cont::Cont;
 use crate::types::{T, ty};
-use crate::vm::{Raised, Vm, exc_slot};
+use crate::vm::{CallArgs, Raised, Request, Vm, exc_slot};
 use alloc::{format, string::String, sync::Arc, vec::Vec};
 use core::sync::atomic::AtomicBool;
 use mm_compile::bytecode::Code;
@@ -1388,6 +1389,11 @@ impl Vm {
             self.dict_set(ns, k, v)?;
         }
         let cname = names.first().copied().unwrap_or(Value::NONE);
+        let spec = self.alloc_tuple(&[cname, field_names])?;
+        let new = Value::native(crate::builtins::REC_NEW);
+        let new = self.new_method(new, spec)?;
+        let k = self.intern("__new__")?;
+        self.dict_set(ns, k, new)?;
         let tuple = self.type_obj(T::tuple);
         let c = self.new_class(cname, &[tuple], ns)?;
         // The host's data, as a host class is: a record a host function
@@ -1937,7 +1943,7 @@ impl Vm {
 /// `_mm.host_help(obj)`: the stub of a host function, class, exception or
 /// module, or `None` for anything else (`help()` prints it).
 #[cfg_attr(mm_shipped, optimize(size))]
-pub(crate) fn mm_host_help(vm: &mut Vm, a: crate::vm::CallArgs) -> Result<Value, Raised> {
+pub(crate) fn mm_host_help(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let obj = vm.arg(&a, 0);
     let text = if obj.is_obj_kind(ty::HOSTFN as u8) {
         vm.hostfn_help(obj, 0)
@@ -1968,6 +1974,29 @@ pub(crate) fn mm_host_help(vm: &mut Vm, a: crate::vm::CallArgs) -> Result<Value,
         Some(t) => vm.new_str(&t),
         None => Ok(Value::NONE),
     }
+}
+
+/// `_mm.rec_new(spec, *args, **kwds)`, a host record class's `__new__` bound
+/// to `(name, fields)` (`Vm::record_class`): the prelude's `_rec_new_py`
+/// with the same arguments. Native, so a class needs no prelude function
+/// built: every cell that meets a record after a restore makes its class
+/// again, and a prelude `__new__` would be built again with it; the
+/// prelude's is built only when a record class is called.
+pub(crate) fn rec_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let func = vm.prelude_fn("_rec_new_py")?;
+    let args: Vec<Value> = (0..a.n).map(|i| vm.arg_o(&a, i)).collect();
+    let kw = match vm.kwarg(&a, 0) {
+        Value::UNDEFINED => Value::NONE,
+        d => d,
+    };
+    vm.request = Some(Request::Call {
+        func,
+        args: args.into(),
+        kw,
+        cont: Cont::None,
+        outer: Cont::None,
+    });
+    Ok(Value::UNDEFINED)
 }
 
 /// Why [`record_names_error`] refuses a record's names.
