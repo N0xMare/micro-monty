@@ -1770,6 +1770,13 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
   `staticmethod`, `zip`, `enumerate` or `super`; `map`, `filter` and
   `reversed` are functions, not types.
 - **Named Unicode escapes** (`'\N{BULLET}'`) are a `SyntaxError`.
+- **`__class__` assignment.** An object's class never changes:
+  `o.__class__ = B` raises `TypeError: micro-monty does not support
+  __class__ assignment: create an instance of 'B' instead`, where CPython
+  switches the class. Assigning the class the object already has does
+  nothing, and the assignments CPython refuses raise CPython's own
+  `TypeError` (a builtin type on either side, user classes with different
+  builtin bases, a value that is not a class, `del o.__class__`).
 
 **asyncio** follows CPython 3.14 for `run`, `gather`, `sleep`,
 `create_task`, `wait_for`, `wait`, `as_completed`, `shield`, `TaskGroup`,
@@ -2060,6 +2067,41 @@ differs:
   imports; one the sandbox leaves out gets its redirect sentence instead,
   and the other stdlib module names CPython hints (213 with the default
   modules) get none ("Did you forget to import" above).
+- **Special methods with other errors or results.** Loud where CPython is,
+  with another type or text \[M, the 0.0.3 class and container
+  generators\]:
+  - `del obj.a` for a data descriptor with `__set__` and no `__delete__`
+    raises `AttributeError: 'K' object has no attribute 'a'` (CPython:
+    `AttributeError: __delete__`).
+  - `len(o)` and `bool(o)` for a `__len__` that returns an int past 64
+    bits raise `TypeError: 'int' object cannot be interpreted as an
+    integer` (CPython: `OverflowError: cannot fit 'int' into an
+    index-sized integer`), so an `except OverflowError` misses it.
+  - `reversed(o)` of an object with `__getitem__` and no `__len__` or
+    `__reversed__` raises `TypeError: 'S' object is not reversible`
+    (CPython: `object of type 'S' has no len()`).
+  - `reversed(o)` for a class with `__reversed__ = None` raises
+    `TypeError: 'NoneType' object is not callable` (CPython: `'C' object
+    is not reversible`).
+  - A unary operator the class lacks, when it defines another unary
+    dunder (`-o` with only `__abs__`), raises `TypeError: 'unary' not
+    supported between instances of 'U' and 'U'` (CPython: `bad operand
+    type for unary -: 'U'`); with no unary dunder at all the text is
+    CPython's.
+  - An `OrderedDict` changed while it is iterated raises `RuntimeError:
+    dictionary changed size during iteration` (CPython: `OrderedDict
+    mutated during iteration`), also where CPython goes on: when the
+    iterator is at the last item, or the dict has one.
+
+  Two are silent:
+  - `type(C.__hash__)` and `type(C().__init__)` are
+    `builtin_function_or_method` (CPython: `wrapper_descriptor` and
+    `method-wrapper`).
+  - `list(o)`, `sorted(o)`, `bytes(o)` and `list.extend(o)`
+    do not call `__len__` or `__length_hint__` as a length hint, so a
+    hint that is negative (CPython: `ValueError: __len__() should return
+    >= 0`) or past 64 bits (`OverflowError`) is never seen and the items
+    are read as usual. Only a broken `__len__` meets it.
 - **Did you forget 'await'.** A `TypeError` or `AttributeError` over a
   coroutine, a host future or a gather ends its report with `. Did you forget
   'await'?`, which CPython does not print; `str(e)` and `e.args` are
