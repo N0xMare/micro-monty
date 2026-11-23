@@ -967,9 +967,8 @@ impl Vm {
             // nothing new to clear: its walk is skipped (most tasks of a
             // program with many are blocked at any collection).
             for task in self.tasks.iter_mut().flatten() {
-                if let Some(s) = &task.st
-                    && !task.cleared
-                {
+                if task.saved && !task.cleared {
+                    let s = &task.st;
                     clear_dead(&mut task.stack, &task.specials, &self.codes, s, task.depth);
                     task.cleared = true;
                 }
@@ -1050,7 +1049,7 @@ impl Vm {
             // Suspended tasks: their live registers and frames.
             for task in self.tasks.iter().flatten() {
                 t.values(&[task.handle, task.handled, task.awaiting, task.context]);
-                if let Some(s) = &task.st {
+                if let Some(s) = task.regs() {
                     t.values(&[s.acc, s.func, s.coro]);
                     let top = (s.base + self.codes[s.ci as usize].code.nregs as usize)
                         .min(task.stack.len());
@@ -1112,7 +1111,7 @@ impl Vm {
         // whose registers cover them would trace and save freed objects.
         self.stack[top..].fill(Value::UNDEFINED);
         for task in self.tasks.iter_mut().flatten() {
-            let top = task.st.as_ref().map_or(0, |s| {
+            let top = task.regs().map_or(0, |s| {
                 (s.base + self.codes[s.ci as usize].code.nregs as usize).min(task.stack.len())
             });
             task.stack[top..].fill(Value::UNDEFINED);

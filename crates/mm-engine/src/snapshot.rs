@@ -440,6 +440,7 @@ impl Vm {
     pub fn write_snapshot_to(&mut self, out: &mut dyn FnMut(&[u8])) -> Result<(), NotAtSafepoint> {
         self.prepare_snapshot()?;
         self.emit_snapshot(out);
+        self.place_gathers(true);
         Ok(())
     }
 
@@ -463,12 +464,13 @@ impl Vm {
         let mut len = header.len().saturating_add(trailer);
         self.emit_snapshot(&mut |b| len = len.saturating_add(b.len()));
         let mut out = Vec::new();
-        if len > limit || out.try_reserve_exact(len).is_err() {
-            return Ok(None);
+        let fits = len <= limit && out.try_reserve_exact(len).is_ok();
+        if fits {
+            out.extend_from_slice(header);
+            self.emit_snapshot(&mut |b| out.extend_from_slice(b));
         }
-        out.extend_from_slice(header);
-        self.emit_snapshot(&mut |b| out.extend_from_slice(b));
-        Ok(Some(out))
+        self.place_gathers(true);
+        Ok(fits.then_some(out))
     }
 
     /// Readies the session for [`Vm::emit_snapshot`]: drops what the image
@@ -535,6 +537,10 @@ impl Vm {
         if !waited {
             self.heap.keep_allocated_since_gc(since);
         }
+        // The tracked gathers as an image holds them: no holes, and no
+        // place in a gather (the writers put the places back).
+        self.pack_gathers();
+        self.place_gathers(false);
         Ok(())
     }
 
@@ -751,11 +757,11 @@ impl Vm {
             put_stack(
                 out,
                 &t.stack,
-                t.st.as_ref().map_or(0, |s| live_top(&self.codes, s)),
+                t.regs().map_or(0, |s| live_top(&self.codes, s)),
             );
             put_u32(out, t.depth);
             put_frames(out, &t.specials);
-            put_opt_state(out, t.st.as_ref());
+            put_opt_state(out, t.regs());
         }
         put_len(out, self.ready.len());
         for r in &self.ready {
@@ -779,8 +785,9 @@ impl Vm {
                 }
             }
         }
-        put_len(out, self.blocked.len());
-        for &b in &self.blocked {
+        // The tasks, not the holes their wakes left.
+        put_len(out, self.blocked.len() - self.blocked_holes);
+        for &b in self.blocked.iter().filter(|&&b| b != crate::vm::HOLE) {
             put_len(out, b);
         }
         put_values(out, &self.gathers);
@@ -2040,18 +2047,17 @@ impl Vm {
             let st = read_opt_state(r)?
                 .map(|s| check_state(&mut codes, &mut bundled, s, t_stack.len()))
                 .transpose()?;
-            tasks.push(Some(Task {
-                handle,
-                stack: t_stack,
-                depth: t_depth,
-                specials: t_specials,
-                st,
-                handled: t_handled,
-                awaiting,
-                context: t_context,
-                cleared: false,
-                copies_cleared: false,
-            }));
+            let mut task = Task::new(handle, t_context);
+            task.stack = t_stack;
+            task.depth = t_depth;
+            task.specials = t_specials;
+            task.handled = t_handled;
+            task.awaiting = awaiting;
+            if let Some(st) = st {
+                task.st = st;
+                task.saved = true;
+            }
+            tasks.push(Some(task));
         }
         let nready = need(r.count(9), "run queue")?;
         charge(&mut budget, nready as u64 * size_of::<Ready>() as u64)?;
@@ -2074,8 +2080,16 @@ impl Vm {
         }
         charge(&mut budget, ntasks as u64 * size_of::<usize>() as u64)?;
         let mut blocked = Vec::with_capacity(ntasks);
-        for _ in 0..nblocked {
-            blocked.push(read_index(r, "blocked")?);
+        for k in 0..nblocked {
+            let i = read_index(r, "blocked")?;
+            // Its place in the list (`Task::at`): a task is listed once.
+            if let Some(Some(t)) = tasks.get_mut(i) {
+                if t.at != crate::vm::NOT_BLOCKED {
+                    return Err(SnapError::Corrupt("blocked"));
+                }
+                t.at = u32::try_from(k).unwrap_or(crate::vm::NOT_BLOCKED);
+            }
+            blocked.push(i);
         }
         let ngathers = need(r.count(8), "gathers")?;
         charge(&mut budget, ngathers as u64 * size_of::<Value>() as u64)?;
@@ -2246,7 +2260,7 @@ impl Vm {
                 &t.stack,
                 &t.specials,
                 t.depth,
-                t.st.as_ref(),
+                t.regs(),
                 &conts,
                 &mut held,
             )?;
@@ -2333,7 +2347,9 @@ impl Vm {
             cur,
             ready,
             blocked,
+            blocked_holes: 0,
             gathers,
+            gathers_holes: 0,
             iter_left,
             iter_open,
             stop_wait,
@@ -2432,6 +2448,7 @@ impl Vm {
         // one would (`Vm::queue_spare`).
         vm.reserve_scheduler(ntasks, ngathers, spare)
             .map_err(|_| SnapError::TooLarge)?;
+        vm.place_gathers(true);
         if check {
             check_steps(&vm)?;
         }

@@ -2019,6 +2019,244 @@ asyncio.run(main())
     assert_eq!(raw(&vm, state, 4 + 2), 20_000);
 }
 
+/// Gathers that settle out of order while others are created, checked
+/// by their results: the scheduler's list has holes and is packed.
+#[cfg(feature = "asyncio")]
+const GATHERS: &str = "\
+import asyncio
+async def main():
+    loop = asyncio.get_running_loop()
+    fs = [loop.create_future() for _ in range(6)]
+    gs = [asyncio.gather(f) for f in fs]
+    fs[1].set_result(1)
+    fs[4].set_result(4)
+    await asyncio.sleep(0)
+    more = [asyncio.gather(f, f) for f in fs]
+    await asyncio.sleep(0)
+    for i, f in enumerate(fs):
+        if not f.done():
+            f.set_result(i * 10)
+    got = await asyncio.gather(*gs, *more)
+    want = [[0], [1], [20], [30], [4], [50]]
+    assert got == want + [x * 2 for x in want], got
+asyncio.run(main())
+";
+
+/// [`GATHERS`] parked where the list of tracked gathers has a hole and
+/// gathers after it.
+#[cfg(feature = "asyncio")]
+fn gathers_with_a_hole() -> Vm {
+    let stop = |vm: &Vm| vm.gathers_holes != 0 && vm.gathers.len() >= 7;
+    let vm = session(GATHERS, stop);
+    assert!(stop(&vm), "never parked with a hole");
+    vm
+}
+
+/// A tracked gather knows its place in the scheduler's list while its
+/// session runs, and no image holds a place: the image of a session is
+/// the one written with every place taken out by hand, the session that
+/// wrote it has its places again, and so has the restored one; both end
+/// with every gather's result.
+#[cfg(feature = "asyncio")]
+#[test]
+fn an_image_holds_no_gather_place_and_both_sessions_keep_theirs() {
+    let mut vm = gathers_with_a_hole();
+    let mut image = Vec::new();
+    vm.write_snapshot(&mut image).expect("at a safepoint");
+    let placed = |vm: &Vm| {
+        vm.gathers_holes == 0 && !vm.gathers.is_empty() && vm.gathers.iter().all(|&g| vm.tracked(g))
+    };
+    assert!(placed(&vm), "the session that goes on lost a place");
+    vm.place_gathers(false);
+    let mut bare = Vec::new();
+    vm.emit_snapshot(&mut |b| bare.extend_from_slice(b));
+    vm.place_gathers(true);
+    assert!(image == bare, "the image holds a place");
+    let mut restored = restore_image(&image);
+    assert!(placed(&restored), "the restored session has no places");
+    // Nor does a gather that settled keep the place it had: two have
+    // settled here and are still alive.
+    let unlisted = objects(&restored, ty::GATHER)
+        .into_iter()
+        .filter(|&r| {
+            !restored
+                .gathers
+                .contains(&Value::from_ref(r, ty::GATHER as u8))
+        })
+        .collect::<Vec<_>>();
+    assert!(unlisted.len() >= 2, "no settled gather alive");
+    for r in unlisted {
+        assert_eq!(raw(&restored, r, crate::aio::aw::FAILS) >> 8, 0);
+    }
+    for vm in [&mut vm, &mut restored] {
+        let exit = loop {
+            vm.set_fuel(Some(1 << 20));
+            match vm.resume() {
+                Exit::Parked(_) => {}
+                exit => break exit,
+            }
+        };
+        assert!(matches!(exit, Exit::Complete(_)), "{exit:?}");
+    }
+}
+
+/// The scheduler packs its list of gathers as it runs (the list full,
+/// with holes) and each gather that moved keeps its place: [`GATHERS`]
+/// run whole with no snapshot, which would give every gather its place
+/// again. A gather that lost its place would never hear its child settle,
+/// and the program would end blocked for ever.
+#[cfg(feature = "asyncio")]
+#[test]
+fn gathers_packed_while_a_session_runs_keep_their_places() {
+    let holes = core::cell::Cell::new(false);
+    let packed = core::cell::Cell::new(false);
+    let vm = session(GATHERS, |vm| {
+        if vm.gathers_holes != 0 {
+            holes.set(true);
+        } else if holes.get() && vm.gathers.len() >= 7 {
+            packed.set(true);
+        }
+        false
+    });
+    assert!(packed.get(), "the list was never packed with gathers in it");
+    assert!(vm.gathers.is_empty(), "a gather is still tracked");
+}
+
+/// A gather still pending when its `asyncio.run` ends is tracked no
+/// more and keeps no place: a place left in it would be written into
+/// every later image.
+#[cfg(feature = "asyncio")]
+#[test]
+fn a_gather_its_run_left_pending_keeps_no_place() {
+    let src = "\
+import asyncio
+async def main():
+    f = asyncio.get_running_loop().create_future()
+    return asyncio.gather(f, f)
+g = asyncio.run(main())
+n = 0
+for i in range(20):
+    n += i
+";
+    let left = |vm: &Vm| vm.gathers.is_empty() && !objects(vm, ty::GATHER).is_empty();
+    let vm = session(src, left);
+    assert!(left(&vm), "never parked after the run");
+    for r in objects(&vm, ty::GATHER) {
+        assert_eq!(raw(&vm, r, crate::aio::aw::FAILS) >> 8, 0);
+    }
+}
+
+/// A long cancel charges for the gathers the scheduler tracks, not for
+/// the holes settled ones left in its list, which an image does not
+/// hold: from a park where 3,000 of 4,001 entries are holes, the session
+/// that goes on and the restored one spend the same fuel to the end.
+#[cfg(feature = "asyncio")]
+#[test]
+fn a_long_cancel_charges_the_same_with_holes_among_the_gathers() {
+    let src = "\
+import asyncio
+async def main():
+    loop = asyncio.get_running_loop()
+    fs = [loop.create_future() for _ in range(4000)]
+    gs = [asyncio.gather(f) for f in fs]
+    G = asyncio.gather(*gs)
+    for f in fs[:3000]:
+        f.set_result(1)
+    await asyncio.sleep(0)
+    G.cancel()
+    try:
+        await G
+    except asyncio.CancelledError:
+        pass
+asyncio.run(main())
+";
+    let holes = |vm: &Vm| vm.gathers_holes >= 3000;
+    let spent = |vm: &mut Vm| {
+        const FUEL: u64 = 1 << 40;
+        vm.set_fuel(Some(FUEL));
+        let exit = vm.resume();
+        assert!(matches!(exit, Exit::Complete(_)), "{exit:?}");
+        FUEL - vm.fuel_account().0.expect("a budget")
+    };
+    let mut on = session_in(src, 64, holes);
+    assert!(holes(&on), "never parked with the holes");
+    let mut parked = session_in(src, 64, holes);
+    let mut restored = restore(&mut parked).expect("restores");
+    assert_eq!(restored.gathers_holes, 0);
+    assert_eq!(spent(&mut on), spent(&mut restored));
+}
+
+/// A cancel's budget counts a sleep's settle by the tasks blocked, and
+/// the settle scans the list they are in: the list is packed before a
+/// scan once its holes outnumber its tasks, so cancelling many sleeping
+/// tasks never leaves a scan of holes alone (12.5 ms a step against
+/// 5.3 ms at 30,000 sleepers without it, and growing with them [M]).
+#[cfg(feature = "asyncio")]
+#[test]
+fn a_cancel_of_sleepers_scans_a_blocked_list_at_most_half_holes() {
+    let src = "\
+import asyncio
+async def w():
+    await asyncio.sleep(1000)
+async def main():
+    ts = [asyncio.create_task(w()) for _ in range(3000)]
+    await asyncio.sleep(0)
+    G = asyncio.gather(*ts)
+    G.cancel()
+    try:
+        await G
+    except asyncio.CancelledError:
+        pass
+asyncio.run(main())
+";
+    let seen = core::cell::Cell::new(false);
+    session(src, |vm| {
+        if cancel_state(vm).is_some() && vm.blocked_holes != 0 {
+            seen.set(true);
+            let tasks = vm.blocked.len() - vm.blocked_holes;
+            // One scan's wake past the half it was packed at.
+            assert!(vm.blocked_holes <= tasks + 2, "{} holes", vm.blocked_holes);
+        }
+        false
+    });
+    assert!(seen.get(), "never parked inside the cancel with a hole");
+}
+
+/// A place is checked against the list, not trusted: a gather that an
+/// image leaves out of the list but gives a place (forged; a gather the
+/// scheduler dropped has none) is not tracked, so its children's settles
+/// take nothing off the callbacks counted for the tracked ones. The
+/// restored session ends or raises; it does not panic.
+#[cfg(feature = "asyncio")]
+#[test]
+fn a_forged_gather_place_is_not_trusted() {
+    for keep in [0, 1, 3] {
+        let mut vm = gathers_with_a_hole();
+        vm.pack_gathers();
+        // Unlisted gathers keep the places `prepare_snapshot` no longer
+        // takes out of them.
+        vm.gathers.truncate(keep);
+        vm.callback_queue = vm.count_callback_queue();
+        let mut restored = restore(&mut vm).expect("restores");
+        let unlisted = objects(&restored, ty::GATHER)
+            .into_iter()
+            .map(|r| Value::from_ref(r, ty::GATHER as u8))
+            .filter(|g| !restored.gathers.contains(g))
+            .collect::<Vec<_>>();
+        assert!(
+            unlisted.iter().any(|&g| raw(
+                &restored,
+                g.as_obj().expect("an object"),
+                crate::aio::aw::FAILS
+            ) >> 8
+                != 0),
+            "no forged place"
+        );
+        assert!(unlisted.iter().all(|&g| !restored.tracked(g)));
+        restore_and_finish(&mut restored);
+    }
+}
+
 /// Every word of a cancel's state and of its frames, forged to every kind
 /// of word, in either pass: the restored session raises or ends; it never
 /// panics (overflow checks on here) and never parks for ever.

@@ -677,13 +677,30 @@ messages; copy wording where behaviour matches.
     callbacks within its count), so a forged or stale state raises
     `SystemError` (the scheduler's at the main task's `await`) and
     never panics. A step is bounded between visits, not inside one: a
-    visit settles its awaitable whole, so one future that many tracked
-    gathers listen to is still one step past the bound (`Vm::settle_as`
-    looks each up among the tracked ones: 119.6 ms at 30,000 gathers
-    [M]), as its settle is outside a cancel.
-    The total time of cancelling many blocked tasks is still quadratic
-    in them, as every settle's wake is (`Vm::settle_as` scans
-    `blocked`): the other steps are bounded, the sum is not shorter.
+    visit settles its awaitable whole.
+  - **The scheduler's lists.** A wake and a settle do not search the
+    blocked tasks or the tracked gathers: a blocked task holds its place
+    in `Vm::blocked` (`Task::at`) and a tracked gather its place in
+    `Vm::gathers` (above its flags, `aw::PLACE_SHIFT`), checked against
+    the list where it is read, so a place alone is never trusted. Taking
+    one out leaves a hole; a list is packed, in order, when it is full or
+    its holes outnumber its entries, and before a sleep's settle scans
+    the blocked tasks (a sleep lists no waiters). An image holds neither
+    holes nor places: `prepare_snapshot` packs the gathers and takes
+    their places out, the writers put them back, and a restore sets them
+    from the list, so the session that goes on and the restored one
+    differ in nothing an image, a report or fuel shows (a cancel's
+    budget counts entries, not holes). The loop's walk for the host
+    calls a blocked program waits on (`Vm::pending_ids`) marks the
+    gathers it reaches (`aw::VISITED`, cleared before it returns). On
+    shipped codegen: 30,000 sleeps due together, one step of 141.9 ms,
+    now 11.9 ms; a future 30,000 gathers listen to, 199.8 ms, now
+    4.7 ms; a loop idle on a gather of 40,000 futures, 233.0 ms, now
+    7.2 ms; cancelling 40,000 tasks each waiting on a future, 631 ms in
+    all, now 86 ms [M]. Cancelling many sleeping tasks is still
+    quadratic in them in all (each sleep's settle scans the blocked
+    tasks), in bounded steps. Not bounded yet: a step that starts many
+    tasks or builds a gather of many children.
 
   `crates/micro-monty/tests/steps.rs` is the oracle: each row runs a site
   near the default limits with a deadline set again after every park, and

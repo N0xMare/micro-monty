@@ -2920,6 +2920,32 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "asyncio.run(main())",
         1,
     ),
+    // The scheduler's own steps over its blocked tasks and tracked
+    // gathers. Sleeps due together woke each with a search of the blocked
+    // list (30,000: one step of 141.9 ms); a settled future looked each
+    // gather that listens to it up among the tracked ones (20,000: 89.8 ms;
+    // 30,000 here); and a loop with nothing to run walked a gather's
+    // children with a list of the gathers it had seen (40,000 futures:
+    // 233.0 ms) [M, shipped, c01b09a]. A task and a gather now know their
+    // places, and the walk marks the gathers it reaches.
+    (
+        Row::Bounded,
+        "import asyncio\nawait asyncio.sleep(0)\nasync def w():\n    await asyncio.sleep(1)",
+        "ts = [asyncio.create_task(w()) for _ in range(30_000)]\nawait asyncio.sleep(0)\nawait asyncio.sleep(2)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "import asyncio\nawait asyncio.sleep(0)\nloop = asyncio.get_running_loop()",
+        "f = loop.create_future()\ngs = [asyncio.gather(f) for _ in range(30_000)]\nf.set_result(1)\nawait asyncio.sleep(0)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "import asyncio\nawait asyncio.sleep(0)\nloop = asyncio.get_running_loop()",
+        "G = asyncio.gather(*[loop.create_future() for _ in range(40_000)])\ntry:\n    await G\nexcept RuntimeError:\n    pass",
+        1,
+    ),
     // One item of a guest-sized tuple, read without copying the tuple: an
     // exception's fields from `args` (an `OSError`'s, a `SyntaxError`'s
     // from its 8M-item location tuple: 73 and 563 ms a read on e54f65f

@@ -725,6 +725,13 @@ pub(crate) enum Ic {
 // every global, attribute and call (see `Ic::New`).
 const _: () = assert!(size_of::<Ic>() == 24);
 
+// A task's place in the blocked list costs the task table nothing (see
+// `Task::saved`).
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(size_of::<Option<Task>>() == 144);
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(size_of::<Option<Task>>() == 112);
+
 /// The registers of the running frame.
 #[derive(Clone)]
 pub(crate) struct State {
@@ -736,6 +743,12 @@ pub(crate) struct State {
     /// The coroutine or generator the running frame belongs to, or `None`.
     pub coro: Value,
 }
+
+/// An entry of [`Vm::blocked`] whose task woke.
+pub(crate) const HOLE: usize = usize::MAX;
+
+/// [`Task::at`] of a task that is not blocked.
+pub(crate) const NOT_BLOCKED: u32 = u32::MAX;
 
 /// A task: one stack of frames the scheduler switches between. The running
 /// task's stack and frames live in [`Vm::stack`], [`Vm::depth`] and
@@ -757,8 +770,17 @@ pub(crate) struct Task {
     pub stack: Vec<Value>,
     pub depth: u32,
     pub specials: Vec<Frame>,
-    /// Saved registers; `None` before the task first runs.
-    pub st: Option<State>,
+    /// Saved registers, if `saved`.
+    pub st: State,
+    /// It has saved registers: not before it first runs, nor while it
+    /// runs. A flag beside `st`, not an `Option` around it, whose tag
+    /// would take the word `at` is in: the task table's charge is what it
+    /// was without `at`.
+    pub saved: bool,
+    /// Its place in [`Vm::blocked`] while it is blocked, else
+    /// [`NOT_BLOCKED`]. Never in an image: the restore sets it from the
+    /// list.
+    pub at: u32,
     /// The exception being handled (`raise` with no argument), per task.
     pub handled: Value,
     /// The awaitable a blocked task waits on (`None` when runnable).
@@ -778,6 +800,36 @@ pub(crate) struct Task {
 }
 
 impl Task {
+    /// A task that has not run: `handle`'s, in `context`.
+    pub(crate) fn new(handle: Value, context: Value) -> Self {
+        Task {
+            handle,
+            stack: Vec::new(),
+            depth: 0,
+            specials: Vec::new(),
+            st: State {
+                pc: 0,
+                base: 0,
+                ci: 0,
+                acc: Value::NONE,
+                func: Value::NONE,
+                coro: Value::NONE,
+            },
+            saved: false,
+            at: NOT_BLOCKED,
+            handled: Value::NONE,
+            awaiting: Value::NONE,
+            context,
+            cleared: false,
+            copies_cleared: false,
+        }
+    }
+
+    /// Its saved registers: `None` before it first runs and while it runs.
+    pub(crate) fn regs(&self) -> Option<&State> {
+        self.saved.then_some(&self.st)
+    }
+
     /// Bytes of stack and frame capacity this task holds while suspended.
     pub(crate) fn buffer_bytes(&self) -> u64 {
         (self.stack.capacity() * size_of::<Value>() + self.specials.capacity() * size_of::<Frame>())
@@ -952,9 +1004,21 @@ pub struct Vm {
     /// The run queue: tasks to step and gathers to check, in the order
     /// asyncio's `call_soon` would run them.
     pub(crate) ready: VecDeque<Ready>,
+    /// The blocked tasks, in the order they blocked, and [`HOLE`]s where
+    /// one woke (`Vm::unblock`): a wake moves no other entry, and the list
+    /// is packed again once its holes outnumber its tasks or it is full,
+    /// so it never outgrows the room the task table reserved for it. Each
+    /// task knows its place ([`Task::at`]). An image holds the tasks only.
     pub(crate) blocked: Vec<usize>,
-    /// Unsettled gathers, in creation order (children before parents).
+    /// The holes in `blocked`.
+    pub(crate) blocked_holes: usize,
+    /// Unsettled gathers, in creation order (children before parents),
+    /// and `UNDEFINED` where one settled (`Vm::untrack_gather`); packed as
+    /// `blocked` is. Each gather knows its place (`aw::PLACE_SHIFT`). An
+    /// image holds the gathers only.
     pub(crate) gathers: Vec<Value>,
+    /// The holes in `gathers`.
+    pub(crate) gathers_holes: usize,
     /// Entries at the front of `ready` that belong to the loop iteration
     /// running now (CPython's `_run_once` runs those ready when it starts).
     pub(crate) iter_left: usize,
@@ -1338,7 +1402,9 @@ impl Vm {
             cur: 0,
             ready: VecDeque::new(),
             blocked: Vec::new(),
+            blocked_holes: 0,
             gathers: Vec::new(),
+            gathers_holes: 0,
             iter_left: 0,
             iter_open: false,
             stop_wait: 0,

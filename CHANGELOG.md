@@ -134,6 +134,15 @@ hashes are pre-release history, kept in the private archive
   cancel parked part way snapshots and restores; nothing else runs
   between its steps. The total time of cancelling many blocked tasks is
   unchanged (quadratic in them). The build id moves [M, own case 579].
+- The asyncio scheduler no longer searches its blocked tasks or its
+  tracked gathers at a wake or a settle: each knows its place in its
+  list. On shipped codegen, 30,000 sleeps due together were one step of
+  141.9 ms and are now 11.9 ms; settling a future that 30,000 gathers
+  listen to, 199.8 ms, now 4.7 ms; a loop idle on a gather of 40,000
+  futures, 233.0 ms, now 7.2 ms; cancelling 40,000 tasks each waiting on
+  a future took 631 ms in all, now 86 ms [M]. Results, the order tasks
+  resume in and fuel are unchanged, and an image holds what it held (the
+  places are kept in memory only). The build id moves [M, own case 595].
 - An `except MemoryError` handler that drops the data that filled memory
   can allocate again. Displays (`[...]`, `(...)`, `{...}`, `x[a:b]`),
   `lambda` and `def`, `str`/`int`/`float` of numbers, strs and bytes,

@@ -17,12 +17,14 @@ aio.rs::new_delegation
 aio.rs::new_task_handle
 aio.rs::next_task
 aio.rs::note_fresh
+aio.rs::place_gathers
 aio.rs::settle_as
 aio.rs::sleep_due
 aio.rs::spawn_named
 aio.rs::start_coro_frame
 aio.rs::start_run
 aio.rs::task_index
+aio.rs::tracked
 aio.rs::unawaited
 aio.rs::vslot_raw_of
 aio.rs::warn_unawaited

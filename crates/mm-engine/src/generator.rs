@@ -503,7 +503,7 @@ impl Vm {
                 continue;
             }
             let (c, n) = (
-                task.st.as_ref().map_or(Value::NONE, |s| s.coro),
+                task.regs().map_or(Value::NONE, |s| s.coro),
                 task.specials.len(),
             );
             self.clear_copy(c);

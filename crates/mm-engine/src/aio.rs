@@ -14,7 +14,9 @@
 //! `Exit::Waiting`.
 
 use crate::types::{T, ty};
-use crate::vm::{Exit, HDR, ParkReason, Raised, Ready, State, Task, Vm, fn_slot};
+use crate::vm::{
+    Exit, HDR, HOLE, NOT_BLOCKED, ParkReason, Raised, Ready, State, Task, Vm, fn_slot,
+};
 use alloc::{format, string::String, vec::Vec};
 use mm_core::{Ref, Value};
 
@@ -195,6 +197,14 @@ pub(crate) mod aw {
     pub const FAILED_CHILD: u64 = 1;
     /// A cancel reached a child (`_cancel_requested`).
     pub const CANCEL_REQUESTED: u64 = 2;
+    /// Set only inside [`super::Vm::pending_ids`], on the gathers its walk
+    /// has reached: never in an image, nor seen by anything else.
+    pub const VISITED: u64 = 4;
+    /// Above the flags of a gather the scheduler tracks: its place in
+    /// `Vm::gathers`, counted from one (`Vm::tracked`). Kept while the
+    /// session runs only: an image is written without it and a restore
+    /// sets it from the list, so no image holds it.
+    pub const PLACE_SHIFT: u32 = 8;
     /// [`RESULT`] of a cancelled task holds the error that ended it.
     pub const HELD: u64 = 2;
     /// The same word of a failed task or loop future: its exception was
@@ -583,14 +593,18 @@ impl Vm {
             v.obj_kind().map(u16::from),
             Some(ty::TASK | ty::FUTURE | ty::GATHER)
         ) {
-            let mut k = 0;
-            while k < self.blocked.len() {
+            // Over a list no more than half holes: a cancel's budget
+            // counts this scan by the tasks blocked (`Vm::settle_work`),
+            // and wakes alone never pack the list.
+            if self.blocked_holes > self.blocked.len() - self.blocked_holes {
+                self.pack_blocked();
+            }
+            for k in 0..self.blocked.len() {
                 let t = self.blocked[k];
-                if matches!(self.tasks.get(t), Some(Some(task)) if task.awaiting == v) {
-                    self.blocked.remove(k);
+                if matches!(self.tasks.get(t), Some(Some(task)) if task.awaiting == v)
+                    && self.unblock(t)
+                {
                     self.ready.push_back(Ready::Task(t));
-                } else {
-                    k += 1;
                 }
             }
         }
@@ -623,9 +637,8 @@ impl Vm {
             if let Some(t) = g.as_int().and_then(|t| usize::try_from(t).ok()) {
                 // A task's wakeup.
                 if matches!(self.tasks.get(t), Some(Some(task)) if task.awaiting == v)
-                    && let Some(j) = self.blocked.iter().position(|&b| b == t)
+                    && self.unblock(t)
                 {
-                    self.blocked.remove(j);
                     self.ready.push_back(Ready::Task(t));
                 }
                 continue;
@@ -640,7 +653,7 @@ impl Vm {
                 continue;
             }
             // Gathers dropped with their `asyncio.run` no longer listen.
-            if !self.gathers.contains(&g) {
+            if !self.tracked(g) {
                 continue;
             }
             if was_pending {
@@ -1132,11 +1145,86 @@ impl Vm {
     /// Takes tracked gather `g` out of `gathers`, with its notifications
     /// from [`Vm::callback_queue`].
     fn untrack_gather(&mut self, g: Value) {
-        if let Some(k) = self.gathers.iter().position(|&x| x == g) {
-            self.gathers.remove(k);
-            let left = usize::try_from(self.raw_of(g, aw::LEFT)).unwrap_or(usize::MAX);
-            self.callback_queue = self.callback_queue.saturating_sub(left);
+        if !self.tracked(g) {
+            return;
         }
+        let flags = self.raw_of(g, aw::FAILS);
+        let k = (flags >> aw::PLACE_SHIFT) as usize - 1;
+        // A hole in its place: no other gather moves (`Vm::track_gather`
+        // packs the list).
+        self.gathers[k] = Value::UNDEFINED;
+        self.gathers_holes += 1;
+        self.set_raw_of(g, aw::FAILS, flags & ((1 << aw::PLACE_SHIFT) - 1));
+        let left = usize::try_from(self.raw_of(g, aw::LEFT)).unwrap_or(usize::MAX);
+        self.callback_queue = self.callback_queue.saturating_sub(left);
+    }
+
+    /// Whether the scheduler tracks gather `g`: its place names the entry
+    /// of `gathers` that is `g`. A place alone is not trusted, so a word
+    /// that names another entry (a forged image's) reads as untracked.
+    pub(crate) fn tracked(&self, g: Value) -> bool {
+        let k = (self.raw_of_hot(g, aw::FAILS) >> aw::PLACE_SHIFT) as usize;
+        k != 0 && self.gathers.get(k - 1) == Some(&g)
+    }
+
+    /// Writes the place of each tracked gather into it (`on`) or takes
+    /// the places out, as an image holds the gathers.
+    pub(crate) fn place_gathers(&mut self, on: bool) {
+        for k in 0..self.gathers.len() {
+            let g = self.gathers[k];
+            if !g.is_obj_kind(ty::GATHER as u8) {
+                continue;
+            }
+            let flags = self.raw_of_hot(g, aw::FAILS) & ((1 << aw::PLACE_SHIFT) - 1);
+            let place = if on {
+                (k as u64 + 1) << aw::PLACE_SHIFT
+            } else {
+                0
+            };
+            self.set_raw_of_hot(g, aw::FAILS, flags | place);
+        }
+    }
+
+    /// Takes the holes out of `gathers`, in order, and gives each gather
+    /// its new place.
+    pub(crate) fn pack_gathers(&mut self) {
+        if self.gathers_holes != 0 {
+            self.gathers.retain(|&g| g != Value::UNDEFINED);
+            self.gathers_holes = 0;
+            self.place_gathers(true);
+        }
+    }
+
+    /// Tracks gather `g`, last, in room `Vm::gathers_room` reserved.
+    #[cfg(feature = "asyncio")]
+    fn track_gather(&mut self, g: Value) {
+        let place = (self.gathers.len() as u64 + 1) << aw::PLACE_SHIFT;
+        self.gathers.push(g);
+        let flags = self.raw_of(g, aw::FAILS);
+        self.set_raw_of(g, aw::FAILS, flags | place);
+    }
+
+    /// The capacity `gathers` needs for one more: the list is packed
+    /// first when it is full or its holes outnumber its gathers, so it
+    /// grows exactly when its gathers fill it.
+    #[cfg(feature = "asyncio")]
+    fn gathers_room(&mut self) -> usize {
+        let len = self.gathers.len();
+        if len == self.gathers.capacity() || self.gathers_holes > len - self.gathers_holes {
+            self.pack_gathers();
+        }
+        if self.gathers.len() == self.gathers.capacity() {
+            self.gathers.len().max(2) * 2
+        } else {
+            self.gathers.capacity()
+        }
+    }
+
+    /// Stops tracking every gather (the cell or its `asyncio.run` ended).
+    fn drop_gathers(&mut self) {
+        self.place_gathers(false);
+        self.gathers.clear();
+        self.gathers_holes = 0;
     }
 
     /// Reserve all possible wakeups before registering work. Settling and
@@ -1187,18 +1275,7 @@ impl Vm {
     pub(crate) fn begin_cell(&mut self) -> Result<(), Raised> {
         self.end_cell();
         self.reserve_scheduler(1, 0, 0)?;
-        self.tasks.push(Some(Task {
-            handle: Value::NONE,
-            stack: Vec::new(),
-            depth: 0,
-            specials: Vec::new(),
-            st: None,
-            handled: Value::NONE,
-            awaiting: Value::NONE,
-            context: Value::NONE,
-            cleared: false,
-            copies_cleared: false,
-        }));
+        self.tasks.push(Some(Task::new(Value::NONE, Value::NONE)));
         self.cur = 0;
         Ok(())
     }
@@ -1330,7 +1407,8 @@ impl Vm {
         self.cur = 0;
         self.ready.clear();
         self.blocked.clear();
-        self.gathers.clear();
+        self.blocked_holes = 0;
+        self.drop_gathers();
         self.callback_queue = 0;
         self.iter_left = 0;
         self.iter_open = false;
@@ -1411,7 +1489,8 @@ impl Vm {
             .map_or(0, Task::buffer_bytes);
         self.ready.clear();
         self.blocked.clear();
-        self.gathers.clear();
+        self.blocked_holes = 0;
+        self.drop_gathers();
         self.callback_queue = 0;
         self.iter_left = 0;
         self.iter_open = false;
@@ -1441,7 +1520,8 @@ impl Vm {
             t.depth = depth;
             t.specials = specials;
             self.parked_bytes = self.parked_bytes.saturating_add(t.buffer_bytes());
-            t.st = Some(st);
+            t.st = st;
+            t.saved = true;
             t.handled = handled;
             t.awaiting = a;
             t.cleared = false;
@@ -1452,7 +1532,7 @@ impl Vm {
             self.ready.push_back(Ready::Task(i));
             return;
         }
-        self.blocked.push(i);
+        self.block(i);
         let h = self
             .tasks
             .get(i)
@@ -1467,9 +1547,59 @@ impl Vm {
     /// Moves blocked task `i` to the run queue (whose room its blocked slot
     /// holds): a cancel it must raise could not go to what it waits on.
     fn wake_blocked(&mut self, i: usize) {
-        if let Some(k) = self.blocked.iter().position(|&t| t == i) {
-            self.blocked.remove(k);
+        if self.unblock(i) {
             self.ready.push_back(Ready::Task(i));
+        }
+    }
+
+    /// Lists task `i` as blocked, last. The list is packed first when it
+    /// is full or its holes outnumber its tasks, in order: a pass over it
+    /// for at least as many wakes as it holds tasks, or for a list as
+    /// full as the task table (one a restore sized exactly).
+    fn block(&mut self, i: usize) {
+        let len = self.blocked.len();
+        if self.blocked_holes != 0
+            && (len == self.blocked.capacity() || self.blocked_holes > len - self.blocked_holes)
+        {
+            self.pack_blocked();
+        }
+        // Every entry is now a task or the list has room: it does not
+        // grow past what the task table reserved (`Vm::reserve_scheduler`).
+        debug_assert!(self.blocked.len() < self.blocked.capacity());
+        let at = u32::try_from(self.blocked.len()).unwrap_or(NOT_BLOCKED);
+        self.blocked.push(i);
+        if let Some(Some(task)) = self.tasks.get_mut(i) {
+            task.at = at;
+        }
+    }
+
+    /// Takes the holes out of the blocked list, in order, and gives each
+    /// task its new place.
+    fn pack_blocked(&mut self) {
+        self.blocked.retain(|&t| t != HOLE);
+        self.blocked_holes = 0;
+        for k in 0..self.blocked.len() {
+            let t = self.blocked[k];
+            if let Some(Some(task)) = self.tasks.get_mut(t) {
+                task.at = u32::try_from(k).unwrap_or(NOT_BLOCKED);
+            }
+        }
+    }
+
+    /// Takes task `i` out of the blocked list, leaving a hole in its
+    /// place: whether it was in it.
+    fn unblock(&mut self, i: usize) -> bool {
+        let Some(Some(task)) = self.tasks.get_mut(i) else {
+            return false;
+        };
+        let at = core::mem::replace(&mut task.at, NOT_BLOCKED) as usize;
+        match self.blocked.get_mut(at) {
+            Some(b) if *b == i => {
+                *b = HOLE;
+                self.blocked_holes += 1;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -1684,18 +1814,7 @@ impl Vm {
         }
         // A task runs in a copy of its creator's context.
         let context = self.context_copy()?;
-        let task = Task {
-            handle: h,
-            stack: Vec::new(),
-            depth: 0,
-            specials: Vec::new(),
-            st: None,
-            handled: Value::NONE,
-            awaiting: Value::NONE,
-            context,
-            cleared: false,
-            copies_cleared: false,
-        };
+        let task = Task::new(h, context);
         if i == self.tasks.len() {
             self.tasks.push(Some(task));
         } else {
@@ -1728,7 +1847,7 @@ impl Vm {
         self.context = t.context;
         t.awaiting = Value::NONE;
         let handle = t.handle;
-        let saved = t.st.take();
+        let saved = core::mem::take(&mut t.saved).then(|| t.st.clone());
         // Task buffers move without a new charge; replacing the previous
         // task's completed buffers releases their reservation. This only
         // lowers the charge, and the task's registers are already taken,
@@ -1759,7 +1878,7 @@ impl Vm {
                 if self.sleep_due(c) {
                     self.ready.push_back(Ready::Task(i));
                 } else {
-                    self.blocked.push(i);
+                    self.block(i);
                 }
                 return Ok(None);
             }
@@ -1986,7 +2105,7 @@ impl Vm {
                 let Some(Some(t)) = self.tasks.get(i) else {
                     continue;
                 };
-                let (h, waited, started) = (t.handle, t.awaiting, t.st.is_some());
+                let (h, waited, started) = (t.handle, t.awaiting, t.saved);
                 // A task settled before it ran: free its slot.
                 if i != 0 && !started && self.raw_of_hot(h, aw::STATE) != aw::PENDING {
                     self.tasks[i] = None;
@@ -2083,7 +2202,7 @@ impl Vm {
                     let a = task.awaiting;
                     if a.is_obj_kind(ty::SLEEP as u8) && self.raw_of_hot(a, aw::STATE) == aw::ARMED
                     {
-                        if *hosts.get_or_insert_with(|| !self.pending_ids(true).is_empty()) {
+                        if *hosts.get_or_insert_with(|| !self.host_ids(true).is_empty()) {
                             continue;
                         }
                         sleepers.push((f64::from_bits(self.raw_of_hot(a, aw::AUX)), k));
@@ -2097,53 +2216,44 @@ impl Vm {
                     a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).is_lt()
                 });
                 let due: Vec<usize> = sleepers.iter().map(|s| self.blocked[s.1]).collect();
-                self.blocked.retain(|t| !due.contains(t));
+                for &t in &due {
+                    self.unblock(t);
+                }
                 self.ready.extend(due.into_iter().map(Ready::Task));
                 continue;
             }
             // A sleeper held back for host calls may be polling any of them
             // (`f.done()`), so then every unsettled one is asked for.
-            let ids = self.pending_ids(hosts == Some(true));
+            let ids = if hosts == Some(true) {
+                self.host_ids(true)
+            } else {
+                self.pending_ids()
+            };
             if !ids.is_empty() {
                 return Next::Wait(ids);
             }
             // Nothing can ever settle: raise in the main task.
-            if let Some(k) = self.blocked.iter().position(|&t| t == 0) {
-                self.blocked.remove(k);
-                if let Ok(Some(st)) = self.activate(0) {
-                    let _ = self.err(
-                        T::RuntimeError,
-                        "every task is waiting and no host call is pending",
-                    );
-                    return Next::Raise(st);
-                }
+            if self.unblock(0)
+                && let Ok(Some(st)) = self.activate(0)
+            {
+                let _ = self.err(
+                    T::RuntimeError,
+                    "every task is waiting and no host call is pending",
+                );
+                return Next::Raise(st);
             }
             return Next::Wait(Vec::new());
         }
     }
 
-    /// Ids of the cell's unsettled host futures, in ascending order: with
-    /// `all`, every one, awaited or not (what a sleep waits for: its
-    /// answer may be what a polling loop looks for); else those a blocked
-    /// task waits on, directly or through gathers, or that a done callback
-    /// waits on (`shield`, `wait`, `add_done_callback`). Only futures in
-    /// the cell's table count: cell end clears `futures`, and the host
-    /// cannot answer a call of an earlier cell.
+    /// Ids of the unsettled host futures something waits for, in ascending
+    /// order: those of [`Vm::host_ids`], and those a blocked task waits
+    /// on, directly or through gathers. Each gather is walked once: it is
+    /// marked [`aw::VISITED`] while the walk lasts (a list of the ones
+    /// seen, searched for each, took 227 ms for a gather of 40,000 [M]).
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
-    fn pending_ids(&self, all: bool) -> Vec<u64> {
-        let pending = |id: u64| {
-            matches!(self.futures.binary_search_by_key(&id, |&(id, _)| id),
-                Ok(i) if self.raw_of(self.futures[i].1, aw::STATE) == aw::PENDING)
-        };
-        let mut ids: Vec<u64> = self
-            .futures
-            .iter()
-            .filter(|&&(id, f)| pending(id) && (all || self.vslot(f, aw::WAITERS) != Value::NONE))
-            .map(|&(id, _)| id)
-            .collect();
-        if all {
-            return ids;
-        }
+    fn pending_ids(&mut self) -> Vec<u64> {
+        let mut ids = self.host_ids(false);
         let mut work: Vec<Value> = self
             .blocked
             .iter()
@@ -2152,27 +2262,56 @@ impl Vm {
                 _ => None,
             })
             .collect();
-        let mut seen: Vec<u64> = Vec::new();
+        let mut visited: Vec<Value> = Vec::new();
         while let Some(a) = work.pop() {
-            if seen.contains(&a.to_bits()) {
-                continue;
-            }
-            seen.push(a.to_bits());
             if self.raw_of(a, aw::STATE) != aw::PENDING {
                 continue;
             }
             if a.is_obj_kind(ty::FUTURE as u8) {
                 let id = self.raw_of(a, aw::AUX);
-                if id < STOP_FUTURE && pending(id) {
+                if id < STOP_FUTURE && self.host_pending(id) {
                     ids.push(id);
                 }
             } else if a.is_obj_kind(ty::GATHER as u8) {
+                let flags = self.raw_of(a, aw::FAILS);
+                if flags & aw::VISITED != 0 {
+                    continue;
+                }
+                self.set_raw_of(a, aw::FAILS, flags | aw::VISITED);
+                visited.push(a);
                 work.extend(self.tuple_items(self.vslot(a, aw::EXTRA)));
             }
+        }
+        for g in visited {
+            let flags = self.raw_of(g, aw::FAILS);
+            self.set_raw_of(g, aw::FAILS, flags & !aw::VISITED);
         }
         crate::ops::heap_sort_by(&mut ids, |a, b| a < b);
         ids.dedup();
         ids
+    }
+
+    /// Is host future `id` in the cell's table and unsettled?
+    fn host_pending(&self, id: u64) -> bool {
+        matches!(self.futures.binary_search_by_key(&id, |&(id, _)| id),
+            Ok(i) if self.raw_of(self.futures[i].1, aw::STATE) == aw::PENDING)
+    }
+
+    /// Ids of the cell's unsettled host futures, in ascending order: with
+    /// `all`, every one, awaited or not (what a sleep waits for: its
+    /// answer may be what a polling loop looks for); else those a done
+    /// callback waits on (`shield`, `wait`, `add_done_callback`) or that
+    /// list a waiter. Only futures in the cell's table count: cell end
+    /// clears `futures`, and the host cannot answer a call of an earlier
+    /// cell.
+    fn host_ids(&self, all: bool) -> Vec<u64> {
+        self.futures
+            .iter()
+            .filter(|&&(id, f)| {
+                self.host_pending(id) && (all || self.vslot(f, aw::WAITERS) != Value::NONE)
+            })
+            .map(|&(id, _)| id)
+            .collect()
     }
 
     // ------------------------------------------------- host futures
@@ -2332,13 +2471,9 @@ impl Vm {
             let l = self.new_list(&[])?;
             self.settle(g, true, l);
         } else {
-            let capacity = if self.gathers.len() == self.gathers.capacity() {
-                self.gathers.len().max(2) * 2
-            } else {
-                self.gathers.capacity()
-            };
+            let capacity = self.gathers_room();
             self.reserve_scheduler(self.tasks.len(), capacity, children.len())?;
-            self.gathers.push(g);
+            self.track_gather(g);
             self.callback_queue += usize::try_from(left).unwrap_or(usize::MAX);
             // Done callbacks added to settled children run soon.
             for &c in &children {
@@ -2627,18 +2762,7 @@ impl Vm {
             self.check_parked_bytes();
             self.reserve_scheduler(i.max(2) * 2, self.gathers.len(), 0)?;
         }
-        let task = Task {
-            handle: Value::NONE,
-            stack: Vec::new(),
-            depth: 0,
-            specials: Vec::new(),
-            st: None,
-            handled: Value::NONE,
-            awaiting: Value::NONE,
-            context: Value::NONE,
-            cleared: false,
-            copies_cleared: false,
-        };
+        let task = Task::new(Value::NONE, Value::NONE);
         if i == self.tasks.len() {
             self.tasks.push(Some(task));
         } else {
@@ -2832,16 +2956,12 @@ impl Vm {
         for &c in items {
             self.add_waiter(c, g)?;
         }
-        let capacity = if self.gathers.len() == self.gathers.capacity() {
-            self.gathers.len().max(2) * 2
-        } else {
-            self.gathers.capacity()
-        };
+        let capacity = self.gathers_room();
         self.reserve_scheduler(self.tasks.len(), capacity, items.len())?;
         // Every item is pending and holds one waiter entry per place it
         // has in `items`: what the gather waits for (`callback_queue`).
         self.set_raw_of(g, aw::LEFT, items.len() as u64);
-        self.gathers.push(g);
+        self.track_gather(g);
         self.callback_queue += items.len();
         Ok(g)
     }
@@ -2920,7 +3040,7 @@ impl Vm {
     fn live(&self, a: Value) -> bool {
         match a.obj_kind().map(u16::from) {
             Some(ty::TASK) => self.task_index(a).is_some(),
-            Some(ty::GATHER) => self.gathers.contains(&a),
+            Some(ty::GATHER) => self.tracked(a),
             Some(ty::FUTURE) => {
                 let id = self.raw_of(a, aw::AUX);
                 matches!(self.futures.binary_search_by_key(&id, |&(id, _)| id),
@@ -3325,8 +3445,10 @@ impl Vm {
     /// 1 ns a task blocked [M]) and looks each gather that waits on it up
     /// among the tracked ones, where a waiter gather is looked up too.
     fn settle_work(&self, c: Value, pending: bool) -> (u64, u64, usize) {
-        let blocked = self.blocked.len() as u64;
-        let gathers = self.gathers.len() as u64;
+        // The tasks blocked, not the list's holes: an image holds none, so
+        // a restored cancel must charge as the one that went on did.
+        let blocked = (self.blocked.len() - self.blocked_holes) as u64;
+        let gathers = (self.gathers.len() - self.gathers_holes) as u64;
         match c.obj_kind().map(u16::from) {
             Some(ty::SLEEP) if self.raw_of(c, aw::STATE) == aw::ARMED => (1, blocked / 16, 0),
             Some(kind @ (ty::FUTURE | ty::GATHER))
@@ -3720,8 +3842,9 @@ impl Vm {
         {
             return None;
         }
-        let k = self.blocked.iter().position(|&t| t == 0)?;
-        self.blocked.remove(k);
+        if !self.unblock(0) {
+            return None;
+        }
         self.set_raw_of(a, aw::STATE, aw::DONE);
         self.activate(0).ok().flatten()
     }
@@ -3883,9 +4006,7 @@ impl Vm {
     /// has ended, so no task could have been waiting on the scheduler.
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn wake_main(&mut self) -> Option<State> {
-        if let Some(k) = self.blocked.iter().position(|&t| t == 0) {
-            self.blocked.remove(k);
-        } else {
+        if !self.unblock(0) {
             let k = self
                 .ready
                 .iter()
