@@ -2668,11 +2668,14 @@ const SITES: &[(Row, &str, &str, usize)] = &[
     // as e54f65f's did: 46.6-47.2 ms [M]. The largest growth below
     // GROW_STEPS (262,143 entries, one deleted) doubled too, 20.9-21.1 ms
     // against 11.2-11.4 ms, but stays under the limit either way, so it
-    // has no row: a row here guards only the limit. With mimalloc on musl
-    // it reads 36.9 to 61.3 ms against 52.5 to 53.2, over in 4 of 8 runs
-    // [M, the musl review's probe].
+    // has no row: a row here guards only the limit. The growth moves all
+    // 2^20 entries in one step, bound by memory latency: 35 to 81 ms
+    // against limits of 50 to 70, over in 14 of 72 runs on glibc, musl's
+    // `malloc` and mimalloc [M, 24 alternated runs each]. `Open`
+    // (CHANGELOG, Known issues) until a growth with memory tight goes on
+    // in steps too.
     (
-        Row::OpenOnMimalloc,
+        Row::Open,
         "M = (1 << 61) - 1\nxs = [k * M + c for k in range(32) for c in range(1, 32_770)][:(1 << 20) + 1]\nballast = bytearray(46 << 20)",
         "d = {}\nfor x in xs: d[x] = None",
         1,

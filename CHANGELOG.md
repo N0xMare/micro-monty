@@ -793,11 +793,12 @@ hashes are pre-release history, kept in the private archive
   first-touches 64 MiB of pages. The step oracle's three rows for it are
   `Open`. The fix, moving the tail a step at a time, is not in this
   release.
-- With mimalloc on musl (what `mm` and `mm-cell-worker` register there),
-  a row of the step oracle exceeds the bound on some runs and is not
-  judged with that allocator; with glibc and with musl's `malloc` it
-  is, and passes. A dict of 2^20 colliding keys filled beside a 46 MiB bytearray:
-  36.9 to 61.3 ms against 52.5 to 53.2, over in 4 of 8 [M].
+- A dict of 2^20 entries or more that grows with less than 1/32 of the
+  memory limit to spare grows in one step, which moves every entry: 35
+  to 81 ms for 2^20 colliding keys filled beside a 46 MiB bytearray,
+  over the bound in 14 of 72 runs on glibc, musl's `malloc` and
+  mimalloc [M]. The step oracle's row for it is `Open`. A growth with
+  more memory to spare goes on in steps.
 - With mimalloc on musl, a native that builds a list past 4M items
   doubles its buffer in one step: a new 64 MiB block and a 32 MiB copy,
   20 to 22 ms or, when mimalloc maps the block's pages fresh, 45 to 47
