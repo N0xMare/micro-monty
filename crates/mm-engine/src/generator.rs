@@ -653,7 +653,7 @@ impl Vm {
     /// running.
     fn gen_leave(&mut self, gn: Value) {
         if let Some(r) = gn.as_obj()
-            && self.slot_hot(r, g::HANDLED) != Value::NONE
+            && self.slot(r, g::HANDLED) != Value::NONE
         {
             self.own_handler_suspend(r, g::HANDLED);
         }

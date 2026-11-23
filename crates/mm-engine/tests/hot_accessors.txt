@@ -24,6 +24,7 @@ aio.rs::spawn_named
 aio.rs::start_coro_frame
 aio.rs::start_run
 aio.rs::task_index
+aio.rs::track_asyncgen
 aio.rs::tracked
 aio.rs::unawaited
 aio.rs::vslot_raw_of
@@ -108,7 +109,6 @@ exc.rs::new_exception
 exc.rs::set_name_hint
 generator.rs::agen_await
 generator.rs::gen_enter
-generator.rs::gen_leave
 generator.rs::gen_over
 generator.rs::gen_raw
 generator.rs::gen_set_raw
@@ -172,6 +172,7 @@ ops.rs::iter_drop
 ops.rs::iter_next
 ops.rs::method_owner
 ops.rs::new_iter
+ops.rs::refuse_shared_change
 ops.rs::repeat
 ops.rs::setattr
 ops.rs::setitem
@@ -229,6 +230,7 @@ vm.rs::oom_retry_op
 vm.rs::seq_copy
 vm.rs::seq_words
 vm.rs::set_module_dunders
+vm.rs::shared_str
 vm.rs::str_from_buf
 vm.rs::tuple_len
 vm.rs::type_name

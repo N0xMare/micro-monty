@@ -3764,7 +3764,7 @@ impl Vm {
             if self.is_shared_fn(obj) {
                 let msg = format!(
                     "'builtin_function_or_method' object has no attribute '{}' and no __dict__ for setting new attributes",
-                    self.str_ref(name)
+                    self.str_ref_hot(name)
                 );
                 return Err(self.err(T::AttributeError, &msg));
             }
@@ -3773,7 +3773,7 @@ impl Vm {
         if Vm::is_class(obj) && self.is_shared_class(obj) {
             let msg = format!(
                 "cannot set '{}' attribute of immutable type '{}'",
-                self.str_ref(name),
+                self.str_ref_hot(name),
                 self.class_name(obj)
             );
             return Err(self.err(T::TypeError, &msg));

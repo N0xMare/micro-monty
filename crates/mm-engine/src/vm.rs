@@ -3085,14 +3085,14 @@ impl Vm {
     /// interned one, through `shared_chars` if it is at most one char.
     pub(crate) fn shared_str(&mut self, s: &str) -> Result<Value, Raised> {
         let Some(i) = shared_index(s.as_bytes()) else {
-            return self.intern(s);
+            return self.intern_hot(s);
         };
         if let Some(&v) = self.shared_chars.get(i)
             && v != Value::NONE
         {
             return Ok(v);
         }
-        let v = self.intern(s)?;
+        let v = self.intern_hot(s)?;
         // Without room for the cache the table alone serves.
         if self.shared_chars.is_empty() && self.shared_chars.try_reserve_exact(SHARED_CHARS).is_ok()
         {

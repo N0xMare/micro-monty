@@ -1298,7 +1298,7 @@ impl Vm {
     #[cfg(feature = "asyncio")]
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     pub(crate) fn track_asyncgen(&mut self, agen: Value) -> Result<(), Raised> {
-        let key = self.intern(Self::ASYNCGENS)?;
+        let key = self.intern_hot(Self::ASYNCGENS)?;
         let list = match self.dict_lookup_str(self.prelude_globals, key) {
             Some(l) if l.is_obj_kind(ty::LIST as u8) => l,
             _ => {
@@ -1308,7 +1308,7 @@ impl Vm {
             }
         };
         self.asyncgens_listed = true;
-        let n = self.list_len(list);
+        let n = self.list_len_hot(list);
         if n >= 32 && n.is_power_of_two() {
             self.burn(n as u64);
             let live = self.unfinished_asyncgens(list);
