@@ -2077,9 +2077,6 @@ differs:
     bits raise `TypeError: 'int' object cannot be interpreted as an
     integer` (CPython: `OverflowError: cannot fit 'int' into an
     index-sized integer`), so an `except OverflowError` misses it.
-  - `reversed(o)` of an object with `__getitem__` and no `__len__` or
-    `__reversed__` raises `TypeError: 'S' object is not reversible`
-    (CPython: `object of type 'S' has no len()`).
   - `reversed(o)` for a class with `__reversed__ = None` raises
     `TypeError: 'NoneType' object is not callable` (CPython: `'C' object
     is not reversible`).

@@ -5353,6 +5353,11 @@ fn bi_reversed(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     {
         return vm.prelude_request("_seq_reversed", alloc::vec![v], Cont::None);
     }
+    // A sequence without a length: CPython's `PySequence_Size` error.
+    if vm.uflags(v) & crate::class::f::GETITEM != 0 && vm.backing(v).is_none() {
+        let msg = format!("object of type '{}' has no len()", vm.type_name(v));
+        return Err(vm.err(T::TypeError, &msg));
+    }
     reversed_of(vm, b)
 }
 
