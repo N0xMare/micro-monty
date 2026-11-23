@@ -3777,7 +3777,9 @@ impl Vm {
         let n = w & aw::COUNT;
         if n > 0 {
             self.set_raw_of(h, aw::CANCELS, w - 1);
-            if n == 1 {
+            // A done task's word is its held `CancelledError` or its
+            // unretrieved mark, not a cancel to drop.
+            if n == 1 && self.raw_of(h, aw::STATE) == aw::PENDING {
                 self.set_raw_of(h, aw::MUST_CANCEL, 0);
             }
         }

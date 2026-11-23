@@ -577,6 +577,11 @@ hashes are pre-release history, kept in the private archive
     (the run could end in `every task is waiting`), and the failure
     taken was the earliest to finish, not the first listed (own case
     599).
+  - `uncancel()` on a task already done cancelled no longer changes what
+    later awaits of it raise: they raised `CancelledError` with the
+    error it ended with as its argument (`(CancelledError('m'),)` where
+    CPython has `('m',)`), and a task that failed after a cancel lost its
+    "never retrieved" report (own case 600).
 
 ### Added
 
