@@ -568,6 +568,15 @@ hashes are pre-release history, kept in the private archive
     child had to raise itself, as CPython's does (`gather(t).cancel('m')`
     while `t` is at a bare `sleep(0)` or has a cancelled waiter); the
     message was lost (own case 598).
+  - A gather made over children already done settles before `gather()`
+    returns, as CPython 3.14's runs their done callbacks there in
+    argument order: with the first of them that failed or was cancelled
+    (unless `return_exceptions`), or with its list when every child is
+    done. A child already cancelled was returned as a result,
+    `[CancelledError('')]`, a pending sibling held the failure back
+    (the run could end in `every task is waiting`), and the failure
+    taken was the earliest to finish, not the first listed (own case
+    599).
 
 ### Added
 

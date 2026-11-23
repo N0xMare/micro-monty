@@ -2517,33 +2517,33 @@ impl Vm {
             u64::from(keep_errors),
         )?;
         let mut left = 0;
-        let mut fails = 0;
+        let mut failed = None;
         for &c in &distinct {
             match self.raw_of_hot(c, aw::STATE) {
                 aw::PENDING => left += 1,
-                aw::FAILED => fails = 1,
+                aw::FAILED | aw::CANCELLED if failed.is_none() => failed = Some(c),
                 _ => {}
             }
             self.add_waiter(c, g)?;
         }
         self.set_raw_of_hot(g, aw::LEFT, left);
-        self.set_raw_of_hot(g, aw::FAILS, fails);
-        if children.is_empty() {
-            let l = self.new_list(&[])?;
-            self.settle(g, true, l);
-        } else {
-            let capacity = self.gathers_room();
-            self.reserve_scheduler(self.tasks.len(), capacity, children.len())?;
-            self.track_gather(g);
-            self.callback_queue += usize::try_from(left).unwrap_or(usize::MAX);
-            // Done callbacks added to settled children run soon.
-            for &c in &children {
-                if self.raw_of_hot(c, aw::STATE) != aw::PENDING {
-                    self.ready.push_back(Ready::Gather(g));
-                    self.callback_queue += 1;
-                }
-            }
+        // CPython 3.14's `gather` runs the done callbacks of the children
+        // already done before it returns, in argument order: the first of
+        // them that failed, or every child done, settles it at once. Its
+        // pending children's later callbacks find it untracked.
+        if let Some(c) = failed.filter(|_| !keep_errors) {
+            let e = self.child_error(c);
+            self.settle(g, false, e);
+            return Ok(g);
         }
+        if left == 0 {
+            self.check_gather(g);
+            return Ok(g);
+        }
+        let capacity = self.gathers_room();
+        self.reserve_scheduler(self.tasks.len(), capacity, children.len())?;
+        self.track_gather(g);
+        self.callback_queue += usize::try_from(left).unwrap_or(usize::MAX);
         Ok(g)
     }
 
