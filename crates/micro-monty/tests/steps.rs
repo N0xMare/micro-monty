@@ -723,6 +723,7 @@ const SITES: &[(Row, &str, &str, usize)] = &[
     ),
     (Row::Bounded, "s = 'é' * 33_000_000", "t = s.upper()", 1),
     (Row::Bounded, "s = 'a' * 60_000_000", "t = s.swapcase()", 1),
+    (Row::Bounded, "s = 'AZ[' * 20_000_000", "t = s.lower()", 1),
     (Row::Bounded, "s = 'Σa' * 10_000_000", "t = s.lower()", 1),
     (Row::Bounded, "s = 'a' * 60_000_000", "t = s.title()", 1),
     (

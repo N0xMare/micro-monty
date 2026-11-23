@@ -49,6 +49,7 @@ show('join iter', lambda: ', '.join(iter(['p', 'q'] * 75_000)))
 show('str of lists', lambda: str([[i] for i in range(150_000)]))
 for m in ('upper', 'lower', 'swapcase', 'title', 'capitalize', 'casefold'):
     show(m, lambda: getattr(U, m)())
+show('lower ascii', lambda: ('AZ[' * 2_000_000).lower())
 show('lower sigma', lambda: ('ΑΣ\u0301 Σ ΣΣ aΣ.b' * 50_000).lower())
 show('lower sigma far', lambda: ('A' + 'Σ' + "'" * 600_000 + 'b').lower())
 show('title words', lambda: ("they're bill's 3rd ǆ x é" * 25_000).title())

@@ -894,6 +894,20 @@ pub(crate) fn upper(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 }
 
 pub(crate) fn lower(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let v = vm.arg_o(&a, 0);
+    if Vm::is_str(v) {
+        let bytes = vm.str_bytes(v);
+        let mut small = [0; 64];
+        // Short ASCII has no case expansion or context-sensitive mappings.
+        // Below 64 bytes neither the old input copy nor the result costs fuel.
+        if (2..64).contains(&bytes.len()) && bytes.is_ascii() {
+            let out = &mut small[..bytes.len()];
+            out.copy_from_slice(bytes);
+            out.make_ascii_lowercase();
+            let res = vm.heap.new_str_ascii(out);
+            return Ok(Value::from_ref(vm.hx(res)?, ty::STR as u8));
+        }
+    }
     if let Some(v) = big_map(vm, &a, mk::LOWER, Value::NONE) {
         return v;
     }

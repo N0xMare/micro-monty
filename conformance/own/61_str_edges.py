@@ -22,3 +22,8 @@ print('a中B'.title(), 'aǅB'.title())
 for text in ('a', 'ab'):
     for width in (4, 5):
         print(repr(text.center(width, '-')))
+
+assert 'AZ[az\x00'.lower() == 'az[az\x00'
+assert ('A' * 62 + 'Z').lower() == 'a' * 62 + 'z'
+assert ('A' * 63 + 'Z').lower() == 'a' * 63 + 'z'
+assert 'AİΣ!'.lower() == 'ai\u0307ς!'
