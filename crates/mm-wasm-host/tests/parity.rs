@@ -339,6 +339,30 @@ fn the_guest_matches_the_native_facade() {
     assert!(format!("{a:?}").contains("bytes omitted"), "{a:?}");
 }
 
+#[test]
+fn parked_restore_reuses_the_previous_sessions_instance() {
+    let config = RuntimeConfig {
+        pool_instances: Some(1),
+        ..RuntimeConfig::default()
+    };
+    let rt = Runtime::new(&guest(), config).unwrap();
+    let options = SessionOptions::new().with_limits(LIMITS);
+    let mut s = rt.session(&options).unwrap();
+    s.define(&module()).unwrap();
+    let saved = SessionTemplate::capture(&mut s).unwrap();
+    let cell = "import tools\ntools.fetch('parked') * 3";
+    let expected = s.start(cell, "cell.py").unwrap();
+    let image = s.snapshot(None).unwrap();
+    // Keep the only store live through the template. Allocating another
+    // would fail, and restore must not carry this handle's pending park.
+    s.park_handle().request();
+    let mut restored = s.restore(&image, &options).unwrap();
+    assert_eq!(restored.pending().unwrap(), Some(expected));
+    let done = restored.resume(&Resume::Value(HostValue::Int(7))).unwrap();
+    assert!(matches!(done, Progress::Complete(Some(c)) if c.repr == "21"));
+    restored.reset_to(&saved).unwrap();
+}
+
 /// `host_modules`, `set_module_dunders`, `set_int_bits_text` and GC stress,
 /// on a native session and on the guest, before and after a restore.
 #[test]

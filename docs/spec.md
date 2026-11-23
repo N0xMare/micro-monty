@@ -2796,6 +2796,11 @@ A trap invalidates all templates and sessions of its instance, but not
 snapshots already copied out. Dropping a template frees its saved state,
 not the sessions made from it.
 
+Hosts may drop a session and restore a same-build snapshot in the vacated
+instance, keeping the engine and linear memory. Restore still checks the
+whole image and supplies new host settings; it cannot revive a trapped
+instance. Reusing an instance does not retain the dropped session's state.
+
 Durability guarantees are pause-anywhere and same-build snapshots. Work after
 the last snapshot is redone on restore, and an in-flight host call's outcome is
 the host's to resolve.

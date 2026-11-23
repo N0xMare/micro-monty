@@ -274,6 +274,15 @@ impl Grace {
     }
 }
 
+impl RuntimeConfig {
+    fn grace(&self, memory: u64) -> Grace {
+        let wall = self.park_grace.as_nanos().saturating_add(
+            self.park_grace_per_mib.as_nanos().saturating_mul(u128::from(memory >> 20)),
+        );
+        Grace::new(wall, self.epoch_tick.as_nanos())
+    }
+}
+
 /// One export call's clock for the park grace. The epoch callback runs at
 /// the guest's first epoch check after the ticker moves, never inside a
 /// host import, so a stretch the guest does not run (its thread preempted,
@@ -826,12 +835,7 @@ impl Runtime {
             None => self.current()?,
         };
         let mut s = self.instance(&guest.pre, &guest.bundle, options.limits.memory)?;
-        let mut input = Vec::with_capacity(64 + image.len());
-        put_options(&mut input, options);
-        input.extend_from_slice(image);
-        s.write(&input)?;
-        let id = s.call(|s| s.f.session_restore.call(&mut s.store, ()))?;
-        let id = s.created(id, true)?;
+        let id = s.restore(image, options)?;
         Ok(s.into_session(id))
     }
 
@@ -842,20 +846,13 @@ impl Runtime {
         bundle: &Bundle,
         memory: u64,
     ) -> Result<Instance, Error> {
-        let grace = self.config.park_grace.as_nanos().saturating_add(
-            self.config
-                .park_grace_per_mib
-                .as_nanos()
-                .saturating_mul(u128::from(memory >> 20)),
-        );
-        let grace = Grace::new(grace, self.config.epoch_tick.as_nanos());
         let ctx = Ctx {
             wasi: WasiCtxBuilder::new().build_p1(),
             limits: StoreLimitsBuilder::new()
                 .memory_size(clamp(self.config.memory_limit))
                 .instances(1)
                 .build(),
-            active: HostState::new(grace),
+            active: HostState::new(self.config.grace(memory)),
             clock: ParkClock::default(),
             parkable: true,
             rng: (RandomState::new(), 0),
@@ -966,6 +963,7 @@ impl Runtime {
             store,
             f,
             memory,
+            config: self.config.clone(),
             dead: Arc::new(OnceLock::new()),
             stack_top,
         })
@@ -1016,12 +1014,22 @@ struct Instance {
     store: Store<Ctx>,
     f: Funcs,
     memory: Memory,
+    config: RuntimeConfig,
     dead: Arc<OnceLock<String>>,
     /// The shadow stack's top, when it was painted.
     stack_top: Option<usize>,
 }
 
 impl Instance {
+    fn restore(&mut self, image: &[u8], options: &SessionOptions) -> Result<u32, Error> {
+        let mut input = Vec::with_capacity(64 + image.len());
+        put_options(&mut input, options);
+        input.extend_from_slice(image);
+        self.write(&input)?;
+        let id = self.call(|s| s.f.session_restore.call(&mut s.store, ()))?;
+        self.created(id, true)
+    }
+
     fn call<T>(
         &mut self,
         f: impl FnOnce(&mut Instance) -> wasmtime::Result<T>,
@@ -1325,6 +1333,19 @@ impl Session {
                 code => Err(inst.failure(code)),
             }
         })
+    }
+
+    /// Drops this session, then restores a same-build image in its instance.
+    /// The old session is lost even on error. A successful restore starts
+    /// with new host settings and a new park handle, as `Runtime::restore` does.
+    pub fn restore(self, image: &[u8], options: &SessionOptions) -> Result<Self, Error> {
+        let shared = Arc::clone(&self.shared);
+        drop(self);
+        let mut inst = shared.lock()?;
+        let id = inst.restore(image, options)?;
+        let host = HostState::new(inst.config.grace(options.limits.memory));
+        drop(inst);
+        Ok(Self { shared, id, host })
     }
 
     /// `Session::setup_done`: the code loaded so far (definitions, a

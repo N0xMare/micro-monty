@@ -111,6 +111,23 @@ test("templates reset to a fresh cell boundary, with instance-local ownership", 
 	fresh.dispose();
 });
 
+test("parked restore replaces the dropped session in its instance", () => {
+	const s = rt.session(options);
+	s.define(module());
+	const saved = SessionTemplate.capture(s);
+	const expected = s.start("import tools\ntools.fetch('parked') * 3", "cell.py");
+	const image = s.snapshot();
+	s.requestPark();
+	const restored = s.restore(image, options);
+	assert.throws(() => s.pending(), { kind: "abi" });
+	assert.deepEqual(restored.pending(), expected);
+	const done = restored.resume({ kind: "value", value: 7 });
+	assert.ok(done.kind === "complete" && done.completion?.repr === "21");
+	restored.resetTo(saved); // A new instance would refuse this template.
+	saved.dispose();
+	restored.dispose();
+});
+
 test("host errors, kwargs, call log, hints, text cut, zones, fuel_wanted, stubs", () => {
 	const CELL = `import tools
 from zoneinfo import ZoneInfo

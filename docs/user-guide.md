@@ -1250,8 +1250,8 @@ release builds them took 3.3 s of cell time on glibc, 4.8 s on musl with
 musl's `malloc` and 3.8 s with mimalloc, protocol included; mimalloc adds
 146 KiB to the static binary \[M\].
 
-`mm-wasm-host` gives every session and restore a new instance, and with many
-sessions in one process its page faults make a snapshot and restore cost
+By default `mm-wasm-host` gives every session and restore a new instance.
+With many sessions in one process its page faults make a snapshot and restore cost
 far more than natively: 4.9 ms per swap at 8 sessions and about 144 ms at
 64, against 1.6 ms natively (0.4 MiB images) \[M\]. Spread wasm sessions over
 processes, or set `RuntimeConfig::pool_instances` (wasmtime's pooling
@@ -1259,6 +1259,8 @@ allocator; at 64 sessions a 128-slot pool took 15.3 ms per swap at a peak
 RSS of 1,153 MB, against 799 MB on demand \[M\]). Size the pool at about
 twice the sessions that swap; with every slot in use, a start or restore
 fails with `Error::Trap` before any guest code runs and can be retried.
+For swaps within one build, [reuse the current instance](#webassembly-hosts)
+with `Session::restore` instead.
 
 ## The `mm` command line
 
@@ -1461,6 +1463,15 @@ The guest exports `mm_template_capture`, `mm_template_instantiate`,
 `mm_reset_to`, and `mm_template_drop`. Template ids are not portable.
 For another instance or isolate, use a snapshot instead: it still carries
 compiled typed definitions and restores on any guest of the same build id.
+
+**Swapping parked sessions.** To reuse the current instance, first copy
+out the outgoing snapshot, then call `s.restore(&incoming, &options)`
+in Rust or `s.restore(incoming, options)` in JavaScript. This drops the old
+session before restoring the incoming same-build image. The old handle is
+gone even on error; keep the snapshots so you can retry with
+`Runtime::restore` (`rt.restore`) after an error, a trap, or when changing
+builds. Set the new session's host callbacks and get a new park handle as
+after any restore. Instance linear memory does not shrink while reused.
 
 ## Binary size
 

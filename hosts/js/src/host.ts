@@ -283,11 +283,7 @@ export class Runtime {
 			}
 			guest = found;
 		}
-		const inst = this.slot(guest);
-		const w = new Writer(64 + image.length);
-		putOptions(w, options);
-		w.raw(image);
-		return inst.open(w.bytes(), () => inst.f.mm_session_restore() as number, true);
+		return this.slot(guest).restore(image, options);
 	}
 
 	/** Live instances, their sessions and their linear memory in bytes. */
@@ -516,6 +512,13 @@ class Instance {
 		return this.output().take(32).slice();
 	}
 
+	restore(image: Uint8Array, options: SessionOptions): Session {
+		const w = new Writer(64 + image.length);
+		putOptions(w, options);
+		w.raw(image);
+		return this.open(w.bytes(), () => this.f.mm_session_restore() as number, true);
+	}
+
 	/**
 	 * Writes the options (and image for a restore), calls `create`, and registers the new session.
 	 */
@@ -734,6 +737,13 @@ export class Session {
 		const id = template.idFor(this.inst);
 		const code = this.call(() => this.f.mm_reset_to(this.sid as never, id as never) as number);
 		if (code !== status.OK) throw this.failure(code);
+	}
+
+	/** Disposes this session, then restores a same-build image in its instance. */
+	restore(image: Uint8Array, options: SessionOptions = sessionOptions()): Session {
+		if (this.disposed) throw new MmError("abi", "the session was disposed");
+		this.dispose();
+		return this.inst.restore(image, options);
 	}
 
 	/**
