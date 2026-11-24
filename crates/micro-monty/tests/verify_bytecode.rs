@@ -335,7 +335,7 @@ fn bundled_code_loading_reserves_decoder_workspace_for_restore() {
     vm.heap.set_memory_limit(limit);
     let mut snapshot = Vec::new();
     vm.write_snapshot(&mut snapshot).expect("snapshot");
-    let mut restored = Vm::read_snapshot(
+    let restored = Vm::read_snapshot(
         &mut mm_core::Reader::new(&snapshot),
         modules,
         None,

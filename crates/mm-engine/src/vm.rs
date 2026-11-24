@@ -1009,14 +1009,13 @@ pub struct Vm {
     /// one woke (`Vm::unblock`): a wake moves no other entry, and the list
     /// is packed again once its holes outnumber its tasks or it is full,
     /// so it never outgrows the room the task table reserved for it. Each
-    /// task knows its place ([`Task::at`]). An image holds the tasks only.
+    /// task knows its place ([`Task::at`]).
     pub(crate) blocked: Vec<usize>,
     /// The holes in `blocked`.
     pub(crate) blocked_holes: usize,
     /// Unsettled gathers, in creation order (children before parents),
     /// and `UNDEFINED` where one settled (`Vm::untrack_gather`); packed as
-    /// `blocked` is. Each gather knows its place (`aw::PLACE_SHIFT`). An
-    /// image holds the gathers only.
+    /// `blocked` is. Each gather knows its place (`aw::PLACE_SHIFT`).
     pub(crate) gathers: Vec<Value>,
     /// The holes in `gathers`.
     pub(crate) gathers_holes: usize,
@@ -1071,8 +1070,7 @@ pub struct Vm {
     pub(crate) loop_flags: u8,
     /// The prelude global `_aio_asyncgens` may hold a list (an async
     /// generator was tracked since the last cell ended), so the end of the
-    /// cell looks the name up; without it every cell would. Not in an
-    /// image: a restored session starts with it set.
+    /// cell looks the name up; without it every cell would.
     pub(crate) asyncgens_listed: bool,
     /// The cell's host futures by call id (settled ones stay until the
     /// cell ends, to tell "already settled" from "unknown"). Sorted by id.

@@ -162,9 +162,8 @@ V8 has no epoch interruption and no store limits, so:
   that reaches no safepoint cannot be stopped from JavaScript. Bound CPU with
   fuel slices and `fuelWanted()` (the driver does), and rely on the platform as
   the last resort (a Node worker's `terminate()`, the Workers CPU limit).
-- **Snapshot and restore cannot park.** A snapshot collects in full first:
-  about 1.4 ms per MiB of image on V8, as natively and under wasmtime (about
-  250 ms at 170 MiB) [M]. A park request or deadline does not stop one, and a
+- **Snapshot and restore cannot park.** A snapshot writes the heap without
+  collecting it. A park request or deadline does not stop one, and a
   host's own timeout must not cover a `snapshot()` or `restore()` call: cutting
   one loses the instance and the image. On Workers the platform's CPU limit is
   the remaining bound, so leave room for the largest image a session can make.

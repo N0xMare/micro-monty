@@ -10,6 +10,14 @@ repository. The 0.0.1 entry stays as published: the docs it cites
 hashes are pre-release history, kept in the private archive
 `N0xMare/micro-monty-archive` (branch `history-0.0.1`).
 
+## Unreleased
+
+- `Session::snapshot` leaves its source unchanged, even during a collection.
+  On the same target, restoring preserves the collector's progress, code
+  reclamation debt and charged capacities: later outcomes, fuel and final
+  images match uninterrupted execution. Images can include garbage and be
+  larger. `SessionTemplate::capture` collects before taking its snapshot.
+
 ## 0.0.3 (2026-11-24)
 
 The third release, from `0c970b8` and the four commits of its landing
@@ -93,19 +101,18 @@ GitHub release also attaches the two mm-wasm guests.
   when a cell starts (a full collection once 16 KiB of code, or an eighth
   of the live heap, was loaded since the last one). A setup's code stays
   in use, so counted, it brought that collection forward to a session's
-  first cells, where it frees nothing. The mark is in an image (the code
-  loaded since it is what an image holds): a template captured after the
-  call makes marked sessions through `SessionTemplate::instantiate` and
-  `Session::reset_to`, and one captured before it makes sessions that
-  count all the template's code and collect at their first cell's start.
+  first cells, where it frees nothing. The mark is not in an image: a
+  host calls it again after `SessionTemplate::instantiate` and
+  `Session::reset_to`, whose sessions otherwise count all the template's
+  code and collect at their first cell's start, as before.
   `Session::reset` starts the count anew. The setup's code stays charged
   to the memory limit, and what a cell drops of it is freed by the next
   reclamation. `mm-cell-worker` calls it after each bootstrap it runs or
   resets to. The mm-wasm guest exports it as `mm_setup_done`, a
   required export: `Session::setup_done` on the reference host
   and `session.setupDone()` on the JavaScript host, called after the
-  definitions and the bootstrap cell, and after a setup run again
-  following a reset.
+  definitions and the bootstrap cell, after a setup run again following a
+  reset, and after restoring a setup's image.
   Over the recorded sessions on the replay worker, against the build
   before: the 79 fresh-per-cell (py-sdk) sessions counted take a median
   0.893 of their instructions (collections 1,952 to 362: a session reset
@@ -162,23 +169,6 @@ GitHub release also attaches the two mm-wasm guests.
   fewer on wasm32-wasip1 under wasmtime (855,689 to 672,382) [M]. The
   builtins, the prelude's globals and a new session's image are the same,
   byte for byte, and the build id does not move.
-- A snapshot no longer changes the session it is taken from: it no
-  longer collects, and the image holds the heap exactly as it is,
-  garbage, free blocks, mark bitmaps, the incremental mark and lazy sweep
-  in progress, the collector's schedule, the generator registry and its
-  clearing cursor, and the capacities of the VM's tables. A restored
-  session goes on as the one that wrote it would, so outcome and fuel no
-  longer depend on whether or when the host snapshotted or restored.
-  Near-limit random programs at 2 to 8 MiB under three GC settings and
-  nine drive modes: 0 of 1,200 runs and 0 of 600 asyncio runs differ
-  between drive modes, against 842 and 401 before [M]. A restore checks
-  the free lists, marks, mark stack, pending sweep and registry it reads
-  against the blocks, and refuses an image where they disagree as
-  `Corrupt`. Images hold dead objects too, so they can be larger than
-  before; a free block is written as its first two words only, and
-  `SessionTemplate::capture` collects the session first, so a template
-  holds no garbage of its setup. The durability gate compares
-  report and fuel within each GC mode. The build id moves.
 - The Huffman decoder tables of the bundled modules and the prelude are
   built once per `Engine` and kept in its module cache (about 90 KB),
   instead of once per prelude chunk part and per cell or restore. A
@@ -427,25 +417,11 @@ GitHub release also attaches the two mm-wasm guests.
   room past the stop is held uncharged, at most 4,096 bytes, as the
   buffer was between stops.
 - Host signature code keeps exact buffer capacities, as a restore decodes
-  it. Compiled code keeps the growth slack of its tables, and an image
-  now carries it: each stored code is written with the room its eleven
-  tables keep past their lengths, and a restore reserves it, so a
-  restored session holds and is charged what the one it came from is,
-  also after its next loads (before, 74,840 against 51,816 bytes after
-  one load in a probe of 40 functions [M]). An image grows by about 11
-  bytes per stored code. Constant strings are compiled to their exact
-  length.
-- An image holds the code loaded since the last reclamation between
-  cells instead of nothing: a restored session reclaims dropped code at
-  the cell the original does, where it used to count all its code as
-  new and reclaim at its first cell. The code charge itself is not in
-  the image: it counts the target's own sizes, so a restore computes it,
-  and an image restores on a target of another pointer width as before.
-- The decoder workspace a prelude chunk's unpacking takes is charged when
-  it grows instead of at the next load, and a restored host module with
-  shared code is charged what its definition was (it counted its recipe's
-  24 bytes a name again): both made a restore's code charge differ from
-  the charge of the session that wrote the image.
+  it. Compiled code still keeps the growth slack of its buffers, which a
+  restore decodes without: code is charged by capacity, so a restored
+  session is charged less for the same code than the one it came from
+  (46,820 against 39,056 bytes in a 2 MiB session [M]) until restores are
+  made exact.
 - Growing the mark stack during an incremental mark reserves the
   capacity it charges: it reserved that many slots beyond the entries on
   the stack, up to 4 bytes per object uncharged, and a restored session

@@ -759,8 +759,8 @@ export class Session {
 
 	/**
 	 * `Session::snapshot` (`maxBytes` omitted: capped at the memory limit). A copy of the image.
-	 * It cannot park: it collects in full first, about 1.4 ms per MiB of image [M], so no host
-	 * timeout should cover it (README, "Differences from the wasmtime host").
+	 * It does not collect or park. No host timeout should cover the write
+	 * (README, "Differences from the wasmtime host").
 	 */
 	snapshot(maxBytes?: number): Uint8Array {
 		const code = this.call(() => this.f.mm_snapshot(this.sid as never, u64(maxBytes) as never) as number);

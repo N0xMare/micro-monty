@@ -754,12 +754,9 @@ messages; copy wording where behaviour matches.
     the list where it is read, so a place alone is never trusted. Taking
     one out leaves a hole; a list is packed, in order, when it is full or
     its holes outnumber its entries, and before a sleep's settle scans
-    the blocked tasks (a sleep lists no waiters). An image holds neither
-    holes nor places: `prepare_snapshot` packs the gathers and takes
-    their places out, the writers put them back, and a restore sets them
-    from the list, so the session that goes on and the restored one
-    differ in nothing an image, a report or fuel shows (a cancel's
-    budget counts entries, not holes). The loop's walk for the host
+    the blocked tasks (a sleep lists no waiters). An image keeps holes and
+    gather places as they are. Restore derives blocked task places from the
+    list, so its next compaction falls at the same time. The loop's walk for the host
     calls a blocked program waits on (`Vm::pending_ids`) marks the
     gathers it reaches (`aw::VISITED`, cleared before it returns). On
     shipped codegen: 30,000 sleeps due together, one step of 141.9 ms,
@@ -972,52 +969,16 @@ are the rules above. Where the code falls short, the clause says so under
    stop and parked with every park restored in a new process (and, with
    `--cross-target`, on and across both targets), and the restore chain also
    against the session that took the same snapshots and went on
-   (`restore-vs-snapshot`, whose only recorded differences are the char
-   cache's fuel in own cases 419, 472 and 498, and 419's digest), and fails
+   (`restore-vs-snapshot`), and fails
    on a difference `conformance/durability-results.txt` does not record.
    `--record` only removes entries; a change that makes a case differ for
    a known cause adds its line by hand, naming the cause and the step
-   that closes it. Its first full run (1,416 runs) gave
-   identical reports in all and equal fuel in 1,397 [M]. An operation the
-   engine does not run again after a collection (§9.2), such as one that
-   drew items from a one-shot iterator, can raise `MemoryError` while
-   garbage not yet collected still counts against the limit, where CPython
-   succeeds. A snapshot
-   collects garbage before it writes the image, which also moves when the
-   next collection falls due [E], so such an operation can come out either
-   way: raise `MemoryError` unparked and succeed after a restore, or
-   succeed unparked and raise after one. The snapshot need not be at the
-   park just before the operation: one kept snapshot at an earlier park
-   moved it [M, reviewer].
-   Operations that do run again wait for a full collection before they
-   raise, so a snapshot's collection does not decide their outcome; free
-   space fragmentation and the bytes counted outside the arena, which
-   differ after a restore and between targets, still can. An
-   operation that fails partway for memory is charged for the work it
-   did, so such a snapshot, restored or not, can raise or lower the fuel
-   total. A reviewed `f(*big, **kw)` charged +28,672 units (+0.64%).
-   Six such calls under `try` beside a 24 MB pad print `ok` six times
-   unparked and `ok ME ok ME ok ME` with a snapshot at every park, and the
-   fuel falls 11% (6,867,483 → 6,107,194 units) [M, reviewer]. Other
-   operations §9.2 does not retry behave the same way, and even retried
-   ones are charged per collection asked for, which a snapshot can move
-   (§9.2). Fuel totals also
-   depend on snapshots when a cell indexes or searches a long non-ASCII str:
-   every collection forgets the char positions, a snapshot collects first,
-   and a restore starts without them, so the next walk after any
-   `Session::snapshot()`, restored or not, is charged again
-   (`conformance/own/419`: +9,775 units
-   with snapshots and no restore, +826 more with restores [M];
-   `docs/user-guide.md`, "Other differences from CPython").
-   Address-derived values are an exception today: which address a new
-   object gets depends on when collections run, and that depends on
-   snapshots, GC stress and the session's limits (not on where fuel
-   slices or deadlines end, §8.6). So `id()` values, default `repr`s
-   (`<... object at 0x...>`) and the order of sets of identity-hashed
-   objects can differ between runs snapshotted differently [E]. What
-   holds: `id` is unique among live objects, `id(x)` is the same for
-   `x`'s whole life across parks and restores, `is` is unaffected, and
-   containers with value-hashed keys keep their order.
+   that closes it. Taking an image neither collects nor changes when the
+   next collection is due. On the same target a restore preserves free-list
+   order, memory charges, the collector's progress and cached character
+   positions (§9.3). Thus snapshot timing does not change addresses,
+   outcomes at the memory limit or fuel. Across pointer widths the cost
+   of a table can differ; a run at its memory limit can still diverge.
 5. **A long operation parks between steps and resumes where it stopped.**
    A step ends in one of three ways: with the operation's value; with its
    progress saved in an `NSTATE` object and a request to the prelude's
@@ -2012,10 +1973,7 @@ timer deadlines.
   `Vm::collect_for_retry`), so a guest that catches `MemoryError` in a
   loop pays for each collection in fuel. The charge per collection is a
   constant of the session (a charge by the live bytes the collection left
-  differed by 4 units after a restore [M]); how many collections a run
-  asks for still moves with snapshots, whose collection can leave a retry
-  nothing to wait for (-4.2M to +5.0M units [M, reviewer]), until
-  snapshots stop collecting. Every retry pays, also while a collection is
+  differed by 4 units after a restore [M]). Every retry pays, also while a collection is
   asked for and not ended: the retry restarts it, and what it pays is a
   function of the failure, not of whether a mark or another request was
   in progress, which the GC mode and the fuel slices decide (paying only
@@ -2189,8 +2147,8 @@ timer deadlines.
   a native's step and the collection step it made due (`ys = xs + xs` of
   4M items: 24.4 ms worst gap [M]).
 - **Fuel and collections.** Collection work charges no fuel: when a
-  collection falls due depends on byte sizes (32- or 64-bit) and on
-  restores, and fuel totals must not. A host that regains control only
+  collection falls due depends on byte sizes (32- or 64-bit), and fuel
+  totals must not depend on the cost of a collection. A host that regains control only
   between fuel slices (deployed Workers, where deadlines never fire)
   would then wait for every collection step in a slice. With
   `Session::set_gc_yield` (off by default; `drive_async` and `hosts/js`'s
@@ -2535,7 +2493,7 @@ Host-call ids survive a restore: the restored session accepts the same
 arguments, the calls a wait is on, a park's reason) from the facade's
 header.
 
-**Cost** [M, release, `taskset -c 2`, median of 21; the range over five
+**Historical cost, when snapshots collected before writing** [M, release, `taskset -c 2`, median of 21; the range over five
 runs; 5a926cf7, 16 cores under gVisor, Xeon at 2.60 GHz]:
 
 | Session | Size | Write | Restore |

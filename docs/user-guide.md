@@ -997,8 +997,8 @@ the session, and a restored session goes on as the original does: the same
 output, outcomes and fuel, near the memory limit too. Restore validates every
 structure before use (bounds, block headers, bytecode, frame states) and
 charges the result against the restoring engine's memory limit
-(`TooLarge`). A fresh session's snapshot is about 41 KB and a parked loop's
-about 42 KB; with `re`, `random` and `time` loaded, about 282 KB \[M\].
+(`TooLarge`). The image can be larger than the live state: it includes
+objects not yet collected, so a restore can collect them at the same point.
 
 The host still owns some state, because no engine can make it durable:
 
@@ -1531,8 +1531,8 @@ in Rust or `SessionTemplate.capture(s)` in JavaScript. `s.reset_to(&template)`
 state, keeping its host-side settings. Or use `template.instantiate()` to get
 an independent session in the same instance. Rust's `instantiate_with(&options)`
 and JavaScript's `instantiate(options)` accept fresh host-side options; limits
-come from the captured session. Call `setup_done` (`setupDone`) again after
-either operation. The setup and reset rules are the same as for native templates.
+come from the captured session. A template captured after `setup_done`
+(`setupDone`) keeps the mark; neither operation needs the call again.
 
 The guest's engine keeps its compiled host code across sessions in the same
 instance. Capture fails with `SnapshotError::Busy` while a cell is stopped;

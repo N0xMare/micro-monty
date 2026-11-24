@@ -1,18 +1,15 @@
 //! The FULL snapshot form of a heap (docs/spec.md §9.3), and the byte reader,
 //! writer and checksum the engine's snapshot code shares.
 //!
-//! A heap is written right after a collection, so every block with a start
-//! bit is live. Per space: the segment table's size, the bump segment, the
-//! vacant indices, then each present segment (a normal one with its
-//! committed capacity, which a restore commits again) with its live runs (maximal
-//! sequences of adjacent live blocks) as raw data; free space is omitted.
+//! A heap is written as it stands, including allocated garbage and any
+//! unfinished mark or sweep. The image stores the allocation order and
+//! each segment's committed capacity, but omits free blocks' payloads.
 //!
 //! Reading validates everything before it is used: indices against the
-//! table, runs against the segment, every block header inside a run, the
+//! table, blocks against the segment, the header of each block, the
 //! memory limit before a segment is allocated and data lengths against the
 //! remaining input. It then rebuilds the start bitmaps from the block headers
-//! and the free lists, bump state and accounting with the sweep a collection
-//! ends with, so the result is the heap the collection left. `str` objects
+//! and restores the free lists, bump state and accounting. `str` objects
 //! and the intern table are checked too: everything mm-core itself trusts
 //! about them (valid UTF-8, the char count, the ASCII flag, the table's
 //! shape) holds after a restore.
@@ -388,14 +385,13 @@ impl Heap {
 
     /// [`Heap::read_snapshot`] of an image this process already read with
     /// it (a session template's): the same heap, admitted the same way,
-    /// without the walk that checks every `str` and intern table and
-    /// without the table that checks each listed free block is free and
-    /// listed once. Only for
-    /// bytes that passed the checked read and have not changed since.
+    /// without rechecking object contents, cached string positions, the
+    /// object count, collector marks or free-list membership and uniqueness.
+    /// Only for bytes that passed the checked read and have not changed since.
     ///
     /// # Errors
     ///
-    /// As [`Heap::read_snapshot`], apart from what the skipped walk finds.
+    /// As [`Heap::read_snapshot`], apart from what the skipped checks find.
     #[doc(hidden)]
     #[cfg_attr(mm_shipped, optimize(size))]
     pub fn read_snapshot_trusted(r: &mut Reader<'_>, max_commit: u64) -> Result<Heap, Error> {
@@ -425,7 +421,7 @@ impl Heap {
             .read_snapshot(r, &mut avail, |h| h & 0xFFFF == 1, check)?;
         heap.objects = r.u32().ok_or(e)? as usize;
         heap.objects_at_gc = r.u32().ok_or(e)? as usize;
-        heap.read_mark_state(r, avail)?;
+        heap.read_mark_state(r, avail, check)?;
         let ns = r.count(12).ok_or(e)?;
         if ns > POS_WAYS {
             return bad();
@@ -482,13 +478,18 @@ impl Heap {
     /// capacity, the incremental mark and its partly scanned objects, each
     /// checked against the marks the segments hold.
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn read_mark_state(&mut self, r: &mut Reader<'_>, avail: u64) -> Result<(), Error> {
+    fn read_mark_state(
+        &mut self,
+        r: &mut Reader<'_>,
+        avail: u64,
+        check: bool,
+    ) -> Result<(), Error> {
         let e = Error::BadSnapshot;
         let cap = r.u32().ok_or(e)? as usize;
         let n = r.count(4).ok_or(e)?;
         // The mark stack holds each marked object once, and every object
         // allocated has a slot reserved (`Heap::alloc_words`).
-        if self.objects != self.words.object_count()
+        if (check && self.objects != self.words.object_count())
             || self.objects_at_gc > self.objects
             || cap < self.objects
             || n > cap
@@ -554,8 +555,7 @@ impl Heap {
             || self.inc.backoff > MAX_BACKOFF
             || self.inc.penalty > MAX_BACKOFF
             || (idle && (n != 0 || np != 0))
-            || !self.words.marks_consistent(idle)
-            || !self.bytes.marks_consistent(idle)
+            || (check && !(self.words.marks_consistent(idle) && self.bytes.marks_consistent(idle)))
         {
             return bad();
         }

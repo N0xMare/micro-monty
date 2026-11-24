@@ -8,8 +8,7 @@
 //! futures, the pending host call, globals, modules, shapes, host modules
 //! and limits, and the capacities of the tables the memory limit charges.
 //! Inline caches, constructor caches and the builtin's consumed iterators
-//! are not written; they start empty (a snapshot drops the last from the
-//! session too). Host-owned state (the output callback, the
+//! are not written. Host-owned state (the output callback, the
 //! clock and deadline, the park flag) is not part of a session's image.
 //!
 //! [`Vm::read_snapshot`] trusts nothing: every count is checked against the
@@ -827,16 +826,14 @@ impl Vm {
         put_u64(out, self.heap.external_bytes());
         // Capacities the charges count (`Vm::code_bytes`,
         // `Vm::execution_bytes`): a restore reserves them again.
-        for c in self.capacities() {
-            put_len(out, c);
-        }
+        self.write_capacities(out);
     }
 
     /// The capacities of the tables the memory limit charges by capacity,
     /// in the order [`Vm::reserve_capacities`] takes them.
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn capacities(&self) -> Vec<usize> {
-        let mut c = alloc::vec![
+    fn write_capacities(&self, out: &mut Sink<'_>) {
+        for c in [
             self.stack.capacity(),
             self.specials.capacity(),
             self.conts.capacity(),
@@ -860,27 +857,35 @@ impl Vm {
             self.host_ids.capacity(),
             self.gens.capacity(),
             self.shared_chars.capacity(),
-        ];
+        ] {
+            put_len(out, c);
+        }
         for t in self.tasks.iter().flatten() {
-            c.extend([t.stack.capacity(), t.specials.capacity()]);
+            put_len(out, t.stack.capacity());
+            put_len(out, t.specials.capacity());
         }
         for s in &self.shapes {
-            c.extend([s.names.capacity(), s.trans.capacity()]);
+            put_len(out, s.names.capacity());
+            put_len(out, s.trans.capacity());
         }
-        c
     }
 
-    /// Reserves the capacities [`Vm::capacities`] wrote, each charged to
+    /// Reserves the capacities [`Vm::write_capacities`] wrote, each charged to
     /// `budget` first.
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn reserve_capacities(&mut self, caps: &[usize], ics_len: usize, budget: &mut u64) -> Res<()> {
+    fn reserve_capacities(
+        &mut self,
+        caps: &[[u8; 4]],
+        ics_len: usize,
+        budget: &mut u64,
+    ) -> Res<()> {
         fn grow<T>(v: &mut Vec<T>, cap: usize, budget: &mut u64) -> Res<()> {
             let extra = cap.saturating_sub(v.capacity());
-            charge(budget, (extra * size_of::<T>()) as u64)?;
+            charge(budget, extra as u64 * size_of::<T>() as u64)?;
             v.try_reserve_exact(cap - v.len().min(cap))
                 .map_err(|_| SnapError::TooLarge)
         }
-        let mut caps = caps.iter().copied();
+        let mut caps = caps.iter().map(|c| u32::from_le_bytes(*c) as usize);
         let mut cap = || need(caps.next(), "capacities");
         grow(&mut self.stack, cap()?, budget)?;
         grow(&mut self.specials, cap()?, budget)?;
@@ -890,7 +895,7 @@ impl Vm {
         let ready = cap()?;
         charge(
             budget,
-            (ready.saturating_sub(self.ready.capacity()) * size_of::<Ready>()) as u64,
+            ready.saturating_sub(self.ready.capacity()) as u64 * size_of::<Ready>() as u64,
         )?;
         self.ready
             .try_reserve_exact(ready - self.ready.len().min(ready))
@@ -936,7 +941,7 @@ impl Vm {
         // state), so keep this the last allocation of a restore.
         charge(
             budget,
-            (ics_cap.saturating_sub(ics_len) * size_of::<crate::vm::Ic>()) as u64,
+            ics_cap.saturating_sub(ics_len) as u64 * size_of::<crate::vm::Ic>() as u64,
         )?;
         self.ics
             .try_reserve_exact(ics_cap.max(ics_len))
@@ -2379,9 +2384,7 @@ impl Vm {
         if r.remaining() != ncaps * 4 {
             return Err(SnapError::Corrupt("capacities"));
         }
-        let caps = (0..ncaps)
-            .map(|_| need(r.u32(), "capacities").map(|c| c as usize))
-            .collect::<Res<Vec<usize>>>()?;
+        let caps = need(r.take(ncaps * 4), "capacities")?.as_chunks::<4>().0;
 
         // Cross-checks: every state, frame, continuation and task index.
         let saved = match saved {
@@ -2439,23 +2442,21 @@ impl Vm {
         }
         // The registry names every generator in the heap once, which the
         // walk that checks them lists in address order.
-        let walked = generators(
-            &heap,
-            Some((&mut codes[..], &mut bundled)),
-            check,
-            gens.len(),
-        )?;
-        // The same values, whatever their order: one sort of plain words
-        // serves both lists.
-        let sorted = |values: &[Value]| {
-            let mut bits: Vec<u64> = values.iter().map(|v| v.to_bits()).collect();
-            crate::ops::heap_sort_by(&mut bits, |a, b| a < b);
-            bits
-        };
-        if sorted(&gens) != sorted(&walked) {
-            return Err(SnapError::Corrupt("generators"));
+        if check {
+            check_generators(&heap, &mut codes, &mut bundled, &gens)?;
+        } else {
+            // The checked image or live template already supplied the registry.
+            // A suspended generator needs its instructions before a collection
+            // clears its dead registers, even when it never resumes.
+            for &v in &gens {
+                let r = need(v.as_obj(), "generator")?;
+                if heap.get_raw(r, crate::generator::g::STATE) == Ok(crate::generator::g::SUSPENDED)
+                {
+                    let ci = need(heap.get_raw(r, crate::generator::g::CODE).ok(), "generator")?;
+                    bundled.load(&mut codes, need(ci.try_into().ok(), "generator")?)?;
+                }
+            }
         }
-        drop(walked);
         // `HostArgs` setters cap the depth; keep the cap.
         host_args.max_depth = host_args.max_depth.min(1000);
 
@@ -2607,7 +2608,7 @@ impl Vm {
             .map_err(|_| SnapError::TooLarge)?;
         // The capacities and charges of the session that wrote the image,
         // so the restored one is charged what that one is.
-        vm.reserve_capacities(&caps, ics_len, &mut budget)?;
+        vm.reserve_capacities(caps, ics_len, &mut budget)?;
         vm.parked_bytes = vm.tasks.iter().flatten().map(Task::buffer_bytes).sum();
         // The code charge with the capacities reserved above, as the
         // session that wrote the image counts its own.
@@ -2655,8 +2656,11 @@ fn check_gathers(vm: &Vm) -> Res<()> {
         }
     }
     for (k, &g) in vm.gathers.iter().enumerate() {
-        if !vm.tracked(g) || place(g) != k {
+        if g == Value::UNDEFINED {
             continue;
+        }
+        if !g.is_obj_kind(ty::GATHER as u8) || !vm.tracked(g) || place(g) != k {
+            return Err(SnapError::Corrupt("gathers"));
         }
         let left = word(g, aw::LEFT);
         let (pending, unrun) = (left & aw::LEFT_MASK, left >> aw::UNRUN_SHIFT);
@@ -3072,30 +3076,19 @@ fn frame_owner_ok(heap: &Heap, coro: Value, ci: u32) -> bool {
     }
 }
 
-/// Every generator and async generator, in address order (`Vm::gens`).
-/// On a restore (`restored`), the bundled code of a suspended one has its
-/// bytecode loaded, trusted or not. With `check`, each must be sound: it runs its function's code (in every
-/// state: a running one's frame saves its pc at the next yield for the code
-/// the generator names), a suspended one resumes at the instruction after
-/// its yield, and one not done keeps its registers in a `BUF` of at least
-/// its code's `nregs` slots, which resuming reads and a collection clears
-/// in place (`Vm::clear_suspended`); and each coroutine a `send()`
-/// suspended resumes at its `AWAIT`. `gens_room(n)` is reserved first (a
-/// snapshot passes its registry's length, which its walk finds again);
-/// the list grows with the fallible allocator, `TooLarge` when it cannot.
+/// Checks the registry against the heap, each generator's code, saved
+/// registers and yield position, and each suspended coroutine's `AWAIT`.
 #[cfg_attr(mm_shipped, optimize(size))]
-fn generators(
+fn check_generators(
     heap: &Heap,
-    mut restored: Option<(&mut [Arc<CodeObj>], &mut Bundled<'_>)>,
-    check: bool,
-    n: usize,
-) -> Res<Vec<Value>> {
+    codes: &mut [Arc<CodeObj>],
+    bundled: &mut Bundled<'_>,
+    registry: &[Value],
+) -> Res<()> {
     use crate::generator::g;
     let mut ok = true;
     let mut gens = Vec::new();
-    let mut room = gens
-        .try_reserve_exact(crate::generator::gens_room(n))
-        .is_ok();
+    let mut room = gens.try_reserve_exact(registry.len()).is_ok();
     heap.for_each_object(&mut |r, h| {
         if !matches!(h.type_id(), ty::GEN | ty::AGEN) || !ok || !room {
             return;
@@ -3105,10 +3098,7 @@ fn generators(
             return;
         }
         #[allow(clippy::cast_possible_truncation, reason = "type ids are below 256")]
-        gens.push(Value::from_ref(r, h.type_id() as u8));
-        let Some((codes, bundled)) = restored.as_mut() else {
-            return;
-        };
+        gens.push(Value::from_ref(r, h.type_id() as u8).to_bits());
         let state = heap.get_raw(r, g::STATE).unwrap_or(u64::MAX);
         let ypc = heap
             .get_raw(r, g::YPC)
@@ -3126,9 +3116,6 @@ fn generators(
             && bundled.load(codes, i).is_err()
         {
             ok = false;
-            return;
-        }
-        if !check {
             return;
         }
         let code = ci.and_then(|i| codes.get(i as usize));
@@ -3162,9 +3149,13 @@ fn generators(
     if !ok {
         return Err(SnapError::Corrupt("generator"));
     }
-    let Some((codes, bundled)) = restored.filter(|_| check) else {
-        return Ok(gens);
-    };
+    let mut listed: Vec<u64> = registry.iter().map(|v| v.to_bits()).collect();
+    for words in [&mut gens, &mut listed] {
+        crate::ops::heap_sort_by(words, |a, b| a < b);
+    }
+    if gens != listed {
+        return Err(SnapError::Corrupt("generators"));
+    }
     // A coroutine a `send()` suspended resumes at its `AWAIT`.
     heap.for_each_object(&mut |r, h| {
         if h.type_id() != ty::CORO || !ok {
@@ -3196,7 +3187,7 @@ fn generators(
         });
     });
     if ok {
-        Ok(gens)
+        Ok(())
     } else {
         Err(SnapError::Corrupt("coroutine"))
     }

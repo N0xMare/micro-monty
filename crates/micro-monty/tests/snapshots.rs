@@ -1529,7 +1529,7 @@ fn module_catalog_storage_is_budgeted_before_creation_and_restore() {
         ),
         Err(SnapError::TooLarge)
     ));
-    let mut restored = Vm::read_snapshot(
+    let restored = Vm::read_snapshot(
         &mut Reader::new(&snapshot),
         &MODULES,
         None,

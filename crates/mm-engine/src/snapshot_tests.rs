@@ -1934,7 +1934,7 @@ fn a_forged_cancel_state_raises() {
         let deep = |vm: &Vm| {
             cancel_state(vm).is_some_and(|r| raw(vm, r, 4 + 1) == 0 && raw(vm, r, 4 + 4) >= 3)
         };
-        let mut vm = session(src, deep);
+        let vm = session(src, deep);
         assert!(deep(&vm), "never parked three frames deep: {src}");
         let mut image = Vec::new();
         vm.write_snapshot(&mut image).expect("at a safepoint");
@@ -2208,8 +2208,8 @@ for i in range(20):
 }
 
 /// A long cancel charges for the gathers the scheduler tracks, not for
-/// the holes settled ones left in its list, which an image does not
-/// hold: from a park where 3,000 of 4,001 entries are holes, the session
+/// the holes settled ones left in its list: from a park where 3,000
+/// of 4,001 entries are holes, the session
 /// that goes on and the restored one spend the same fuel to the end.
 #[cfg(feature = "asyncio")]
 #[test]
@@ -2243,7 +2243,7 @@ asyncio.run(main())
     assert!(holes(&on), "never parked with the holes");
     let mut parked = session_in(src, 64, holes);
     let mut restored = restore(&mut parked).expect("restores");
-    assert_eq!(restored.gathers_holes, 0);
+    assert_eq!(restored.gathers_holes, on.gathers_holes);
     assert_eq!(spent(&mut on), spent(&mut restored));
 }
 

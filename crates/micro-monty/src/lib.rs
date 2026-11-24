@@ -2344,7 +2344,7 @@ impl Session {
 
     /// Like [`Session::snapshot`], with an explicit output-buffer capacity cap
     /// including the header and checksum. Growth checks before allocating.
-    /// A failed snapshot leaves the session usable, although GC may have run.
+    /// A failed snapshot leaves the session unchanged.
     /// Allocator overhead and transient reallocation peaks are not included.
     ///
     /// # Errors

@@ -489,8 +489,21 @@ impl<'a> In<'a> {
     /// room, charged first.
     fn room<T>(&mut self, n: usize) -> Option<Vec<T>> {
         let cap = n.checked_add(core::mem::take(&mut self.spare))?;
+        if cap == 0 {
+            return Some(Vec::new());
+        }
         self.charge((cap as u64).checked_mul(size_of::<T>() as u64)?)?;
-        Some(Vec::with_capacity(cap))
+        if cap == n {
+            // Lengths are bounded by the input; only stored spare capacity
+            // can request a large allocation from a few encoded bytes.
+            return Some(Vec::with_capacity(n));
+        }
+        let mut values = Vec::new();
+        if values.try_reserve_exact(cap).is_err() {
+            self.budget = None;
+            return None;
+        }
+        Some(values)
     }
 
     fn charge(&mut self, bytes: u64) -> Option<()> {
@@ -654,14 +667,18 @@ impl<'a> In<'a> {
         (pc == n).then_some(out)
     }
 
+    fn inline_str(&mut self) -> Option<&'a str> {
+        let n = self.len()?;
+        self.charge(n as u64)?;
+        core::str::from_utf8(self.take(n)?).ok()
+    }
+
     /// A pool string, shared with every code object naming it (its bytes
     /// are still charged per use, as an owned copy would be).
     fn shared(&mut self) -> Option<Arc<str>> {
         if !self.split && self.pool.is_empty() {
             // Inline (a single code object), or the pool itself.
-            let n = self.len()?;
-            self.charge(n as u64)?;
-            return core::str::from_utf8(self.take(n)?).ok().map(Arc::from);
+            return self.inline_str().map(Arc::from);
         }
         let i = usize::try_from(leb(if self.split {
             &mut self.index
@@ -693,9 +710,7 @@ impl<'a> In<'a> {
         self.charge((n as u64).checked_mul(size_of::<Arc<str>>() as u64)?)?;
         self.pool.reserve_exact(n);
         for _ in 0..n {
-            let n = self.len()?;
-            self.charge(n as u64)?;
-            let s = core::str::from_utf8(self.take(n)?).ok()?;
+            let s = self.inline_str()?;
             self.pool.push(Arc::from(s));
         }
         Some(())
@@ -706,6 +721,11 @@ impl<'a> In<'a> {
     }
 
     fn str(&mut self) -> Option<String> {
+        // Single-code images carry inline text: copy it into the owned
+        // string directly, without allocating a temporary shared string.
+        if !self.split && self.pool.is_empty() {
+            return self.inline_str().map(String::from);
+        }
         self.shared().map(|s| String::from(&*s))
     }
 

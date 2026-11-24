@@ -1176,7 +1176,7 @@ impl Vm {
     }
 
     /// Writes the place of each tracked gather into it (`on`) or takes
-    /// the places out, as an image holds the gathers.
+    /// the places out when the scheduler drops its gathers.
     pub(crate) fn place_gathers(&mut self, on: bool) {
         for k in 0..self.gathers.len() {
             let g = self.gathers[k];
@@ -1195,6 +1195,7 @@ impl Vm {
 
     /// Takes the holes out of `gathers`, in order, and gives each gather
     /// its new place.
+    #[cfg(feature = "asyncio")]
     pub(crate) fn pack_gathers(&mut self) {
         if self.gathers_holes != 0 {
             self.gathers.retain(|&g| g != Value::UNDEFINED);
@@ -3607,8 +3608,7 @@ impl Vm {
     /// 1 ns a task blocked [M]) and looks each gather that waits on it up
     /// among the tracked ones, where a waiter gather is looked up too.
     fn settle_work(&self, c: Value, pending: bool) -> (u64, u64, usize) {
-        // The tasks blocked, not the list's holes: an image holds none, so
-        // a restored cancel must charge as the one that went on did.
+        // Charge the tasks blocked, not the holes left by earlier wakes.
         let blocked = (self.blocked.len() - self.blocked_holes) as u64;
         let gathers = (self.gathers.len() - self.gathers_holes) as u64;
         match c.obj_kind().map(u16::from) {
