@@ -452,7 +452,7 @@ pub(crate) fn judge(
         if write {
             seed(root, gate, sides, rules)?;
         }
-        return pre_tag(root, gate, sides, rules);
+        return pre_tag(root, gate, sides, rules, rules.swept);
     }
     let source = at(root, sides.base, gate)?;
     let floors = this_run(&source, sides);
@@ -582,11 +582,12 @@ pub(crate) fn judge(
 ///   tag; and a rise past the limit that a line accepts has raised its
 ///   floor to the head's count, as a landing does. A floor above the
 ///   head's count passes, as in a landing.
-fn pre_tag(
+pub(crate) fn pre_tag(
     root: &Path,
     gate: &str,
     sides: &Sides<'_>,
     rules: &Rules<'_>,
+    floor_swept: &dyn Fn(&str) -> bool,
 ) -> Result<(Counts, Vec<String>), String> {
     let source = here(root, gate)?;
     let floors = this_run(&source, sides);
@@ -639,11 +640,11 @@ fn pre_tag(
                 ));
             }
         }
-        // A floor an accepted geomean swept up is the head's count, past
-        // its own limit or not, with no line that names it.
+        // Authorization for the stored floor is separate from whether the
+        // current head needs to raise it again below.
         if let Some(t) = t
             && f > t
-            && !(rules.swept)(name)
+            && !floor_swept(name)
             && !(rules.accepted)(name, ratio(f, t))
         {
             errors.push(format!(
@@ -1219,6 +1220,9 @@ mod tests {
         let (dir, sha) = repo("tag-swept", &Floors::new());
         git(&dir, &["tag", "v0.0.9"]).unwrap();
         let tb = build_id(&dir, Some(&sha)).unwrap();
+        fs::create_dir_all(dir.join("crates")).unwrap();
+        fs::write(dir.join("crates/build"), "seed").unwrap();
+        let seeded = build_id(&dir, Some(&commit(&dir, "seed build"))).unwrap();
         let keys = keys(&["a", "b", "c"], "k");
         // a and b rose 0.2%, under the program limit; c is the tag's.
         let tag = counts(&[("a", 10_000), ("b", 10_000), ("c", 10_000)]);
@@ -1230,7 +1234,7 @@ mod tests {
             head: &head,
             base_counts: &tag,
             keys: &keys,
-            head_build: "b-head",
+            head_build: &seeded,
             recounted: &none,
         };
         let never = |_: &str, _: f64| false;
@@ -1242,7 +1246,7 @@ mod tests {
         };
         judge(&dir, "native-ir", &sides, &rules, true).unwrap();
         let written = here(&dir, "native-ir").unwrap();
-        assert_eq!(written["a"], floor(10_020, "b-head"));
+        assert_eq!(written["a"], floor(10_020, &seeded));
         assert_eq!(written["c"], floor(10_000, &tb), "c did not rise");
         let (_, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
@@ -1262,6 +1266,15 @@ mod tests {
             2,
             "{errors:?}"
         );
+        // A later head dropped below the tag. The historical sweep still
+        // authorizes its own floors, but cannot authorize new head raises.
+        let later = Sides {
+            head: &tag,
+            head_build: "later",
+            ..sides
+        };
+        let (_, errors) = pre_tag(&dir, "native-ir", &later, &not_swept, &|_| true).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
         fs::remove_dir_all(&dir).unwrap();
     }
 

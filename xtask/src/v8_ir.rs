@@ -305,32 +305,37 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         },
         false,
     )?;
-    let swept: Vec<&str> = GUESTS
-        .iter()
-        .map(|g| label(g))
-        .filter(|g| {
-            let prefix = format!("{g}/");
-            let geo = floors::geomean(&all[0], &at_floor, &all[1], &|name| {
-                name.starts_with(&prefix)
-            });
-            geo > GEOMEAN_LIMIT && raised(&format!("{g}/geomean"), geo)
-        })
-        .collect();
-    let (against, errors) = floors::judge(
-        &root,
-        "v8-ir",
-        &floor_sides,
-        &floors::Rules {
-            accepted: &raised,
-            past: &past,
-            swept: &|name| {
-                name.split_once('/')
-                    .is_some_and(|(g, _)| swept.contains(&g))
-            },
-            band: floors::exact,
-        },
-        write,
-    )?;
+    let sweeps = |counts, floors| -> Vec<&str> {
+        GUESTS
+            .iter()
+            .map(|g| label(g))
+            .filter(|g| {
+                let prefix = format!("{g}/");
+                let geo =
+                    floors::geomean(counts, floors, &all[1], &|name| name.starts_with(&prefix));
+                geo > GEOMEAN_LIMIT && raised(&format!("{g}/geomean"), geo)
+            })
+            .collect()
+    };
+    let includes = |groups: &[&str], name: &str| {
+        name.split_once('/')
+            .is_some_and(|(g, _)| groups.contains(&g))
+    };
+    let swept = sweeps(&all[0], if tag && write { &all[1] } else { &at_floor });
+    let rules = floors::Rules {
+        accepted: &raised,
+        past: &past,
+        swept: &|name| includes(&swept, name),
+        band: floors::exact,
+    };
+    let (against, errors) = if tag && !write {
+        let stored = sweeps(&at_floor, &all[1]);
+        floors::pre_tag(&root, "v8-ir", &floor_sides, &rules, &|name| {
+            includes(&stored, name)
+        })?
+    } else {
+        floors::judge(&root, "v8-ir", &floor_sides, &rules, write)?
+    };
     // The floors keyed as the counts are.
     let floor: Counts = against
         .into_iter()
