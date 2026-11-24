@@ -7049,7 +7049,14 @@ fn exc_add_note(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         vm.arg_o(&a, 1),
     );
     if !Vm::is_str(n) {
-        let msg = format!("add_note() argument must be str, not {}", vm.type_name(n));
+        let msg = format!(
+            "add_note() argument must be str, not {}",
+            if n == Value::NONE {
+                "None"
+            } else {
+                vm.type_name(n)
+            }
+        );
         return Err(vm.err(T::TypeError, &msg));
     }
     let k = vm.intern("__notes__")?;

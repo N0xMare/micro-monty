@@ -2085,6 +2085,9 @@ differs:
     supported between instances of 'U' and 'U'` (CPython: `bad operand
     type for unary -: 'U'`); with no unary dunder at all the text is
     CPython's.
+  - `e.add_note(note)` of a `str` subclass instance raises CPython's
+    `TypeError` for a non-str (`add_note() argument must be str, not
+    S`), where CPython adds it; pass `str(note)`.
   - An `OrderedDict` changed while it is iterated raises `RuntimeError:
     dictionary changed size during iteration` (CPython: `OrderedDict
     mutated during iteration`), also where CPython goes on: when the
