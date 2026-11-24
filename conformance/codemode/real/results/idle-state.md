@@ -46,7 +46,7 @@ raises never reaches the probe.
 | Kinds beyond plain data, imports and defs | States |
 |---|---:|
 | `stdlib collections.Counter` | 161 |
-| `stdlib re.Match` | 155 |
+| `stdlib re.Match` | 156 |
 | `stdlib re.Pattern` | 93 |
 | `stdlib datetime.datetime` | 74 |
 | `stdlib collections.defaultdict` | 67 |
