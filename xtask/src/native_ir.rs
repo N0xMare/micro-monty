@@ -171,7 +171,12 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         .is_ok();
         let recipe = size::recipe_key(if own { &tree } else { &root }, &tree)?;
         let key = format!("{method}; {recipe}");
-        let cached = load(&dir.join("cache").join(format!("{sha}.tsv")), &key, &hashes);
+        let mut cached = load(&dir.join("cache").join(format!("{sha}.tsv")), &key, &hashes);
+        if cached.len() < PROGRAMS.len()
+            && let Some(path) = crate::tag_reference::file(&root, sha, "native-ir.tsv")
+        {
+            cached.extend(load(&path, &key, &hashes));
+        }
         if cached.len() < PROGRAMS.len() {
             let how = if own {
                 "its own recipe"

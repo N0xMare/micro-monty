@@ -71,9 +71,11 @@ mod native_ir;
 mod overflow;
 mod package;
 mod replay_ir;
+mod replay_worker;
 mod restack;
 mod shipped;
 mod size;
+mod tag_reference;
 mod v8_ir;
 mod wasm;
 mod wasm_ir;
@@ -1021,6 +1023,9 @@ const RELEASE_GATE_PATHS: &[&str] = &[
     // check.
     "xtask/src/v8_ir.rs",
     "xtask/src/replay_ir.rs",
+    "xtask/src/replay_worker.rs",
+    "xtask/src/tag_reference.rs",
+    "xtask/tag-reference/",
     "xtask/src/accept.rs",
     "xtask/src/floors.rs",
     "xtask/ir-floors/v8-ir.txt",

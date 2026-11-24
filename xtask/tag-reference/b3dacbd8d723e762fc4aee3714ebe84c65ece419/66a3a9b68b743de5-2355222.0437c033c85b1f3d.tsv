@@ -1,0 +1,17 @@
+# V8 generated code (in no file), second of two runs, node --no-liftoff --single-threaded, from /tmp/mm-v8-ir-<run>/<job>, 4; node v26.13.1 (fc2d2ed0315c27ce); valgrind-3.24.0; glibc 2.41, x86-64-v3; driver 0437c033c85b1f3d
+aio	908884474	a8a7aed0a8263735
+bytearray	2369380415	183e39b50472ee77
+classes	1912908856	6b3a2e68aaef39c4
+closure	999200208	14c122d99992c10b
+dict	1667407096	895b2c8cff5cce3d
+exceptions	1395686114	f7f727e648fe371c
+fib	480647744	31e4e18330474b79
+floats	2153224954	587d4d7d4466cdba
+fmt	2196022583	ec2370fea5399a32
+generators	3228289225	d83687b808fffda9
+held	3657810228	60e799db6d46aa6f
+interp	3065364528	d3c40eb524eb35b7
+json	1684566836	65d8c8dfcc1609e5
+loop	1729313772	a64718e92df318c8
+sort	2020517689	c0b65fa5be4bfad5
+str	681286817	83ab02c072edf8e6

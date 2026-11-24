@@ -1,0 +1,5 @@
+# Historical reference measurements
+
+The directory name is the measured tag commit. The size, native, Wasmtime and V8 TSVs use the gates' native cache formats. `v8.guests` maps historical guest names to the measured contents; the driver hash is part of each V8 count filename. `replay.worker` pairs the historical toolchain and current replay build recipe with the measured worker hash. Its TSV contains counts, not a gate result. Identical head and reference workers still get a fresh head replay when its local cache is empty.
+
+Refresh these from historical **builds and counts**, not floor files. Check the rebuilt worker digest and both guest digests. Compare with a run without the retained data, then pin the data directory's Git tree ID, tag commit and producing host in `xtask/src/tag_reference.rs`. A file that no longer matches its blob, or a recipe, tool, host, workload or driver mismatch, falls back to the ordinary gate. `MM_RECOUNT_TAG=1` ignores these records; remove the relevant `target/<gate>/cache` as well for a fresh measurement. Neither source of measurements replaces the comparison with the current floors, trailers or budgets.

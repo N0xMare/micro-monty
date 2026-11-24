@@ -108,8 +108,6 @@ const NAME: &str = "sessions";
 const SESSION_LIMIT: f64 = 1.005;
 /// The most the median of the sessions' ratios may rise.
 const MEDIAN_LIMIT: f64 = 1.003;
-/// The cfg that turns on the wasm-only `optimize(size)` marks natively.
-const WASM_MARKS: &str = "--cfg mm_size_wasm";
 /// What a count holds, in the cache key: change it when that changes.
 const COUNTING: &str = "callgrind from start_thread, all counted: total, total without the \
                         allocator's entry points, allocator calls; replay_worker, wasm marks on, \
@@ -281,9 +279,23 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         ));
     }
     let mut workers = Vec::new();
-    for (label, tree, target) in &trees {
+    let mut retained = BTreeMap::new();
+    for (i, (label, tree, target)) in trees.iter().enumerate() {
+        let sha = match i {
+            0 => None,
+            1 => Some(&base),
+            i => Some(&stale[i - 2].0),
+        };
+        if let Some(sha) = sha
+            && let Some((hash, counts)) = retained_worker(&root, tree, sha, &method)
+        {
+            println!("replay-ir: retained the {label}'s worker {hash}");
+            retained.insert(hash.clone(), counts);
+            workers.push((hash, tree.clone()));
+            continue;
+        }
         println!("replay-ir: building the {label}'s worker");
-        let worker = build(tree, target, &host)?;
+        let worker = crate::replay_worker::build(tree, target, &host)?;
         let bytes = fs::read(&worker).map_err(|e| format!("{}: {e}", worker.display()))?;
         workers.push((source_hash(&bytes), worker));
     }
@@ -295,11 +307,15 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let cache = |hash: &str| dir.join("cache").join(format!("{hash}.tsv"));
     let mut counts: BTreeMap<String, Counts> = BTreeMap::new();
     let mut todo: Vec<&(String, PathBuf)> = Vec::new();
-    for side in &workers {
+    for (i, side) in workers.iter().enumerate() {
         if counts.contains_key(&side.0) || todo.iter().any(|t| t.0 == side.0) {
             continue;
         }
-        match load(&cache(&side.0), &method) {
+        // Even on an identical worker, an empty head cache forces a fresh
+        // replay: the tag record cannot certify the head or a floor recount.
+        match load(&cache(&side.0), &method)
+            .or_else(|| (i != 0).then(|| retained.remove(&side.0)).flatten())
+        {
             Some(c) => {
                 println!("replay-ir: {} is counted (cache)", side.1.display());
                 counts.insert(side.0.clone(), c);
@@ -517,33 +533,26 @@ fn absolute(tool: &Path) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-/// Builds `replay_worker` of the tree at `src` for `host` into `target`,
-/// with this checkout's shipped recipe plus [`WASM_MARKS`] and the tree's
-/// toolchain.
-fn build(src: &Path, target: &Path, host: &str) -> Result<PathBuf, String> {
-    let status = crate::shipped::shipped_build_in(host, src)
-        .env(
-            "RUSTFLAGS",
-            format!("{} {WASM_MARKS}", crate::shipped::SHIPPED_RUSTFLAGS),
-        )
-        .arg("--target-dir")
-        .arg(target)
-        .args([
-            "--quiet",
-            "--package",
-            "mm-cell-worker",
-            "--example",
-            "replay_worker",
-        ])
-        .status()
-        .map_err(|e| format!("cannot run cargo: {e}"))?;
-    if !status.success() {
-        return Err(format!(
-            "shipped build of replay_worker for {host} in {} failed",
-            src.display()
-        ));
+fn retained_worker(root: &Path, tree: &Path, sha: &str, method: &str) -> Option<(String, Counts)> {
+    let path = crate::tag_reference::file(root, sha, "replay.worker")?;
+    let record = fs::read_to_string(path).ok()?;
+    let mut lines = record.lines();
+    // As in native-ir, read rustc's identity in the historical checkout.
+    let toolchain = crate::size::recipe_key(tree, tree).ok()?;
+    let recipe = format!(
+        "{toolchain}; shipped {}; worker {}",
+        source_hash(include_bytes!("shipped.rs")),
+        source_hash(include_bytes!("replay_worker.rs"))
+    );
+    if lines.next()? != recipe {
+        return None;
     }
-    Ok(target.join(host).join("release/examples/replay_worker"))
+    let hash = lines.next()?;
+    let counts = load(
+        &crate::tag_reference::file(root, sha, &format!("{hash}.tsv"))?,
+        method,
+    )?;
+    Some((hash.to_owned(), counts))
 }
 
 /// [`FIXED_RANDOM`] built with the C compiler (`$CC`, else `cc`) into

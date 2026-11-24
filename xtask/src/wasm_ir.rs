@@ -487,10 +487,18 @@ fn measure(
         let own = tree == root || own_recipe(root, side.sha.as_deref());
         let recipe = crate::size::recipe_key(if own { &tree } else { root }, &tree)?;
         let key = format!("{}; {recipe}", tools.full_key());
-        let cached = side
+        let mut cached = side
             .sha
             .as_deref()
             .map_or_default(|s| load(&cache, s, &key, &hashes));
+        if cached.len() < programs.len()
+            && let Some(path) = side
+                .sha
+                .as_deref()
+                .and_then(|sha| crate::tag_reference::file(root, sha, "wasm-ir.tsv"))
+        {
+            cached.extend(read_cache(&path, &key, &hashes));
+        }
         let missing: Vec<(&str, &str)> = programs
             .iter()
             .copied()
@@ -586,7 +594,11 @@ pub(crate) fn version(tool: &Path) -> String {
 /// The cached counts of commit `sha` under `key`; none when the key
 /// differs, and none for a program whose source hash is not `hashes`'.
 fn load(cache: &Path, sha: &str, key: &str, hashes: &BTreeMap<String, String>) -> Counts {
-    let Ok(text) = fs::read_to_string(cache.join(format!("{sha}.tsv"))) else {
+    read_cache(&cache.join(format!("{sha}.tsv")), key, hashes)
+}
+
+fn read_cache(path: &Path, key: &str, hashes: &BTreeMap<String, String>) -> Counts {
+    let Ok(text) = fs::read_to_string(path) else {
         return Counts::new();
     };
     let mut lines = text.lines();

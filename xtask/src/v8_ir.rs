@@ -478,6 +478,10 @@ fn tree_of(root: &Path, side: &Side) -> PathBuf {
 /// commit's guests per commit and recipe (in `target/v8-ir/cache/`, the
 /// guests themselves in `target/v8-ir/guests/`): a recipe change rebuilds
 /// the guests, and only a guest whose bytes changed is counted again.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one scoped pool builds, deduplicates and counts the sides"
+)]
 fn measure(
     root: &Path,
     valgrind: &Path,
@@ -534,9 +538,33 @@ fn measure(
         }
         let mut jobs = 0;
         let built = sides.iter().try_for_each(|side| {
-            let guests = contents_of(root, side, head_built)?;
-            let driver = Arc::new(driver(&tree_of(root, side), root)?);
+            let tree = tree_of(root, side);
+            if let Some(sha) = &side.sha {
+                checkout(root, &tree, sha)?;
+            }
+            let driver = Arc::new(driver(&tree, root)?);
             let key = key_of(method, &driver);
+            let own = side
+                .sha
+                .as_ref()
+                .is_none_or(|sha| size::builds_itself(root, sha));
+            let recipe = size::recipe_key(if own { &tree } else { root }, &tree)?;
+            if let Some(rows) = side
+                .sha
+                .as_ref()
+                .and_then(|sha| retained_guests(root, sha, &recipe, &driver.hash, &key, &hashes))
+            {
+                let mut ids = BTreeMap::new();
+                for (guest, id, counts) in rows {
+                    by_content
+                        .entry(id.clone())
+                        .or_insert_with(|| (key.clone(), counts));
+                    ids.insert(guest.to_owned(), id);
+                }
+                contents.push(ids);
+                return Ok(());
+            }
+            let guests = contents_of(root, side, &tree, own, &recipe, head_built)?;
             let mut ids = BTreeMap::new();
             for (name, guest) in guests {
                 let id = format!("{guest}.{}", driver.hash);
@@ -588,30 +616,44 @@ fn measure(
         .collect())
 }
 
+/// Guest bytes aren't needed when both the historical recipe-to-content
+/// map and every selected count under this driver and method are verified.
+fn retained_guests(
+    root: &Path,
+    sha: &str,
+    recipe: &str,
+    driver: &str,
+    key: &str,
+    hashes: &BTreeMap<String, String>,
+) -> Option<Vec<(&'static str, String, Counts)>> {
+    let map = load_guests(&crate::tag_reference::file(root, sha, "v8.guests")?, recipe)?;
+    GUESTS
+        .into_iter()
+        .map(|guest| {
+            let id = format!("{}.{driver}", map.get(guest)?);
+            let file = crate::tag_reference::file(root, sha, &format!("{id}.tsv"))?;
+            let counts = read_cache(&file, key, hashes);
+            (counts.len() == hashes.len()).then_some((guest, id, counts))
+        })
+        .collect()
+}
+
 /// The contents of `side`'s guests: a commit's from the cache when known
 /// under its recipe, else built and stored.
 fn contents_of(
     root: &Path,
     side: &Side,
+    tree: &Path,
+    own: bool,
+    recipe: &str,
     head_built: bool,
 ) -> Result<BTreeMap<String, String>, String> {
     let dir = root.join("target/v8-ir");
     let (cache, store) = (dir.join("cache"), dir.join("guests"));
-    let tree = tree_of(root, side);
-    let own = match &side.sha {
-        Some(sha) => {
-            // Checked out either way, since its toolchain builds it and its
-            // host drives its guests.
-            checkout(root, &tree, sha)?;
-            size::builds_itself(root, sha)
-        }
-        None => true,
-    };
-    let recipe = size::recipe_key(if own { &tree } else { root }, &tree)?;
     let known = side
         .sha
         .as_deref()
-        .and_then(|s| load_guests(&cache, s, &recipe))
+        .and_then(|s| load_guests(&cache.join(format!("{s}.guests")), recipe))
         .filter(|ids| {
             ids.values()
                 .all(|id| store.join(format!("{id}.wasm")).exists())
@@ -621,7 +663,7 @@ fn contents_of(
         ids
     } else {
         let mut ids = BTreeMap::new();
-        for (guest, path) in guests(root, side, &tree, own, head_built)? {
+        for (guest, path) in guests(root, side, tree, own, head_built)? {
             if !GUESTS.contains(&guest.as_str()) {
                 continue;
             }
@@ -632,7 +674,7 @@ fn contents_of(
             ids.insert(guest, id);
         }
         if let Some(sha) = &side.sha {
-            save_guests(&cache, sha, &recipe, &ids)?;
+            save_guests(&cache, sha, recipe, &ids)?;
         }
         ids
     };
@@ -643,8 +685,8 @@ fn contents_of(
 }
 
 /// A commit's guests' contents under `recipe`, when known.
-fn load_guests(cache: &Path, sha: &str, recipe: &str) -> Option<BTreeMap<String, String>> {
-    let text = fs::read_to_string(cache.join(format!("{sha}.guests"))).ok()?;
+fn load_guests(file: &Path, recipe: &str) -> Option<BTreeMap<String, String>> {
+    let text = fs::read_to_string(file).ok()?;
     let mut lines = text.lines();
     if lines.next() != Some(&format!("# {recipe}")) {
         return None;
@@ -684,8 +726,7 @@ fn guests(
     match &side.sha {
         None if head_built => paths(&root.join("target/size/head.tsv")),
         None => Ok(listed(crate::shipped_guests(root, &root.join("target"))?)),
-        Some(sha) => {
-            checkout(root, tree, sha)?;
+        Some(_) => {
             if own {
                 println!("v8-ir: building the {} with its own recipe", side.label);
                 paths(&size::size_head(tree)?)
@@ -1016,7 +1057,11 @@ fn generated(cg: &str, maps: &[(u64, u64, bool)]) -> Result<u64, String> {
 /// The cached counts of the guest with content `id` under `key`, each kept
 /// only while its program's source hash is `hashes`'.
 fn load(cache: &Path, id: &str, key: &str, hashes: &BTreeMap<String, String>) -> Counts {
-    let Ok(text) = fs::read_to_string(cache.join(format!("{id}.tsv"))) else {
+    read_cache(&cache.join(format!("{id}.tsv")), key, hashes)
+}
+
+fn read_cache(path: &Path, key: &str, hashes: &BTreeMap<String, String>) -> Counts {
+    let Ok(text) = fs::read_to_string(path) else {
         return Counts::new();
     };
     let mut lines = text.lines();

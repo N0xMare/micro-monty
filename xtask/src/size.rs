@@ -112,7 +112,9 @@ pub(crate) fn gate(
             recipe_key(&root, &tree)?
         };
         let same = inputs(&root, &sha)?;
-        let cached = load(&cache, &sha, &key).or_else(|| load(&cache, &same, &key));
+        let cached = load(&cache, &sha, &key)
+            .or_else(|| load(&cache, &same, &key))
+            .or_else(|| read_cache(&crate::tag_reference::file(&root, &sha, "size.tsv")?, &key));
         let got = if let Some(cached) = cached {
             save(&cache, &sha, &key, &cached)?;
             cached
@@ -646,7 +648,11 @@ fn cache_file(cache: &Path, sha: &str) -> PathBuf {
 /// Commit `sha`'s cached sizes under `key`; none when absent or the key
 /// differs.
 fn load(cache: &Path, sha: &str, key: &str) -> Option<Sizes> {
-    let text = fs::read_to_string(cache_file(cache, sha)).ok()?;
+    read_cache(&cache_file(cache, sha), key)
+}
+
+fn read_cache(path: &Path, key: &str) -> Option<Sizes> {
+    let text = fs::read_to_string(path).ok()?;
     let mut lines = text.lines();
     if lines.next() != Some(&format!("# {key}")) {
         return None;
