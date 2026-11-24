@@ -2062,7 +2062,13 @@ differs:
   with them which keys the walk passes: a dict of 8 entries or fewer,
   whose table mm keeps in another form, and a table that grows at other
   sizes than CPython's (mm grows a small table fourfold), so an insert by
-  `__eq__` replaces it at other points \[M\].
+  `__eq__` replaces it at other points \[M\]. A merge of a dict into one
+  that is empty when it starts (`dict(d)`, `d.copy()`, `{**d}`,
+  `{} | d`) compares the keys whose hashes collide, where CPython copies
+  a source with few or no deleted entries without comparing: an `__eq__`
+  with a side effect runs on mm only, and one that changes the source's
+  size there ends the merge with `RuntimeError: dict mutated during
+  update` where CPython's copy completes \[M\].
 - **A `NameError`'s import hint** names only a module this build
   imports; one the sandbox leaves out gets its redirect sentence instead,
   and the other stdlib module names CPython hints (213 with the default

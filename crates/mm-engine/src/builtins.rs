@@ -8321,18 +8321,19 @@ fn bi_tuple(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn dict_fill_phase(vm: &mut Vm, src: Value, reg: u64) -> Result<(Value, u64), Raised> {
     use crate::set::{act, phase};
-    let src = match vm.backing(src) {
+    let (src, view) = match vm.backing(src) {
         Some(b) if b.is_obj_kind(ty::DICT as u8) && vm.uflags(src) & crate::class::f::ITER == 0 => {
-            b
+            (b, 0)
         }
-        // A dict's items view: its pairs, as the dict's entries.
+        // A dict's items view: its pairs, as the dict's entries, with the
+        // error of an iterator over them when the dict changes size.
         _ if vm.type_of(src) == T::dict_items && vm.vslot(src, 0).is_obj_kind(ty::DICT as u8) => {
-            vm.vslot(src, 0)
+            (vm.vslot(src, 0), act::VIEW)
         }
-        _ => src,
+        _ => (src, 0),
     };
     if src.is_obj_kind(ty::DICT as u8) {
-        return Ok((src, phase(act::DICT, 0, reg, 0)));
+        return Ok((src, phase(act::DICT | view, 0, reg, 0)));
     }
     if vm.user_class(src).is_some() && vm.backing(src).is_none() {
         return Err(vm.need_py());

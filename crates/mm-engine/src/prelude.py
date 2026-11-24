@@ -762,8 +762,7 @@ def _op_binop(a, b, op, inplace):
         return a
     if tu is dict and type(ub) is dict and op == 10:
         out = ua if inplace else _dict((ua,), _MISSING)
-        for k, v in ub.items():
-            _dset(out, k, v)
+        _dict_fill(out, ub)
         return a if inplace else out
     if op == 5 and (tu is str or tu is bytes):
         # The format's value; the right operand as given (a str subclass's
@@ -1553,8 +1552,12 @@ def _pair_list(item):
 
 def _dict_fill(d, src):
     if type(src) is dict:
+        # As `_bulk`'s dict phase, CPython's `dict_merge`.
+        n = len(src)
         for k, v in src.items():
             _dset(d, k, v)
+            if len(src) != n:
+                raise RuntimeError('dict mutated during update')
         return
     if hasattr(src, 'keys'):
         for k in src.keys():
@@ -6233,6 +6236,11 @@ def _bulk(r, prog, pc, i, res):
             i = 0
             pc += 1
             continue
+        # A dict's entries raise once the dict changed size, after the
+        # insert that changed it (CPython's `dict_merge`; an items view's
+        # iterator, flag 16384, in `PyDict_MergeFromSeq2`). No Python code
+        # ran since a phase that began natively did.
+        n = len(src) if a == 0 else -1
         while True:
             t = _more(src, i, p & 8192, None)
             if t is None:
@@ -6260,6 +6268,10 @@ def _bulk(r, prog, pc, i, res):
                         pass
                 else:
                     _dict_set_at(out, e, v)
+                if n >= 0 and len(src) != n:
+                    if p & 16384:
+                        raise RuntimeError('dictionary changed size during iteration')
+                    raise RuntimeError('dict mutated during update')
                 continue
             if h is None:
                 # An intersection hashes as `hash()` does (`set_intersection`).

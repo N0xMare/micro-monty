@@ -726,14 +726,16 @@ class OrderedDict(dict):
         # CPython's `mutablemapping_update`: each key is stored through
         # the class's `__setitem__`, a mapping is read through `keys()`
         # and `[]`, and pairs unpack as `mutablemapping_add_pairs` does.
-        # An exact dict into a class that keeps dict's store stays native.
+        # An exact dict is read as a list of its items, so a key's `__eq__`
+        # that changes it changes nothing read, and into a class that keeps
+        # dict's store the pairs stay native.
         own = type(self).__setitem__ is not dict.__setitem__
         if type(other) is dict:
             if own:
                 for k, v in list(other.items()):
                     self[k] = v
             else:
-                dict.update(self, other)
+                dict.update(self, list(other.items()))
         elif hasattr(other, 'keys'):
             for k in other.keys():
                 self[k] = other[k]

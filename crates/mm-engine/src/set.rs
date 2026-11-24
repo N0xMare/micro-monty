@@ -82,6 +82,9 @@ pub(crate) mod act {
     pub const ITEMS: u64 = 1 << 13;
     /// Flag: a dict source is a keys view, read a key at a time as
     /// CPython's `set_update_iterable` does: an `ADD` does not presize.
+    /// On a `DICT` phase, the source is an items view: a size change
+    /// raises its iterator's error, not `dict_merge`'s (the prelude's
+    /// `_bulk`).
     pub const VIEW: u64 = 1 << 14;
 }
 
