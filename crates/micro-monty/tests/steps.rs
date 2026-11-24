@@ -2880,6 +2880,15 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "junk = [str(i) * 20 for i in range(8000)]",
         60,
     ),
+    // Starting each task and blocking on f needs no guest call or loop.
+    // Check every task's outcome: before in-place waiters, the program
+    // completed while most of its tasks failed registration (MemoryError).
+    (
+        Row::Bounded,
+        "import asyncio\nawait asyncio.sleep(0)\nloop = asyncio.get_running_loop()\nf = loop.create_future()\nasync def w():\n    await f",
+        "ts = [asyncio.create_task(w()) for _ in range(40_000)]\nawait asyncio.sleep(0)\nf.set_result(1)\nawait asyncio.sleep(0)\nassert all(t.result() is None for t in ts)",
+        1,
+    ),
     // Loop callbacks with no call or loop in their body: the scheduler
     // starts each one, and the start is a safepoint, as `_aio_callback`'s
     // `CALL_EX` was. Entered without one, 300,000 done callbacks were one

@@ -56,6 +56,13 @@ const FRAME_WORDS: usize = 3;
 /// ([`Vm::settle_work`]), so one visit can pass it.
 const CANCEL_STEP: u64 = 1 << 14;
 
+/// The task turns and gather notifications between the scheduler's own
+/// checks (`Vm::sched_due`): a task that starts, awaits and blocks with
+/// no call or loop passes no safepoint, so 200,000 of them were one step
+/// of 66.9 ms [M]; a check every 256 is a step of well under 1 ms.
+const SCHED_TURNS: u32 = 256;
+const SCHED_BURNED: u64 = 1 << 14;
+
 /// A cancel in progress ([`Vm::cancel_walk`]).
 struct CancelWalk {
     root: Value,
@@ -2140,6 +2147,13 @@ impl Vm {
                     Ready::Task(i) => i,
                     Ready::Gather(g, c) => {
                         self.check_gather(g, c);
+                        if self.sched_due() {
+                            let st = self.idle_state();
+                            if let Some(r) = self.safepoint(&st) {
+                                self.loop_flags |= crate::vm::LOOP_SKIP_PARK;
+                                return Next::Park(r, st);
+                            }
+                        }
                         continue;
                     }
                     Ready::Call(..) | Ready::Handle(_) => {
@@ -2246,7 +2260,14 @@ impl Vm {
                         self.exc = exc;
                         return Next::Raise(st);
                     }
-                    Ok(Some(st)) => return Next::Run(st),
+                    Ok(Some(st)) => {
+                        if self.sched_due()
+                            && let Some(r) = self.safepoint(&st)
+                        {
+                            return Next::Park(r, st);
+                        }
+                        return Next::Run(st);
+                    }
                     Ok(None) => continue,
                     // A first start with no room for its stack: as a
                     // callback's start (the task is still unstarted).
@@ -4101,6 +4122,20 @@ impl Vm {
             }
         }
         None
+    }
+
+    /// Whether the scheduler makes a check before what it runs next: every
+    /// `SCHED_TURNS` task turns and gather notifications, or sooner after
+    /// native work past `SCHED_BURNED` or with the fuel spent. A task can
+    /// start and block without passing an instruction's safepoint. This
+    /// check charges only ticks already run.
+    fn sched_due(&mut self) -> bool {
+        self.sched_turns += 1;
+        if self.sched_turns < SCHED_TURNS && self.burned <= SCHED_BURNED && self.fuel != Some(0) {
+            return false;
+        }
+        self.sched_turns = 0;
+        true
     }
 
     /// The registers of the scheduler between tasks: the trampoline's, with

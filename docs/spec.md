@@ -1891,6 +1891,11 @@ them, `burned`), or spent the fuel, left the tick counter at most 1, and
 only then does `CHECK` run the safepoint. Fuel totals do not change: a
 check charges only the safepoints that ran.
 
+The scheduler also checks when it starts a task or finishes a gather
+notification: every 256 of these turns, after more than 16,384 units of
+native work, or when the fuel runs out. These turns need not pass any
+bytecode check. The scheduler check adds no tick of its own.
+
 **Regular checks.** The checks every run of a cell makes at the same
 safepoints, however a host slices it (`Vm::regular_check`): where the
 session's ticks reach a multiple of `TICKS` (the phase, `sp_phase`,

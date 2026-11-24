@@ -498,6 +498,9 @@ impl Vm {
         // is not kept alive.
         self.consumed.clear();
         self.partial = None;
+        // Restart the scheduler's check interval in both continuations:
+        // otherwise their next check, and therefore collection, can differ.
+        self.sched_turns = 0;
         // The stopped task's registers are the GC's running frame; between
         // cells and while waiting, no frame runs (an empty trampoline frame).
         let st = if let Some(s) = &self.saved {
@@ -2384,6 +2387,7 @@ impl Vm {
             stop_wait,
             cb_slots,
             callback_queue: 0,
+            sched_turns: 0,
             task_counter,
             task_names,
             context,

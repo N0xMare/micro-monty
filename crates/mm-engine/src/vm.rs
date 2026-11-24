@@ -1038,6 +1038,11 @@ pub struct Vm {
     /// gather's children (`Vm::callback_slots`); not in the image, which
     /// holds both terms: a restore counts it (`Vm::count_callback_queue`).
     pub(crate) callback_queue: usize,
+    /// The task turns and gather notifications `Vm::next_task` has run
+    /// since it last made a check of its own: past `SCHED_TURNS` it makes
+    /// one, so a run of them is no single step. Snapshot preparation and
+    /// restore both reset it; it is not in the image.
+    pub(crate) sched_turns: u32,
     /// Tasks named so far (`Task-N`), across cells as CPython's counter.
     pub(crate) task_counter: u64,
     /// Names the program gave tasks: a dict from task to name, or `None`.
@@ -1411,6 +1416,7 @@ impl Vm {
             stop_wait: 0,
             cb_slots: 0,
             callback_queue: 0,
+            sched_turns: 0,
             task_counter: 0,
             task_names: Value::NONE,
             context: Value::NONE,
