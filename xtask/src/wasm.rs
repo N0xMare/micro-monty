@@ -173,8 +173,6 @@ fn invoke_main(wasmtime: &Path, module: &Path, what: &str) -> Result<(), String>
 /// crates, the facade API or the snapshot format (AGENTS.md).
 pub(crate) fn host() -> Result<(), String> {
     let root = workspace_root();
-    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
-    let dir = root.join("crates/mm-wasm-host");
     let mut guests = Vec::new();
     for target in TARGETS {
         let status = crate::shipped_build(target)
@@ -217,17 +215,6 @@ pub(crate) fn host() -> Result<(), String> {
         "wasm32-unknown-unknown",
         &alt.join("wasm32-unknown-unknown/release/mm_wasm_guest.wasm"),
     )?;
-    let host_cargo = |args: &[&str]| {
-        let mut command = Command::new(&cargo);
-        command
-            .current_dir(&dir)
-            .args(args)
-            .env_remove("RUSTFLAGS")
-            .env_remove("CARGO_ENCODED_RUSTFLAGS")
-            .env_remove("RUSTC_BOOTSTRAP")
-            .env_remove("CARGO_TARGET_DIR");
-        command
-    };
     let status = host_cargo(&[
         "clippy",
         "--release",
@@ -256,6 +243,18 @@ pub(crate) fn host() -> Result<(), String> {
         println!("wasm-host: {target} guest passes the mm-wasm-host tests");
     }
     Ok(())
+}
+
+pub(crate) fn host_cargo(args: &[&str]) -> Command {
+    let mut command = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned()));
+    command
+        .current_dir(workspace_root().join("crates/mm-wasm-host"))
+        .args(args)
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env_remove("RUSTC_BOOTSTRAP")
+        .env_remove("CARGO_TARGET_DIR");
+    command
 }
 
 /// `cargo xtask js-host`: `hosts/js`' tests (`node --test`, no `npm ci`:

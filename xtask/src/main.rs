@@ -297,6 +297,12 @@ fn main() -> ExitCode {
         Some("wasm-ir") => wasm_ir::run(&rest),
         Some("native-ir") => native_ir::run(&rest),
         Some("replay-ir") => replay_ir::run(&rest),
+        Some("replay-ir-build") if rest.is_empty() => {
+            let root = workspace_root();
+            host_target().and_then(|host| {
+                replay_worker::build(&root, &root.join("target/replay-ir/build"), &host).map(|_| ())
+            })
+        }
         Some("v8-ir") => v8_ir::run(&rest),
         Some("wasm-opt") => wasm::wasm_opt_command(&rest),
         Some("gc-stress") => gc_stress::run(&rest),
@@ -597,7 +603,7 @@ fn check(args: &[String]) -> Result<(), String> {
             .run(mm_task(&["durability", "--cross-target"])),
         // Every recorded real cell replayed through mm-cell-worker.
         Stage::new("real-replay")
-            .after(&["mm"])
+            .after(&["size-head"])
             .run(release_cargo(&[
                 "build",
                 "--profile",
@@ -656,7 +662,7 @@ fn check(args: &[String]) -> Result<(), String> {
                 corpus
             }),
         Stage::new("embedding-bench")
-            .after(&["mm"])
+            .after(&["size-head"])
             .run(release_cargo(&[
                 "run",
                 "--release",
@@ -789,14 +795,17 @@ fn check(args: &[String]) -> Result<(), String> {
             "--base",
             ir_base,
         ])));
-        // The recorded real sessions' Ir on the shipped replay worker,
-        // built beside shipped-mm's mm (the same target directory). Its
-        // builds and replays fill cores for minutes, so it waits for the
-        // stages with wall-clock limits; an Ir count does not care when it
-        // runs.
+        // Build in replay-ir's own target directory, at low priority. Its
+        // callgrind pool still waits for all the timeout-sensitive suites.
+        stages.push(Stage::new("replay-ir-build").after(&["mm"]).run({
+            let mut build = task(&["replay-ir-build"]);
+            build.env("CARGO_BUILD_JOBS", "2");
+            build
+        }));
         stages.push(
             Stage::new("replay-ir")
                 .after(&[
+                    "replay-ir-build",
                     "shipped-mm",
                     "durability",
                     "durability-cross",
@@ -818,9 +827,24 @@ fn check(args: &[String]) -> Result<(), String> {
             at,
             Stage::new("overflow-wasip1").run(task(&["overflow-wasip1"])),
         );
+        // The host has its own Cargo workspace. Compiling its tests does
+        // not use a guest; running them does. Limit this early build's
+        // parallelism alongside the urgent test and durability stages.
+        stages.push(
+            Stage::new("wasm-host-build")
+                .after(&["mm"])
+                .run(wasm::host_cargo(&[
+                    "test",
+                    "--release",
+                    "--locked",
+                    "--no-run",
+                    "--jobs",
+                    "2",
+                ])),
+        );
         stages.push(
             Stage::new("wasm-host")
-                .after(&["size"])
+                .after(&["size-head", "wasm-host-build"])
                 .run(task(&["wasm-host"])),
         );
         // The JS host's tests on the guests `size-head` built, with the
