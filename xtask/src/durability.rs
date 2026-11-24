@@ -147,6 +147,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut fine = FINE.to_owned();
     let mut timeout = MM_TIMEOUT_SECS;
     let mut cross = false;
+    let mut built = false;
     let mut record = false;
     let mut report_only = false;
     let mut it = args.iter();
@@ -154,6 +155,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         match a.as_str() {
             "--filter" => filter = Some(it.next().ok_or("--filter needs a substring")?.clone()),
             "--cross-target" => cross = true,
+            "--cross-target-built" => {
+                cross = true;
+                built = true;
+            }
             "--record" => record = true,
             "--report-only" => report_only = true,
             "--every" => every = Some(it.next().ok_or("--every needs N or N:M")?.clone()),
@@ -180,7 +185,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let python = python();
     let oracle = root.join("conformance/oracle.py");
     let alternate = if cross {
-        Some(crate::wasm::wasip1_mm().map(|(wasmtime, module)| Alternate { wasmtime, module })?)
+        Some(
+            crate::wasm::wasip1_mm(built)
+                .map(|(wasmtime, module)| Alternate { wasmtime, module })?,
+        )
     } else {
         None
     };

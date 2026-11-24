@@ -171,10 +171,24 @@ fn invoke_main(wasmtime: &Path, module: &Path, what: &str) -> Result<(), String>
 /// an older build, here the guest built with `mod-uuid`, beside the new
 /// one). Required before pushing changes to the wasm
 /// crates, the facade API or the snapshot format (AGENTS.md).
-pub(crate) fn host() -> Result<(), String> {
+pub(crate) fn host(size_head_built: bool) -> Result<(), String> {
     let root = workspace_root();
     let mut guests = Vec::new();
+    let mut sizes = if size_head_built {
+        crate::size::paths(&root.join("target/size/head.tsv"))?
+    } else {
+        std::collections::BTreeMap::new()
+    };
     for target in TARGETS {
+        if size_head_built && target == "wasm32-unknown-unknown" {
+            guests.push((
+                target,
+                sizes
+                    .remove("mm_wasm_guest.wasm")
+                    .ok_or("no default guest from size-head")?,
+            ));
+            continue;
+        }
         let status = crate::shipped_build(target)
             .args(["--package", "mm-wasm-guest"])
             .status()
@@ -197,7 +211,13 @@ pub(crate) fn host() -> Result<(), String> {
     // the module's custom sections.
     guests.push((
         "wasm32-unknown-unknown (bundle guest)",
-        shipped_bundle_guest("wasm32-unknown-unknown")?,
+        if size_head_built {
+            sizes
+                .remove("mm_wasm_guest_bundle.wasm")
+                .ok_or("no bundle guest from size-head")?
+        } else {
+            shipped_bundle_guest("wasm32-unknown-unknown")?
+        },
     ));
     // A second build for the upgrade test (tests/upgrade.rs): the same
     // source with the opt-in `uuid` module, so its build id differs. Its
@@ -539,12 +559,19 @@ pub(crate) fn tool(var: &str, name: &str) -> Option<PathBuf> {
 /// so the same build id; in the profile `$MM_PROFILE` names, default
 /// `release`) and precompiles it for wasmtime; returns wasmtime and the
 /// precompiled module.
-pub(crate) fn wasip1_mm() -> Result<(PathBuf, PathBuf), String> {
+pub(crate) fn wasip1_mm(built: bool) -> Result<(PathBuf, PathBuf), String> {
     let wasmtime = tool("WASMTIME", "wasmtime").ok_or(
         "mm on wasm32-wasip1 needs wasmtime ($WASMTIME, ~/.local/bin, PATH); run .agents/setup",
     )?;
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let profile = env::var("MM_PROFILE").unwrap_or_else(|_| "release".to_owned());
+    let release = workspace_root().join(format!("target/wasm32-wasip1/{profile}"));
+    let module = release.join("mm.cwasm");
+    // Only check's release graph requests this: conformance built and ran
+    // the regular CLI with this wasmtime, profile and host in this run.
+    if built {
+        return Ok((wasmtime, module));
+    }
     let status = Command::new(cargo)
         .args([
             "build",
@@ -562,8 +589,6 @@ pub(crate) fn wasip1_mm() -> Result<(PathBuf, PathBuf), String> {
     if !status.success() {
         return Err("release build of mm for wasm32-wasip1 failed".to_owned());
     }
-    let release = workspace_root().join(format!("target/wasm32-wasip1/{profile}"));
-    let module = release.join("mm.cwasm");
     let status = Command::new(&wasmtime)
         .arg("compile")
         .arg(release.join("mm.wasm"))

@@ -218,7 +218,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let (mm, wasmtime) = match options.engine {
         Engine::Cpython => (None, None),
         Engine::MicroMonty if options.wasm => {
-            let (wasmtime, module) = crate::wasm::wasip1_mm()?;
+            let (wasmtime, module) = crate::wasm::wasip1_mm(false)?;
             (Some(module), Some(wasmtime))
         }
         Engine::MicroMonty => (Some(micro_monty_binary()?), None),

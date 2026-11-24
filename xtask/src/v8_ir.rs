@@ -655,31 +655,54 @@ fn contents_of(
         .as_deref()
         .and_then(|s| load_guests(&cache.join(format!("{s}.guests")), recipe))
         .filter(|ids| {
-            ids.values()
-                .all(|id| store.join(format!("{id}.wasm")).exists())
+            GUESTS.iter().all(|guest| {
+                ids.get(*guest).is_some_and(|id| {
+                    fs::read(store.join(format!("{id}.wasm")))
+                        .is_ok_and(|b| format!("{}-{}", source_hash(&b), b.len()) == *id)
+                })
+            })
         });
-    let ids = if let Some(ids) = known {
+    if let Some(ids) = known {
         println!("v8-ir: the {}'s guests cached", side.label);
-        ids
-    } else {
-        let mut ids = BTreeMap::new();
-        for (guest, path) in guests(root, side, tree, own, head_built)? {
-            if !GUESTS.contains(&guest.as_str()) {
-                continue;
-            }
-            let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            let id = format!("{}-{}", source_hash(&bytes), bytes.len());
-            let kept = store.join(format!("{id}.wasm"));
-            fs::write(&kept, &bytes).map_err(|e| format!("{}: {e}", kept.display()))?;
-            ids.insert(guest, id);
+        return Ok(ids);
+    }
+    store_guests(
+        root,
+        side.sha.as_deref(),
+        recipe,
+        guests(root, side, tree, own, head_built)?,
+    )
+}
+
+/// Copy the exact optimized bytes out of a mutable Cargo worktree before
+/// publishing its recipe-to-content map. Size and V8 share this store.
+pub(crate) fn store_guests(
+    root: &Path,
+    sha: Option<&str>,
+    recipe: &str,
+    artifacts: BTreeMap<String, PathBuf>,
+) -> Result<BTreeMap<String, String>, String> {
+    let dir = root.join("target/v8-ir");
+    let (cache, store) = (dir.join("cache"), dir.join("guests"));
+    for d in [&cache, &store] {
+        fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
+    }
+    let mut ids = BTreeMap::new();
+    for (guest, path) in artifacts {
+        if !GUESTS.contains(&guest.as_str()) {
+            continue;
         }
-        if let Some(sha) = &side.sha {
-            save_guests(&cache, sha, recipe, &ids)?;
-        }
-        ids
-    };
+        let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let id = format!("{}-{}", source_hash(&bytes), bytes.len());
+        let kept = store.join(format!("{id}.wasm"));
+        fs::write(&kept, &bytes).map_err(|e| format!("{}: {e}", kept.display()))?;
+        ids.insert(guest, id);
+    }
     if let Some(missing) = GUESTS.iter().find(|g| !ids.contains_key(**g)) {
-        return Err(format!("v8-ir: no {missing} for the {}", side.label));
+        return Err(format!("v8-ir: no {missing} from the guest build"));
+    }
+    if let Some(sha) = sha {
+        save_guests(&cache, sha, recipe, &ids)?;
     }
     Ok(ids)
 }
@@ -724,12 +747,12 @@ fn guests(
     head_built: bool,
 ) -> Result<BTreeMap<String, PathBuf>, String> {
     match &side.sha {
-        None if head_built => paths(&root.join("target/size/head.tsv")),
+        None if head_built => size::paths(&root.join("target/size/head.tsv")),
         None => Ok(listed(crate::shipped_guests(root, &root.join("target"))?)),
         Some(_) => {
             if own {
                 println!("v8-ir: building the {} with its own recipe", side.label);
-                paths(&size::size_head(tree)?)
+                size::paths(&size::size_head(tree)?)
             } else {
                 println!(
                     "v8-ir: building the {} with the head's recipe and its own toolchain (its \
@@ -748,20 +771,6 @@ fn listed(artifacts: Vec<(&'static str, PathBuf)>) -> BTreeMap<String, PathBuf> 
     artifacts
         .into_iter()
         .map(|(name, path)| (name.to_owned(), path))
-        .collect()
-}
-
-/// The paths `size --head` listed in `file`.
-fn paths(file: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
-    let text = fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
-    text.lines()
-        .map(|l| {
-            let f: Vec<&str> = l.split('\t').collect();
-            match f[..] {
-                [name, _, path] => Ok((name.to_owned(), PathBuf::from(path))),
-                _ => Err(format!("{}: no path in `{l}`", file.display())),
-            }
-        })
         .collect()
 }
 

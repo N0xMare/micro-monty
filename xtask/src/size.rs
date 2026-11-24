@@ -121,7 +121,13 @@ pub(crate) fn gate(
         } else {
             println!("size: building the {label}, {name} (cached afterwards)");
             let got: Sizes = if own {
-                build_itself(&tree)?
+                let file = size_head(&tree)?;
+                if let Ok(artifacts) = paths(&file)
+                    && let Err(e) = crate::v8_ir::store_guests(&root, Some(&sha), &key, artifacts)
+                {
+                    println!("size: could not keep reference guests; v8-ir will rebuild: {e}");
+                }
+                read(&file)?
             } else {
                 build(&tree, &refs.join(label))?
                     .into_iter()
@@ -547,12 +553,6 @@ pub(crate) fn builds_itself(root: &Path, sha: &str) -> bool {
     git(root, &args).is_ok()
 }
 
-/// The tree at `tree` builds its shipped artifacts with its own xtask,
-/// into its own `target/`, and returns the sizes it wrote.
-fn build_itself(tree: &Path) -> Result<Sizes, String> {
-    read(&size_head(tree)?)
-}
-
 /// Runs the tree at `tree`'s own `cargo xtask size --head` and returns the
 /// file it wrote: each shipped artifact's size and path ([`write`]).
 pub(crate) fn size_head(tree: &Path) -> Result<PathBuf, String> {
@@ -623,6 +623,20 @@ pub(crate) fn read(file: &Path) -> Result<Sizes, String> {
                 a.to_owned(),
                 b.parse().map_err(|e| format!("{}: {e}", file.display()))?,
             ))
+        })
+        .collect()
+}
+
+/// Paths in the manifest produced by `size --head`.
+pub(crate) fn paths(file: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
+    let text = fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    text.lines()
+        .map(|line| {
+            let fields: Vec<_> = line.split('\t').collect();
+            match fields[..] {
+                [name, _, path] => Ok((name.to_owned(), PathBuf::from(path))),
+                _ => Err(format!("{}: no path in `{line}`", file.display())),
+            }
         })
         .collect()
 }

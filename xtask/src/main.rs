@@ -291,7 +291,9 @@ fn main() -> ExitCode {
         Some("shipped-mm") => shipped_mm(&rest),
         Some("shipped-build") => shipped::shipped_build_cli(&rest),
         Some("wasm") => wasm::run(&rest),
-        Some("wasm-host") if rest.is_empty() => wasm::host(),
+        Some("wasm-host") if rest.is_empty() || rest == ["--size-head-built"] => {
+            wasm::host(!rest.is_empty())
+        }
         Some("js-host") if rest.is_empty() => wasm::js_host(),
         Some("wasm-wall") => wasm_wall::run(&rest),
         Some("wasm-ir") => wasm_ir::run(&rest),
@@ -600,7 +602,11 @@ fn check(args: &[String]) -> Result<(), String> {
         // `nice` 10, its heaviest cases ran past the 120 s wall limit [M].
         Stage::new("durability-cross")
             .after(&["conformance-wasip1", "durability"])
-            .run(mm_task(&["durability", "--cross-target"])),
+            .run(mm_task(if release_gate {
+                &["durability", "--cross-target-built"]
+            } else {
+                &["durability", "--cross-target"]
+            })),
         // Every recorded real cell replayed through mm-cell-worker.
         Stage::new("real-replay")
             .after(&["size-head"])
@@ -789,12 +795,11 @@ fn check(args: &[String]) -> Result<(), String> {
     }
     if cfg!(target_os = "linux") {
         // V8's instructions on the guests the size-head stage built.
-        stages.push(Stage::new("v8-ir").after(&["size-head"]).run(task(&[
-            "v8-ir",
-            "--head-built",
-            "--base",
-            ir_base,
-        ])));
+        stages.push(
+            Stage::new("v8-ir")
+                .after(&["size-head", "size-references"])
+                .run(task(&["v8-ir", "--head-built", "--base", ir_base])),
+        );
         // Build in replay-ir's own target directory, at low priority. Its
         // callgrind pool still waits for all the timeout-sensitive suites.
         stages.push(Stage::new("replay-ir-build").after(&["mm"]).run({
@@ -845,7 +850,7 @@ fn check(args: &[String]) -> Result<(), String> {
         stages.push(
             Stage::new("wasm-host")
                 .after(&["size-head", "wasm-host-build"])
-                .run(task(&["wasm-host"])),
+                .run(task(&["wasm-host", "--size-head-built"])),
         );
         // The JS host's tests on the guests `size-head` built, with the
         // second build `wasm-host` made for its own upgrade test: no build
