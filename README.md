@@ -14,12 +14,12 @@ as part of its conformance gate.
 
 ## Size and specs
 
-Measured on v0.0.2 (the release commit, on `7e59d6c`) [M]:
+Measured on v0.0.3 (the release commit, on `0c970b8` and its landing) [M]:
 
-- `hello.wasm` 2,233,281 B, native `hello` 2,413,200 B (stripped, the whole
+- `hello.wasm` 2,259,536 B, native `hello` 2,451,824 B (stripped, the whole
   engine and its default stdlib).
 - About 95 KB per set-up session, and 0.10 ms for a new session plus setup
-  (measured on v0.0.1; not re-measured for 0.0.2).
+  (measured on v0.0.1; not re-measured since).
 - Durable snapshots: a cell parked anywhere restores in a new process,
   natively or on either wasm target, on a build with the same build id.
 - 100% of the model-written code-mode solutions that pass on CPython pass
@@ -56,7 +56,7 @@ From crates.io, as a library (`cargo add micro-monty`):
 
 ```toml
 [dependencies]
-micro-monty = "0.0.2"
+micro-monty = "0.0.3"
 ```
 
 The [user guide](docs/user-guide.md) is the crate's documentation: embedding,

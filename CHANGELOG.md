@@ -10,7 +10,34 @@ repository. The 0.0.1 entry stays as published: the docs it cites
 hashes are pre-release history, kept in the private archive
 `N0xMare/micro-monty-archive` (branch `history-0.0.1`).
 
-## 0.0.3 (unreleased)
+## 0.0.3 (2026-11-24)
+
+The third release, from `0c970b8` and the four commits of its landing
+before this one: the idle-state census, `mm-wasm-host`'s wasmtime 50.0.3,
+the dict-merge fix below and the v8-ir floors lowered (this entry as of
+2026-11-24). Every API may have changed since 0.0.2, and images written
+by 0.0.2 do not restore: the build ids below are new.
+
+### Build ids
+
+A snapshot restores only on a build with the id that wrote it [M, on
+the release commit, `micro-monty`'s `build_id` example and `mm
+version`]:
+
+- `744d12b78e3af171ec94f1b6d70d45f8d9f168d2820a378a70a1db5977ebd69a`: the facade's default features: an
+  embedding with no opt-in module, the shipped mm-wasm guest and the
+  bundle guest, and `mm-cell-worker` built on its own.
+- `57939cb9cbfe237dbe0244b862fd87772f3a207dbd623192d5692f16b2389579`: with `mod-uuid`, `mod-unicodedata`,
+  `mod-html-entities` and `mod-ast`, as `mm` (native and `wasm32-wasip1`)
+  builds it, and any binary built together with `mm`.
+
+### Published crates
+
+The same six as 0.0.2, at 0.0.3 and pinning each other with `=0.0.3`:
+`micro-monty` and `mm-core`, `mm-compile`, `mm-parse`, `mm-engine` and
+`mm-stdlib`. Still not published: `mm-cli`, `mm-cell-worker`,
+`mm-wasm-abi`, `mm-wasm-guest`, `mm-wasm-host` and `mm-wasm-alloc`. The
+GitHub release also attaches the two mm-wasm guests.
 
 ### Added
 
@@ -73,9 +100,8 @@ hashes are pre-release history, kept in the private archive
   `Session::reset` starts the count anew. The setup's code stays charged
   to the memory limit, and what a cell drops of it is freed by the next
   reclamation. `mm-cell-worker` calls it after each bootstrap it runs or
-  resets to. The mm-wasm guest exports it as `mm_setup_done`
-  (`ABI_VERSION` 2, a required export; a host built for version 1 refuses
-  the guest and the reverse): `Session::setup_done` on the reference host
+  resets to. The mm-wasm guest exports it as `mm_setup_done`, a
+  required export: `Session::setup_done` on the reference host
   and `session.setupDone()` on the JavaScript host, called after the
   definitions and the bootstrap cell, after a setup run again following a
   reset, and after restoring a setup's image.
@@ -86,6 +112,42 @@ hashes are pre-release history, kept in the private archive
   persistent (py-ptc) sessions of five cells or fewer a median 0.960
   (collections 23 to 5 in 29 sessions); allocator calls do not move [M].
   Not in an image: no snapshot format change.
+- `Session::reset_to(&SessionTemplate)`: reset a session to the state a
+  template was captured in, in place of `reset` and a re-run of the setup.
+  The session keeps its host-side settings, park handle, limits, fuel
+  state and hint overrides; call ids, `Task-N` numbers and the safepoint
+  phase continue. It keeps nothing earlier cells loaded, so the next
+  cell's output, fuel and memory are those of a new session after the
+  setup (`reset`, documented now, keeps loaded bundled code and prelude
+  parts). It refuses a template captured under other limits, host
+  definitions, function ids or local time zone with the new
+  `SnapshotError::Mismatch`, and leaves the session unchanged on every
+  error. `Session::outside_reads` counts the session's reads of the wall
+  clock and entropy. `mm-cell-worker`
+  uses it for py-sdk cells: a `Reset` waits for
+  the next `StartCell`, and a bootstrap equal to the one whose state the
+  worker kept is not compiled or run again.
+- A template from `SessionTemplate::capture` is read without the
+  validation walks from its first instantiation or `reset_to`, where
+  0.0.2 walked it once: this build wrote its image from a live session,
+  and the checksum is still compared each time. `from_image` still
+  restores its image checked, as `Engine::restore` always does. A
+  two-cell py-sdk session's reset to its bootstrap takes about 1.87 M
+  fewer instructions [M].
+- The wasm hosts take session templates: the guest exports
+  `mm_template_capture`, `mm_template_instantiate`, `mm_reset_to` and
+  `mm_template_drop`, with `SessionTemplate::capture`, `instantiate`,
+  `instantiate_with` and `Session::reset_to` on `mm-wasm-host` and
+  `SessionTemplate.capture`, `instantiate`, `resetTo` and `dispose` on the
+  JavaScript host, with the native rules for setup, reset and fuel. A
+  template and the sessions made from it share the guest's engine and its
+  compiled host code within one instance; template ids are local to it,
+  and a template used in another instance is `SnapshotError::Mismatch`.
+  Snapshots still carry the compiled host code, for a cold restore. With
+  these and `mm_setup_done` above, the interface is `ABI_VERSION` 3: a
+  host built for 0.0.2's version 1 refuses this release's guests, and
+  the reverse. `mm-wasm-host` restores a parked session into the
+  instance of a session it dropped, keeping its store and memory.
 
 ### Changed
 
@@ -117,7 +179,6 @@ hashes are pre-release history, kept in the private archive
   wasmtime instance, and a durable replay of the 158 typical recorded
   sessions takes 6.5% fewer instructions in all (108.7 G to 101.7 G) [M].
   Charges and fuel do not depend on whether code was decoded yet.
-
 - `SessionTemplate::instantiate` and `Session::reset_to` no longer hash the
   template's image: a trusted read skips the checksum as it skips the
   validation walks. The bytes are the template's own, written by `capture`
@@ -126,6 +187,11 @@ hashes are pre-release history, kept in the private archive
   after the capture (a hardware fault); `Engine::restore` and `from_image`
   check as before. Over the 79 recorded py-sdk sessions the median falls
   4.8% in instructions and the best 10.9% [M]; the others do not move.
+- `str.lower` of a short ASCII str and a `split` at one ASCII delimiter
+  that cuts at most once build their result without scratch buffers, and
+  the hot accessors were chosen again by `bench/hot_set.py`; results and
+  fuel do not change. The instructions against 0.0.2 are under Measured
+  at release.
 
 ### Fixed
 
@@ -449,7 +515,8 @@ hashes are pre-release history, kept in the private archive
   coroutine's old exception for the rest of the module, and that
   exception no longer stays alive (a 180 MiB one ended in `MemoryError`
   where CPython completes). This is the second half of 0.0.2's `send()`
-  known issue, except what Known issues keeps [M, own case 570].
+  known issue; what it left, a handler under one resumption seen by the
+  next, is fixed below (own case 593) [M, own case 570].
 - asyncio near the memory limit no longer drops what the loop accepted.
   A done callback, a `call_soon` entry, a timer or a task's first step
   that has no room to start stays queued: the scheduler waits for one
@@ -480,11 +547,13 @@ hashes are pre-release history, kept in the private archive
   epoch and the build id move.
 - `call_later`, `call_at`, `wait_for` and `as_completed(timeout=)` make
   their deadline at the call, so a NaN delay (`ValueError: Invalid delay:
-  NaN`) or a delay of the wrong type (`call_at('x')`,
+  NaN (not a number)`) or a delay of the wrong type (`call_at('x')`,
   `as_completed(timeout='x')`: `TypeError`) raises there. Before, the call
   returned and the timer's task failed unseen: the timer never fired,
   `wait_for(x, nan)` returned or ended in `RuntimeError`, and
-  `as_completed` raised `TimeoutError` at once.
+  `as_completed` raised `TimeoutError` at once. CPython 3.14.7 takes a
+  NaN delay: `call_later(nan, f)` schedules `f`, which runs, and
+  `wait_for(x, nan)` returns `x`'s result [M]; here the call refuses it.
 - An exception's fields read from its `args` (`OSError.errno`,
   `StopIteration.value`, `SystemExit.code`, `ImportError.msg`,
   `SyntaxError`'s), a call's `__defaults__`, and `isinstance` and
@@ -671,31 +740,90 @@ hashes are pre-release history, kept in the private archive
     error it ended with as its argument (`(CancelledError('m'),)` where
     CPython has `('m',)`), and a task that failed after a cancel lost its
     "never retrieved" report (own case 600).
+- Differences from CPython found by the 0.0.3 campaign's program
+  generators, each checked against python3.14 [M]:
+  - A walrus in a generator expression binds in the scope around it, as
+    in the other comprehensions: `any((hit := x) < 0 for x in xs)` left
+    `hit` unchanged, or raised `NameError` without an earlier binding.
+    CPython's SyntaxErrors for a walrus that rebinds an iteration
+    variable now hold for generator expressions, and one directly in a
+    class body raises for every comprehension kind (own case 604).
+  - `reversed(d)` and the reversed views of a dict are live iterators
+    with CPython's types (`dict_reversekeyiterator`, ...): a loop that
+    changes the dict's size raises `RuntimeError: dictionary changed
+    size during iteration` at its next step, where they walked a copy
+    and finished (own case 605).
+  - `bytes(x)` calls `__bytes__` first, also for a str, int or list
+    subclass, which were read as text, a count or items, and an object
+    it cannot convert raises CPython's `cannot convert 'C' object to
+    bytes` (own case 606).
+  - `o.__class__ = B` raises `TypeError` with CPython's text where
+    CPython refuses it, and otherwise says micro-monty does not support
+    the assignment; it was ignored, the object keeping its class (own
+    case 607).
+  - `reversed(o)` of a class with `__getitem__` and no `__len__` raises
+    CPython's `TypeError: object of type 'S' has no len()` (own case
+    608), and `e.add_note(None)` names `None` as CPython does (own case
+    609).
+  - A host record's class has a namedtuple's `__new__`: with `R =
+    type(rec)`, `R(4)` and `R(a=5)` make a record, and its argument
+    errors are CPython's (`tests/host_calls.rs`).
+  - A merge of a dict whose key's `__eq__` changes the source's size
+    raises `RuntimeError: dict mutated during update` after the insert,
+    as CPython's `dict_merge` does, in `update`, `|=`, `|`, `{**d}` and
+    the dict-subclass forms, and an items view raises `dictionary
+    changed size during iteration`; such a merge completed with what was
+    left. `OrderedDict.update` reads a list of an exact dict's items, as
+    CPython does (own case 610).
 
-### Added
+### Measured at release [M]
 
-- `Session::reset_to(&SessionTemplate)`: reset a session to the state a
-  template was captured in, in place of `reset` and a re-run of the setup.
-  The session keeps its host-side settings, park handle, limits, fuel
-  state and hint overrides; call ids, `Task-N` numbers and the safepoint
-  phase continue. It keeps nothing earlier cells loaded, so the next
-  cell's output, fuel and memory are those of a new session after the
-  setup (`reset`, documented now, keeps loaded bundled code and prelude
-  parts). It refuses a template captured under other limits, host
-  definitions, function ids or local time zone with the new
-  `SnapshotError::Mismatch`, and leaves the session unchanged on every
-  error. `Session::outside_reads` counts the session's reads of the wall
-  clock and entropy. `mm-cell-worker`
-  uses it for py-sdk cells: a `Reset` waits for
-  the next `StartCell`, and a bootstrap equal to the one whose state the
-  worker kept is not compiled or run again.
-- A template from `SessionTemplate::capture` is read without the
-  validation walks from its first instantiation or `reset_to`, where
-  0.0.2 walked it once: this build wrote its image from a live session,
-  and the checksum is still compared each time. `from_image` still
-  restores its image checked, as `Engine::restore` always does. A
-  two-cell py-sdk session's reset to its bootstrap takes about 1.87 M
-  fewer instructions [M].
+On the release commit's tree (`0c970b8` and its landing, with the
+version bump):
+
+- 546 of the 568 CPython-scored cases of Monty's test corpus
+  (`conformance/results/micro-monty.md`), as at 0.0.2; three of the
+  failing cases now stop at a later assert.
+- 2,841 recorded cells from 160 real code-mode sessions replay as
+  `conformance/codemode/real/results/gate.jsonl` records them
+  (`gate.py --check`): the same 53 cells as at 0.0.2 differ from their
+  recording, each with its reason there.
+- The codemode census: 1,722 of the 1,722 CPython-passing solutions pass,
+  with CPython's tool calls batch by batch (`conformance/codemode`).
+- The memory bound's probes: a high-water of 1.99 × L over 74 probes,
+  from an exception's text, where 0.0.2 measured 2.01 × L from
+  `bytes.find`'s KMP table (docs/spec.md §11).
+- Shipped sizes (`cargo xtask size`), against 0.0.2: `hello.wasm`
+  2,259,536 B (+26,255 from 2,233,281), native `hello` 2,451,824 B
+  (+38,624 from 2,413,200), `mm_wasm_guest.wasm` 2,355,222 B (+31,196
+  from 2,324,026), `mm_wasm_guest_bundle.wasm` 2,354,493 B (+31,931
+  from 2,322,562), inside the owner's budget of +42,000 B for each.
+- Instructions against v0.0.2's own counts, the pre-tag forms of the Ir
+  gates:
+  - Gated native Ir on the shipped `mm` (`native-ir --base v0.0.2`):
+    `startup` 0.428M against 0.533M (−104,861 instructions), the
+    programs 0.9455 (`interp`) to 1.0054 (`held`): `held`, the program
+    that holds suspended generators, pays for clearing their dead saved
+    registers (accepted in `cd4f79b`), and no other program is past
+    +0.1%. The whole process, startup included, takes 0.614M against
+    0.718M instructions for `startup` (`bench/callgrind.py`).
+  - wasmtime guest instructions (`wasm-ir --base v0.0.2`): geomean
+    0.9946, `startup` −188,086 instructions, the programs 0.9490
+    (`interp`) to 1.0080 (`held`, accepted in `cd4f79b`).
+  - V8's generated code on the `wasm32-unknown-unknown` guests (`v8-ir
+    --base v0.0.2`): geomean 0.9923 on the plain guest and 0.9927 on the
+    bundle guest, the programs 0.9547 (`interp`) to 1.0071 (`held`,
+    accepted in `cd4f79b`).
+  - The recorded real sessions replayed under callgrind against v0.0.2's
+    worker (`replay-ir --base v0.0.2`), 159 compared: Ir without the
+    allocator 0.9169 in total and 0.8770 at the median, allocator calls
+    0.9612 in total; `phase1.codex-sdk-monty.codec-review` diverges on
+    both builds, as in `gate.jsonl`, and is compared on neither side.
+    Past the limits, each under an accept line of the cycle: six
+    sessions' Ir, 1.0054 to 1.0250 (`dea985e`, the Unicode error
+    fields, and `468ab49`, the per-session cost py-ptc sessions carry
+    since 0.0.2), and 52 sessions' allocator calls, 1.0053 to 1.0202
+    (`468ab49`, about 100 calls a py-ptc session).
 
 ### Known issues
 
@@ -844,6 +972,53 @@ hashes are pre-release history, kept in the private archive
 - A `UnicodeEncodeError` raised by encoding an instance of a `str`
   subclass holds the plain `str` as its `object`, where CPython's holds
   the instance itself (`e.object is s`).
+- Carried from 0.0.2, checked on this release's tree:
+  - Restores are still not fully transparent (docs/spec.md §5.1,
+    guarantee 4). A snapshot collects first, so near the memory limit
+    a session that was snapshotted or restored can end with another
+    outcome or fuel than the plain run. An operation that fails part
+    way for memory is charged for what it did, so a snapshot can move
+    the fuel total (not re-measured). Indexing or searching a long
+    non-ASCII str is charged its char-position walk again after every
+    snapshot: `conformance/own/419` spends 251,845 units unparked and
+    parked, and 262,808 with a snapshot every 5,000 units [M].
+  - Memory freed inside a cell is not always reused by that cell: after
+    a fill to `MemoryError` and `del xs`, an `import json` or `from
+    collections import Counter` as the next statement raises
+    `MemoryError` again at 256 MiB, also after `gc.collect()`, where
+    python3.14 completes; with a `print()` between them it runs [M].
+    The next cell recovers.
+  - Steps past the 50 ms bound: a greedy `(a|b)*c` over 450,000 chars
+    and more (228 to 327 ms per slice end at 0.0.2 [M]) and
+    `MemoryError` past about 650,000 chars where CPython completes
+    (`re.fullmatch('(a|b)*', 'ab' * 653_000)` [M]); `del b[::2]` on a
+    64 MiB bytearray and single dict lookups, `map(d.get)`, `%`,
+    itemgetter, comparisons and items views over many colliding keys
+    (69 to 80 ms at 0.0.2 [M]; their code is unchanged, not
+    re-measured).
+  - Restoring a forged image can hang instead of being refused (not
+    re-checked; nothing since 0.0.2 changes it).
+  - Smaller differences from CPython [M]: no `locals` builtin; dict
+    bulk operations never raise `dictionary keys changed during
+    iteration` (`s.update(d.keys())`, `s | d.keys()`,
+    `x.update(d.items())` under an `__eq__` that swaps a key), and some
+    results depend on the table's layout; `BaseException.__str__`
+    called unbound skips the receiver check (`BaseException.__str__(1)`
+    is `''`), has no `__get__`, its `__qualname__` is `'__str__'` and
+    it quotes a `KeyError`'s key; `True + I(1)`, `0.5 + I(1)` and
+    `J(1) + I(1)` call an int subclass's `__radd__` where CPython does
+    not; `in`, `find`, `count`, `index`, `rfind` and `rindex` on
+    `bytes` and `bytearray` refuse an object with `__index__`;
+    `add_done_callback(cb, context=ctx)` does not run `cb` in `ctx`.
+- Found while fixing the dict merge, older than this release [M]: a
+  merge into a dict that is empty when it starts (`dict(d)`,
+  `d.copy()`, `{**d}`, `{} | d`) compares keys whose hashes collide,
+  where CPython copies a source with few or no deleted entries without
+  comparing, so an `__eq__` with a side effect runs here only (docs/
+  user-guide.md); and `f(**m)` refuses a key that is an instance of a
+  `str` subclass with `TypeError: keywords must be strings`, where
+  CPython takes it.
+
 ## 0.0.2 (2026-11-18)
 
 The second release, from `7e59d6c` (this entry as of 2026-11-18). Every API may have changed since 0.0.1, and images written

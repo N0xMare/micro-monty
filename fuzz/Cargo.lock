@@ -334,7 +334,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "micro-monty"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "mm-compile",
  "mm-core",
@@ -345,15 +345,15 @@ dependencies = [
 
 [[package]]
 name = "mm-compile"
-version = "0.0.2"
+version = "0.0.3"
 
 [[package]]
 name = "mm-core"
-version = "0.0.2"
+version = "0.0.3"
 
 [[package]]
 name = "mm-engine"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "mm-compile",
  "mm-core",
@@ -376,7 +376,7 @@ dependencies = [
 
 [[package]]
 name = "mm-parse"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "mm-compile",
  "ruff_python_ast",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "mm-stdlib"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "mm-compile",
  "mm-engine",
@@ -395,7 +395,7 @@ dependencies = [
 
 [[package]]
 name = "mm-wasm-abi"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "micro-monty",
 ]

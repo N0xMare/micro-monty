@@ -1,6 +1,6 @@
 # micro-monty: architecture
 
-Status: released as 0.0.2; this file describes `main`. Owner: n0x.
+Status: released as 0.0.3; this file describes `main`. Owner: n0x.
 
 This is the architecture of micro-monty: how it works, the rules it keeps,
 its contracts with hosts and its limits. Read it before changing engine
@@ -1223,17 +1223,17 @@ because executable formats and code size differ per target. The ceilings
 until 2026-11-13 and the reasons for their raises stay in
 `xtask/size-ceilings.txt`, read-only (owner decision D2).
 
-**Sizes at v0.0.2** [M, the release commit on `7e59d6c`, Rust 1.100.0, binaryen 133,
-`cargo xtask size`]:
+**Sizes at v0.0.3** [M, the release commit on `0c970b8` and its landing, Rust 1.100.0,
+binaryen 133, `cargo xtask size`]:
 
 | Artifact | Bytes |
 |---|---:|
-| `hello.wasm` (`wasm32-unknown-unknown`, after `wasm-opt -Oz`) | 2,233,281 |
-| native `hello` (x86_64, PIE) | 2,413,200 |
-| `mm_wasm_guest.wasm` | 2,324,026 |
-| `mm_wasm_guest_bundle.wasm` | 2,322,562 |
+| `hello.wasm` (`wasm32-unknown-unknown`, after `wasm-opt -Oz`) | 2,259,536 |
+| native `hello` (x86_64, PIE) | 2,451,824 |
+| `mm_wasm_guest.wasm` | 2,355,222 |
+| `mm_wasm_guest_bundle.wasm` | 2,354,493 |
 
-At v0.0.1 (`1cfcde3`; not re-measured for 0.0.2), `hello.wasm` was
+At v0.0.1 (`1cfcde3`; not re-measured since), `hello.wasm` was
 1,811,762 bytes of code and 455,312 of data. Code by crate: mm-engine
 1.02 MB, mm-core 317 KB (almost all inlined heap accessors), mm-compile
 149 KB, std 141 KB, mm-parse 112 KB. The 65 stdlib modules' packed
@@ -3070,8 +3070,13 @@ before. The parts are:
 - fixed tables and capped scratch: the `re` and native-scratch allowances,
   the bundled modules a cell decodes.
 
-The measured high-water is 2.01 × L [M], from `bytes.find`'s KMP table,
-over 73 probes at 16, 64 and 256 MiB; the ratio is the same at each limit.
+The measured high-water is 1.99 × L [M, on the 0.0.3 release tree], from
+an exception's text (`exception_repr_args`: `repr` of a `ValueError`
+whose args are a third of the limit of `'\x00'`s), at 64 and
+256 MiB (1.49 × L at 16 MiB), over 74 probes at 16, 64 and 256 MiB.
+`bytes.find`'s KMP table, 2.01 × L over 73 probes at 0.0.2, now reaches
+0.67 to 0.68 × L at 16 and 64 MiB and ends in `MemoryError` at 256 MiB
+(`bytes_find_kmp`) [M].
 
 Compiling a cell is inside the bound when it goes through
 `Session::compile`: the session reserves 512 bytes per source byte +

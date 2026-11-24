@@ -20,7 +20,7 @@ members = [
 exclude = ["fuzz", "crates/mm-wasm-host"]
 
 [workspace.package]
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 rust-version = "1.100.0"
 license = "MIT AND PSF-2.0 AND Unicode-3.0"
@@ -32,12 +32,12 @@ exclude = ["/tests/", "/benches/"]
 # The published crates pin each other exactly: they are one engine, and a
 # mix of versions is untested (the snapshot build id hashes each engine
 # crate's layouts and codecs, not its version; docs/spec.md §9.3).
-mm-core = { path = "crates/mm-core", version = "=0.0.2" }
-mm-compile = { path = "crates/mm-compile", version = "=0.0.2" }
-mm-engine = { path = "crates/mm-engine", version = "=0.0.2" }
-mm-stdlib = { path = "crates/mm-stdlib", version = "=0.0.2", default-features = false }
-mm-parse = { path = "crates/mm-parse", version = "=0.0.2" }
-micro-monty = { path = "crates/micro-monty", version = "=0.0.2" }
+mm-core = { path = "crates/mm-core", version = "=0.0.3" }
+mm-compile = { path = "crates/mm-compile", version = "=0.0.3" }
+mm-engine = { path = "crates/mm-engine", version = "=0.0.3" }
+mm-stdlib = { path = "crates/mm-stdlib", version = "=0.0.3", default-features = false }
+mm-parse = { path = "crates/mm-parse", version = "=0.0.3" }
+micro-monty = { path = "crates/micro-monty", version = "=0.0.3" }
 mm-wasm-abi = { path = "crates/mm-wasm-abi" }
 mm-wasm-alloc = { path = "crates/mm-wasm-alloc" }
 # Not on crates.io yet; switch to `plakous-cell = "=0.0.x"` once plak publishes it.
