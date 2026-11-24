@@ -2019,6 +2019,31 @@ asyncio.run(main())
     assert_eq!(raw(&vm, state, 4 + 2), 20_000);
 }
 
+#[cfg(feature = "asyncio")]
+#[test]
+fn refuses_waiter_length_past_capacity() {
+    let src = "import asyncio\nawait asyncio.sleep(0)\nf = asyncio.get_running_loop().create_future()\nf.add_done_callback(print)\nf.add_done_callback(print)\n";
+    refuses(
+        src,
+        |_| false,
+        "waiters",
+        |vm| {
+            let mut buf = None;
+            vm.heap.for_each_object(&mut |r, h| {
+                if h.type_id() == ty::FUTURE
+                    && let Ok(w) = vm.heap.get(r, crate::aio::aw::WAITERS)
+                    && w.is_obj_kind(ty::BUF as u8)
+                {
+                    buf = w.as_obj();
+                }
+            });
+            let b = buf.expect("registered callbacks");
+            let slots = vm.heap.header(b).expect("buffer").nvals();
+            vm.set_slot(b, 0, Value::int(i64::from(slots)).expect("small int"));
+        },
+    );
+}
+
 /// Gathers that settle out of order while others are created, checked
 /// by their results: the scheduler's list has holes and is packed.
 #[cfg(feature = "asyncio")]

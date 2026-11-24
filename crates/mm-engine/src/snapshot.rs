@@ -79,7 +79,7 @@ const STACK_SLACK: usize = 1 << 16;
 ///   set tables;
 /// - what an opcode's operands mean, with the same format;
 /// - how frames, generators or coroutines keep their state.
-pub(crate) const SNAPSHOT_EPOCH: u32 = 17;
+pub(crate) const SNAPSHOT_EPOCH: u32 = 18;
 
 /// This build's engine fingerprint for snapshot build ids: what an image
 /// written by this engine means. The layout epoch; the codecs and every
@@ -932,6 +932,7 @@ fn ref_ok(heap: &Heap, v: Value) -> bool {
 #[cfg_attr(mm_shipped, optimize(size))]
 fn check_refs(heap: &Heap) -> Res<()> {
     let mut ok = true;
+    let mut waiters_ok = true;
     heap.for_each_object(&mut |r, h| {
         // The intern table holds untagged string references; mm-core
         // checks it when it reads the heap.
@@ -946,8 +947,22 @@ fn check_refs(heap: &Heap) -> Res<()> {
         ok = w[..n]
             .iter()
             .all(|&b| Value::from_bits(b).is_none_or(|v| ref_ok(heap, v)));
+        if matches!(h.type_id(), ty::TASK | ty::GATHER | ty::FUTURE | ty::SLEEP)
+            && let Ok(v) = heap.get(r, crate::aio::aw::WAITERS)
+            && v.is_obj_kind(ty::BUF as u8)
+            && let Some(b) = v.as_obj()
+        {
+            waiters_ok &= heap
+                .get(b, 0)
+                .ok()
+                .and_then(Value::as_int)
+                .and_then(|n| u32::try_from(n).ok())
+                .is_some_and(|n| n >= 2 && heap.header(b).is_ok_and(|h| n < h.nvals()));
+        }
     });
-    if ok {
+    if !waiters_ok {
+        Err(SnapError::Corrupt("waiters"))
+    } else if ok {
         Ok(())
     } else {
         Err(SnapError::Corrupt("references"))

@@ -3441,7 +3441,7 @@ fn aio_add_cb(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 fn aio_remove_cb(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (f, cb) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
-    let n = vm.remove_done_callback(f, cb)?;
+    let n = vm.remove_done_callback(f, cb);
     vm.new_int(i64::try_from(n).unwrap_or(i64::MAX))
 }
 

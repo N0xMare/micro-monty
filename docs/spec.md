@@ -1762,7 +1762,11 @@ The other primitives (`Lock`, `Event`, `Condition`, the queues,
 prelude, over three engine pieces. A pending task, future or gather keeps
 an ordered list of what waits on it (a gather, a task's wakeup, or a done
 callback), woken in that order when it settles, which gives CPython's FIFO
-release and callback order. A gather is done in its children's done callbacks,
+release and callback order. A single waiter needs no buffer. Further
+registrations append into spare capacity; when it is full, registration
+charges for the scan, drops dead entries and doubles the room for the
+live ones. The image keeps the spare capacity and the reader checks
+that the length fits it. A gather is done in its children's done callbacks,
 as with CPython's `_done_callback`: a child's settle queues one
 notification that names it, and the gather counts them as they run
 (`aw::LEFT`: its distinct children still pending, and its notifications

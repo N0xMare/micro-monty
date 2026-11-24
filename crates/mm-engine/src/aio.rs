@@ -167,7 +167,8 @@ pub(crate) mod aw {
     pub const RESULT: u32 = 0;
     pub const EXTRA: u32 = 1;
     /// What waits on this awaitable, in registration order (CPython's done
-    /// callbacks): `None`, one entry, or a tuple of them. An entry is a
+    /// callbacks): `None`, one entry, or a BUF with a small-int length in
+    /// slot zero followed by its entries and then spare slots. An entry is a
     /// gather it is a child of, a task slot (small int) blocked on it, or a
     /// callable from `add_done_callback`.
     pub const WAITERS: u32 = 2;
@@ -625,20 +626,13 @@ impl Vm {
         // settles only in its own cell: an earlier cell's `FIRST` waiter
         // future holds task wakeups only.
         let held = !self.pays_at_settle(v) && (v.is_obj_kind(ty::GATHER as u8) || self.live(v));
-        let single = !waiters.is_obj_kind(ty::TUPLE as u8);
-        let n = if waiters == Value::NONE {
-            0
-        } else if single {
-            1
-        } else {
-            self.tuple_len(waiters)
-        };
-        for k in 0..n {
-            let g = if single {
-                waiters
-            } else {
-                self.vslot_hot(waiters, u32::try_from(k).unwrap_or(0))
-            };
+        // Slot numbers can be reused. Only the latest registration of a
+        // task blocked on v is its wakeup; an older one might still be in
+        // the buffer. Claim that wakeup last-to-first, then put the new
+        // queue entries back in registration order.
+        let start = self.ready.len();
+        for k in (0..self.waiter_count(waiters)).rev() {
+            let g = self.waiter_at(waiters, k);
             if let Some(t) = g.as_int().and_then(|t| usize::try_from(t).ok()) {
                 // A task's wakeup.
                 if matches!(self.tasks.get(t), Some(Some(task)) if task.awaiting == v)
@@ -670,6 +664,10 @@ impl Vm {
             }
             self.ready.push_back(Ready::Gather(g, v));
             self.callback_queue += 1;
+        }
+        let end = self.ready.len();
+        for i in 0..(end - start) / 2 {
+            self.ready.swap(start + i, end - 1 - i);
         }
     }
 
@@ -1730,12 +1728,8 @@ impl Vm {
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
     fn gathered(&self, a: Value) -> bool {
         let w = self.vslot(a, aw::WAITERS);
-        let all = if w.is_obj_kind(ty::TUPLE as u8) {
-            self.tuple_items(w)
-        } else {
-            alloc::vec![w]
-        };
-        all.into_iter()
+        (0..self.waiter_count(w))
+            .map(|i| self.waiter_at(w, i))
             .any(|g| g.is_obj_kind(ty::GATHER as u8) && self.raw_of(g, aw::AUX) != FIRST)
     }
 
@@ -2578,42 +2572,86 @@ impl Vm {
         Ok(g)
     }
 
+    fn waiter_count(&self, w: Value) -> u32 {
+        if w.is_obj_kind(ty::BUF as u8) {
+            self.vslot(w, 0)
+                .as_int()
+                .and_then(|n| u32::try_from(n).ok())
+                .unwrap_or(0)
+        } else {
+            u32::from(w != Value::NONE)
+        }
+    }
+
+    fn waiter_at(&self, w: Value, i: u32) -> Value {
+        if w.is_obj_kind(ty::BUF as u8) {
+            self.vslot(w, i + 1)
+        } else {
+            w
+        }
+    }
+
     /// Lists `g` (a gather, a task slot or a callback) among what waits on
     /// awaitable `c`.
     #[inline(never)]
     fn add_waiter(&mut self, c: Value, g: Value) -> Result<(), Raised> {
         let w = self.vslot_hot(c, aw::WAITERS);
-        let mut all = if w == Value::NONE {
-            Vec::new()
-        } else if !w.is_obj_kind(ty::TUPLE as u8) {
-            alloc::vec![w]
-        } else {
-            self.tuple_items(w)
+        let Some(owner) = c.as_obj() else {
+            return Ok(());
         };
+        if w == Value::NONE {
+            self.set_slot_hot(owner, aw::WAITERS, g);
+            return Ok(());
+        }
+        let n = self.waiter_count(w);
+        if w.is_obj_kind(ty::BUF as u8)
+            && let Some(b) = w.as_obj()
+            && self.heap.set(b, n + 1, g).is_ok()
+        {
+            self.set_slot_hot(b, 0, Value::int(i64::from(n + 1)).unwrap_or(Value::NONE));
+            return Ok(());
+        }
         // Settled gathers listen no more (each `as_completed` step leaves
         // one on every awaitable left), nor tasks no longer blocked on `c`:
         // drop them.
-        self.burn(all.len() as u64);
-        all.retain(|&x| {
+        self.burn(u64::from(n));
+        let live = |vm: &Vm, x: Value| {
             if x.is_obj_kind(ty::GATHER as u8) {
-                return self.raw_of_hot(x, aw::STATE) == aw::PENDING;
+                return vm.raw_of(x, aw::STATE) == aw::PENDING;
             }
             match x.as_int().and_then(|t| usize::try_from(t).ok()) {
                 Some(t) => {
-                    matches!(self.tasks.get(t), Some(Some(task)) if task.awaiting == c)
-                        || (t == self.cur && x != g)
+                    matches!(vm.tasks.get(t), Some(Some(task)) if task.awaiting == c)
+                        || (t == vm.cur && x != g)
                 }
                 None => true,
             }
-        });
-        let w = if all.is_empty() {
-            g
-        } else {
-            all.push(g);
-            self.alloc_tuple_hot(&all)?
         };
-        if let Some(r) = c.as_obj() {
-            self.set_slot_hot(r, aw::WAITERS, w);
+        let kept = (0..n).filter(|&i| live(self, self.waiter_at(w, i))).count() as u32;
+        if kept == 0 {
+            self.set_slot(owner, aw::WAITERS, g);
+        } else {
+            let max = (mm_core::MAX_OBJECT_BYTES / 8) as u32 - 1;
+            let cap = (kept * 2).min(max).max(kept + 1);
+            let b = self.alloc_buf(cap as usize + 1)?;
+            if kept == n
+                && w.is_obj_kind(ty::BUF as u8)
+                && let Some(src) = w.as_obj()
+            {
+                self.copy_slots(b, 1, src, 1, n as usize);
+            } else {
+                let mut at = 1;
+                for i in 0..n {
+                    let x = self.waiter_at(w, i);
+                    if live(self, x) {
+                        self.set_slot(b, at, x);
+                        at += 1;
+                    }
+                }
+            }
+            self.set_slot(b, kept + 1, g);
+            self.set_slot(b, 0, Value::int(i64::from(kept + 1)).unwrap_or(Value::NONE));
+            self.set_slot(owner, aw::WAITERS, Value::from_ref(b, ty::BUF as u8));
         }
         Ok(())
     }
@@ -2660,16 +2698,10 @@ impl Vm {
     /// object) and returns how many.
     #[cfg(feature = "asyncio")]
     #[cfg_attr(all(mm_shipped, not(target_arch = "wasm32")), optimize(size))]
-    pub(crate) fn remove_done_callback(&mut self, fut: Value, f: Value) -> Result<usize, Raised> {
+    pub(crate) fn remove_done_callback(&mut self, fut: Value, f: Value) -> usize {
         let w = self.vslot(fut, aw::WAITERS);
-        let all = if w == Value::NONE {
-            Vec::new()
-        } else if !w.is_obj_kind(ty::TUPLE as u8) {
-            alloc::vec![w]
-        } else {
-            self.tuple_items(w)
-        };
-        self.burn(all.len() as u64);
+        let len = self.waiter_count(w);
+        self.burn(u64::from(len));
         let same = |vm: &Vm, x: Value| {
             if x == f {
                 return true;
@@ -2681,19 +2713,35 @@ impl Vm {
                 && vm.vslot(x, 1) == vm.vslot(f, 1)
         };
         let callable = |x: Value| x.as_int().is_none() && !x.is_obj_kind(ty::GATHER as u8);
-        let keep: Vec<Value> = all
-            .iter()
-            .copied()
-            .filter(|&x| !(callable(x) && same(self, x)))
-            .collect();
-        let n = all.len() - keep.len();
-        if n == 0 {
-            return Ok(0);
+        let mut kept = 0;
+        for i in 0..len {
+            let x = self.waiter_at(w, i);
+            if callable(x) && same(self, x) {
+                continue;
+            }
+            if kept != i
+                && let Some(b) = w.as_obj()
+            {
+                self.set_slot(b, kept + 1, x);
+            }
+            kept += 1;
         }
-        let w = match keep.len() {
+        let n = (len - kept) as usize;
+        if n == 0 {
+            return 0;
+        }
+        let w = match kept {
             0 => Value::NONE,
-            1 => keep[0],
-            _ => self.alloc_tuple(&keep)?,
+            1 => self.waiter_at(w, 0),
+            _ => {
+                if let Some(b) = w.as_obj() {
+                    for i in kept..len {
+                        self.set_slot(b, i + 1, Value::NONE);
+                    }
+                    self.set_slot(b, 0, Value::int(i64::from(kept)).unwrap_or(Value::NONE));
+                }
+                w
+            }
         };
         if let Some(r) = fut.as_obj() {
             self.set_slot(r, aw::WAITERS, w);
@@ -2703,7 +2751,7 @@ impl Vm {
         if !self.pays_at_settle(fut) && self.live(fut) {
             self.cb_slots = self.cb_slots.saturating_sub(n);
         }
-        Ok(n)
+        n
     }
 
     /// `loop.call_soon(...)`: `asyncio.Handle` `h` runs at its turn in the
@@ -3150,13 +3198,9 @@ impl Vm {
     fn done_callbacks(&self, a: Value) -> usize {
         let w = self.vslot(a, aw::WAITERS);
         let callable = |x: Value| x.as_int().is_none() && !x.is_obj_kind(ty::GATHER as u8);
-        if w.is_obj_kind(ty::TUPLE as u8) {
-            (0..self.tuple_len(w))
-                .filter(|&i| callable(self.vslot(w, u32::try_from(i).unwrap_or(0))))
-                .count()
-        } else {
-            usize::from(w != Value::NONE && callable(w))
-        }
+        (0..self.waiter_count(w))
+            .filter(|&i| callable(self.waiter_at(w, i)))
+            .count()
     }
 
     /// The pending awaitable state as `asyncio.Future` reports it: 0
@@ -3552,19 +3596,12 @@ impl Vm {
                 if pending && (kind == ty::FUTURE || self.raw_of(c, aw::AUX) == FIRST) =>
             {
                 let w = self.vslot(c, aw::WAITERS);
-                let (mut n, mut wakes, mut listens) = (0, 0, u64::from(kind == ty::GATHER));
-                let mut count = |x: Value| {
+                let n = self.waiter_count(w) as usize;
+                let (mut wakes, mut listens) = (0, u64::from(kind == ty::GATHER));
+                for i in 0..n as u32 {
+                    let x = self.waiter_at(w, i);
                     wakes += u64::from(x.is_int());
                     listens += u64::from(x.is_obj_kind(ty::GATHER as u8));
-                };
-                if w.is_obj_kind(ty::TUPLE as u8) {
-                    n = self.tuple_len(w);
-                    for i in 0..n {
-                        count(self.vslot(w, u32::try_from(i).unwrap_or(0)));
-                    }
-                } else if w != Value::NONE {
-                    n = 1;
-                    count(w);
                 }
                 // Its done callbacks too (`Vm::done_callbacks`: the
                 // waiters that neither wake a task nor are a gather), from
@@ -3582,12 +3619,7 @@ impl Vm {
             // read of its waiters.
             Some(ty::TASK) if pending => {
                 let w = self.vslot(c, aw::WAITERS);
-                let n = if w.is_obj_kind(ty::TUPLE as u8) {
-                    self.tuple_len(w)
-                } else {
-                    0
-                };
-                (1 + n as u64 / 8, 0, 0)
+                (1 + u64::from(self.waiter_count(w)) / 8, 0, 0)
             }
             _ => (1, 0, 0),
         }
@@ -3761,17 +3793,8 @@ impl Vm {
         // message in its own `RESULT`, for the error it raises if it was
         // cancelled ([`Vm::check_gather`]).
         let w = self.vslot(h, aw::WAITERS);
-        let (single, n) = if w.is_obj_kind(ty::TUPLE as u8) {
-            (false, self.tuple_len(w))
-        } else {
-            (true, 1)
-        };
-        for k in 0..n {
-            let g = if single {
-                w
-            } else {
-                self.vslot(w, u32::try_from(k).unwrap_or(0))
-            };
+        for k in 0..self.waiter_count(w) {
+            let g = self.waiter_at(w, k);
             if g.is_obj_kind(ty::GATHER as u8)
                 && self.gather_last_child(g) == h
                 && let Some(r) = g.as_obj()

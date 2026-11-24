@@ -5184,7 +5184,7 @@ except SystemExit as e:
     ),
 ];
 
-/// How a run parks: not at all, at every 997 fuel units, or at every
+/// How a run parks: not at all, at every 7 fuel units, or at every
 /// safepoint (a deadline always past).
 #[derive(Clone, Copy, Debug)]
 enum Parks {
@@ -5206,7 +5206,7 @@ fn run_restored_at(engine: &Engine, src: &str, parks: Parks) -> (String, u64, us
     };
     let arm = |s: &mut Session| match parks {
         Parks::None => {}
-        Parks::Fuel => s.set_fuel(Some(997u64.max(s.fuel_wanted()))),
+        Parks::Fuel => s.set_fuel(Some(7u64.max(s.fuel_wanted()))),
         Parks::Deadline => s.set_deadline(Some(std::time::Instant::now())),
     };
     let total = u64::MAX / 2;
@@ -5237,7 +5237,7 @@ fn run_restored_at(engine: &Engine, src: &str, parks: Parks) -> (String, u64, us
 /// rooted at a task under each caller: the program's `cancel()`, the
 /// scheduler's for a task that blocks with a cancel pending, and the one
 /// for a `SystemExit` that leaves the run. Parked at every safepoint and
-/// at every 997 fuel units, snapshotted and restored at every park, each
+/// at every 7 fuel units, snapshotted and restored at every park, each
 /// prints what the plain run prints and charges its fuel.
 #[test]
 fn a_cancel_long_by_a_tasks_waiters_is_the_same_parked_and_restored() {
@@ -5248,7 +5248,11 @@ fn a_cancel_long_by_a_tasks_waiters_is_the_same_parked_and_restored() {
         assert_eq!(out, expected);
         for parks in [Parks::Fuel, Parks::Deadline] {
             let (parked, parked_fuel, n) = run_restored_at(&engine, &src, parks);
-            assert!(n > 100, "{parks:?}: {n} parks");
+            // A buffered append with room no longer forces a deadline
+            // check while registering callbacks; only fuel slicing asks
+            // for hundreds of stops in the setup.
+            let minimum = if matches!(parks, Parks::Fuel) { 100 } else { 1 };
+            assert!(n > minimum, "{parks:?}: {n} parks");
             assert_eq!(
                 (parked.as_str(), parked_fuel),
                 (expected, fuel),
