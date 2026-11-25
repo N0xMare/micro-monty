@@ -52,8 +52,9 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Write as _,
     fs,
+    io::{self, Read},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Output, Stdio},
     sync::{
         Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -828,26 +829,14 @@ fn run_job(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn();
-    let mut child = match child {
+    let child = match child {
         Ok(c) => c,
         Err(e) => return fail("error", format!("cannot start the oracle: {e}")),
     };
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if started.elapsed() > case_timeout => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return fail("timeout", format!("over {} s", case_timeout.as_secs()));
-            }
-            Ok(None) => thread::sleep(Duration::from_millis(5)),
-            Err(e) => return fail("error", format!("cannot wait for the oracle: {e}")),
-        }
-    }
-    let output = match child.wait_with_output() {
-        Ok(o) => o,
-        Err(e) => return fail("error", format!("cannot read the oracle: {e}")),
+    let output = match oracle_output(child, case_timeout) {
+        Ok(Some(output)) => output,
+        Ok(None) => return fail("timeout", format!("over {} s", case_timeout.as_secs())),
+        Err(e) => return fail("error", e),
     };
     let stdout = String::from_utf8_lossy(&output.stdout);
     let Some(v) = stdout
@@ -880,11 +869,72 @@ fn run_job(
     }
 }
 
+fn oracle_output(mut child: Child, timeout: Duration) -> Result<Option<Output>, String> {
+    fn drain(mut pipe: impl Read + Send + 'static) -> thread::JoinHandle<io::Result<Vec<u8>>> {
+        thread::spawn(move || {
+            let mut bytes = Vec::new();
+            pipe.read_to_end(&mut bytes)?;
+            Ok(bytes)
+        })
+    }
+
+    // A full pipe would keep the oracle from ever exiting during the wait.
+    let stdout = child.stdout.take().map(drain);
+    let stderr = child.stderr.take().map(drain);
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() > timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                // Don't wait for EOF past the deadline if a descendant
+                // still has a pipe open.
+                return Ok(None);
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(5)),
+            Err(e) => return Err(format!("cannot wait for the oracle: {e}")),
+        }
+    };
+    let join = |reader: Option<thread::JoinHandle<io::Result<Vec<u8>>>>| {
+        reader.map_or(Ok(Vec::new()), |handle| {
+            handle
+                .join()
+                .map_err(|_| "cannot read the oracle: pipe reader panicked".to_owned())?
+                .map_err(|e| format!("cannot read the oracle: {e}"))
+        })
+    };
+    Ok(Some(Output {
+        status,
+        stdout: join(stdout)?,
+        stderr: join(stderr)?,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, reason = "tests fail on a broken fixture")]
 
     use super::*;
+
+    #[test]
+    fn an_oracle_can_write_more_than_a_pipe_holds_to_both_streams() {
+        let child = Command::new(python())
+            .args([
+                "-c",
+                "import sys; sys.stdout.write('a' * 262144); sys.stderr.write('b' * 393216)",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let output = oracle_output(child, Duration::from_secs(10))
+            .unwrap()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, vec![b'a'; 262_144]);
+        assert_eq!(output.stderr, vec![b'b'; 393_216]);
+    }
 
     #[test]
     fn a_sweep_removes_only_the_scratch_of_runs_that_are_gone() {
