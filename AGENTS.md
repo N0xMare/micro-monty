@@ -137,7 +137,9 @@ each stage logs to
   the files of the copies and compares that take another path on musl
   (`crates/mm-core/src/heap.rs` or `string.rs`,
   `crates/mm-engine/src/strmeth.rs`), whose timed half, on musl too,
-  stays in the release gate; a
+  stays in the release gate; parser, compiler, core, engine and facade
+  sources, the bundled prelude and stdlib inputs, and the probes themselves
+  add `memory-probes` (compile, run, snapshot and restore heap bounds); a
   `crates/mm-wasm-*` crate adds `wasm` and `wasm-host`;
   `crates/mm-cell-worker/` adds `musl` (Linux), where the worker's
   musl-only seccomp rules are built and tested. **Release gate**:

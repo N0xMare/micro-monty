@@ -3127,11 +3127,12 @@ Outside the bound:
 - Host-owned `Code` and `HostValue` objects, allocator overhead and process
   RSS: `Limits::memory` is not a total session-memory or RSS limit.
 
-Enforcement: `cargo xtask check` runs `fuzz/src/bin/memory_probes.rs`,
-which replays `fuzz/memory_probes/*.py` under a counting allocator (§5),
-snapshots and restores each session after its cell, and fails on any probe
-over the bound, the snapshot bound or the compile bound. The `memory_bound`
-fuzz target, at an 8 MiB limit, searches for inputs that break either.
+Enforcement: the release gate always runs `memory-probes`; the dev tier
+adds it for changes to the code or inputs it measures (`DEV_ADDS`,
+`AGENTS.md`). It replays `fuzz/memory_probes/*.py` under a counting allocator
+(§5), snapshots and restores each session after its cell, and fails on any
+probe over the run, snapshot, restore or compile bound. The `memory_bound`
+fuzz target, at an 8 MiB limit, searches for inputs that break these bounds.
 
 Hosts size process memory from the bound. A wasm host gives the instance
 about 3 × L + 16 MiB of linear memory, which covers the run bound and a

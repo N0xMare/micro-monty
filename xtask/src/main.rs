@@ -560,8 +560,8 @@ fn check(args: &[String]) -> Result<(), String> {
         Stage::new("package").run(debug_task(&["package"])),
         Stage::new("parse-diff").run(debug_task(&["parse-diff"])),
         Stage::new("handoffs").run(task(&["handoffs", "--check"])),
-        // The memory bound (docs/spec.md §11): fuzz/memory_probes under the
-        // counting allocator, Rust heap <= 2.5 x limit + 16 MiB.
+        // Heap bounds for compilation, execution and snapshots (§11 of
+        // docs/spec.md). The fuzz workspace builds in its own target dir.
         Stage::new("memory-probes").run(release_cargo(&[
             "run",
             "--release",
@@ -968,9 +968,9 @@ const DEV_STAGES: &[&str] = &[
 
 /// Paths (prefixes) and the stages a change to one adds to the dev tier,
 /// the ones that guard it: what an image holds (durability at its fine
-/// setting too, `check`), the dispatch loop and the park state (the step
-/// oracle's fuel half; its timed half needs the machine alone), the wasm
-/// crates, and the worker (its musl build).
+/// setting too, `check`), what allocates (memory probes), the dispatch loop
+/// and the park state (the step oracle's fuel half; its timed half needs
+/// the machine alone), the wasm crates, and the worker (its musl build).
 const DEV_ADDS: &[(&[&str], &[&str])] = &[
     (
         &[
@@ -1011,6 +1011,29 @@ const DEV_ADDS: &[(&[&str], &[&str])] = &[
     // are compiled for musl only, with their tests: no other dev-tier
     // stage builds them.
     (&["crates/mm-cell-worker/"], &["musl"]),
+    // The probes count parser/compiler heap, the arena and native/host
+    // scratch, bundled module decoding, and snapshot/restore allocations.
+    // CLI and other hosts' buffers are outside this meter.
+    (
+        &[
+            "crates/mm-parse/src/",
+            "crates/mm-compile/src/",
+            "crates/mm-core/src/",
+            "crates/mm-engine/src/",
+            "crates/mm-engine/build.rs",
+            "crates/micro-monty/src/",
+            "crates/mm-stdlib/src/",
+            "crates/mm-stdlib/python/",
+            "crates/mm-stdlib/build.rs",
+            "crates/mm-stdlib/Cargo.toml",
+            "fuzz/memory_probes/",
+            "fuzz/src/bin/memory_probes.rs",
+            "fuzz/fuzz_targets/memory_meter.rs",
+            "fuzz/Cargo.toml",
+            "fuzz/Cargo.lock",
+        ],
+        &["memory-probes"],
+    ),
 ];
 
 /// The stages [`DEV_ADDS`] adds for `changed` (a path a line), each group
@@ -1440,27 +1463,34 @@ mod tests {
                 .collect()
         };
         assert_eq!(
-            stages("docs/spec.md\ncrates/mm-engine/src/ops.rs\n"),
+            stages("docs/spec.md\nxtask/src/durability.rs\ncrates/mm-cli/src/main.rs\n"),
             [] as [&str; 0]
         );
+        assert_eq!(stages("crates/mm-engine/src/dict.rs\n"), ["memory-probes"]);
         assert_eq!(
             stages("crates/mm-engine/src/interp.rs\n"),
-            ["steps-build", "steps-fuel"]
+            ["steps-build", "steps-fuel", "memory-probes"]
         );
         // The files of the musl-only copies and compares.
         assert_eq!(
             stages("crates/mm-core/src/heap.rs\ncrates/mm-engine/src/strmeth.rs\n"),
-            ["steps-build", "steps-fuel"]
+            ["steps-build", "steps-fuel", "memory-probes"]
         );
         // `gc` is a prefix (gc.rs, gc_inc.rs); snapshot.rs of mm-engine is
         // an image path, not a dispatch one.
         assert_eq!(
             stages("crates/mm-core/src/gc_inc.rs\ncrates/mm-engine/src/snapshot.rs\n"),
-            ["durability-cross"]
+            ["durability-cross", "memory-probes"]
         );
         assert_eq!(
             stages("README.md\ncrates/mm-wasm-host/src/lib.rs\ncrates/mm-engine/src/vm.rs\n"),
-            ["steps-build", "steps-fuel", "wasm", "wasm-host"]
+            [
+                "steps-build",
+                "steps-fuel",
+                "wasm",
+                "wasm-host",
+                "memory-probes"
+            ]
         );
         // The worker's musl-only seccomp rules; `mm-cell-worker` is a
         // directory prefix, so another crate's file of that name is not one.

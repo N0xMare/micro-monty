@@ -1195,8 +1195,9 @@ source byte + 8 MiB \[M\]; compile model-written cells with
 runs, for any guest input.** That is the arena, about one transient native
 copy of the largest value a native reads, and fixed tables. The measured
 worst case is 2.01 × the limit over 73 probes at 16, 64 and 256 MiB \[M\];
-`cargo xtask check` replays them with a counting allocator, and the
-`memory_bound` fuzz target searches for inputs that break the bound.
+the release gate and allocation-sensitive dev-tier changes replay them with
+a counting allocator, and the `memory_bound` fuzz target searches for inputs
+that break the bound.
 Writing or restoring a snapshot holds the image once on top: at most the
 limit + the image + 16 MiB \[M\]. Give a wasm instance about 3 × the session
 limit + 16 MiB of linear memory, which covers both; a guest that runs out
