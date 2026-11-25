@@ -552,8 +552,10 @@ messages; copy wording where behaviour matches.
   its rebuild in one step would, the probes past the free runs, and asks
   for a clock check after it (`force_check`), since a step that charges 64
   units or fewer reaches none (`Vm::burn`); a dict's slice charges the
-  entries it reads and the probes past the free slots. A lookup that meets a key only Python can compare
-  stops just past it (`dict_probe_py`, `set_probe_py`) and the twin
+  entries it reads and the probes past the free slots. A set lookup hands
+  off at the first key only Python can compare, even if it would find the
+  identical object later. A resumable lookup stops just past that key
+  (`dict_probe_py`, `set_probe_py`) and the twin
   (`_dfind`, `_sfind`) hands the compare's truth back with the place: as
   in CPython's lookups, a compare that replaced the table or the compared
   slot's key starts the lookup again (only the same table goes on; CPython

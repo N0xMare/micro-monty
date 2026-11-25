@@ -60,6 +60,8 @@ pub(crate) const WALK: u32 = 1 << 14;
 /// The slots a probe walks before every 8 more spend a walk visit, for
 /// the reason [`crate::set::FREE_RUNS`] gives.
 const FREE_SLOTS: u64 = 32;
+/// Cap on the keys a probe hands to the Python twin, plus one run's worth.
+const PY_CHUNK: usize = 64;
 
 /// The budget of a native walk a prelude twin starts at nesting `depth`
 /// of a comparison it took over: halved per level, down to one visit.
@@ -1274,7 +1276,7 @@ impl Vm {
                 // Python twin to go on, and a long chain's answer is the
                 // walk's end, as before slots were counted.
                 if RESUME && n % 8 == 0 && n > FREE_SLOTS {
-                    if *left == 0 || deferred >= crate::set::PY_CHUNK {
+                    if *left == 0 || deferred >= PY_CHUNK {
                         *at = Some((i as usize, perturb, n));
                         break 'walk Err(Hard::Py);
                     }

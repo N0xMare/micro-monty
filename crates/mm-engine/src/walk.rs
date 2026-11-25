@@ -215,7 +215,6 @@ enum Frame {
         i: u32,
         j: u32,
         perturb: u64,
-        deferred: bool,
         wait: bool,
     },
     /// Order of two lists or two tuples from item `i` on: `wait` 1 while a
@@ -818,7 +817,6 @@ impl Vm {
             i,
             j: 0,
             perturb: hash,
-            deferred: false,
             wait: false,
         })
     }
@@ -1453,7 +1451,6 @@ impl Vm {
                 i,
                 j,
                 perturb,
-                deferred,
                 wait,
             } => {
                 if *wait {
@@ -1461,7 +1458,6 @@ impl Vm {
                     match input {
                         Some(Ok(Res::Bool(true))) => return found(Some(*key)),
                         Some(Ok(_)) | None => {}
-                        Some(Err(OrdErr::Py)) => *deferred = true,
                         Some(r) => return Done(r),
                     }
                     *j += 1;
@@ -1477,9 +1473,6 @@ impl Vm {
                         let ek = self.slot(*keys, idx);
                         let eh = self.raw(*hashes, idx);
                         if ek == Value::UNDEFINED && eh == 0 {
-                            if *deferred {
-                                return Done(Err(OrdErr::Py));
-                            }
                             return found(None);
                         }
                         if eh == *hash && ek != Value::UNDEFINED {
@@ -1489,7 +1482,6 @@ impl Vm {
                             match self.start_eq(ek, *key, depth.saturating_add(1), left) {
                                 Start::Leaf(Ok(Res::Bool(true))) => return found(Some(ek)),
                                 Start::Leaf(Ok(_)) => {}
-                                Start::Leaf(Err(OrdErr::Py)) => *deferred = true,
                                 Start::Leaf(r) => return Done(r),
                                 Start::Push(c) => {
                                     *wait = true;

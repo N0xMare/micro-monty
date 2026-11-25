@@ -21,9 +21,6 @@ const FROZEN: u32 = 4;
 const FINGER: u32 = 5;
 pub(crate) const LINEAR_PROBES: usize = 9;
 pub(crate) const PERTURB_SHIFT: u32 = 5;
-/// The keys a native lookup passes to Python to compare at most (and a
-/// run's worth more) before it gives up and hands the lookup to the twin.
-pub(crate) const PY_CHUNK: usize = 64;
 /// The runs of slots a probe walks before each further one spends a walk
 /// visit: a constant bound on the uncharged walk of one lookup or insert
 /// (160 slots), so a chain of colliding keys or deleted slots pays and the
@@ -316,17 +313,12 @@ impl Vm {
         )
     }
 
-    /// `set_find`, reporting entries whose keys only Python can compare.
-    /// Each run of slots past the first spends a visit of `left`, so a
-    /// chain of deleted slots or colliding keys is charged as it is
-    /// walked. Out of visits, or with [`PY_CHUNK`] keys reported, it stops
-    /// at a run's end with `Err(Hard::Py)` and its place in `at` (the
-    /// run's first slot, the perturbation and the slot in the run), from
-    /// which a caller can go on (the prelude's `_sfind`); a place in `at`
-    /// on entry is where it starts. `RESUME` also stops just past each key
-    /// only Python can compare, so the twin compares it and goes on from
-    /// there, and keeps the last deleted slot it passed in `free` (CPython's
-    /// `freeslot`).
+    /// Stop at the first key only Python can compare, even if an identical
+    /// key is later in the chain. Each run of slots past the free ones
+    /// spends a visit of `left`; out of visits, stop at the run's end.
+    /// `RESUME` passes the comparison to `_sfind` and records where to
+    /// continue in `at` (run start, perturbation, slot in the run) and the
+    /// last deleted slot passed in `free` (CPython's `freeslot`).
     #[allow(clippy::too_many_arguments, reason = "a lookup's state")]
     fn set_find_with<const RESUME: bool>(
         &self,
@@ -342,7 +334,6 @@ impl Vm {
         let Some((_, k, h, size)) = self.set_parts(s) else {
             return Ok(None);
         };
-        let mut deferred = 0;
         let mut runs = 0;
         let mask = size - 1;
         #[allow(clippy::cast_possible_truncation, reason = "masked")]
@@ -361,11 +352,7 @@ impl Vm {
                 let ek = self.slot(k, idx);
                 let eh = self.raw(h, idx);
                 if ek == Value::UNDEFINED && eh == 0 {
-                    return if deferred > 0 {
-                        Err(Hard::Py)
-                    } else {
-                        Ok(None)
-                    };
+                    return Ok(None);
                 }
                 if RESUME && eh == DUMMY && ek == Value::UNDEFINED {
                     *free = Some(i + j);
@@ -379,12 +366,11 @@ impl Vm {
                         Ok(false) => {}
                         Err(Hard::Deep) => return Err(Hard::Deep),
                         Err(Hard::Py) => {
-                            deferred += 1;
-                            undecided(i + j, ek);
                             if RESUME {
+                                undecided(i + j, ek);
                                 *at = Some((i, perturb, j as u64 + 1));
-                                return Err(Hard::Py);
                             }
+                            return Err(Hard::Py);
                         }
                     }
                 }
@@ -401,7 +387,7 @@ impl Vm {
             }
             runs += 1;
             if runs > FREE_RUNS {
-                if *left == 0 || deferred >= PY_CHUNK {
+                if *left == 0 {
                     *at = Some((i, perturb, 0));
                     return Err(Hard::Py);
                 }
