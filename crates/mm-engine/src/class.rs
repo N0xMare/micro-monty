@@ -108,8 +108,22 @@ macro_rules! dunders {
         pub(crate) enum Dn {
             $($id,)*
         }
-        /// The text of each [`Dn`].
-        pub(crate) const DUNDER_NAMES: &[&str] = &[$($name,)*];
+
+        /// Number of [`Dn`] names.
+        pub(crate) const NDUNDERS: usize = [$(Dn::$id),*].len();
+
+        // One string and its boundaries, not a pointer and relocation per name.
+        const DUNDER_TEXT: &str = concat!($($name),*);
+        const DUNDER_ENDS: [u16; NDUNDERS + 1] = {
+            assert!(DUNDER_TEXT.len() <= u16::MAX as usize);
+            let mut ends = [0; NDUNDERS + 1];
+            let mut end = 0;
+            $(
+                end += $name.len();
+                ends[Dn::$id as usize + 1] = end as u16;
+            )*
+            ends
+        };
     };
 }
 
@@ -209,8 +223,12 @@ dunders! {
     Xor = "__xor__",
 }
 
-/// Number of [`Dn`] names.
-pub(crate) const NDUNDERS: usize = DUNDER_NAMES.len();
+/// The spelling at index `i` in [`Dn`] order.
+pub(crate) const fn dunder_name(i: usize) -> &'static str {
+    let start = DUNDER_ENDS[i] as usize;
+    let end = DUNDER_ENDS[i + 1] as usize;
+    DUNDER_TEXT.split_at(end).0.split_at(start).1
+}
 
 /// The dunder each flag stands for.
 const FLAG_NAMES: &[(Dn, u64)] = &[
@@ -293,7 +311,7 @@ const FLAGGED_HASH: [u64; NFLAGGED] = {
     let mut t = [0; NFLAGGED];
     let mut j = 0;
     while j < NFLAGGED {
-        t[j] = mm_core::hash_bytes_const(DUNDER_NAMES[dn_at(j) as usize].as_bytes());
+        t[j] = mm_core::hash_bytes_const(dunder_name(dn_at(j) as usize).as_bytes());
         j += 1;
     }
     t
@@ -327,7 +345,7 @@ fn flagged(hash: u64, name: &[u8]) -> Option<(usize, u64)> {
     loop {
         let j = usize::from(*FLAGGED_SLOTS.get(i)?).checked_sub(1)?;
         if FLAGGED_HASH.get(j) == Some(&hash) {
-            let text = DUNDER_NAMES.get(dn_at(j) as usize)?;
+            let text = dunder_name(dn_at(j) as usize);
             return (text.as_bytes() == name)
                 .then(|| (j, FLAG_NAMES.get(j).map_or(f::ARITH, |&(_, bit)| bit)));
         }
@@ -586,7 +604,7 @@ impl Vm {
     #[cold]
     #[inline(never)]
     fn dn_slow(&mut self, i: usize) -> Result<Value, Raised> {
-        let v = self.intern_hot(DUNDER_NAMES.get(i).copied().unwrap_or("__init__"))?;
+        let v = self.intern_hot(dunder_name(i))?;
         if self.dunders.len() < NDUNDERS {
             self.dunders.resize(NDUNDERS, Value::UNDEFINED);
         }

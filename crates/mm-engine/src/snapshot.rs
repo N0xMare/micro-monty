@@ -2435,14 +2435,16 @@ impl Vm {
             return Err(SnapError::Corrupt("dunders"));
         }
         let mut dunders = Vec::with_capacity(ndunders);
-        for name in crate::class::DUNDER_NAMES.iter().take(ndunders) {
+        for i in 0..ndunders {
             let v = need(r.value(), "dunders")?;
             let ok = v == Value::UNDEFINED
                 || v.as_obj().is_some_and(|o| {
                     heap.header(o).is_ok_and(|h| {
                         h.type_id() == mm_core::types::STR
                             && h.flags() & mm_core::flags::INTERNED != 0
-                    }) && heap.str_bytes(o).is_ok_and(|b| b == name.as_bytes())
+                    }) && heap
+                        .str_bytes(o)
+                        .is_ok_and(|b| b == crate::class::dunder_name(i).as_bytes())
                 });
             if !ok {
                 return Err(SnapError::Corrupt("dunders"));
