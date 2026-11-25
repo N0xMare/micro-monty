@@ -802,21 +802,25 @@ impl Code {
     /// Whether word `pc` starts an instruction (instructions are complete).
     #[must_use]
     pub fn is_instr_start(&self, pc: usize) -> bool {
-        let bc = &self.bytecode;
-        if pc >= bc.len() {
-            return false;
-        }
-        let mut at = 0;
         let mut found = false;
+        self.each_instr_start(&mut |at| found |= at == pc) && found
+    }
+
+    /// Calls `f` with each instruction's start in order, in one walk of
+    /// the code; whether the instructions are complete (`f` is called for
+    /// those before the first that is not).
+    pub fn each_instr_start(&self, f: &mut dyn FnMut(usize)) -> bool {
+        let bc = &self.bytecode;
+        let mut at = 0;
         while at < bc.len() {
             let o = opcode(bc, at);
             if NAMES[o as usize].is_empty() || at + instr_len(o) > bc.len() {
                 return false;
             }
-            found |= at == pc;
+            f(at);
             at += instr_len(o);
         }
-        found
+        true
     }
 
     /// One bit per word: does an instruction start there? `None` if an

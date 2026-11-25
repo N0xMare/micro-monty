@@ -1490,18 +1490,59 @@ impl Bundled<'_> {
     }
 }
 
+/// Each code's instruction starts, one bit per word, taken in one walk
+/// the first time a restore checks a pc of it: `Code::is_instr_start`
+/// walks the code for each pc, and many generators or frames can name one
+/// long code. The bits are a 64th of the codes' bytecode at most; where
+/// there is no room for them, the walk per pc gives the same answer.
+#[derive(Default)]
+struct Starts {
+    /// One past where each code's bits start in `bits`; 0 before they are
+    /// taken.
+    at: Vec<u64>,
+    bits: Vec<u64>,
+}
+
+impl Starts {
+    /// Whether `pc` starts an instruction of `code`, code `ci`.
+    fn has(&mut self, ci: u32, code: &Code, pc: usize) -> bool {
+        let (i, len) = (ci as usize, code.bytecode.len());
+        if self.at.len() <= i && self.at.try_reserve(i + 1 - self.at.len()).is_ok() {
+            self.at.resize(i + 1, 0);
+        }
+        let Some(at) = self.at.get_mut(i) else {
+            return code.is_instr_start(pc);
+        };
+        if *at == 0 {
+            let off = self.bits.len();
+            if self.bits.try_reserve_exact(len.div_ceil(64)).is_err() {
+                return code.is_instr_start(pc);
+            }
+            self.bits.resize(off + len.div_ceil(64), 0);
+            let bits = &mut self.bits[off..];
+            if !code.each_instr_start(&mut |s| bits[s / 64] |= 1 << (s % 64)) {
+                self.bits.truncate(off);
+                return false;
+            }
+            *at = off as u64 + 1;
+        }
+        pc < len && self.bits[*at as usize - 1 + pc / 64] >> (pc % 64) & 1 == 1
+    }
+}
+
 /// Checks a raw state against the code table and its stack.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn check_state(
     codes: &mut [Arc<CodeObj>],
     bundled: &mut Bundled<'_>,
+    starts: &mut Starts,
     s: RawState,
     stack_len: usize,
 ) -> Res<State> {
     bundled.load(codes, s.ci)?;
     let code = need(codes.get(s.ci as usize), "state code")?;
     let top = s.base.checked_add(code.code.nregs as usize);
-    if !code.code.is_instr_start(s.pc) || top.is_none_or(|t| t > stack_len) {
+    if !starts.has(s.ci, &code.code, s.pc) || top.is_none_or(|t| t > stack_len) {
         return Err(SnapError::Corrupt("state"));
     }
     Ok(State {
@@ -1525,6 +1566,7 @@ fn check_frames(
     heap: &Heap,
     codes: &mut [Arc<CodeObj>],
     bundled: &mut Bundled<'_>,
+    starts: &mut Starts,
     stack: &[Value],
     specials: &[Frame],
     depth: u32,
@@ -1551,7 +1593,7 @@ fn check_frames(
     for f in &frames {
         bundled.load(codes, f.code)?;
         let code = need(codes.get(f.code as usize), "frame code")?;
-        let at = |pc: u32| code.code.is_instr_start(pc as usize);
+        let mut at = |pc: u32| starts.has(f.code, &code.code, pc as usize);
         let nregs = code.code.nregs as usize;
         // The callee's header sits in this frame's window, past its own.
         let low = (f.base as usize).checked_add(HDR);
@@ -2160,6 +2202,7 @@ impl Vm {
             cache: module_cache.as_deref(),
             unpackers: &mut unpackers,
         };
+        let mut starts = Starts::default();
         let mut tasks = Vec::with_capacity(ntasks);
         for _ in 0..ntasks {
             if !need(r.bool(), "task")? {
@@ -2174,7 +2217,7 @@ impl Vm {
             let t_depth = need(r.u32(), "frames")?;
             let t_specials = read_frames(r, &mut budget)?;
             let st = read_opt_state(r)?
-                .map(|s| check_state(&mut codes, &mut bundled, s, t_stack.len()))
+                .map(|s| check_state(&mut codes, &mut bundled, &mut starts, s, t_stack.len()))
                 .transpose()?;
             let mut task = Task::new(handle, t_context);
             task.stack = t_stack;
@@ -2416,7 +2459,13 @@ impl Vm {
 
         // Cross-checks: every state, frame, continuation and task index.
         let saved = match saved {
-            Some(s) => Some(check_state(&mut codes, &mut bundled, s, stack.len())?),
+            Some(s) => Some(check_state(
+                &mut codes,
+                &mut bundled,
+                &mut starts,
+                s,
+                stack.len(),
+            )?),
             None => None,
         };
         charge(&mut budget, nconts as u64)?;
@@ -2425,6 +2474,7 @@ impl Vm {
             &heap,
             &mut codes,
             &mut bundled,
+            &mut starts,
             &stack,
             &specials,
             depth,
@@ -2437,6 +2487,7 @@ impl Vm {
                 &heap,
                 &mut codes,
                 &mut bundled,
+                &mut starts,
                 &t.stack,
                 &t.specials,
                 t.depth,
@@ -2464,14 +2515,14 @@ impl Vm {
             return Err(SnapError::Corrupt("tasks"));
         }
         if let (Some((_, pc)), Some(st)) = (host_call, &saved)
-            && !codes[st.ci as usize].code.is_instr_start(pc as usize)
+            && !starts.has(st.ci, &codes[st.ci as usize].code, pc as usize)
         {
             return Err(SnapError::Corrupt("host call"));
         }
         // The registry names every generator in the heap once, which the
         // walk that checks them lists in address order.
         if check {
-            check_generators(&heap, &mut codes, &mut bundled, &gens)?;
+            check_generators(&heap, &mut codes, &mut bundled, &mut starts, &gens)?;
         } else {
             // The checked image or live template already supplied the registry.
             // A suspended generator needs its instructions before a collection
@@ -3130,6 +3181,7 @@ fn check_generators(
     heap: &Heap,
     codes: &mut [Arc<CodeObj>],
     bundled: &mut Bundled<'_>,
+    starts: &mut Starts,
     registry: &[Value],
 ) -> Res<()> {
     use crate::generator::g;
@@ -3165,7 +3217,7 @@ fn check_generators(
             ok = false;
             return;
         }
-        let code = ci.and_then(|i| codes.get(i as usize));
+        let code = ci.and_then(|i| codes.get(i as usize).map(|c| (i, c)));
         let regs_ok = |c: &CodeObj| {
             heap.get(r, g::REGS)
                 .ok()
@@ -3175,17 +3227,17 @@ fn check_generators(
                 .is_some_and(|bh| bh.type_id() == ty::BUF && bh.nvals() >= c.code.nregs)
         };
         ok = match (state, code) {
-            (g::SUSPENDED, Some(c)) => {
+            (g::SUSPENDED, Some((i, c))) => {
                 regs_ok(c)
                     && usize::try_from(ypc).is_ok_and(|p| {
-                        c.code.is_instr_start(p)
+                        starts.has(i, &c.code, p)
                             && matches!(
                                 c.code.bytecode.get(p).map(|&w| crate::interp::op_of(w)),
                                 Some(op::YIELD | op::YIELD_FROM)
                             )
                     })
             }
-            (g::CREATED | g::RUNNING, Some(c)) => regs_ok(c),
+            (g::CREATED | g::RUNNING, Some((_, c))) => regs_ok(c),
             (g::DONE, Some(_)) => true,
             _ => false,
         };
@@ -3225,10 +3277,10 @@ fn check_generators(
             ok = false;
             return;
         }
-        let code = ci.and_then(|i| codes.get(i as usize));
-        ok = code.is_some_and(|c| {
+        let code = ci.and_then(|i| codes.get(i as usize).map(|c| (i, c)));
+        ok = code.is_some_and(|(i, c)| {
             usize::try_from(pc).is_ok_and(|p| {
-                c.code.is_instr_start(p)
+                starts.has(i, &c.code, p)
                     && c.code.bytecode.get(p).map(|&w| crate::interp::op_of(w)) == Some(op::AWAIT)
             })
         });

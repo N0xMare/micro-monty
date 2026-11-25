@@ -173,6 +173,22 @@ fn the_stopped_frame_must_fit_its_stack() {
     refuses(UNPACKING, holds_cont, "state", |vm| {
         vm.saved.as_mut().expect("stopped").base = u32::MAX as usize - 1;
     });
+    // A pc inside an instruction, and one past the code: the restore
+    // answers both from the starts it took in one walk of the code.
+    for past in [false, true] {
+        refuses(UNPACKING, holds_cont, "state", |vm| {
+            let st = vm.saved.as_ref().expect("stopped");
+            let code = &vm.codes[st.ci as usize].code;
+            let pc = if past {
+                code.bytecode.len()
+            } else {
+                (0..code.bytecode.len())
+                    .find(|&p| !code.is_instr_start(p))
+                    .expect("an operand word")
+            };
+            vm.saved.as_mut().expect("stopped").pc = pc;
+        });
+    }
 }
 
 #[test]
