@@ -701,7 +701,10 @@ pub(crate) fn pop(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 pub(crate) fn remove(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = this(vm, &a, "remove")?;
     let x = vm.byte_arg(vm.arg_o(&a, 1))?;
-    let Some(k) = vm.bytearray_data(s).iter().position(|&c| c == x) else {
+    let bytes = vm.bytearray_data(s);
+    let found = bytes.iter().position(|&c| c == x);
+    vm.burn_bytes(found.map_or(bytes.len(), |k| k + 1));
+    let Some(k) = found else {
         return Err(vm.err(T::ValueError, "value not found in bytearray"));
     };
     vm.ba_splice(s, k, k + 1, None)?;

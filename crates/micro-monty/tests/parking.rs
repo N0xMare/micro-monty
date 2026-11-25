@@ -817,6 +817,39 @@ fn bytearray_splice_charges_source_and_in_place_tail() {
 }
 
 #[test]
+fn bytearray_remove_charges_every_inspected_byte() {
+    let engine = Engine::new(EngineConfig::default());
+    let spent = |scanned, hit| {
+        let out = Arc::new(Mutex::new(String::new()));
+        let mut s = session(&engine, &out);
+        // Keep the shifted tail identical on hits to isolate the scan.
+        let (setup, op) = if hit {
+            (
+                format!("b = bytearray({scanned} + 65)\nb[{scanned} - 1] = 1\n"),
+                "b.remove(1)\n",
+            )
+        } else {
+            (
+                format!("b = bytearray({scanned})\n"),
+                "try:\n    b.remove(1)\nexcept ValueError:\n    pass\nelse:\n    raise AssertionError\n",
+            )
+        };
+        let p = s.start(&engine.compile(&setup, "setup.py").expect("compiles"));
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        let total = 10_000;
+        s.set_fuel_total(Some(total));
+        let p = s.start(&engine.compile(op, "remove.py").expect("compiles"));
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        total - s.fuel_total().expect("total")
+    };
+    for hit in [false, true] {
+        let short = spent(63, hit);
+        assert_eq!(spent(64, hit), short + 1, "hit: {hit}");
+        assert_eq!(spent(8192, hit), short + 128, "hit: {hit}");
+    }
+}
+
+#[test]
 fn class_regex_and_parse_error_work_charges_fuel_in_proportion() {
     // Fuel-audit sweep: work that charged nothing beyond its instruction.
     // `B.x = v` revisits every subclass (and was quadratic in them), class

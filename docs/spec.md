@@ -1406,6 +1406,8 @@ template restore replace the heap, and the table with it.
   moves the tail directly into a new block, the block charge covers that
   move; a tail shifted before shrinking or after a stepped growth still
   costs fuel.
+- **`remove` fuel.** The scan charges one unit per 64 inspected bytes,
+  including the matching byte if found, independently of the splice.
 - **Snapshots.** Nothing special: a bytearray is an ordinary object plus a
   byte block, written and validated with the segments. The spare capacity
   is saved with it. A length past the block (only a corrupt image) reads
