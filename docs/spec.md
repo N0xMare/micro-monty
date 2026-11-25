@@ -1418,7 +1418,8 @@ template restore replace the heap, and the table with it.
   bytes and, separately, per 64 bytes of tail shifted in place. If growth
   moves the tail directly into a new block, the block charge covers that
   move; a tail shifted before shrinking or after a stepped growth still
-  costs fuel.
+  costs fuel. `insert` and `append` finishing a stepped growth use the
+  same in-place tail charge: at the end there is no tail to shift.
 - **`remove` fuel.** The scan charges one unit per 64 inspected bytes,
   including the matching byte if found, independently of the splice.
 - **Snapshots.** Nothing special: a bytearray is an ordinary object plus a

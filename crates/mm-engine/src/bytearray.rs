@@ -211,8 +211,8 @@ impl Vm {
         match j.w[W_A] {
             fin::APPEND | fin::INSERT => {
                 let at = if j.w[W_A] == fin::APPEND { old } else { a };
-                self.ba_resize(v, old + 1, at)?;
-                self.burn(old as u64 / 64);
+                let shifted = self.ba_resize(v, old + 1, at)?;
+                self.burn_bytes(shifted);
                 self.ba_put(v, at, if j.w[W_A] == fin::APPEND { a } else { b } as u8);
                 Ok(Some(Value::NONE))
             }
@@ -706,8 +706,8 @@ pub(crate) fn insert(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             Value::NONE,
         );
     }
-    vm.ba_resize(s, n + 1, at)?;
-    vm.burn(n as u64 / 64);
+    let shifted = vm.ba_resize(s, n + 1, at)?;
+    vm.burn_bytes(shifted);
     vm.ba_put(s, at, x);
     Ok(Value::NONE)
 }

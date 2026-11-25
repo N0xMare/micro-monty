@@ -817,6 +817,36 @@ fn bytearray_splice_charges_source_and_in_place_tail() {
 }
 
 #[test]
+fn bytearray_insert_and_append_charge_only_the_tail_shift() {
+    let engine = Engine::new(EngineConfig::default());
+    let spent = |setup, op, at| {
+        let out = Arc::new(Mutex::new(String::new()));
+        let mut s = session(&engine, &out);
+        let p = s.start(&engine.compile(setup, "setup.py").expect("compiles"));
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        let total = 1_000_000;
+        s.set_fuel_total(Some(total));
+        let p = s.start(&engine.compile(op, "edit.py").expect("compiles"));
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        let used = total - s.fuel_total().expect("total");
+        let check = format!("assert len(b) == n + 1 and b[{at}] == 9 and b[{at} - 1] == 0");
+        let p = s.start(&engine.compile(&check, "check.py").expect("compiles"));
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        used
+    };
+    let (end, middle) = ("b.insert(n, 9)", "b.insert(n // 4, 9)");
+    let full = "n = 8 << 20\nb = bytearray(n)";
+    // There is no post-growth shift at the end; in the middle there is.
+    // 8 MiB copied into the new block, 9 MiB allocated, plus the call.
+    assert_eq!(spent(full, "b.append(9)", "n"), 278_529);
+    assert_eq!(spent(full, end, "n"), 278_529);
+    assert_eq!(spent(full, middle, "n // 4"), 278_529 + (6 << 20) / 64);
+    let spare = "n = 128\nb = bytearray(n)\nb.append(8)\nb.pop()";
+    assert_eq!(spent(spare, end, "n"), 1);
+    assert_eq!(spent(spare, "b.insert(63, 9)", "63"), 2);
+}
+
+#[test]
 fn bytearray_remove_charges_every_inspected_byte() {
     let engine = Engine::new(EngineConfig::default());
     let spent = |scanned, hit| {
