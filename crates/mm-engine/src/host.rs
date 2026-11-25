@@ -718,7 +718,7 @@ impl Vm {
             let v = self.stack[args + i];
             pos.push(self.host_arg(v, &name, &mut conv)?);
         }
-        let mut kwargs = Vec::new();
+        let mut kwargs = Vec::with_capacity(nkw);
         if kwnames != Value::NONE {
             for (k, n) in self.tuple_items(kwnames).into_iter().enumerate() {
                 let v = self.stack[args + npos + k];
@@ -941,12 +941,13 @@ impl Vm {
     #[inline(never)]
     #[cfg_attr(mm_shipped, optimize(size))]
     fn host_too_deep(&mut self, conv: &mut Conversion) -> Result<HostValue, Raised> {
-        conv.stop(Unconverted::TooDeep, || {
-            self.err(
-                T::RecursionError,
-                "maximum recursion depth exceeded while converting a host value",
-            )
-        })
+        if conv.args.lenient {
+            return Ok(conv.stop(Unconverted::TooDeep));
+        }
+        Err(self.err(
+            T::RecursionError,
+            "maximum recursion depth exceeded while converting a host value",
+        ))
     }
 
     /// [`Vm::host_value`] of a value that is not a container, or `None`.
@@ -1012,12 +1013,14 @@ impl Vm {
                 ),
             ));
         }
-        let repr = self.repr_capped(v, conv.room())?;
+        let mut repr = self.repr_capped(v, conv.room())?;
         let cost = repr.len() + 2;
         let held = cost + self.type_name(v).len();
         if let Some(marker) = self.charge(v, func, conv, cost, held)? {
             return Ok(marker);
         }
+        // The conversion holds only the text length once we hand it over.
+        repr.text.shrink_to_fit();
         Ok(HostValue::Unconverted(Unconverted::Opaque {
             type_name: String::from(self.type_name(v)),
             repr: repr.text,
@@ -1033,15 +1036,16 @@ impl Vm {
         func: &str,
         conv: &mut Conversion,
     ) -> Result<HostValue, Raised> {
-        conv.stop(Unconverted::KeyNotStr, || {
-            self.err(
-                T::TypeError,
-                &format!(
-                    "{func}() argument: dict keys passed to the host must be str, not {}",
-                    self.type_name(k)
-                ),
-            )
-        })
+        if conv.args.lenient {
+            return Ok(conv.stop(Unconverted::KeyNotStr));
+        }
+        Err(self.err(
+            T::TypeError,
+            &format!(
+                "{func}() argument: dict keys passed to the host must be str, not {}",
+                self.type_name(k)
+            ),
+        ))
     }
 
     /// `make(self)` after charging `cost` for `v`, or the stop marker.
@@ -1074,29 +1078,28 @@ impl Vm {
         cost: usize,
         held: usize,
     ) -> Result<Option<HostValue>, Raised> {
-        if let Some(rest) = conv.budget.checked_sub(cost) {
-            if self.hold(conv, held) {
-                conv.budget = rest;
-                return Ok(None);
-            }
-            let type_name = String::from(self.type_name(v));
-            return conv
-                .stop(Unconverted::TooLarge { type_name }, || {
-                    self.err(T::MemoryError, "")
-                })
-                .map(Some);
+        let rest = conv.budget.checked_sub(cost);
+        if let Some(rest) = rest
+            && self.hold(conv, held)
+        {
+            conv.budget = rest;
+            return Ok(None);
+        }
+        if conv.args.lenient {
+            return Ok(Some(conv.stop(Unconverted::TooLarge {
+                type_name: String::from(self.type_name(v)),
+            })));
+        }
+        if rest.is_some() {
+            return Err(self.err(T::MemoryError, ""));
         }
         let max = conv.args.max_bytes;
-        let type_name = String::from(self.type_name(v));
-        conv.stop(Unconverted::TooLarge { type_name }, || {
-            self.err(
-                T::ValueError,
-                &format!(
-                    "{func}() argument: the value is too large to pass to the host (more than {max} bytes)"
-                ),
-            )
-        })
-        .map(Some)
+        Err(self.err(
+            T::ValueError,
+            &format!(
+                "{func}() argument: the value is too large to pass to the host (more than {max} bytes)"
+            ),
+        ))
     }
 
     /// Reserves `bytes` more of Rust heap for a conversion, in steps that
@@ -1847,19 +1850,11 @@ impl Conversion {
         self.budget.saturating_add(1)
     }
 
-    /// Stops for `reason`: a lenient conversion returns the marker, a
-    /// strict one raises `raise()`.
+    /// Stops a lenient conversion and returns its marker.
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn stop(
-        &mut self,
-        reason: Unconverted,
-        raise: impl FnOnce() -> Raised,
-    ) -> Result<HostValue, Raised> {
-        if !self.args.lenient {
-            return Err(raise());
-        }
+    fn stop(&mut self, reason: Unconverted) -> HostValue {
         self.stopped = Some(reason.clone());
-        Ok(HostValue::Unconverted(reason))
+        HostValue::Unconverted(reason)
     }
 }
 
