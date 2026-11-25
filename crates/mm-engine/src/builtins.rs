@@ -1779,7 +1779,7 @@ const DEFS: &[Def] = &[
     p!("_dict_at", 2, 2, pl_dict_at),
     p!("_dict_del_at", 2, 2, pl_dict_del_at),
     p!("_set_probe", 6, 6, pl_set_probe),
-    p!("_seq_scan", 4, 4, pl_seq_scan),
+    p!("_seq_scan", 4, 5, pl_seq_scan),
     p!("_more", 1, 4, pl_more),
     p!("_dict_scan", 4, 4, pl_dict_scan),
     p!("_walk_eq", 3, 3, pl_walk_eq),
@@ -7654,9 +7654,11 @@ fn pl_more(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// `_seq_scan(a, b, i, d)` for two lists or two tuples at nesting `d` of a
 /// comparison: the first index from `i` whose items one native walk cannot
 /// prove `==` (they differ, need a user `__eq__`, or the walk spent its
-/// budget, [`crate::dict::walk_budget`]), else the shorter length. The
+/// budget, [`crate::dict::walk_budget`]), else the index where it stopped. The
 /// prelude's sequence comparisons loop over it, so long sequences compare
-/// in native slices with a safepoint between them.
+/// in native slices with a safepoint between them. The equality form
+/// `_seq_scan(a, b, i, d, True)` returns -1 (equal lengths) or -2 (unequal
+/// lengths) at either sequence's current end, even if `i` already passed it.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn pl_seq_scan(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (x, y) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
@@ -7685,8 +7687,13 @@ fn pl_seq_scan(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         }
         i += 1;
     }
+    let next = if a.n == 5 && i >= xa.len().min(xb.len()) {
+        if xa.len() == xb.len() { -1 } else { -2 }
+    } else {
+        i64::try_from(i).unwrap_or(i64::MAX)
+    };
     vm.walked_of(budget, left);
-    vm.new_int(i64::try_from(i).unwrap_or(i64::MAX))
+    vm.new_int(next)
 }
 
 /// `_dict_scan(a, b, e, d)` for two dicts at nesting `d`: the first entry

@@ -205,6 +205,10 @@ a key comparison shrinks the set being probed.
 For a built-in set `s`, `s -= s` and `s ^= s` clear it; `s |= s` leaves
 it unchanged without comparing keys.
 
+If an item's `__eq__` changes either list during `==` or `!=`, the
+comparison uses the new lengths to decide whether to keep comparing items,
+as CPython does.
+
 **Fuel is per cell.** Each `start` gives the cell `Limits::fuel`, unless
 `set_fuel` was called since the last cell (then the next cell gets that,
 once). On a parked cell, `set_fuel` refuels it before `Continue`. With

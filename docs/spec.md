@@ -575,9 +575,12 @@ messages; copy wording where behaviour matches.
   nesting `d` rather than with `==`/`<`, so the native depth limit holds
   for the whole comparison. A walk started at nesting `d` gets
   `max(WALK >> d, 1)` visits, so re-walking what the twin then descends
-  into costs about 2 × `WALK` plus one visit per level. Ordering finds the
-  first unequal pair in one descent (`_ord`); a pair that needs Python
-  code falls back to CPython's `==`-then-`<` steps.
+  into costs about 2 × `WALK` plus one visit per level. List equality
+  uses both lists' current lengths after each Python item comparison,
+  as CPython does: if the comparison reaches either end, the lengths
+  decide equality. Ordering finds the first unequal pair in one descent
+  (`_ord`); a pair that needs Python code falls back to CPython's
+  `==`-then-`<` steps.
 - **Membership scans charge per item.** `in` on a list, tuple or
   `dict.values()` (or a range, for an item that is not an int), and
   `count`/`index` on lists and tuples and `list.remove`, charge one fuel

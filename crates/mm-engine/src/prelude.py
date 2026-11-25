@@ -155,11 +155,25 @@ def _eq(a, b, d=0):
     # carries and the walk's depth limit holds across the levels run here.
     ta = type(a)
     tb = type(b)
-    if (ta is list and tb is list) or (ta is tuple and tb is tuple):
+    if ta is list and tb is list:
+        if len(a) != len(b):
+            return False
+        # Native slices return an index, or -1/-2 for equal/unequal lengths
+        # once the scan has reached either current end.
+        i = _seq_scan(a, b, 0, d, True)
+        while i >= 0:
+            x = a[i]
+            y = b[i]
+            if not (x is y or _eqd(x, y, d + 1)):
+                # CPython uses the lengths if even this pair is now past
+                # an end, regardless of the result the pair returned.
+                return len(a) == len(b) <= i
+            i = _seq_scan(a, b, i + 1, d, True)
+        return i == -1
+    if ta is tuple and tb is tuple:
         if len(a) != len(b):
             return False
         n = len(a)
-        # Native slices; the items between them compare here.
         i = _seq_scan(a, b, 0, d)
         while i < n:
             x = a[i]
