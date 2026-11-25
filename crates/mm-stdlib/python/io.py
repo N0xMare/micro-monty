@@ -121,6 +121,11 @@ class _Memory:
         buf = self._value()
         if size is None:
             size = self._pos
+        else:
+            size = _ssize(size)
+            if size < 0:
+                prefix = 'Negative' if self._kind is str else 'negative'
+                raise ValueError(f'{prefix} size value {size}')
         self._buf = buf[:size]
         self._len = len(self._buf)
         return size
@@ -182,6 +187,8 @@ def _ssize(x):
         except AttributeError:
             raise TypeError(f"'{type(x).__name__}' object cannot be interpreted as an integer") from None
         x = f(x)
+        if not isinstance(x, int):
+            raise TypeError(f'__index__ returned non-int (type {type(x).__name__})')
     if not -9223372036854775808 <= x <= 9223372036854775807:
         raise OverflowError('Python int too large to convert to C ssize_t')
     return x
