@@ -563,7 +563,9 @@ messages; copy wording where behaviour matches.
   does not imitate), an equal key is found, and an
   unequal one goes on from the place over the table as it now is; an add
   takes a key whose compare was true before that check (`set_add_entry`).
-  No lookup probes again after a miss.
+  On a miss, an add uses the last deleted slot it passed, or the empty
+  slot it found, without probing again. If a comparison filled the chosen
+  deleted slot before the miss, the add restarts instead.
   Depth carries through set and dict probes, so nested frozensets and keys
   raise `RecursionError`. It also carries across the levels a twin runs in
   bytecode: the twins compare items with `_walk_eq`/`_walk_ord` at their

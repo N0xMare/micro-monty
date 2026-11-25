@@ -47,6 +47,11 @@ pub(crate) const FREE_RUNS: u32 = 16;
 const ITEM_WALK: u64 = 4 * FREE_RUNS as u64;
 const DUMMY: u64 = u64::MAX;
 
+enum SetProbe {
+    Found(usize),
+    Vacant(usize),
+}
+
 /// What a phase of a chunked set or dict operation does with each item of
 /// its source ([`Vm::bulk`]); the numbers are the prelude's (`_bulk`).
 pub(crate) mod act {
@@ -311,6 +316,10 @@ impl Vm {
             &mut None,
             &mut None,
         )
+        .map(|p| match p {
+            SetProbe::Found(i) => Some(i),
+            SetProbe::Vacant(_) => None,
+        })
     }
 
     /// Stop at the first key only Python can compare, even if an identical
@@ -330,9 +339,9 @@ impl Vm {
         undecided: &mut dyn FnMut(usize, Value),
         at: &mut Option<(usize, u64, u64)>,
         free: &mut Option<usize>,
-    ) -> Result<Option<usize>, Hard> {
+    ) -> Result<SetProbe, Hard> {
         let Some((_, k, h, size)) = self.set_parts(s) else {
-            return Ok(None);
+            return Ok(SetProbe::Vacant(0));
         };
         let mut runs = 0;
         let mask = size - 1;
@@ -352,17 +361,17 @@ impl Vm {
                 let ek = self.slot(k, idx);
                 let eh = self.raw(h, idx);
                 if ek == Value::UNDEFINED && eh == 0 {
-                    return Ok(None);
+                    return Ok(SetProbe::Vacant(i + j));
                 }
                 if RESUME && eh == DUMMY && ek == Value::UNDEFINED {
                     *free = Some(i + j);
                 }
                 if eh == hash && ek != Value::UNDEFINED {
                     if ek == key {
-                        return Ok(Some(i + j));
+                        return Ok(SetProbe::Found(i + j));
                     }
                     match self.eq_hard(ek, key, depth + 1, left) {
-                        Ok(true) => return Ok(Some(i + j)),
+                        Ok(true) => return Ok(SetProbe::Found(i + j)),
                         Ok(false) => {}
                         Err(Hard::Deep) => return Err(Hard::Deep),
                         Err(Hard::Py) => {
@@ -466,10 +475,12 @@ impl Vm {
     /// out, after Python compared its key (`eq`): a compare that replaced
     /// the table or the slot's key starts the walk again (CPython's
     /// `set_lookkey`); else an equal key is found, and an unequal one goes
-    /// on from the place. For an `add`, a miss whose last deleted slot a
-    /// compare filled starts again too, as CPython's `set_add_entry` does
-    /// before it takes that slot. `depth` is the set's nesting in a
-    /// comparison walk (see [`crate::dict::walk_budget`]).
+    /// on from the place. For an `add`, a miss returns the bitwise
+    /// complement of the insertion slot: the last dummy the probe saw,
+    /// or the empty slot it stopped at. If a compare filled that dummy,
+    /// CPython's `set_add_entry` restarts rather than taking another slot.
+    /// `depth` is the set's nesting in a comparison walk (see
+    /// [`crate::dict::walk_budget`]).
     #[allow(clippy::too_many_arguments, reason = "a lookup's state")]
     pub(crate) fn set_probe_py(
         &mut self,
@@ -512,7 +523,7 @@ impl Vm {
                     f >= size || self.raw(hs, u32::try_from(f).unwrap_or(0)) != DUMMY
                 })
             };
-            if add && matches!(found, Ok(None)) && free.is_some_and(filled) {
+            if add && matches!(found, Ok(SetProbe::Vacant(_))) && free.is_some_and(filled) {
                 free = None;
                 continue;
             }
@@ -520,8 +531,11 @@ impl Vm {
         };
         self.walked_of(budget, left);
         match found {
-            Ok(Some(i)) => self.new_int(i64::try_from(i).unwrap_or(0)),
-            Ok(None) => Ok(Value::int(-1).unwrap_or(Value::NONE)),
+            Ok(SetProbe::Found(i)) => self.new_int(i64::try_from(i).unwrap_or(0)),
+            Ok(SetProbe::Vacant(i)) if add => {
+                self.new_int(!i64::try_from(free.unwrap_or(i)).unwrap_or(0))
+            }
+            Ok(SetProbe::Vacant(_)) => Ok(Value::int(-1).unwrap_or(Value::NONE)),
             Err(Hard::Deep) => Err(self.set_hard(Hard::Deep)),
             Err(Hard::Py) => self.probe_key(cand, at, table, free, prev),
         }
@@ -616,10 +630,30 @@ impl Vm {
         self.alloc_tuple(&items)
     }
 
-    /// Adds `key` (hash `h`, known absent) without comparing, for a
-    /// caller that can hand a request on (the prelude's `_set_insert`).
-    pub(crate) fn set_add_new(&mut self, s: Value, key: Value, hash: u64) -> Result<(), Raised> {
-        self.set_add_core(s, key, hash, true, true)
+    /// Adds an absent key without comparing. If the add probe chose a
+    /// slot, use it rather than revisiting slots its comparisons changed.
+    pub(crate) fn set_add_new(
+        &mut self,
+        s: Value,
+        key: Value,
+        hash: u64,
+        slot: Option<usize>,
+    ) -> Result<(), Raised> {
+        let Some(i) = slot else {
+            return self.set_add_core(s, key, hash, true, true);
+        };
+        let Some(parts @ (_, k, h, size)) = self.set_parts(s) else {
+            return Err(self.err(T::SystemError, "invalid set table"));
+        };
+        let idx = u32::try_from(i).unwrap_or(u32::MAX);
+        if i >= size || self.slot(k, idx) != Value::UNDEFINED {
+            return Err(self.err(T::SystemError, "invalid set insertion slot"));
+        }
+        let dummy = self.raw(h, idx) == DUMMY;
+        if let Some(grow) = self.set_put_at(parts, key, hash, i, dummy) {
+            self.set_grow_after_add(s, key, hash, true, true, grow)?;
+        }
+        Ok(())
     }
 
     /// `s.clear()`: a new empty table, as CPython's `set_clear_internal`
@@ -708,9 +742,22 @@ impl Vm {
         absent: bool,
         top: bool,
     ) -> Result<(), Raised> {
-        let Some((idx, minused)) = self.set_put(s, key, hash, absent)? else {
+        let Some(grow) = self.set_put(s, key, hash, absent)? else {
             return Ok(());
         };
+        self.set_grow_after_add(s, key, hash, absent, top, grow)
+    }
+
+    #[inline(never)]
+    fn set_grow_after_add(
+        &mut self,
+        s: Value,
+        key: Value,
+        hash: u64,
+        absent: bool,
+        top: bool,
+        (idx, minused): (usize, usize),
+    ) -> Result<(), Raised> {
         // A key known `absent` comes from the prelude twins (`_set_insert`).
         // The steps that grow a table (`bulk_grow_top`) add it back by
         // hashing it natively, so one whose hash needs Python (a user
@@ -761,7 +808,7 @@ impl Vm {
         hash: u64,
         absent: bool,
     ) -> Result<Option<(usize, usize)>, Raised> {
-        let Some((r, k, h, size)) = self.set_parts(s) else {
+        let Some(parts @ (_, k, h, size)) = self.set_parts(s) else {
             return Err(self.err(T::SystemError, "invalid set table"));
         };
         let mask = size - 1;
@@ -841,24 +888,39 @@ impl Vm {
                     & mask;
             }
         };
+        Ok(self.set_put_at(
+            parts,
+            key,
+            hash,
+            freeslot.unwrap_or(slot),
+            freeslot.is_some(),
+        ))
+    }
+
+    #[inline]
+    fn set_put_at(
+        &mut self,
+        (r, k, h, size): (Ref, Ref, Ref, usize),
+        key: Value,
+        hash: u64,
+        slot: usize,
+        dummy: bool,
+    ) -> Option<(usize, usize)> {
         let used = self.raw(r, USED) + 1;
         self.set_raw(r, USED, used);
-        if let Some(f) = freeslot {
-            let f = u32::try_from(f).unwrap_or(0);
-            self.set_slot(k, f, key);
-            self.set_raw(h, f, hash);
-            return Ok(None);
-        }
         let idx = u32::try_from(slot).unwrap_or(0);
         self.set_slot(k, idx, key);
         self.set_raw(h, idx, hash);
+        if dummy {
+            return None;
+        }
         let fill = self.raw(r, FILL) + 1;
         self.set_raw(r, FILL, fill);
-        if fill * 5 < (mask as u64) * 3 {
-            return Ok(None);
+        if fill * 5 < (size as u64 - 1) * 3 {
+            return None;
         }
         let minused = if used > 50_000 { used * 2 } else { used * 4 };
-        Ok(Some((slot, usize::try_from(minused).unwrap_or(usize::MAX))))
+        Some((slot, usize::try_from(minused).unwrap_or(usize::MAX)))
     }
 
     /// Takes back the insertion [`Vm::set_put`] made into empty slot `i`.

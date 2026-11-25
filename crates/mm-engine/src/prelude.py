@@ -102,13 +102,15 @@ def _sfind(s, x, h, d=-1, add=False):
 
 def _sadd(s, x):
     h = _khash(x, 'set element')
-    if _sfind(s, x, h, -1, True) < 0:
-        _set_insert(s, x, h)
+    r = _sfind(s, x, h, -1, True)
+    if r < 0:
+        _set_insert(s, x, h, ~r)
 
 
 def _sadd_h(s, x, h):
-    if _sfind(s, x, h, -1, True) < 0:
-        _set_insert(s, x, h)
+    r = _sfind(s, x, h, -1, True)
+    if r < 0:
+        _set_insert(s, x, h, ~r)
 
 
 def _ssub(a, b, d=-1):

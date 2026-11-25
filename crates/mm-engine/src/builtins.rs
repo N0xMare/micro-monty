@@ -1785,7 +1785,7 @@ const DEFS: &[Def] = &[
     p!("_walk_eq", 3, 3, pl_walk_eq),
     p!("_walk_ord", 3, 3, pl_walk_ord),
     p!("_walk_repr", 3, 3, pl_walk_repr),
-    p!("_set_insert", 3, 3, pl_set_insert),
+    p!("_set_insert", 3, 4, pl_set_insert),
     p!("_set_table", 2, 2, pl_set_table),
     p!("_set_hashed_at", 2, 2, pl_set_hashed),
     p!("_cell_set", 2, 2, pl_cell_set),
@@ -7827,7 +7827,10 @@ fn pl_walk_ord(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 fn pl_set_insert(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let h = pl_hash_arg(vm, vm.arg_o(&a, 2))?;
-    vm.set_add_new(vm.arg_o(&a, 0), vm.arg_o(&a, 1), h)?;
+    let slot = vm
+        .int_of_o(vm.arg_o(&a, 3))
+        .and_then(|i| usize::try_from(i).ok());
+    vm.set_add_new(vm.arg_o(&a, 0), vm.arg_o(&a, 1), h, slot)?;
     Ok(stored(vm))
 }
 
