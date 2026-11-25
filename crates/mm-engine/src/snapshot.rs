@@ -1093,17 +1093,6 @@ fn read_host_string(r: &mut Reader<'_>, budget: &mut u64) -> Res<String> {
     Ok(String::from(s))
 }
 
-/// A record's or host object's class, or an unconverted value's type:
-/// charged when `charged`, as a host definition counts it; a stop's live
-/// conversion does not charge it, and a restore charges no more than the
-/// call did.
-fn read_host_name(r: &mut Reader<'_>, budget: &mut u64, charged: bool) -> Res<String> {
-    if charged {
-        return read_host_string(r, budget);
-    }
-    need(r.str(), "host value").map(String::from)
-}
-
 #[cfg_attr(mm_shipped, optimize(size))]
 fn read_index(r: &mut Rd<'_, '_>, what: &'static str) -> Res<usize> {
     need(r.u32(), what).map(|n| n as usize)
@@ -1281,14 +1270,15 @@ struct HostFrame {
 
 pub(crate) const HOST_FRAME_BYTES: u64 = size_of::<HostFrame>() as u64;
 
-/// Reads a host value; `names` charges the names inside it (a host
-/// definition's, not a stop's).
+/// Reads a host value as live conversion or host-definition cloning
+/// charges it. Live conversion does not charge the marker it returns
+/// when it runs out of room; a host `definition` counts it like any value.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn read_host(
     r: &mut Reader<'_>,
     budget: &mut u64,
     scratch: &mut u64,
-    names: bool,
+    definition: bool,
 ) -> Res<(HostValue, u64)> {
     let mut stack: Vec<HostFrame> = Vec::new();
     let value = 'read: loop {
@@ -1315,7 +1305,7 @@ fn read_host(
                     return Err(SnapError::Corrupt("host value"));
                 }
                 let record = if tag == 9 || tag == 14 {
-                    Some(read_host_name(r, budget, names)?)
+                    Some(read_host_string(r, budget)?)
                 } else {
                     None
                 };
@@ -1358,13 +1348,17 @@ fn read_host(
                 v
             }
             10 => HostValue::Unconverted(Unconverted::Opaque {
-                type_name: read_host_name(r, budget, names)?,
+                type_name: read_host_string(r, budget)?,
                 repr: read_host_string(r, budget)?,
             }),
             11 => HostValue::Unconverted(Unconverted::KeyNotStr),
             12 => HostValue::Unconverted(Unconverted::TooDeep),
             13 => HostValue::Unconverted(Unconverted::TooLarge {
-                type_name: read_host_name(r, budget, names)?,
+                type_name: if definition {
+                    read_host_string(r, budget)?
+                } else {
+                    String::from(need(r.str(), "host value")?)
+                },
             }),
             _ => return Err(SnapError::Corrupt("host value")),
         };

@@ -3007,12 +3007,13 @@ bytes, the pending stop that `Session::pending` re-reports (the host's
 data: its argument vectors and host values, and a wait's calls, each
 charged before it is built to a budget of its own, the memory limit; the
 live call's charge is the reference, and a restore charges no more than
-it, so an image restores at its writer's limit: the call's name, its
-keyword keys and the class and type names inside its values, which the
-live call does not charge, are not charged; `TooLarge` past it), the
-decoded modules the Engine's cache shares, and the allocator's transient
-peaks. A host module's constants and spec are host definitions: their
-names are charged, as `define_host_module` counts them.
+it, so an image restores at its writer's limit: record and host-object
+class names and opaque values' type names count by their UTF-8 byte
+length; the call's name, its keyword keys and the single lenient
+`Unconverted::TooLarge` marker's type name are not charged; `TooLarge`
+past the budget), the decoded modules the Engine's cache shares, and the
+allocator's transient peaks. A host module's constants and spec are host
+definitions: their names are charged, as `define_host_module` counts them.
 
 ### Admission: native work buffers
 

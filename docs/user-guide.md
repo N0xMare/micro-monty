@@ -179,6 +179,8 @@ entropy, so the driving loop above is the whole integration.
 
 Every byte count the API takes is a `u64` on every target; a limit larger
 than the address space (`u64::MAX` included) means no limit, never a panic.
+Copied class names and opaque type names in host arguments count toward
+the memory limit, both during conversion and when restoring a host call.
 `Limits::memory` bounds what the session retains, not process RSS
 ([Embedding guarantees](#embedding-guarantees)). Fuel bounds work; bounded
 native steps bound latency: a native operation charges fuel in proportion

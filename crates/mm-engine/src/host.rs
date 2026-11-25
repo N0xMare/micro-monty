@@ -821,23 +821,29 @@ impl Vm {
         // level and its place on the open stack.
         let frame = size_of::<Open>();
         if let Some((c, back, fields)) = self.record_parts(x) {
-            // A named tuple: a `Record` (charged as a dict of its fields).
+            // The byte budget counts a dict of the fields; memory also
+            // counts the one name kept by the resulting Record or Object.
+            let class = self
+                .find_interned("__host_class__")
+                .and_then(|k| self.class_lookup(c, k))
+                .filter(|n| Vm::is_str(*n));
+            let name = class.unwrap_or_else(|| self.vslot(c, crate::class::cls::NAME));
             let n = self.seq_words(back).len();
             let copies = frame + n * (size_of::<Value>() + size_of::<String>());
-            let slots = n * size_of::<(String, HostValue)>();
+            let kept = n * size_of::<(String, HostValue)>() + self.str_ref(name).len();
             let cost = n.saturating_sub(1) + 2;
-            if let Some(marker) = self.charge(x, func, conv, cost, slots + copies)? {
+            if let Some(marker) = self.charge(x, func, conv, cost, kept + copies)? {
                 return Ok(Opened::Value(marker));
             }
-            let (name, names, items, class) = self.record_copy(c, back, fields);
+            let (names, items) = self.record_copy(back, fields);
             let out = Vec::with_capacity(items.len().min(conv.room()));
             return Ok(Opened::Open(Open::Record {
                 x,
                 fields: names.into_iter().zip(items),
                 out,
                 key: String::new(),
-                name,
-                class,
+                name: String::from(self.str_ref(name)),
+                object: class.is_some(),
                 copies,
             }));
         }
@@ -1007,13 +1013,15 @@ impl Vm {
             ));
         }
         let repr = self.repr_capped(v, conv.room())?;
-        let type_name = String::from(self.type_name(v));
-        self.charged(v, func, conv, repr.len() + 2, |_| {
-            HostValue::Unconverted(Unconverted::Opaque {
-                type_name,
-                repr: repr.text,
-            })
-        })
+        let cost = repr.len() + 2;
+        let held = cost + self.type_name(v).len();
+        if let Some(marker) = self.charge(v, func, conv, cost, held)? {
+            return Ok(marker);
+        }
+        Ok(HostValue::Unconverted(Unconverted::Opaque {
+            type_name: String::from(self.type_name(v)),
+            repr: repr.text,
+        }))
     }
 
     #[cold]
@@ -1243,29 +1251,15 @@ impl Vm {
         Some((c, back, fields))
     }
 
-    /// The class name, field names and items of the record `record_parts`
-    /// checked. Last, the registered name of a host class
-    /// (`__host_class__`).
-    #[allow(clippy::type_complexity, reason = "one private caller")]
+    /// Copies the field names and items of the record `record_parts` checked.
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn record_copy(
-        &self,
-        c: Value,
-        back: Value,
-        fields: Value,
-    ) -> (String, Vec<String>, Vec<Value>, Option<String>) {
+    fn record_copy(&self, back: Value, fields: Value) -> (Vec<String>, Vec<Value>) {
         let names = self
             .tuple_items(fields)
             .iter()
             .map(|n| String::from(self.str_ref(*n)))
             .collect();
-        let items = self.tuple_items(back);
-        let class = self
-            .find_interned("__host_class__")
-            .and_then(|k| self.class_lookup(c, k))
-            .filter(|n| Vm::is_str(*n))
-            .map(|n| String::from(self.str_ref(n)));
-        (String::from(self.class_name(c)), names, items, class)
+        (names, self.tuple_items(back))
     }
 
     /// The host class `name` (`HostModule::classes` in the facade), if `fields`
@@ -1769,7 +1763,7 @@ enum Open {
         out: Vec<(String, HostValue)>,
         key: String,
         name: String,
-        class: Option<String>,
+        object: bool,
         copies: usize,
     },
 }
@@ -1811,11 +1805,15 @@ impl Open {
             Open::Seq { out, .. } => HostValue::List(out),
             Open::Dict { out, .. } => HostValue::Dict(out),
             Open::Record {
-                out, name, class, ..
-            } => match class {
-                Some(class) => HostValue::Object { class, fields: out },
-                None => HostValue::Record { name, fields: out },
+                out,
+                name,
+                object: true,
+                ..
+            } => HostValue::Object {
+                class: name,
+                fields: out,
             },
+            Open::Record { out, name, .. } => HostValue::Record { name, fields: out },
         }
     }
 }

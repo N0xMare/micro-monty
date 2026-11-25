@@ -7,8 +7,8 @@
 #![allow(clippy::expect_used, clippy::panic, reason = "tests")]
 
 use micro_monty::{
-    Engine, EngineConfig, HostModule, HostValue, Limits, Progress, Resume, Session,
-    SessionSettings, SessionTemplate, SnapshotError, Stream, TextCut,
+    Engine, EngineConfig, HostArgs, HostClass, HostModule, HostValue, Limits, Progress, Resume,
+    Session, SessionSettings, SessionTemplate, SnapshotError, Stream, TextCut, Unconverted,
 };
 use std::{
     fmt::Write as _,
@@ -3866,8 +3866,66 @@ fn reset_to_keeps_the_sessions_gc_settings() {
     assert_ne!(all[0], all[1]);
 }
 
-/// The stop an image's header names (a host call's name, arguments and
-/// keyword arguments, a wait's calls) is charged to the restoring
+/// Stops with a long opaque type name or registered host class name at
+/// every list entry. Assert a full payload: a lenient stop marker would
+/// otherwise make the image much smaller without failing the call.
+fn named_host_stops(e: &Engine, opaque: usize, objects: usize) -> [(Progress, Vec<u8>); 2] {
+    let opaque_name = "C".repeat(300);
+    let class_name = "H".repeat(300);
+    let qualified = format!("fs.{class_name}");
+    [
+        (
+            format!("class {opaque_name}: pass\no = {opaque_name}()\ncheckpoint([o] * {opaque})"),
+            opaque,
+            true,
+        ),
+        (
+            format!("import fs\no = {qualified}(1)\ncheckpoint([o] * {objects})"),
+            objects,
+            false,
+        ),
+    ]
+    .map(|(src, copies, lenient)| {
+        let mut s = Session::new(e).expect("session");
+        s.define(&HostModule::untyped("", &["checkpoint"]))
+            .expect("defines");
+        s.set_host_args(HostArgs {
+            lenient,
+            ..HostArgs::default()
+        });
+        if !lenient {
+            s.define(&HostModule {
+                name: "fs".into(),
+                classes: vec![HostClass {
+                    name: class_name.clone(),
+                    fields: vec![("x".into(), "int".into())],
+                    ..HostClass::default()
+                }],
+                ..HostModule::default()
+            })
+            .expect("defines class");
+        }
+        let p = s.start(&e.compile(&src, "stop.py").expect("compiles"));
+        let Progress::HostCall { args, .. } = &p else {
+            panic!("expected a host call: {p:?}");
+        };
+        let [HostValue::List(values)] = args.as_slice() else {
+            panic!("expected one list argument");
+        };
+        assert_eq!(values.len(), copies);
+        assert!(values.iter().all(|v| match v {
+            HostValue::Unconverted(Unconverted::Opaque { type_name, .. }) => {
+                lenient && *type_name == opaque_name
+            }
+            HostValue::Object { class, .. } => !lenient && *class == qualified,
+            _ => false,
+        }));
+        (p, s.snapshot().expect("snapshot with full payload"))
+    })
+}
+
+/// The stop an image's header names (a host call's positional and
+/// keyword argument values, a wait's calls) is charged to the restoring
 /// engine's memory as it is read, each part before it is allocated: past
 /// the limit the restore is `TooLarge`, never a header read as corrupt or
 /// an allocation past the limit.
@@ -3899,19 +3957,69 @@ fn a_stop_past_the_memory_limit_is_too_large() {
     let many = parked("checkpoint(*([None] * (1 << 19)))");
     assert_eq!(restore(&many, 64), None);
     assert_eq!(restore(&many, 24), Some(SnapshotError::TooLarge));
+    // The encoded stop and heap fit in 8 MiB; the decoded stop's record
+    // names and HostValue slots together do not.
+    let records = parked(
+        "from collections import namedtuple\nT = namedtuple('A' * 300, 'x')\ncheckpoint([T(1)] * 20_000)",
+    );
+    assert_eq!(restore(&records, 8), Some(SnapshotError::TooLarge));
+    for (_, image) in named_host_stops(&roomy, 12_400, 20_000) {
+        assert_eq!(restore(&image, 64), None);
+        assert_eq!(restore(&image, 8), Some(SnapshotError::TooLarge));
+    }
+}
+
+/// Both the live and the restored session convert the large record list
+/// after resuming the empty checkpoint. Snapshot decoding of payloads
+/// already built is covered by the stopped-call tests.
+#[test]
+fn record_names_count_towards_the_host_call_memory_limit() {
+    let e = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(8 << 20)));
+    for (copies, fits) in [(16_000, true), (20_000, false)] {
+        let mut live = Session::new(&e).expect("session");
+        live.define(&HostModule::untyped("", &["checkpoint"]))
+            .expect("defines");
+        live.set_fuel_total(Some(1_000_000));
+        let src = format!(
+            "from collections import namedtuple\nT = namedtuple('A' * 300, 'x')\n\
+             checkpoint()\ncheckpoint([T(1)] * {copies})"
+        );
+        assert!(matches!(
+            live.start(&e.compile(&src, "stop.py").expect("compiles")),
+            Progress::HostCall { .. }
+        ));
+        let mut restored = e
+            .restore(&live.snapshot().expect("snapshot"))
+            .expect("restores");
+        let p = live.resume(Resume::Value(HostValue::None)).expect("live");
+        let q = restored
+            .resume(Resume::Value(HostValue::None))
+            .expect("restored");
+        assert!(p == q, "{copies} copies: live and restored outcomes differ");
+        assert_eq!(live.fuel_total(), restored.fuel_total());
+        assert!(
+            match p {
+                Progress::HostCall { .. } => fits,
+                Progress::Error(e) if e.type_name == "MemoryError" => !fits,
+                _ => false,
+            },
+            "{copies} copies: expected the call to {}",
+            if fits { "fit" } else { "exhaust memory" }
+        );
+    }
 }
 
 /// A host call's stop restores at its writer's limit: the restore charges
 /// no more than the live call did, which releases each container's open
-/// frame once it is built and charges no class or type names.
+/// frame once it is built.
 #[test]
 fn a_stop_restores_at_its_writers_limit() {
     for (src, mib) in [
         // A container argument each.
         ("checkpoint(*([[]] * 100_000))", 16),
-        // Long class names, one a record.
+        // Long class names, one per record.
         (
-            "from collections import namedtuple\nT = namedtuple('A' * 300, 'x')\ncheckpoint([T(1)] * 20_000)",
+            "from collections import namedtuple\nT = namedtuple('A' * 300, 'x')\ncheckpoint([T(1)] * 16_000)",
             8,
         ),
     ] {
@@ -3923,6 +4031,11 @@ fn a_stop_restores_at_its_writers_limit() {
         assert!(matches!(p, Progress::HostCall { .. }), "{src}: {p:?}");
         let image = s.snapshot().expect("snapshot");
         assert_eq!(e.restore(&image).map(drop).err(), None, "{src}");
+    }
+    let e = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(8 << 20)));
+    for (p, image) in named_host_stops(&e, 11_000, 17_000) {
+        let restored = e.restore(&image).expect("restores at the writer's limit");
+        assert!(restored.pending() == Some(p), "restored the full payload");
     }
 }
 
