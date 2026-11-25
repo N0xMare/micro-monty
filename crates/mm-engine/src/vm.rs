@@ -3303,15 +3303,12 @@ impl Vm {
         if let Some(v) = Value::int(i) {
             return Ok(v);
         }
-        self.new_big(&crate::bigint::Big::from_i64(i))
+        self.new_int128(i128::from(i))
     }
 
     /// An int from an `i128` result.
     pub(crate) fn int_from_i128(&mut self, i: i128) -> Result<Value, Raised> {
-        match i64::try_from(i) {
-            Ok(v) => self.new_int(v),
-            Err(_) => self.new_big(&crate::bigint::Big::from_i128(i)),
-        }
+        self.new_int128(i)
     }
 
     /// The value of an int or bool, if `v` is one that fits `i64`.

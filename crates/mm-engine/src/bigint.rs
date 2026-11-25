@@ -535,20 +535,6 @@ impl Big {
         Big::from_u64(i.unsigned_abs(), i < 0)
     }
 
-    /// From an `i128`.
-    pub fn from_i128(i: i128) -> Big {
-        let m = i.unsigned_abs();
-        Big::from_mag(
-            i < 0,
-            vec![
-                m as u32,
-                (m >> 32) as u32,
-                (m >> 64) as u32,
-                (m >> 96) as u32,
-            ],
-        )
-    }
-
     /// Is this zero?
     pub fn is_zero(&self) -> bool {
         self.mag.is_empty()
@@ -1035,7 +1021,16 @@ mod tests {
     use super::*;
 
     fn b(i: i128) -> Big {
-        Big::from_i128(i)
+        let m = i.unsigned_abs();
+        Big::from_mag(
+            i < 0,
+            vec![
+                m as u32,
+                (m >> 32) as u32,
+                (m >> 64) as u32,
+                (m >> 96) as u32,
+            ],
+        )
     }
 
     #[test]

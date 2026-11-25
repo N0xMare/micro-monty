@@ -313,8 +313,8 @@ impl Vm {
         }
     }
 
-    /// An int value for `i`, as [`Vm::new_big`] of `Big::from_i128(i)`
-    /// makes it (the same layout and charges), without the vectors.
+    /// An int value for `i`, with the same layout and charges as
+    /// [`Vm::new_big`], without the vectors.
     #[inline(never)]
     pub(crate) fn new_int128(&mut self, i: i128) -> Result<Value, Raised> {
         if let Some(v) = i64::try_from(i).ok().and_then(Value::int) {
