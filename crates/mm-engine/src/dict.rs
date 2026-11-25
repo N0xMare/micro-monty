@@ -1101,7 +1101,9 @@ impl Vm {
             if self.exc_type(exc) != T::TypeError {
                 return Err(Raised);
             }
-            let inner = self.exc_str(exc).unwrap_or_default();
+            // Refused memory for the inner text, the `MemoryError` is
+            // raised: a default dropped it and the detail with it.
+            let inner = self.exc_str(exc)?;
             let msg = alloc::format!("cannot use '{}' as a {what} ({inner})", self.type_name(k));
             Err(self.err(T::TypeError, &msg))
         }

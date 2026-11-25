@@ -727,6 +727,58 @@ e"
     assert!(refused > 0, "no fill refused the rendering alone");
 }
 
+/// An unhashable dict key refused the memory for the text of its inner
+/// `TypeError` raises `MemoryError`. A large `bytes` leaves `d` bytes of
+/// the limit free; below 24 [M] the copy of `unhashable type: 'list'` did
+/// not fit, the error was raised without it, `cannot use 'list' as a dict
+/// key ()`.
+#[test]
+fn an_unhashable_key_refused_its_detail_raises_memory_error() {
+    let mut refused = 0;
+    for d in (0..120).step_by(4) {
+        let src = format!(
+            "\
+import gc
+def fits(n):
+    try:
+        bytes(n)
+    except MemoryError:
+        return False
+    return True
+lo, hi = 1 << 16, 1 << 24
+while lo < hi:
+    mid = (lo + hi + 1) // 2
+    ok = fits(mid)
+    gc.collect()
+    if ok:
+        lo = mid
+    else:
+        hi = mid - 1
+k = []
+pad = bytes(lo - {d})
+try:
+    {{k: 1}}
+except (TypeError, MemoryError) as e:
+    r = e
+pad = None
+gc.collect()
+print(repr(r))
+"
+        );
+        let (p, out) = run_with(Limits::new().with_memory(8 << 20), &src);
+        assert!(matches!(p, Progress::Complete(_)), "{d}: {p:?}");
+        if out == "MemoryError()\n" {
+            refused += 1;
+        } else {
+            assert_eq!(
+                out, "TypeError(\"cannot use 'list' as a dict key (unhashable type: 'list')\")\n",
+                "{d}"
+            );
+        }
+    }
+    assert!(refused > 0, "no fill refused the detail");
+}
+
 /// An exhausted builtin iterator drops its sequence, as python3.14's do:
 /// three exhausted iterators over 8 MB lists kept the lists, so the next
 /// three raised `MemoryError` under a 32 MiB limit. Each kind of iterator
