@@ -665,8 +665,7 @@ class TypedDict(dict):
     def __new__(cls, *args, total=True, **kwargs):
         if cls is TypedDict:
             typename, fields = args[0], (args[1] if len(args) > 1 else {})
-            ns = {'__annotations__': dict(fields), '__total__': total}
-            return type(typename, (TypedDict,), ns)
+            return type(typename, (TypedDict,), {'__annotations__': dict(fields)}, total=total)
         return dict(*args, **kwargs)
 
     def __init_subclass__(cls, total=True, **kwargs):
