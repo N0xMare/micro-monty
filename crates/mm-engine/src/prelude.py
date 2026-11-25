@@ -393,7 +393,7 @@ def _op_not_contains(c, x):
 def _has_index(x):
     # An int subclass's `__index__` is never called for its value, as in
     # CPython's PyNumber_Index (see `_int_value`).
-    return getattr(type(x), '__index__', None) is not None and not isinstance(x, int)
+    return _class_slot(type(x), '__index__', _MISSING) is not _MISSING and not isinstance(x, int)
 
 
 def _int_value(x):
@@ -405,13 +405,22 @@ def _int_value(x):
 
 
 def _index(x):
-    r = type(x).__index__(x)
+    r = _index_callable(x)(x)
     if type(r) is not int and type(r) is not bool:
         if not isinstance(r, int):
             raise TypeError(f'__index__ returned non-int (type {_type_name(r)})')
         # An int subclass's instance (CPython warns, and takes its value).
         r = _bx_value(r)
     return r
+
+
+def _index_other(x):
+    t = type(x)
+    f = _class_slot(t, '__index__', _MISSING)
+    if f is _MISSING:
+        raise TypeError(f"'{_type_name(x)}' object cannot be interpreted as an integer")
+    get = getattr(type(f), '__get__', None)
+    return (f if get is None else get(f, x, t))()
 
 
 def _slice_part(x):

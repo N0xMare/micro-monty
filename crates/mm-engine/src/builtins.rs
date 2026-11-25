@@ -1813,6 +1813,8 @@ const DEFS: &[Def] = &[
     p!("_bx_make", 2, 2, pl_bx_make),
     p!("_bx_value", 1, 1, crate::mmmod::mm_backing),
     p!("_sum_off", 1, 1, pl_sum_off),
+    p!("_class_slot", 3, 3, pl_class_slot),
+    p!("_index_callable", 1, 1, pl_index_callable),
 ];
 
 // ------------------------------------------------------- packed table
@@ -1945,6 +1947,16 @@ const fn function_index(module: &str, name: &str) -> u32 {
 /// `_mm.rec_new`, a host record class's `__new__` (`Vm::record_class`).
 pub(crate) const REC_NEW: u32 = function_index("_mm", "rec_new");
 const _: () = assert!(REC_NEW != u32::MAX, "no native _mm.rec_new");
+
+// The index helpers are bound on first use, so they do not fill the prelude
+// globals of sessions that never need user-defined index conversion.
+pub(crate) const CLASS_SLOT: u32 = function_index("_prelude", "_class_slot");
+pub(crate) const INDEX_CALLABLE: u32 = function_index("_prelude", "_index_callable");
+const _: () = assert!(CLASS_SLOT != u32::MAX, "no native _prelude._class_slot");
+const _: () = assert!(
+    INDEX_CALLABLE != u32::MAX,
+    "no native _prelude._index_callable"
+);
 
 /// How many methods have an unbound twin ([`UNBOUND`]).
 const TWINS: usize = 2;
@@ -2201,7 +2213,9 @@ const fn pack() -> Packed {
                 p.builtin_fns[p.builtin_fns_len] = k as u16;
                 p.builtin_fns_len += 1;
             }
-            (None, Some(m)) if str_eq(m, "_prelude") => {
+            (None, Some(m))
+                if str_eq(m, "_prelude") && !matches!(k as u32, CLASS_SLOT | INDEX_CALLABLE) =>
+            {
                 p.prelude_fns[p.prelude_fns_len] = k as u16;
                 p.prelude_fns_len += 1;
             }
@@ -7993,6 +8007,30 @@ fn pl_type_name(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.new_str(&n)
 }
 
+#[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
+fn pl_class_slot(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let c = vm.arg_o(&a, 0);
+    let name = vm.arg_o(&a, 1);
+    Ok(vm.class_lookup(c, name).unwrap_or_else(|| vm.arg_o(&a, 2)))
+}
+
+fn pl_index_callable(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let x = vm.arg_o(&a, 0);
+    let c = vm.class_of(x);
+    let name = vm.dn(Dn::Index)?;
+    // Native method descriptors take the receiver explicitly, like functions.
+    if let Some(method) = vm.class_lookup(c, name)
+        && (method.is_obj_kind(ty::FUNC as u8)
+            || method
+                .as_native()
+                .and_then(native)
+                .is_some_and(|n| n.owner.is_some()))
+    {
+        return Ok(method);
+    }
+    vm.prelude_fn("_index_other")
+}
+
 #[cfg_attr(mm_shipped, optimize(size))]
 fn pl_cmp_error(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (x, y, sym) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1), vm.arg_o(&a, 2));
@@ -9342,7 +9380,9 @@ mod tests {
                     .iter()
                     .any(|t| t.name() == n.name() && t.is_builtin_name())
         });
-        let prelude = indices(&|n| n.module() == Some("_prelude"));
+        let prelude = indices(&|n| {
+            n.module() == Some("_prelude") && !matches!(n.name(), "_class_slot" | "_index_callable")
+        });
         let listed =
             |list: &[u16]| -> Vec<usize> { list.iter().map(|&i| usize::from(i)).collect() };
         assert_eq!(listed(&BUILTIN_FNS), builtins);

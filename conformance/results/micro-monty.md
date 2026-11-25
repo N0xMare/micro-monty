@@ -6,19 +6,19 @@ Tags are those of `summary.md`. `call-external` cases run with `mm exec --host-f
 
 | Tag | Cases | Pass | Fail | Skip | Crash | Timeout | Error |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `cpython` | 568 | 546 | 22 | 0 | 0 | 0 | 0 |
+| `cpython` | 568 | 547 | 21 | 0 | 0 | 0 | 0 |
 | `host` | 81 | 62 | 7 | 12 | 0 | 0 | 0 |
 | `monty-specific` | 8 | 2 | 6 | 0 | 0 | 0 | 0 |
 | `excluded` | 69 | 0 | 0 | 69 | 0 | 0 | 0 |
-| total | 726 | 610 | 35 | 81 | 0 | 0 | 0 |
+| total | 726 | 611 | 34 | 81 | 0 | 0 | 0 |
 
-## Failures by first cause (35)
+## Failures by first cause (34)
 
 The first thing that stops each case: a feature `mm` reports it does not support, a 64-bit int limit (`bigint`), one int operation's work past about 50 ms (`int work cap`, docs/spec.md §11), a builtin it lacks, else how the result differs (`wrong output`, `wrong exception`, `wrong traceback`, `no exception raised`, `unexpected <Type>`), or `crash`/`timeout`. Largest first, to order the milestones.
 
 | Cause | Cases | Examples |
 |---|---:|---|
-| unexpected AssertionError | 19 | `args__macro_errors.py`, `bytes__percent_format.py`, `class__numeric.py` |
+| unexpected AssertionError | 18 | `args__macro_errors.py`, `bytes__percent_format.py`, `collections__deque.py` |
 | missing builtin | 8 | `builtin__eval_exec.py`, `builtin__exec_import_traceback.py`, `builtin__exec_namespaces.py` |
 | unexpected NotImplementedError | 2 | `builtin__setattr.py`, `dataclass__basic.py` |
 | wrong exception | 2 | `fstring__error_invalid_spec.py`, `fstring__error_invalid_spec_str.py` |
@@ -26,13 +26,12 @@ The first thing that stops each case: a feature `mm` reports it does not support
 | int work cap | 1 | `builtin__math_funcs.py` |
 | no exception raised | 1 | `import__star_error.py` |
 
-## Failing cases (35)
+## Failing cases (34)
 
 | Case | Tag | Status | Cause | Reason |
 |---|---|---|---|---|
 | `args__macro_errors.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError: c-convert-vs-conflict: function missing required argument 'month' (pos 2) |
 | `bytes__percent_format.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
-| `class__numeric.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError |
 | `collections__deque.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError: a NaN element makes the ordering false |
 | `collections__namedtuple.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError: a NaN element leaves the pair unordered |
 | `fstring__all.py` | cpython | fail | unexpected AssertionError | unexpected exception: AssertionError: expected precision too big for 0.0001 with '.2147482624g' |

@@ -113,7 +113,7 @@
 {"file":"class__init_return.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"class__method_raises.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"class__name_error.py","tags":["cpython"],"status":"pass","reason":""}
-{"file":"class__numeric.py","tags":["cpython"],"status":"fail","reason":"unexpected exception: AssertionError","category":"unexpected AssertionError"}
+{"file":"class__numeric.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"class__numeric_traceback.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"class__operators.py","tags":["cpython"],"status":"pass","reason":""}
 {"file":"class__protocol_traceback.py","tags":["cpython"],"status":"pass","reason":""}

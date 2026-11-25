@@ -388,16 +388,17 @@ impl Vm {
     /// in the prelude globals; `None` if no unit has that name.
     pub(crate) fn prelude_unit(&mut self, name: Value) -> Result<Option<Value>, Raised> {
         let Some(&[_, chunk, at, len, kind]) = unit(self.str_ref_hot(name)) else {
-            // The asyncio types its prelude part names (docs/spec.md §8.5).
-            let t = match self.str_ref_hot(name) {
-                "CancelledError" => T::CancelledError,
-                "InvalidStateError" => T::InvalidStateError,
-                "Task" => T::Task,
-                "_AioFuture" => T::Future,
-                "coroutine" => T::coroutine,
+            // The asyncio types (docs/spec.md §8.5) and lazy index natives.
+            let v = match self.str_ref_hot(name) {
+                "CancelledError" => self.type_obj(T::CancelledError),
+                "InvalidStateError" => self.type_obj(T::InvalidStateError),
+                "Task" => self.type_obj(T::Task),
+                "_AioFuture" => self.type_obj(T::Future),
+                "coroutine" => self.type_obj(T::coroutine),
+                "_class_slot" => Value::native(crate::builtins::CLASS_SLOT),
+                "_index_callable" => Value::native(crate::builtins::INDEX_CALLABLE),
                 _ => return Ok(None),
             };
-            let v = self.types[t as usize];
             let g = self.prelude_globals;
             self.dict_set(g, name, v)?;
             return Ok(Some(v));
