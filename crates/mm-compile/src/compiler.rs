@@ -2495,17 +2495,7 @@ impl<'a> Compiler<'a> {
                 self.binop(*bop, ra);
                 Ok(())
             }
-            ExprKind::Unary(uop, a) => {
-                self.expr(a)?;
-                self.at(e);
-                self.emit(match uop {
-                    UnaryOp::Neg => op::NEG,
-                    UnaryOp::Pos => op::POS,
-                    UnaryOp::Not => op::NOT,
-                    UnaryOp::Invert => op::INVERT,
-                });
-                Ok(())
-            }
+            ExprKind::Unary(uop, a) => self.unary(e, *uop, a),
             ExprKind::BoolOp(bop, values) => {
                 let end = self.label();
                 let jump = if *bop == BoolOp::And {
@@ -2709,11 +2699,38 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    fn unary(&mut self, e: &'a Expr, op: UnaryOp, mut inner: &'a Expr) -> R<()> {
+        // Prefixes still count toward the nesting limit; keeping the
+        // operators here preserves their source positions without recursion.
+        let depth = self.depth;
+        let mut steps = Vec::new();
+        while let ExprKind::Unary(op, child) = &inner.kind {
+            self.enter(inner.pos)?;
+            steps.push((*op, inner));
+            inner = child;
+        }
+        self.expr(inner)?;
+        self.depth = depth;
+        for (op, node) in steps.into_iter().rev().chain([(op, e)]) {
+            self.at(node);
+            self.emit(match op {
+                UnaryOp::Neg => op::NEG,
+                UnaryOp::Pos => op::POS,
+                UnaryOp::Not => op::NOT,
+                UnaryOp::Invert => op::INVERT,
+            });
+        }
+        Ok(())
+    }
+
     /// Jumps to `target` when `test` is `when`; falls through otherwise.
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn cond_jump(&mut self, test: &'a Expr, when: bool, target: Label) -> R<()> {
+    fn cond_jump(&mut self, mut test: &'a Expr, mut when: bool, target: Label) -> R<()> {
+        while let ExprKind::Unary(UnaryOp::Not, inner) = &test.kind {
+            test = inner;
+            when = !when;
+        }
         match &test.kind {
-            ExprKind::Unary(UnaryOp::Not, inner) => self.cond_jump(inner, !when, target),
             ExprKind::BoolOp(bop, values) if values.len() > 1 => {
                 self.enter(test.pos)?;
                 let is_and = *bop == BoolOp::And;

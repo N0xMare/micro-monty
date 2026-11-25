@@ -876,7 +876,11 @@ impl Builder {
                 self.chain_rest(e)?;
             }
             ExprKind::Unary(_, a) | ExprKind::Starred(a) => {
-                self.expr(a)?;
+                let mut inner = a.as_ref();
+                while let ExprKind::Unary(_, child) | ExprKind::Starred(child) = &inner.kind {
+                    inner = child;
+                }
+                self.expr(inner)?;
             }
             ExprKind::BoolOp(_, items)
             | ExprKind::List(items)

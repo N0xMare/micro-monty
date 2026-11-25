@@ -860,27 +860,25 @@ impl Build<'_> {
         )
     }
 
-    /// `e`'s node. A chain (`a + b + ...`, `x.f().g[0]`, `a if c else b if
-    /// ...`) nests as deeply as it is long, so it is built in a loop from
-    /// its innermost operand out.
+    /// `e`'s node. Build chains and prefixes from their innermost operand
+    /// out without using the Rust stack for each link.
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn expr<'e>(&mut self, e: &'e Expr, ctx: Ctx) -> R {
-        let link = |e: &'e Expr| match &e.kind {
-            ExprKind::IfExp(_, _, o) => Some(&**o),
-            _ => e.chain_left(),
-        };
+    fn expr(&mut self, mut e: &Expr, mut ctx: Ctx) -> R {
         let mut spine = Vec::new();
-        let mut base = e;
-        while let Some(l) = link(base) {
-            spine.push(base);
-            base = l;
+        loop {
+            let next = match &e.kind {
+                ExprKind::Starred(x) => Some((x.as_ref(), ctx)),
+                ExprKind::IfExp(_, _, x) | ExprKind::Unary(_, x) => Some((x.as_ref(), Ctx::Load)),
+                _ => e.chain_left().map(|x| (x, Ctx::Load)),
+            };
+            let Some((child, child_ctx)) = next else {
+                break;
+            };
+            spine.push((e, ctx));
+            (e, ctx) = (child, child_ctx);
         }
-        if spine.is_empty() {
-            return self.one(e, ctx, None);
-        }
-        let mut v = self.one(base, Ctx::Load, None)?;
-        while let Some(s) = spine.pop() {
-            let c = if spine.is_empty() { ctx } else { Ctx::Load };
+        let mut v = self.one(e, ctx, None)?;
+        while let Some((s, c)) = spine.pop() {
             v = self.one(s, c, Some(v))?;
         }
         Ok(v)
@@ -916,7 +914,7 @@ impl Build<'_> {
                     UnaryOp::Not => "Not",
                     UnaryOp::Invert => "Invert",
                 })?;
-                let x = self.expr(x, load)?;
+                let x = self.chained(chained, x)?;
                 self.node("UnaryOp", &[("op", op), ("operand", x)], p)
             }
             ExprKind::BoolOp(op, vs) => {
@@ -1001,7 +999,7 @@ impl Build<'_> {
                 self.node("Slice", &[("lower", a), ("upper", b), ("step", c)], p)
             }
             ExprKind::Starred(v) => {
-                let v = self.expr(v, ctx)?;
+                let v = chained.map_or_else(|| self.expr(v, ctx), Ok)?;
                 let c = self.ctx(ctx)?;
                 self.node("Starred", &[("value", v), ("ctx", c)], p)
             }

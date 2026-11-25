@@ -104,6 +104,7 @@ impl ExprKind {
                 | ExprKind::Call(..)
                 | ExprKind::IfExp(..)
                 | ExprKind::Unary(..)
+                | ExprKind::Starred(..)
         ) {
             return None;
         }
@@ -113,6 +114,7 @@ impl ExprKind {
             | ExprKind::Subscript(a, _)
             | ExprKind::Call(a, _, _)
             | ExprKind::Unary(_, a)
+            | ExprKind::Starred(a)
             | ExprKind::IfExp(_, _, a) => Some(a),
             _ => None,
         }
