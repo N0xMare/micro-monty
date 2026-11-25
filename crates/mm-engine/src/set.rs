@@ -10,7 +10,6 @@
 use crate::dict::{Hard, WALK};
 use crate::types::{T, ty};
 use crate::vm::{Raised, Vm};
-use alloc::vec::Vec;
 use mm_core::{Ref, Value};
 
 const FILL: u32 = 2;
@@ -276,30 +275,6 @@ impl Vm {
     pub(crate) fn set_len(&self, s: Value) -> usize {
         s.as_obj()
             .map_or(0, |r| usize::try_from(self.raw_hot(r, USED)).unwrap_or(0))
-    }
-
-    /// [`Vm::set_items`] for a caller that works on every element, charged
-    /// one unit per element (docs/spec.md §5).
-    pub(crate) fn set_items_charged(&mut self, s: Value) -> Vec<Value> {
-        let items = self.set_items(s);
-        if items.len() >= 8 {
-            self.burn(items.len() as u64);
-        }
-        items
-    }
-
-    /// Elements in table order.
-    pub(crate) fn set_items(&self, s: Value) -> Vec<Value> {
-        let mut out = Vec::new();
-        if let Some((_, k, _, size)) = self.set_parts(s) {
-            for i in 0..size {
-                let v = self.slot(k, u32::try_from(i).unwrap_or(0));
-                if v != Value::UNDEFINED {
-                    out.push(v);
-                }
-            }
-        }
-        out
     }
 
     /// The first element at slot `i` or after (for iterators) and its

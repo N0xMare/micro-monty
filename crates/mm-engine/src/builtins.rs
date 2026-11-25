@@ -6417,18 +6417,20 @@ fn list_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 fn set_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = vm.check_self(&a, T::set, "__init__")?;
     let src = vm.arg_o(&a, 1);
-    let items = if src == Value::UNDEFINED {
-        NativeValues::default()
-    } else {
-        vm.collect(src)?
-    };
-    for x in vm.set_items_charged(s) {
-        vm.set_discard(s, x)?;
+    // CPython clears before reading the iterable, which may be `s`.
+    if src != Value::UNDEFINED
+        && !matches!(
+            src.obj_kind().map(u16::from),
+            Some(ty::LIST | ty::TUPLE | ty::SET | ty::DICT | ty::RANGE)
+        )
+    {
+        return Err(vm.need_py());
     }
-    for &x in &items {
-        vm.set_add_plain(s, x)?;
+    vm.set_clear(s)?;
+    if src == Value::UNDEFINED {
+        return Ok(Value::NONE);
     }
-    Ok(Value::NONE)
+    set_inplace(vm, mm_compile::ast::BinOp::BitOr, s, src, true)
 }
 
 /// `T.__new__(cls, *args, **kwargs)` for a builtin type `T` that classes

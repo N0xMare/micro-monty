@@ -1927,9 +1927,8 @@ def _list___init__(a):
 
 def _set___init__(a):
     s = a[0]
-    items = list(a[1]) if len(a) > 1 else []
-    s.clear()
-    s.update(items)
+    set.clear(s)
+    _set_update(a)
 
 
 def _dict___init__(a, kw):
