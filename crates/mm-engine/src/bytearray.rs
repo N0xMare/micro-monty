@@ -113,42 +113,41 @@ impl Vm {
         let (at, gap) = (at.min(old), n.saturating_sub(old));
         let cap = self.heap.bytes(b).map_or(0, <[u8]>::len);
         let shrink = shrink_block(cap, n);
-        if n <= cap && !shrink {
-            if n > old
-                && let Ok(d) = self.heap.bytes_mut(b)
-                && let Some(t) = d.get_mut(old..n)
-            {
-                t.fill(0);
+        if n > cap || shrink {
+            let alloc = if shrink { n } else { grown_block(cap, n) };
+            if alloc >= 64 {
+                self.burn_result(alloc, true);
             }
-            if at < old {
-                let res = self.heap.copy_bytes(b, at, b, at + gap, old - at);
-                self.hx_hot(res)?;
+            match self.heap.alloc_bytes_zeroed(alloc) {
+                Ok(nb) => {
+                    let res = self.heap.copy_bytes(b, 0, nb, 0, at.min(n));
+                    self.hx_hot(res)?;
+                    if at < old.min(n) {
+                        let res = self.heap.copy_bytes(b, at, nb, at + gap, old - at);
+                        self.hx_hot(res)?;
+                    }
+                    self.set_slot_hot(r, 0, Value::from_byte_ref(nb));
+                    self.set_raw_hot(r, 1, n as u64);
+                    return Ok(0);
+                }
+                // A failed shrink keeps the larger block (`n < cap / 4`), and
+                // its length changes in place as below, a growth's gap too.
+                Err(_) if shrink => {}
+                Err(e) => return self.hx_hot(Err(e)),
             }
-            self.set_raw_hot(r, 1, n as u64);
-            return Ok(old - at);
         }
-        let alloc = if shrink { n } else { grown_block(cap, n) };
-        if alloc >= 64 {
-            self.burn_result(alloc, true);
+        if n > old
+            && let Ok(d) = self.heap.bytes_mut(b)
+            && let Some(t) = d.get_mut(old..n)
+        {
+            t.fill(0);
         }
-        let nb = match self.heap.alloc_bytes_zeroed(alloc) {
-            Ok(nb) => nb,
-            // A failed shrink keeps the larger block.
-            Err(_) if shrink => {
-                self.set_raw_hot(r, 1, n as u64);
-                return Ok(0);
-            }
-            Err(e) => return self.hx_hot(Err(e)),
-        };
-        let res = self.heap.copy_bytes(b, 0, nb, 0, at.min(n));
-        self.hx_hot(res)?;
-        if at < old.min(n) {
-            let res = self.heap.copy_bytes(b, at, nb, at + gap, old - at);
+        if at < old {
+            let res = self.heap.copy_bytes(b, at, b, at + gap, old - at);
             self.hx_hot(res)?;
         }
-        self.set_slot_hot(r, 0, Value::from_byte_ref(nb));
         self.set_raw_hot(r, 1, n as u64);
-        Ok(0)
+        Ok(old - at)
     }
 
     /// Does growing bytearray `v` to `need` bytes move more than a step's
