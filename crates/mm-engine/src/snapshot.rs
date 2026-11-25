@@ -40,7 +40,7 @@ use crate::interp::walk_frames;
 use crate::types::{NTYPES, ty};
 use crate::vm::{CodeObj, Frame, HDR, Post, Ready, Source, State, Task, Vm};
 use alloc::{collections::VecDeque, string::String, sync::Arc, vec, vec::Vec};
-use core::sync::atomic::AtomicBool;
+use core::{ops::RangeInclusive, sync::atomic::AtomicBool};
 use mm_compile::bytecode::{Code, Konst, op};
 use mm_core::{Heap, Reader, Sink, Value, put_bytes, put_len, put_u8, put_u32, put_u64};
 
@@ -981,6 +981,7 @@ impl<'a> core::ops::DerefMut for Rd<'a, '_> {
 
 impl Rd<'_, '_> {
     /// A value whose reference, if any, names an object of its kind.
+    #[inline(never)]
     #[cfg_attr(mm_shipped, optimize(size))]
     fn value(&mut self) -> Option<Value> {
         self.r.value().filter(|&v| ref_ok(self.heap, v))
@@ -1143,19 +1144,33 @@ fn read_frames(r: &mut Rd<'_, '_>, budget: &mut u64) -> Res<Vec<Frame>> {
     Ok(frames)
 }
 
+/// Check the vector's count before charging it, then validate every
+/// reference in stream order.
+#[inline(never)]
+fn read_values(
+    r: &mut Rd<'_, '_>,
+    budget: &mut u64,
+    count: RangeInclusive<usize>,
+    what: &'static str,
+) -> Res<Vec<Value>> {
+    let n = need(r.count(8), what)?;
+    let (min, max) = count.into_inner();
+    if n < min || n > max {
+        return Err(SnapError::Corrupt(what));
+    }
+    charge(budget, n as u64 * size_of::<Value>() as u64)?;
+    let mut values = Vec::with_capacity(n);
+    for _ in 0..n {
+        values.push(need(r.value(), what)?);
+    }
+    Ok(values)
+}
+
 /// A stack as written: every register.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn read_stack(r: &mut Rd<'_, '_>, budget: &mut u64) -> Res<Vec<Value>> {
     let len = read_index(r, "stack")?;
-    if need(r.count(8), "stack")? != len {
-        return Err(SnapError::Corrupt("stack"));
-    }
-    charge(budget, len as u64 * size_of::<Value>() as u64)?;
-    let mut stack = Vec::with_capacity(len);
-    for _ in 0..len {
-        stack.push(need(r.value(), "stack")?);
-    }
-    Ok(stack)
+    read_values(r, budget, len..=len, "stack")
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
@@ -1985,18 +2000,18 @@ impl Vm {
             {
                 return Err(SnapError::Corrupt("code"));
             }
-            let mut values = [Vec::new(), Vec::new()];
-            for (values, expected) in values.iter_mut().zip([code.consts.len(), code.names.len()]) {
-                if need(r.count(8), "code values")? != expected {
-                    return Err(SnapError::Corrupt("code values"));
-                }
-                charge(&mut budget, expected as u64 * size_of::<Value>() as u64)?;
-                values.reserve_exact(expected);
-                for _ in 0..expected {
-                    values.push(need(r.value(), "code values")?);
-                }
-            }
-            let [consts, names] = values;
+            let consts = read_values(
+                r,
+                &mut budget,
+                code.consts.len()..=code.consts.len(),
+                "code values",
+            )?;
+            let names = read_values(
+                r,
+                &mut budget,
+                code.names.len()..=code.names.len(),
+                "code values",
+            )?;
             // A function made from the code takes them as its names.
             let mut both = [Value::NONE; 2];
             for v in &mut both {
@@ -2260,12 +2275,7 @@ impl Vm {
             }
             blocked.push(i);
         }
-        let ngathers = need(r.count(8), "gathers")?;
-        charge(&mut budget, ngathers as u64 * size_of::<Value>() as u64)?;
-        let mut gathers = Vec::with_capacity(ngathers);
-        for _ in 0..ngathers {
-            gathers.push(need(r.value(), "gathers")?);
-        }
+        let gathers = read_values(r, &mut budget, 0..=usize::MAX, "gathers")?;
         let gathers_holes = gathers.iter().filter(|&&g| g == Value::UNDEFINED).count();
         let iter_left = read_index(r, "run queue")?;
         if iter_left > ready.len() {
@@ -2289,12 +2299,7 @@ impl Vm {
         }
         let run_handled = need(r.value(), "run queue")?;
         let asyncgens_listed = need(r.bool(), "run queue")?;
-        let nun = need(r.count(8), "run queue")?;
-        charge(&mut budget, nun as u64 * size_of::<Value>() as u64)?;
-        let mut unretrieved = Vec::with_capacity(nun);
-        for _ in 0..nun {
-            unretrieved.push(need(r.value(), "run queue")?);
-        }
+        let unretrieved = read_values(r, &mut budget, 0..=usize::MAX, "run queue")?;
         let loop_flags = need(r.u8(), "run queue")?;
         let nfut = need(r.count(16), "futures")?;
         charge(&mut budget, nfut as u64 * size_of::<(u64, Value)>() as u64)?;
@@ -2332,15 +2337,7 @@ impl Vm {
         charge(&mut budget, nshapes as u64 * size_of::<Shape>() as u64)?;
         let mut shapes = Vec::with_capacity(nshapes);
         for _ in 0..nshapes {
-            let nnames = need(r.count(8), "shapes")?;
-            if nnames > crate::class::MAX_SHAPE_ATTRS {
-                return Err(SnapError::Corrupt("shapes"));
-            }
-            charge(&mut budget, nnames as u64 * size_of::<Value>() as u64)?;
-            let mut names = Vec::with_capacity(nnames);
-            for _ in 0..nnames {
-                names.push(need(r.value(), "shapes")?);
-            }
+            let names = read_values(r, &mut budget, 0..=crate::class::MAX_SHAPE_ATTRS, "shapes")?;
             let nt = need(r.count(12), "shapes")?;
             charge(&mut budget, nt as u64 * size_of::<(Value, u32)>() as u64)?;
             let mut trans = Vec::with_capacity(nt);
@@ -2398,18 +2395,8 @@ impl Vm {
             }
             call_log.push((id, function, status));
         }
-        let nfresh = need(r.count(8), "coroutines")?;
-        charge(&mut budget, nfresh as u64 * size_of::<Value>() as u64)?;
-        let mut fresh = Vec::with_capacity(nfresh);
-        for _ in 0..nfresh {
-            fresh.push(need(r.value(), "coroutines")?);
-        }
-        let ngens = need(r.count(8), "generators")?;
-        charge(&mut budget, ngens as u64 * size_of::<Value>() as u64)?;
-        let mut gens = Vec::with_capacity(ngens);
-        for _ in 0..ngens {
-            gens.push(need(r.value(), "generators")?);
-        }
+        let fresh = read_values(r, &mut budget, 0..=usize::MAX, "coroutines")?;
+        let gens = read_values(r, &mut budget, 0..=usize::MAX, "generators")?;
         let gens_at = need(r.u32(), "generators")? as usize;
         if gens_at > gens.len() {
             return Err(SnapError::Corrupt("generators"));
@@ -2679,7 +2666,7 @@ impl Vm {
             .map_err(|_| SnapError::TooLarge)?;
         // The queue's spare room too: a restored queue grows as the running
         // one would (`Vm::queue_spare`).
-        vm.reserve_scheduler(ntasks, ngathers, spare)
+        vm.reserve_scheduler(ntasks, vm.gathers.len(), spare)
             .map_err(|_| SnapError::TooLarge)?;
         // The capacities and charges of the session that wrote the image,
         // so the restored one is charged what that one is.
