@@ -1965,7 +1965,9 @@ impl Vm {
                         self.new_method(f, obj)?
                     }
                     "__class__" => self.type_obj(T::type_),
-                    "mro" => match crate::builtins::find_method(T::type_, "mro") {
+                    // On `type` itself the ordinary type lookup returns its
+                    // unbound descriptor, as it does for `str.upper`.
+                    "mro" if t != T::type_ => match crate::builtins::find_method(T::type_, "mro") {
                         Some(f) => self.new_bound(Value::native(f), obj)?,
                         None => return Ok(None),
                     },

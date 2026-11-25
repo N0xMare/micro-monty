@@ -329,8 +329,7 @@ The check does not consult function-local bindings.
     to a new session's only by chance. An exception's `__init__` called
     through another exception class than the instance's
     (`OSError.__init__(ValueError('v'), 1)`) is accepted where CPython
-    raises `TypeError`; `type.mro()` with no argument returns a list,
-    and a dunder that is a method descriptor in CPython
+    raises `TypeError`; a dunder that is a method descriptor in CPython
     (`dict.__getitem__()`) has the slot wrapper's `descriptor ... needs
     an argument` text.
   - `sys`'s struct sequences (`version_info`, `float_info`, `hash_info`,

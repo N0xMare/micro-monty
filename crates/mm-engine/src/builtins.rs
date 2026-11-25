@@ -6801,10 +6801,9 @@ fn object_delattr(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     })
 }
 
-#[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
 #[cfg_attr(mm_shipped, optimize(size))]
 fn type_mro(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    let c = vm.arg_o(&a, 0);
+    let c = own_self(vm, &a, &[ty::TYPE, ty::CLASS], T::type_, "mro")?;
     let m = vm.mro_of(c);
     vm.new_list(&m)
 }
