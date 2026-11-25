@@ -3005,23 +3005,40 @@ impl Vm {
                 .bulk(&[d, src], phase(act::DICT, 0, 1, 0), res::NONE, true)
                 .map(|_| ());
         }
-        for (k, v) in self.dict_items_charged(src) {
-            if mode == 1 {
-                if !Vm::is_str(k) {
-                    return Err(self.err(T::TypeError, "keywords must be strings"));
+        for (added, (k, v)) in self.dict_items_charged(src).into_iter().enumerate() {
+            let r = if mode == 1 {
+                self.spread_key(d, k, callee_reg)
+            } else {
+                Ok(())
+            };
+            if let Err(e) = r.and_then(|()| self.dict_set(d, k, v)) {
+                if mode == 1 && self.exc == self.memory_error {
+                    // A call's `**` spread runs again after a collection
+                    // (`Vm::oom_retry_fault`) from the keyword dict it
+                    // found: its own keys are the last `added` entries.
+                    self.kwargs_unput(d, added);
                 }
-                if self.dict_get(d, k)?.is_some() {
-                    let f = self.callee_name(self.stack[callee_reg]);
-                    let ks = String::from(self.str_ref_hot(k));
-                    return Err(self.err(
-                        T::TypeError,
-                        &format!("{f} got multiple values for keyword argument '{ks}'"),
-                    ));
-                }
+                return Err(e);
             }
-            self.dict_set(d, k, v)?;
         }
         let _ = st;
+        Ok(())
+    }
+
+    /// Key `k` of a call's `**` spread into its keyword dict `d`: a string
+    /// `d` does not hold yet.
+    fn spread_key(&mut self, d: Value, k: Value, callee_reg: usize) -> Result<(), Raised> {
+        if !Vm::is_str(k) {
+            return Err(self.err(T::TypeError, "keywords must be strings"));
+        }
+        if self.dict_get(d, k)?.is_some() {
+            let f = self.callee_name(self.stack[callee_reg]);
+            let ks = String::from(self.str_ref(k));
+            return Err(self.err(
+                T::TypeError,
+                &format!("{f} got multiple values for keyword argument '{ks}'"),
+            ));
+        }
         Ok(())
     }
 

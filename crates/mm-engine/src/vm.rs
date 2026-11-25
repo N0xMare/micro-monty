@@ -2170,19 +2170,12 @@ impl Vm {
                 | op::FORMAT_SPEC,
             ) => true,
             // A call's keyword (mode 2): a failed insert wrote nothing. A
-            // `**` spread (mode 1) first takes out the keys it put in
+            // `**` spread of a dict (mode 1) took out the keys it put in
             // (`Vm::kwargs_unput`). A merge (mode 0) waits for its
             // collection in the bulk update itself (`bulk_defer`).
             Some(op::DICT_UPDATE) => match operand(bc, st.pc, 1) {
                 2 => true,
-                1 => {
-                    let d = self
-                        .stack
-                        .get(st.base + operand(bc, st.pc, 0))
-                        .copied()
-                        .unwrap_or(Value::NONE);
-                    self.kwargs_unput(d, st.acc)
-                }
+                1 => st.acc.is_obj_kind(ty::DICT as u8),
                 _ => false,
             },
             Some(op::UNPACK_EX) => seq(st.acc),

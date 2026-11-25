@@ -779,6 +779,68 @@ print(repr(r))
     assert!(refused > 0, "no fill refused the detail");
 }
 
+/// A call's `**` spread whose duplicate keyword's `TypeError` was refused
+/// memory runs again after a collection from the keyword dict it found.
+/// A 140,000-char name puts the error's text in a block of its own (128
+/// KiB and more), so `d` bytes of the limit left free refuse it while
+/// `g`, garbage, holds 1 MiB for the collection to free. The retry took
+/// out every key of the spread that the keyword dict held, the keyword
+/// before it too, so the rerun found no duplicate and called `f` (own
+/// case 580 in the budget sweep). `k1`'s key is the explicit keyword's
+/// own string, as an identifier's is in a short name.
+#[test]
+fn a_spread_refused_its_duplicate_keyword_error_raises_it_after_a_collection() {
+    let name = "a".repeat(140_000);
+    for call in ["named(k1)", "f(**k1, **k1)"] {
+        for d in [1000, 100_000] {
+            let src = format!(
+                "\
+import gc
+def f(**kw):
+    return kw
+def named(extra):
+    return f({name}=1, **extra)
+k1 = {{next(iter(named({{}}))): 2}}
+def fits(n):
+    try:
+        bytes(n)
+    except MemoryError:
+        return False
+    return True
+lo, hi = 1 << 16, 1 << 24
+while lo < hi:
+    mid = (lo + hi + 1) // 2
+    ok = fits(mid)
+    gc.collect()
+    if ok:
+        lo = mid
+    else:
+        hi = mid - 1
+pad = bytes(lo - (1 << 20))
+g = bytes((1 << 20) - {d})
+g = None
+try:
+    {call}
+    r = 'no error'
+except TypeError as e:
+    r = str(e)[-30:]
+except MemoryError:
+    r = 'MemoryError'
+pad = None
+gc.collect()
+print(r)
+"
+            );
+            let (p, out) = run_with(Limits::new().with_memory(8 << 20), &src);
+            assert!(matches!(p, Progress::Complete(_)), "{d}: {p:?}");
+            assert!(
+                out == "MemoryError\n" || out == format!("{}'\n", &name[..29]),
+                "{call} {d}: {out}"
+            );
+        }
+    }
+}
+
 /// An exhausted builtin iterator drops its sequence, as python3.14's do:
 /// three exhausted iterators over 8 MB lists kept the lists, so the next
 /// three raised `MemoryError` under a 32 MiB limit. Each kind of iterator
