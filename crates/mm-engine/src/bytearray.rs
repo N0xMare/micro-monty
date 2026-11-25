@@ -17,6 +17,10 @@ use mm_core::{ByteRef, Value};
 /// quarter of them.
 const SHRINK_ABOVE: usize = 64;
 
+fn shrink_block(cap: usize, len: usize) -> bool {
+    cap > SHRINK_ABOVE && len < cap / 4
+}
+
 /// The operation a [`job::GROW`] job does once the bytearray holds its new
 /// block (raw word `W_A`; its arguments are `W_A + 1`, `W_A + 2` and value
 /// slot 0).
@@ -108,7 +112,7 @@ impl Vm {
         // A growth's gap: the bytes from `at` on move to the end.
         let (at, gap) = (at.min(old), n.saturating_sub(old));
         let cap = self.heap.bytes(b).map_or(0, <[u8]>::len);
-        let shrink = cap > SHRINK_ABOVE && n < cap / 4;
+        let shrink = shrink_block(cap, n);
         if n <= cap && !shrink {
             if n > old
                 && let Ok(d) = self.heap.bytes_mut(b)
@@ -558,7 +562,23 @@ impl Vm {
             ));
         }
         let n = self.bytearray_data(a).len();
-        let need = n.saturating_add(self.bytes_data(b).len());
+        let len = self.bytes_data(b).len();
+        let need = n.saturating_add(len);
+        if let (Some(r), Some(dst), Some(src)) = (a.as_obj(), self.ba_block(a), self.ba_block(b))
+            && self
+                .heap
+                .bytes(dst)
+                .is_ok_and(|d| need <= d.len() && !shrink_block(d.len(), need))
+        {
+            // The copy initializes the new span; no zero fill is needed.
+            if len != 0 {
+                self.burn_bytes(len);
+                let res = self.heap.copy_bytes(src, 0, dst, n, len);
+                self.hx(res)?;
+                self.set_raw(r, 1, need as u64);
+            }
+            return Ok(if f == fin::IADD { a } else { Value::NONE });
+        }
         if self.ba_grows_far(a, need) {
             return self.ba_grow(a, need, f, [0, 0], b);
         }
@@ -592,6 +612,18 @@ pub(crate) fn append(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = this(vm, &a, "append")?;
     let x = vm.byte_arg(vm.arg_o(&a, 1))?;
     let n = vm.bytearray_data(s).len();
+    if let (Some(r), Some(b)) = (s.as_obj(), vm.ba_block(s))
+        && vm
+            .heap
+            .bytes(b)
+            .is_ok_and(|d| n < d.len() && !shrink_block(d.len(), n + 1))
+        && let Ok(d) = vm.heap.bytes_mut(b)
+        && let Some(slot) = d.get_mut(n)
+    {
+        *slot = x;
+        vm.set_raw(r, 1, n as u64 + 1);
+        return Ok(Value::NONE);
+    }
     if vm.ba_grows_far(s, n + 1) {
         return vm.ba_grow(s, n + 1, fin::APPEND, [u64::from(x), 0], Value::NONE);
     }

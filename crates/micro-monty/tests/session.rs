@@ -1684,6 +1684,26 @@ while True:
 }
 
 #[test]
+fn bytearray_appends_in_spare_capacity_then_grows() {
+    let (p, _) = run("\
+b = bytearray(b'a' * 180 + b'z' * 76)
+del b[192:]
+src = bytearray(b'b' * 31)
+b.append(255)
+b += src
+b.extend(b'c' * 32)
+prefix = b'a' * 180 + b'z' * 12 + b'\\xff' + b'b' * 31 + b'c' * 32
+assert b == prefix
+b.extend(b'd' * 65)
+b += b''
+b.extend(b'')
+assert b == prefix + b'd' * 65
+assert src == b'b' * 31
+");
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+}
+
+#[test]
 fn native_formatting_bounds_width_and_complex_precision() {
     let (p, out) = run_with(
         Limits::new().with_memory(8 << 20),
