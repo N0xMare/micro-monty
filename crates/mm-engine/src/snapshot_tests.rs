@@ -520,6 +520,109 @@ fn a_dict_index_reaches_every_entry() {
     );
 }
 
+/// The indexed dict with the most entries: it, its entries and its index.
+fn biggest_dict(vm: &Vm) -> (mm_core::Ref, mm_core::Ref, mm_core::Ref) {
+    let mut best: Option<(usize, mm_core::Ref, mm_core::Ref, mm_core::Ref)> = None;
+    vm.heap.for_each_object(&mut |r, h| {
+        let slot = |i| vm.heap.get(r, i).ok().and_then(Value::as_obj);
+        if h.type_id() == ty::DICT
+            && let (Some(e), Some(i)) = (slot(0), slot(1))
+            && let Ok(n) = vm.heap.slot_words(e).map(<[u64]>::len)
+            && vm.heap.raw_words(i).is_ok()
+            && best.is_none_or(|(m, ..)| m < n)
+        {
+            best = Some((n, r, e, i));
+        }
+    });
+    let (_, r, e, i) = best.expect("an indexed dict");
+    (r, e, i)
+}
+
+/// Counts one entry of dict `r` fewer as live (the low half of its last
+/// word).
+fn drop_dict_len(vm: &mut Vm, r: mm_core::Ref) {
+    let n = vm.heap.object_words(r).expect("words").1.len() - 1;
+    let n = u32::try_from(n).expect("small");
+    let c = raw(vm, r, n);
+    vm.heap.set_raw(r, n, c - 1).expect("counts");
+}
+
+#[test]
+fn a_dict_index_slot_names_a_live_entry() {
+    // A deleted entry (its key `UNDEFINED`) whose slot is not marked
+    // deleted, the length counting the live entries.
+    refuses(
+        "d = dict.fromkeys(range(100))\n",
+        |_| false,
+        "dict index",
+        |vm| {
+            let (r, entries, _) = biggest_dict(vm);
+            for k in 0..2 {
+                vm.heap.set(entries, k, Value::UNDEFINED).expect("entry");
+            }
+            drop_dict_len(vm, r);
+        },
+    );
+}
+
+#[test]
+fn a_dict_index_is_checked_once_along_colliding_probes() {
+    use crate::dict::{Geo, islot};
+    // Every entry's hash forged to one value, the slots laid along its
+    // probe sequence as inserting them in order would: entry `k` is found
+    // after `k` probes, which the check follows once for the whole table
+    // instead of once for each entry (60,000 entries: 1.8e9 probes).
+    let n = 60_000;
+    let src = "d = dict.fromkeys(range(60_000))\n";
+    let collide = |vm: &mut Vm, hole: Option<usize>| {
+        let (r, entries, index) = biggest_dict(vm);
+        let words = vm.heap.raw_words_mut(index).expect("index");
+        let cap = words.len() / 2;
+        let g = Geo::new(u32::try_from(cap).expect("small"));
+        let h = 0x1234_5678_9abc_def0_u64;
+        words[..cap].fill(0);
+        words[cap..cap + n].fill(h);
+        let put = |words: &mut [u64], i: u32, w: u32| {
+            let sh = (i & 1) * 32;
+            let x = &mut words[(i / 2) as usize];
+            *x = *x & !(0xFFFF_FFFF << sh) | u64::from(w) << sh;
+        };
+        // The hole's slot holds a placeholder while the rest are laid, so
+        // no later entry takes it.
+        let (mut i, mut perturb, mut placed, mut held) = (g.start(h), h, 0, None);
+        while placed < n {
+            if islot(words, i) == 0 {
+                let e = u32::try_from(placed + 1).expect("small");
+                put(words, i, g.tag(h) | e);
+                if hole == Some(placed) {
+                    held = Some(i);
+                }
+                placed += 1;
+            }
+            i = g.next(i, &mut perturb);
+        }
+        if let (Some(k), Some(i)) = (hole, held) {
+            put(words, i, 0);
+            for j in [2 * k, 2 * k + 1] {
+                let j = u32::try_from(j).expect("small");
+                vm.heap.set(entries, j, Value::UNDEFINED).expect("entry");
+            }
+            drop_dict_len(vm, r);
+        }
+    };
+    let mut vm = session(src, |_| false);
+    collide(&mut vm, None);
+    assert!(restore(&mut vm).is_ok(), "one long chain is a valid index");
+    // A deleted entry's slot emptied in the middle of the chain cuts the
+    // later entries off from their hash's probe.
+    let mut vm = session(src, |_| false);
+    collide(&mut vm, Some(n / 2));
+    assert_eq!(
+        restore(&mut vm).err(),
+        Some(SnapError::Corrupt("dict index"))
+    );
+}
+
 #[test]
 fn a_restored_class_size_hint_cannot_size_an_instance() {
     // Honest hints never exceed the inline slots; a restored one may say

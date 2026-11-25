@@ -1647,7 +1647,8 @@ impl Vm {
         })?;
         if check {
             check_refs(&heap)?;
-            if !crate::dict::check_indexes(&heap) || !linear_dicts_ok(&heap) {
+            let indexes = crate::dict::check_indexes(&heap).ok_or(SnapError::TooLarge)?;
+            if !indexes || !linear_dicts_ok(&heap) {
                 return Err(SnapError::Corrupt("dict index"));
             }
         }

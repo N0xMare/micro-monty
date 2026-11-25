@@ -223,12 +223,19 @@ impl Geo {
 
 /// Whether every indexed dict in `heap` has a consistent index (a restored
 /// image is checked once): a power-of-two table, counts within it, and
-/// slots that each name a different entry of at most `used` whose hash
-/// they are tagged with, every live entry found on its own probe sequence.
-/// Lookups rely on all of it (an entry of 0 would underflow).
-pub(crate) fn check_indexes(heap: &mm_core::Heap) -> bool {
-    let mut ok = true;
-    let mut seen: Vec<bool> = Vec::new();
+/// slots that each name a different live entry of at most `used` whose
+/// hash they are tagged with, every live entry found on its own probe
+/// sequence. Lookups rely on all of it (an entry of 0 would underflow).
+/// The work is linear in the tables, however long the probes: an entry's
+/// probe is followed while its hash still perturbs it (at most 13 steps),
+/// then it walks the `5i + 1` cycle, which reaches its slot first exactly
+/// when both lie in one run of nonzero slots, the slot later along it.
+/// `None` when the check's own tables cannot be allocated.
+pub(crate) fn check_indexes(heap: &mm_core::Heap) -> Option<bool> {
+    let (mut ok, mut room) = (true, true);
+    // The slot of each entry, and for each slot its place on the cycle
+    // and (high half) the place of the zero slot that starts its run.
+    let (mut slot_of, mut cycle): (Vec<u64>, Vec<u64>) = (Vec::new(), Vec::new());
     heap.for_each_object(&mut |r, h| {
         if !ok || h.type_id() != ty::DICT {
             return;
@@ -266,51 +273,80 @@ pub(crate) fn check_indexes(heap: &mm_core::Heap) -> bool {
         }
         let g = Geo::new(cap32);
         let hash = |e: usize| words[cap + e];
-        seen.clear();
-        seen.resize(used, false);
+        let undefined = Value::UNDEFINED.to_bits();
+        slot_of.clear();
+        if slot_of.try_reserve_exact(used).is_err() {
+            (ok, room) = (false, false);
+            return;
+        }
+        slot_of.resize(used, u64::MAX);
+        let mut zero = None;
         for i in 0..2 * cap32 {
             let w = islot(words, i);
+            if w == 0 {
+                zero = zero.or(Some(i));
+            }
             if w == 0 || w == DELETED {
                 continue;
             }
             let e = (w & g.emask) as usize;
-            if e == 0 || e > used || seen[e - 1] || w & !g.emask != g.tag(hash(e - 1)) {
+            if e == 0
+                || e > used
+                || slot_of[e - 1] != u64::MAX
+                || kvs[2 * (e - 1)] == undefined
+                || w & !g.emask != g.tag(hash(e - 1))
+            {
                 ok = false;
                 return;
             }
-            seen[e - 1] = true;
+            slot_of[e - 1] = u64::from(i);
         }
-        let undefined = Value::UNDEFINED.to_bits();
+        cycle.clear();
         let mut live = 0;
         for e in 0..used {
             if kvs[2 * e] == undefined {
                 continue;
             }
             live += 1;
-            // The probe a lookup of this key takes reaches its slot.
+            let s = slot_of[e];
             let h = hash(e);
-            let mut i = g.start(h);
-            let mut perturb = h;
-            let mut found = false;
-            for _ in 0..=g.steps() {
-                let w = islot(words, i);
-                if w == 0 {
-                    break;
-                }
-                if w != DELETED && (w & g.emask) as usize == e + 1 {
-                    found = true;
-                    break;
-                }
+            let (mut i, mut perturb) = (g.start(h), h);
+            while u64::from(i) != s && perturb != 0 && islot(words, i) != 0 {
                 i = g.next(i, &mut perturb);
             }
-            if !found {
+            // Found on the perturbed steps; or past them, in a table without
+            // a zero slot, which a lookup walks whole within `steps()`.
+            let Some(z) = zero.filter(|_| u64::from(i) != s) else {
+                if s == u64::MAX {
+                    ok = false;
+                    return;
+                }
+                continue;
+            };
+            if cycle.is_empty() {
+                if cycle.try_reserve_exact(2 * cap).is_err() {
+                    (ok, room) = (false, false);
+                    return;
+                }
+                cycle.resize(2 * cap, 0);
+                let (mut at, mut run, mut none) = (z, 0, 0);
+                for k in 0..u64::from(2 * cap32) {
+                    if islot(words, at) == 0 {
+                        run = k;
+                    }
+                    cycle[at as usize] = run << 32 | k;
+                    at = g.next(at, &mut none);
+                }
+            }
+            let (from, to) = (cycle[i as usize], cycle.get(s as usize).copied());
+            if islot(words, i) == 0 || to.is_none_or(|t| t >> 32 != from >> 32 || t < from) {
                 ok = false;
                 return;
             }
         }
         ok = live == len;
     });
-    ok
+    room.then_some(ok)
 }
 
 /// Index slot `i`.
