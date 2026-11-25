@@ -9156,16 +9156,6 @@ fn set_inplace(
     } else {
         o
     };
-    if o == s {
-        match op {
-            BinOp::BitOr => return Ok(Value::NONE),
-            BinOp::Sub | BinOp::BitXor => {
-                vm.set_clear(s)?;
-                return Ok(Value::NONE);
-            }
-            _ => {}
-        }
-    }
     if Vm::is_set(o) {
         return vm.set_binop(op, s, o, true, true, res::NONE);
     }

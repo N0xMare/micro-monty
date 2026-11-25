@@ -202,6 +202,8 @@ Like CPython, `difference_update` and `-=` intersect with a much larger
 set before they remove anything. An intersection can leave a non-set
 iterator partly unread. It scans a set source to exhaustion, even if
 a key comparison shrinks the set being probed.
+For a built-in set `s`, `s -= s` and `s ^= s` clear it; `s |= s` leaves
+it unchanged without comparing keys.
 
 **Fuel is per cell.** Each `start` gives the cell `Limits::fuel`, unless
 `set_fuel` was called since the last cell (then the next cell gets that,

@@ -679,6 +679,8 @@ messages; copy wording where behaviour matches.
     An intersection stops after a match reaches the size of the set it
     probes only if the source is a non-set iterable. A set source is
     scanned to exhaustion even if a comparison shrinks the probed set.
+    On an exact set with itself, `-=` and `^=` clear the table as the
+    named updates do; `|=` is a no-op and does not compare keys.
   - **Numbers.** `int()`, `float()` and `complex()` read a long text 2 MB
     (a non-ASCII char counting 32) per step in one chunked text engine
     (`op::NUM_TEXT`: one char loop and step, a grammar per op), keeping a

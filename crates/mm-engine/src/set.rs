@@ -1200,6 +1200,12 @@ impl Vm {
         let (la, lb) = (self.set_len(a), self.set_len(b));
         if inplace {
             // CPython's `set_ior`, `set_iand`, `set_isub`, `set_ixor`.
+            if a == b && matches!(op, BinOp::BitOr | BinOp::Sub | BinOp::BitXor) {
+                if op != BinOp::BitOr {
+                    self.set_clear(a)?;
+                }
+                return Ok(if res == res::NONE { Value::NONE } else { a });
+            }
             let prog = match op {
                 BinOp::BitOr => phase(act::ADD, 0, 1, 0),
                 BinOp::Sub if lb >> 3 > la => {
