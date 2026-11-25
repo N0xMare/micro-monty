@@ -662,9 +662,10 @@ class NamedTuple(tuple):
 class TypedDict(dict):
     """A simple typed namespace. At runtime it is a plain dict."""
 
-    def __new__(cls, *args, total=True, **kwargs):
+    def __new__(cls, *args, **kwargs):
         if cls is TypedDict:
             typename, fields = args[0], (args[1] if len(args) > 1 else {})
+            total = kwargs.pop('total', True)
             return type(typename, (TypedDict,), {'__annotations__': dict(fields)}, total=total)
         return dict(*args, **kwargs)
 
