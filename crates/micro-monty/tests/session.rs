@@ -670,6 +670,63 @@ print(out)
     assert_eq!(out, "['MemoryError', 0]\n");
 }
 
+/// A cell that ends with a value whose `repr` is user code, refused the
+/// memory to load the prelude's rendering of it, raises `MemoryError`, and
+/// the session goes on. A large `bytes` leaves `d` bytes of the limit free
+/// at the cell's end; from about 330 to 670 [M] the cell's code fits and
+/// the rendering does not, and the next cell's small code fits. The cell
+/// completed without the text, and the host's native `repr` reported
+/// `SystemError: micro-monty: this operation needs Python code here`.
+#[test]
+fn a_completion_refused_its_rendering_raises_memory_error() {
+    let mut refused = 0;
+    for d in (0..1200).step_by(24) {
+        let src = format!(
+            "\
+import gc
+class Echo:
+    def __repr__(self):
+        return 'Echo()'
+e = Echo()
+def fits(n):
+    try:
+        bytes(n)
+    except MemoryError:
+        return False
+    return True
+lo, hi = 1 << 16, 1 << 24
+while lo < hi:
+    mid = (lo + hi + 1) // 2
+    ok = fits(mid)
+    gc.collect()
+    if ok:
+        lo = mid
+    else:
+        hi = mid - 1
+def free():
+    global pad
+    pad = None
+    gc.collect()
+pad = bytes(lo - {d})
+e"
+        );
+        let r = run_cells(Limits::new().with_memory(8 << 20), &[&src, "free()", "e"]);
+        for (p, _) in &r {
+            if let Progress::Error(e) = p {
+                assert_eq!(e.type_name, "MemoryError", "{d}: {p:?}");
+            }
+        }
+        if matches!(r[0].0, Progress::Error(_)) && matches!(r[1].0, Progress::Complete(_)) {
+            let Progress::Complete(Some(c)) = &r[2].0 else {
+                panic!("{d}: {:?}", r[2].0)
+            };
+            assert_eq!(c.repr, "Echo()", "{d}");
+            refused += 1;
+        }
+    }
+    assert!(refused > 0, "no fill refused the rendering alone");
+}
+
 /// An exhausted builtin iterator drops its sequence, as python3.14's do:
 /// three exhausted iterators over 8 MB lists kept the lists, so the next
 /// three raised `MemoryError` under a 32 MiB limit. Each kind of iterator

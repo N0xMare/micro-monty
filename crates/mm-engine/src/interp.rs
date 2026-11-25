@@ -540,11 +540,19 @@ impl Vm {
                             }
                             None => {}
                         }
-                        if self.want_text
-                            && self.text_needs_py(v)
-                            && let Ok(f) = self.prelude_fn("_post_complete")
-                            && let Ok(s) = self.bottom_call(f, &[v])
-                        {
+                        if self.want_text && self.text_needs_py(v) {
+                            // Refused memory for the prelude's rendering,
+                            // the cell raises its `MemoryError`: completed
+                            // without the text, the host's native `repr`
+                            // reported a `SystemError` (`need_py`).
+                            let Ok(s) = self
+                                .prelude_fn("_post_complete")
+                                .and_then(|f| self.bottom_call(f, &[v]))
+                            else {
+                                self.drop_refusal();
+                                self.finish_cell();
+                                return Exit::Error;
+                            };
                             self.post = Some(crate::vm::Post::Complete(v));
                             st = s;
                             continue;
