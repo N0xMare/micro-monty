@@ -6,9 +6,10 @@
 //! [`SnapshotError::Incompatible`] instead of misreading them.
 
 use crate::{
-    Engine, ParkReason, Progress, Session, SnapshotError, build_id, host_defs, test_hooks,
+    Engine, HostValue, ParkReason, Progress, Session, SnapshotError, build_id, host_defs,
+    test_hooks,
 };
-use mm_engine::{FutureStatus, Stopped, Vm};
+use mm_engine::{FutureStatus, SnapError, Stopped, Vm};
 
 /// The first bytes of every snapshot.
 const SNAPSHOT_MAGIC: [u8; 8] = *b"MMSNAP\0\x01";
@@ -164,10 +165,7 @@ pub(crate) fn read(engine: &Engine, bytes: &[u8], trusted: bool) -> Result<Image
         },
         engine.config.limits.memory,
     )
-    .map_err(|e| match e {
-        mm_engine::SnapError::Corrupt(what) => corrupt(what),
-        mm_engine::SnapError::TooLarge => SnapshotError::TooLarge,
-    })?;
+    .map_err(snap_error)?;
     // The header's stop is what the session reports and which answer it
     // takes, so it must be what the VM is stopped at. A waiting cell's
     // futures may have been cancelled since (the host's answer to one is
@@ -246,37 +244,71 @@ pub(crate) fn write_stop(out: &mut Vec<u8>, p: &Progress) {
     }
 }
 
-/// The inverse of [`write_stop`]: corrupt if the header is malformed or
-/// its host values take more than `budget` bytes.
+/// The facade's form of an engine read error.
+fn snap_error(e: SnapError) -> SnapshotError {
+    match e {
+        SnapError::Corrupt(what) => SnapshotError::Corrupt {
+            what: what.to_owned(),
+        },
+        SnapError::TooLarge => SnapshotError::TooLarge,
+    }
+}
+
+/// A malformed stop.
+const BAD_STOP: SnapError = SnapError::Corrupt("session");
+
+/// The inverse of [`write_stop`]: `TooLarge` if what it builds takes more
+/// than `budget` bytes (charged before each part is allocated), corrupt if
+/// the header is malformed.
 pub(crate) fn read_stop(
     r: &mut mm_core::Reader<'_>,
     budget: &mut u64,
 ) -> Result<Option<Progress>, SnapshotError> {
-    let corrupt = || SnapshotError::Corrupt {
-        what: "session".to_owned(),
-    };
-    match r.u8().ok_or_else(corrupt)? {
-        0 => Ok(None),
-        phase => read_stopped(phase, r, budget).map(Some).ok_or_else(corrupt),
+    match r.u8() {
+        Some(0) => Ok(None),
+        Some(phase) => read_stopped(phase, r, budget).map(Some).map_err(snap_error),
+        None => Err(snap_error(BAD_STOP)),
     }
 }
 
-/// A stop of phase `phase` (not idle) as [`write_stop`] wrote it.
-fn read_stopped(phase: u8, r: &mut mm_core::Reader<'_>, budget: &mut u64) -> Option<Progress> {
-    Some(match phase {
+/// Takes `bytes` from `budget`.
+fn charge(budget: &mut u64, bytes: u64) -> Result<(), SnapError> {
+    *budget = budget.checked_sub(bytes).ok_or(SnapError::TooLarge)?;
+    Ok(())
+}
+
+/// A name of the stop (the function's, a keyword's), which the live call
+/// does not charge either.
+fn read_text(r: &mut mm_core::Reader<'_>) -> Result<String, SnapError> {
+    r.str().map(str::to_owned).ok_or(BAD_STOP)
+}
+
+/// A stop of phase `phase` (not idle) as [`write_stop`] wrote it. Its
+/// vectors are charged at the rates the call charged them, before they are
+/// allocated, and nothing the call did not charge: the live call's charge
+/// is the reference. A count is at most the bytes left, so the products
+/// fit.
+fn read_stopped(
+    phase: u8,
+    r: &mut mm_core::Reader<'_>,
+    budget: &mut u64,
+) -> Result<Progress, SnapError> {
+    Ok(match phase {
         1 => {
-            let call = r.u64()?;
-            let function = r.u32()?;
-            let name = r.str()?.to_owned();
-            let n = r.count(1)?;
+            let call = r.u64().ok_or(BAD_STOP)?;
+            let function = r.u32().ok_or(BAD_STOP)?;
+            let name = read_text(r)?;
+            let n = r.count(1).ok_or(BAD_STOP)?;
+            charge(budget, n as u64 * size_of::<HostValue>() as u64)?;
             let mut args = Vec::with_capacity(n);
             for _ in 0..n {
                 args.push(mm_engine::read_host_value(r, budget)?);
             }
-            let n = r.count(5)?;
+            let n = r.count(5).ok_or(BAD_STOP)?;
+            charge(budget, n as u64 * size_of::<(String, HostValue)>() as u64)?;
             let mut kwargs = Vec::with_capacity(n);
             for _ in 0..n {
-                let k = r.str()?.to_owned();
+                let k = read_text(r)?;
                 kwargs.push((k, mm_engine::read_host_value(r, budget)?));
             }
             Progress::HostCall {
@@ -288,19 +320,23 @@ fn read_stopped(phase: u8, r: &mut mm_core::Reader<'_>, budget: &mut u64) -> Opt
             }
         }
         2 => {
-            let n = r.count(8)?;
+            let n = r.count(8).ok_or(BAD_STOP)?;
+            charge(budget, n as u64 * 8)?;
             Progress::Waiting {
-                calls: (0..n).map(|_| r.u64()).collect::<Option<_>>()?,
+                calls: (0..n)
+                    .map(|_| r.u64())
+                    .collect::<Option<_>>()
+                    .ok_or(BAD_STOP)?,
             }
         }
         3 => Progress::Parked {
-            reason: match r.u8()? {
-                0 => ParkReason::Fuel,
-                1 => ParkReason::Requested,
-                2 => ParkReason::Deadline,
-                _ => return None,
+            reason: match r.u8() {
+                Some(0) => ParkReason::Fuel,
+                Some(1) => ParkReason::Requested,
+                Some(2) => ParkReason::Deadline,
+                _ => return Err(BAD_STOP),
             },
         },
-        _ => return None,
+        _ => return Err(BAD_STOP),
     })
 }

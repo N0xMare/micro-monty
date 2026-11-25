@@ -235,11 +235,11 @@ pub fn forge_stop(image: &[u8], phase: u8) -> Option<Vec<u8>> {
             r.u32()?;
             r.str()?;
             for _ in 0..r.count(1)? {
-                mm_engine::read_host_value(&mut r, &mut budget)?;
+                mm_engine::read_host_value(&mut r, &mut budget).ok()?;
             }
             for _ in 0..r.count(5)? {
                 r.str()?;
-                mm_engine::read_host_value(&mut r, &mut budget)?;
+                mm_engine::read_host_value(&mut r, &mut budget).ok()?;
             }
         }
         2 => {

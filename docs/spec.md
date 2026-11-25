@@ -2994,10 +2994,16 @@ fixed VM tables, bytecode verification scratch and the bundled-module
 decode workspace are each admitted before allocation (`Vm::read_snapshot`,
 `TooLarge` past it), in the same capacity classes the session had, decoded
 straight into their final storage. Not in that budget: the caller's image
-bytes, the pending stop's host values that `Session::pending` re-reports
-(the host's data, capped separately at the memory limit, as snapshot output
-is), the decoded modules the Engine's cache shares, and the allocator's
-transient peaks.
+bytes, the pending stop that `Session::pending` re-reports (the host's
+data: its argument vectors and host values, and a wait's calls, each
+charged before it is built to a budget of its own, the memory limit; the
+live call's charge is the reference, and a restore charges no more than
+it, so an image restores at its writer's limit: the call's name, its
+keyword keys and the class and type names inside its values, which the
+live call does not charge, are not charged; `TooLarge` past it), the
+decoded modules the Engine's cache shares, and the allocator's transient
+peaks. A host module's constants and spec are host definitions: their
+names are charged, as `define_host_module` counts them.
 
 ### Admission: native work buffers
 

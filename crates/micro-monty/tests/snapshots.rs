@@ -3865,3 +3865,84 @@ fn reset_to_keeps_the_sessions_gc_settings() {
     // Yielding changes what incremental collection alone does.
     assert_ne!(all[0], all[1]);
 }
+
+/// The stop an image's header names (a host call's name, arguments and
+/// keyword arguments, a wait's calls) is charged to the restoring
+/// engine's memory as it is read, each part before it is allocated: past
+/// the limit the restore is `TooLarge`, never a header read as corrupt or
+/// an allocation past the limit.
+#[test]
+fn a_stop_past_the_memory_limit_is_too_large() {
+    let roomy = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(64 << 20)));
+    let parked = |src: &str| {
+        let mut s = Session::new(&roomy).expect("session");
+        s.define(&HostModule::untyped("", &["checkpoint"]))
+            .expect("defines");
+        let p = s.start(&roomy.compile(src, "stop.py").expect("compiles"));
+        assert!(matches!(p, Progress::HostCall { .. }), "{p:?}");
+        s.snapshot().expect("snapshot")
+    };
+    let restore = |image: &[u8], mib: u64| {
+        Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(mib << 20)))
+            .restore(image)
+            .map(drop)
+            .err()
+    };
+    // One argument's text past the limit.
+    let text = parked("checkpoint('x' * (3 << 20))");
+    assert_eq!(restore(&text, 64), None);
+    assert_eq!(restore(&text, 2), Some(SnapshotError::TooLarge));
+    // Half a million `None` arguments: a byte each in the image, eight
+    // in the restored heap's tuple, but a `HostValue` (56 bytes) each in
+    // the stop, as the call charged them: on 24 MiB the heap fits and the
+    // stop does not.
+    let many = parked("checkpoint(*([None] * (1 << 19)))");
+    assert_eq!(restore(&many, 64), None);
+    assert_eq!(restore(&many, 24), Some(SnapshotError::TooLarge));
+}
+
+/// A host call's stop restores at its writer's limit: the restore charges
+/// no more than the live call did, which releases each container's open
+/// frame once it is built and charges no class or type names.
+#[test]
+fn a_stop_restores_at_its_writers_limit() {
+    for (src, mib) in [
+        // A container argument each.
+        ("checkpoint(*([[]] * 100_000))", 16),
+        // Long class names, one a record.
+        (
+            "from collections import namedtuple\nT = namedtuple('A' * 300, 'x')\ncheckpoint([T(1)] * 20_000)",
+            8,
+        ),
+    ] {
+        let e = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(mib << 20)));
+        let mut s = Session::new(&e).expect("session");
+        s.define(&HostModule::untyped("", &["checkpoint"]))
+            .expect("defines");
+        let p = s.start(&e.compile(src, "stop.py").expect("compiles"));
+        assert!(matches!(p, Progress::HostCall { .. }), "{src}: {p:?}");
+        let image = s.snapshot().expect("snapshot");
+        assert_eq!(e.restore(&image).map(drop).err(), None, "{src}");
+    }
+}
+
+/// A host module's constants are host definitions, whose names
+/// `define_host_module` counts: a restore counts a record constant's class
+/// name too, so the restored session saves the image it came from.
+#[test]
+fn a_record_constant_restores_to_the_same_image() {
+    let e = engine();
+    let mut s = Session::new(&e).expect("session");
+    let record = HostValue::Record {
+        name: "Point".to_owned(),
+        fields: vec![("x".to_owned(), HostValue::Int(1))],
+    };
+    s.define(&HostModule {
+        constants: vec![("ORIGIN".to_owned(), record)],
+        ..HostModule::untyped("tools", &["get"])
+    })
+    .expect("defines");
+    let image = s.snapshot().expect("snapshot");
+    let mut restored = e.restore(&image).expect("restores");
+    assert!(restored.snapshot().expect("snapshot") == image);
+}

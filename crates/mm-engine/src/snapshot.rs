@@ -1093,6 +1093,17 @@ fn read_host_string(r: &mut Reader<'_>, budget: &mut u64) -> Res<String> {
     Ok(String::from(s))
 }
 
+/// A record's or host object's class, or an unconverted value's type:
+/// charged when `charged`, as a host definition counts it; a stop's live
+/// conversion does not charge it, and a restore charges no more than the
+/// call did.
+fn read_host_name(r: &mut Reader<'_>, budget: &mut u64, charged: bool) -> Res<String> {
+    if charged {
+        return read_host_string(r, budget);
+    }
+    need(r.str(), "host value").map(String::from)
+}
+
 #[cfg_attr(mm_shipped, optimize(size))]
 fn read_index(r: &mut Rd<'_, '_>, what: &'static str) -> Res<usize> {
     need(r.u32(), what).map(|n| n as usize)
@@ -1270,8 +1281,15 @@ struct HostFrame {
 
 pub(crate) const HOST_FRAME_BYTES: u64 = size_of::<HostFrame>() as u64;
 
+/// Reads a host value; `names` charges the names inside it (a host
+/// definition's, not a stop's).
 #[cfg_attr(mm_shipped, optimize(size))]
-fn read_host(r: &mut Reader<'_>, budget: &mut u64, scratch: &mut u64) -> Res<(HostValue, u64)> {
+fn read_host(
+    r: &mut Reader<'_>,
+    budget: &mut u64,
+    scratch: &mut u64,
+    names: bool,
+) -> Res<(HostValue, u64)> {
     let mut stack: Vec<HostFrame> = Vec::new();
     let value = 'read: loop {
         let mut key = match stack.last() {
@@ -1297,7 +1315,7 @@ fn read_host(r: &mut Reader<'_>, budget: &mut u64, scratch: &mut u64) -> Res<(Ho
                     return Err(SnapError::Corrupt("host value"));
                 }
                 let record = if tag == 9 || tag == 14 {
-                    Some(read_host_string(r, budget)?)
+                    Some(read_host_name(r, budget, names)?)
                 } else {
                     None
                 };
@@ -1340,13 +1358,13 @@ fn read_host(r: &mut Reader<'_>, budget: &mut u64, scratch: &mut u64) -> Res<(Ho
                 v
             }
             10 => HostValue::Unconverted(Unconverted::Opaque {
-                type_name: read_host_string(r, budget)?,
+                type_name: read_host_name(r, budget, names)?,
                 repr: read_host_string(r, budget)?,
             }),
             11 => HostValue::Unconverted(Unconverted::KeyNotStr),
             12 => HostValue::Unconverted(Unconverted::TooDeep),
             13 => HostValue::Unconverted(Unconverted::TooLarge {
-                type_name: read_host_string(r, budget)?,
+                type_name: read_host_name(r, budget, names)?,
             }),
             _ => return Err(SnapError::Corrupt("host value")),
         };
@@ -1376,11 +1394,16 @@ pub fn put_host_value(out: &mut Vec<u8>, v: &HostValue) {
 }
 
 /// Reads a value [`put_host_value`] wrote, taking the bytes it builds (as
-/// a restore counts host values) from `budget`; `None` if it is malformed
-/// or does not fit.
+/// a restore counts host values) from `budget`: `TooLarge` when they do
+/// not fit, before they are allocated, `Corrupt` if it is malformed. The
+/// decode stack's charge goes back once the value is built, as the live
+/// conversion releases its open containers'.
 #[cfg_attr(mm_shipped, optimize(size))]
-pub fn read_host_value(r: &mut Reader<'_>, budget: &mut u64) -> Option<HostValue> {
-    read_host(r, budget, &mut 0).ok().map(|(v, _)| v)
+pub fn read_host_value(r: &mut Reader<'_>, budget: &mut u64) -> Res<HostValue> {
+    let mut scratch = 0;
+    let (v, _) = read_host(r, budget, &mut scratch, false)?;
+    *budget = budget.saturating_add(scratch);
+    Ok(v)
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
@@ -1701,12 +1724,12 @@ impl Vm {
             let mut constants = Vec::with_capacity(nc);
             for _ in 0..nc {
                 let k = read_host_string(r, &mut budget)?;
-                let (value, workspace) = read_host(r, &mut budget, &mut host_scratch)?;
+                let (value, workspace) = read_host(r, &mut budget, &mut host_scratch, true)?;
                 scratch = scratch.max(workspace);
                 constants.push((k, value));
             }
             let encoded = *r.rest_mut();
-            let (spec, workspace) = read_host(r, &mut budget, &mut host_scratch)?;
+            let (spec, workspace) = read_host(r, &mut budget, &mut host_scratch, true)?;
             let encoded = &encoded[..encoded.len() - r.remaining()];
             scratch = scratch.max(workspace);
             // Its shared code: the cached program, if it was built from
