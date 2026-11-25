@@ -441,10 +441,14 @@ impl Vm {
             return self.int_op(op, x, y);
         }
         if Vm::is_intlike(a) && Vm::is_intlike(b) {
-            if let (Some(x), Some(y)) = (self.int128_of(a), self.int128_of(b))
-                && let Some(r) = Vm::int128_binop(op, x, y)
-            {
-                return self.new_int128(r);
+            if let (Some(x), Some(y)) = (self.int128_of(a), self.int128_of(b)) {
+                if op == BinOp::Pow {
+                    if let Some(r) = self.int128_pow(x, y) {
+                        return r;
+                    }
+                } else if let Some(r) = Vm::int128_binop(op, x, y) {
+                    return self.new_int128(r);
+                }
             }
             let (x, y) = (
                 self.big_of(a).unwrap_or_default(),
@@ -1008,6 +1012,9 @@ impl Vm {
                         Some(v) => base = v,
                         None => break,
                     }
+                }
+                if let Some(r) = self.int128_pow(x128, y128) {
+                    return r;
                 }
                 self.big_binop(op, &Big::from_i64(x), &Big::from_i64(y))
             }

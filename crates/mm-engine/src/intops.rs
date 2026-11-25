@@ -854,6 +854,29 @@ impl Vm {
         self.alloc_tuple(&[q, m])
     }
 
+    /// The `big_pow` path for nonnegative powers that fit `i128`.
+    #[inline(never)]
+    pub(crate) fn int128_pow(&mut self, x: i128, y: i128) -> Option<Result<Value, Raised>> {
+        if y < 0 {
+            return None;
+        }
+        let r = match x {
+            -1 => 1 - 2 * (y & 1),
+            0 => i128::from(y == 0),
+            1 => 1,
+            _ => {
+                let e = u32::try_from(y).ok()?;
+                let r = x.checked_pow(e)?;
+                let abits = u64::from(128 - x.unsigned_abs().leading_zeros());
+                if let Err(raised) = self.charge_big_pow(abits, u64::from(e)) {
+                    return Some(Err(raised));
+                }
+                r
+            }
+        };
+        Some(self.new_int128(r))
+    }
+
     fn big_pow(&mut self, a: &Big, b: &Big) -> Result<Value, Raised> {
         if b.neg {
             // As float `**`: both convert first, then the zero check.
@@ -875,12 +898,17 @@ impl Vm {
         let Some(e) = b.to_i64().and_then(|e| u64::try_from(e).ok()) else {
             return Err(self.err(T::MemoryError, ""));
         };
-        let bits = a.bit_length().saturating_mul(e);
+        self.charge_big_pow(a.bit_length(), e)?;
+        self.new_big(&a.pow(e))
+    }
+
+    fn charge_big_pow(&mut self, abits: u64, e: u64) -> Result<(), Raised> {
+        let bits = abits.saturating_mul(e);
         self.big_room(bits)?;
-        self.work_room(pow_ns(a.bit_length(), e))?;
+        self.work_room(pow_ns(abits, e))?;
         let limbs = bits / 32;
         self.burn(limbs.saturating_mul(limbs) / 64 + e.min(64));
-        self.new_big(&a.pow(e))
+        Ok(())
     }
 
     /// `pow(a, e, m)` for ints.
