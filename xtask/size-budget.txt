@@ -12,3 +12,7 @@ v0.0.2 hello +42000 owner, 2026-11-19: the queued fixes measure about +38 KB wit
 v0.0.2 hello.wasm +42000 owner, 2026-11-19: as hello
 v0.0.2 mm_wasm_guest.wasm +42000 owner, 2026-11-19: as hello; reset over a full heap is +1.8 KB here [M]
 v0.0.2 mm_wasm_guest_bundle.wasm +42000 owner, 2026-11-19: as mm_wasm_guest.wasm; this passes v0.0.1's size, which the tag was 34,745 B under
+v0.0.3 hello +30000 owner, 2026-11-25: 0.0.4's first lanes measure +21,376 B [M]: scheduler A with its waiter buffer +1,344, exact image stage 1 +20,032
+v0.0.3 hello.wasm +30000 owner, 2026-11-25: as hello; scheduler A +1,608, exact image stage 1 +18,714 [M]
+v0.0.3 mm_wasm_guest.wasm +30000 owner, 2026-11-25: as hello; scheduler A +1,660, exact image stage 1 +19,750 [M]
+v0.0.3 mm_wasm_guest_bundle.wasm +30000 owner, 2026-11-25: as hello; scheduler A +1,660, exact image stage 1 +19,835 [M]
