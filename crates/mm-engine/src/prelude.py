@@ -6298,9 +6298,9 @@ def _bulk(r, prog, pc, i, res):
                     has = _sfind(other, x, h) >= 0
                 if a == 6 and has or a == 7 and not has:
                     _sadd_h(out, x, h)
-                    # Holding all of the set it probes, an intersection
-                    # reads no further (`Item::End`).
-                    if a == 6 and type(other) is not dict and len(out) >= len(other):
+                    # Only a non-set iterable can leave its tail unread.
+                    if (a == 6 and type(other) is not dict and len(out) >= len(other)
+                            and type(src) is not set and type(src) is not frozenset):
                         break
                 elif a == 8 and not has or a == 9 and has:
                     return False

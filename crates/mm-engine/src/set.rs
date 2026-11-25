@@ -219,8 +219,8 @@ enum Item {
     /// Not taken: `out`'s table must grow first.
     Wait,
     Done(Value),
-    /// The phase is done before its source is (an intersection holding
-    /// all of the set it probes, as CPython's `set_intersection` stops).
+    /// An intersection with a non-set iterable found as many elements
+    /// as the set it probes, so the rest of the iterable stays unread.
     End,
     /// Not taken yet: its lookup walked a slice of a long chain
     /// ([`PROBING`]); the step ends and the next goes on with it.
@@ -1620,6 +1620,7 @@ impl Vm {
                 if a == act::AND
                     && b.nk == Value::UNDEFINED
                     && Self::is_set(other)
+                    && !Self::is_set(src)
                     && self.set_len(out) >= self.set_len(other)
                 {
                     b.pc = (b.pc & 7) + 1;
@@ -1661,7 +1662,17 @@ impl Vm {
                             < crate::nstep::STEP_WORK / 4;
                     *units += unit;
                     free += ITEM_WALK;
-                    match self.bulk_act(b, a, out, other, b.i as usize, x, Value::NONE, None)? {
+                    match self.bulk_act(
+                        b,
+                        a,
+                        out,
+                        src,
+                        other,
+                        b.i as usize,
+                        x,
+                        Value::NONE,
+                        None,
+                    )? {
                         Item::Next => b.i += 1,
                         Item::Wait => break,
                         Item::Yield => return Ok(Flow::More),
@@ -1706,7 +1717,7 @@ impl Vm {
                 (a != act::AND || !src.is_obj_kind(ty::DICT as u8))
                     && (a != act::DISJOINT || !other.is_obj_kind(ty::DICT as u8))
             });
-            let r = self.bulk_act(b, a, out, other, at, x, v, h);
+            let r = self.bulk_act(b, a, out, src, other, at, x, v, h);
             if one_shot && (matches!(r, Ok(Item::Wait | Item::Yield)) || r.is_err() && self.slow) {
                 for &(o, i, w) in pos.iter().flatten() {
                     match (i, Value::from_bits(w)) {
@@ -2369,6 +2380,7 @@ impl Vm {
         b: &mut Bulk,
         a: u64,
         out: Value,
+        src: Value,
         other: Value,
         at: usize,
         x: Value,
@@ -2439,11 +2451,11 @@ impl Vm {
                 match a {
                     act::AND | act::SUB if has == (a == act::AND) => {
                         self.bulk_add(b, out, x, h, false)?;
-                        // Holding all of `other`, it reads no further, but
-                        // not before a rebuild that add started has run:
-                        // the table's order is CPython's only after it.
+                        // CPython only cuts a non-set source short; a set
+                        // source must go on even if equality shrank `other`.
                         if a == act::AND
                             && Self::is_set(other)
+                            && !Self::is_set(src)
                             && self.set_len(out) >= self.set_len(other)
                             && b.nk == Value::UNDEFINED
                         {

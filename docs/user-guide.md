@@ -199,7 +199,9 @@ the remaining items of that iterator stay unread.
 `update` and `difference_update` keep the changes already made;
 `intersection_update` replaces the set only after all inputs succeed.
 Like CPython, `difference_update` and `-=` intersect with a much larger
-set before they remove anything.
+set before they remove anything. An intersection can leave a non-set
+iterator partly unread. It scans a set source to exhaustion, even if
+a key comparison shrinks the set being probed.
 
 **Fuel is per cell.** Each `start` gives the cell `Limits::fuel`, unless
 `set_fuel` was called since the last cell (then the next cell gets that,

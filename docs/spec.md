@@ -676,6 +676,9 @@ messages; copy wording where behaviour matches.
     up to the error. For a set source whose size shifted right by three
     exceeds the receiver's size, `difference_update` and `-=` first build
     the intersection, as CPython does, so no deletion precedes it.
+    An intersection stops after a match reaches the size of the set it
+    probes only if the source is a non-set iterable. A set source is
+    scanned to exhaustion even if a comparison shrinks the probed set.
   - **Numbers.** `int()`, `float()` and `complex()` read a long text 2 MB
     (a non-ASCII char counting 32) per step in one chunked text engine
     (`op::NUM_TEXT`: one char loop and step, a grammar per op), keeping a
