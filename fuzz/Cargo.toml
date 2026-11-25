@@ -27,6 +27,8 @@ ruff-oracle = ["mm-parse/ruff-oracle"]
 # whose callbacks only libFuzzer or a sanitizer runtime defines, and the
 # replay links neither under `-s none`.
 memory-probes = []
+# Public-native sweep, including the opt-in bundles.
+fuel-sweep = ["micro-monty/mod-uuid", "micro-monty/mod-html-entities"]
 
 # Its own workspace: fuzz-only dependencies stay out of the main lockfile.
 [workspace]
@@ -117,3 +119,12 @@ required-features = ["memory-probes"]
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuel_sweep"
+path = "src/bin/fuel_sweep.rs"
+required-features = ["fuel-sweep"]
+test = false
+doc = false
+bench = false
+
