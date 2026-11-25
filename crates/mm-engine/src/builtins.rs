@@ -4420,6 +4420,20 @@ fn bi_sum(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
     let src = vm.arg_o(&a, 0);
     let itv = vm.get_iter(src)?;
+    if Vm::is_bytearray(src)
+        && let (Some(start), Some(iter)) = (acc.as_int(), itv.as_obj())
+    {
+        let bytes = vm.bytearray_data(src);
+        let n = bytes.len() as u64;
+        if n < nstep::STEP_WORK {
+            let sum = bytes.iter().map(|&b| i64::from(b)).sum::<i64>();
+            // Leave the same exhausted iterator in the heap as the fold.
+            vm.set_raw(iter, 2, n);
+            vm.set_slot(iter, 0, Value::NONE);
+            vm.burn(n);
+            return vm.new_int(start + sum);
+        }
+    }
     if src.is_obj_kind(ty::RANGE as u8)
         && let Some(start) = acc.as_int()
         && let Some(total) = vm.range_sum(itv).and_then(|s| s.checked_add(start.into()))

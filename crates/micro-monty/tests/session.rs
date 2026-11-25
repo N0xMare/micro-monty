@@ -1704,6 +1704,25 @@ assert src == b'b' * 31
 }
 
 #[test]
+fn bytearray_sum_preserves_start_types_and_step_boundary() {
+    let (p, _) = run("\
+b = bytearray(b'\\x05\\x14\\x2c')
+assert sum(b, -37) == 32
+assert sum(b, (1 << 47) - 1) == (1 << 47) + 68
+assert sum(b, -0.5) == 68.5
+assert sum(bytearray(), True) is True
+b *= 43690
+b.append(254)
+assert len(b) == (1 << 17) - 1
+assert sum(b, -37) == 69 * 43690 + 254 - 37
+b.append(251)
+assert len(b) == 1 << 17
+assert sum(b, -37) == 69 * 43690 + 254 + 251 - 37
+");
+    assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+}
+
+#[test]
 fn native_formatting_bounds_width_and_complex_precision() {
     let (p, out) = run_with(
         Limits::new().with_memory(8 << 20),
