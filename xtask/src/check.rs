@@ -87,6 +87,27 @@ pub(crate) fn keep(stages: Vec<Stage>, kept: &[&str]) -> Result<Vec<Stage>, Stri
         .collect())
 }
 
+/// Keep all producer/consumer pairs together in the untimed lane. Each
+/// timed command is `cargo test`, so it can build its own binary.
+pub(crate) fn pilot_lanes(stages: &[Stage]) -> Result<Vec<Vec<&'static str>>, String> {
+    let untimed: Vec<_> = stages.iter().filter(|s| !s.alone).map(|s| s.name).collect();
+    for stage in stages {
+        for dep in &stage.after {
+            if !untimed.contains(dep)
+                || (stage.alone && (stage.name, *dep) != ("steps", "steps-build"))
+            {
+                return Err(format!(
+                    "check: pilot cannot separate {} from {dep}",
+                    stage.name
+                ));
+            }
+        }
+    }
+    let mut lanes = vec![untimed];
+    lanes.extend(stages.iter().filter(|s| s.alone).map(|s| vec![s.name]));
+    Ok(lanes)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
     Waiting,
@@ -98,7 +119,12 @@ enum State {
 
 /// Runs `stages` (at the same time unless `serial`); fails if one fails.
 #[allow(clippy::too_many_lines, reason = "the scheduling loop and its report")]
-pub(crate) fn run(stages: Vec<Stage>, root: &Path, serial: bool) -> Result<(), String> {
+pub(crate) fn run(
+    stages: Vec<Stage>,
+    root: &Path,
+    serial: bool,
+    report: Option<&mut serde_json::Value>,
+) -> Result<(), String> {
     let names: Vec<&'static str> = stages.iter().map(|s| s.name).collect();
     let mut after = Vec::new();
     for stage in &stages {
@@ -195,12 +221,31 @@ pub(crate) fn run(stages: Vec<Stage>, root: &Path, serial: bool) -> Result<(), S
         };
         println!("check:   {name:<20} {what}");
     }
-    println!("check: {} in all", clock(began.elapsed()));
+    let elapsed = began.elapsed();
+    println!("check: {} in all", clock(elapsed));
+    if let Some(report) = report {
+        let rows: Vec<_> = names
+            .iter()
+            .zip(state.iter())
+            .zip(&times)
+            .map(|((&name, &state), time)| {
+                let status = match state {
+                    State::Passed => "passed",
+                    State::Failed => "failed",
+                    State::Stopped => "stopped",
+                    State::Waiting | State::Running => "not run",
+                };
+                serde_json::json!({"stage": name, "status": status, "ms": time.as_millis()})
+            })
+            .collect();
+        *report = serde_json::json!({"elapsed_ms": elapsed.as_millis(), "rows": rows});
+    }
     match failure {
-        None => {
+        None if state.iter().all(|&s| s == State::Passed) => {
             println!("check: every gate passed");
             Ok(())
         }
+        None => Err("check: no more stages can run".into()),
         Some((i, error)) if serial => Err(format!("{}: {error}", names[i])),
         Some((i, error)) => {
             let log = logs.join(format!("{}.log", names[i]));

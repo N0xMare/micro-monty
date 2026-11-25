@@ -70,6 +70,7 @@ mod handoffs;
 mod native_ir;
 mod overflow;
 mod package;
+mod pilot;
 mod replay_ir;
 mod replay_worker;
 mod restack;
@@ -124,6 +125,14 @@ tasks:
                              where it is not --base's: a `v*` tag, for the
                              commit that seeds the floors late (size and
                              the tier's paths stay on --base)
+      --pilot-plan ID PLAN   Linux release gate: write the four stage lists to
+                             PLAN, with a unique run ID and pinned revisions
+      --pilot-run PLAN RESULT STAGE[,STAGE...]
+                             run one list from PLAN on a dedicated worker;
+                             write its result even if a stage fails
+      --pilot-join PLAN RESULT...
+                             require matching results for every stage list
+                             and fail unless every stage passed
   size [--base <rev>]        build `hello` and the mm-wasm guests as shipped
                              (wasm-opt on wasm), and the base's (default
                              origin/main) and the release's, each with its
@@ -346,6 +355,7 @@ fn main() -> ExitCode {
 /// oracle measures wall time, so it runs last, alone.
 #[allow(clippy::too_many_lines, reason = "one flat list of stages")]
 fn check(args: &[String]) -> Result<(), String> {
+    let (pilot, args) = pilot::parse(args)?;
     let (mut serial, mut release_gate) = (false, false);
     let (mut base, mut ir_base) = (None, None);
     let mut args = args.iter();
@@ -361,6 +371,25 @@ fn check(args: &[String]) -> Result<(), String> {
         }
     }
     let root = workspace_root();
+    if pilot.is_some() && (!release_gate || serial || !cfg!(target_os = "linux")) {
+        return Err("check: the pilot requires --release-gate on Linux, without --serial".into());
+    }
+    let base_rev;
+    let ir_base_rev;
+    if pilot.is_some() {
+        // Every worker must measure the same resolved revisions, not its
+        // local origin/main or a tag that might have moved.
+        let resolve = |rev: &str| {
+            wasm_wall::git(
+                &root,
+                &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
+            )
+        };
+        base_rev = resolve(base.map_or("origin/main", String::as_str))?;
+        ir_base_rev = resolve(ir_base.map_or(&base_rev, String::as_str))?;
+        base = Some(&base_rev);
+        ir_base = Some(&ir_base_rev);
+    }
     let head = wasm_wall::git(&root, &["rev-parse", "HEAD"])?;
     let merge_base = base.map_or("origin/main", String::as_str);
     let merge_base = wasm_wall::git(&root, &["merge-base", merge_base, "HEAD"]).ok();
@@ -869,6 +898,7 @@ fn check(args: &[String]) -> Result<(), String> {
     }
     // The step-time oracle: its fuel half beside the other stages (fuel is
     // deterministic), its wall-time half in release and alone.
+    let timed = ["--", "--skip", "slice_charges", "--test-threads=1"];
     stages.push(
         Stage::new("steps-fuel")
             .after(&["steps-build"])
@@ -880,13 +910,7 @@ fn check(args: &[String]) -> Result<(), String> {
         Stage::new("steps")
             .after(&["steps-build"])
             .alone()
-            .run(steps_cargo(
-                &[
-                    &steps[..],
-                    &["--", "--skip", "slice_charges", "--test-threads=1"],
-                ]
-                .concat(),
-            )),
+            .run(steps_cargo(&[&steps[..], &timed].concat())),
     );
     if release_gate && cfg!(target_os = "linux") {
         // The timed oracle on musl too, whose `memcpy`, `memcmp` and
@@ -903,35 +927,42 @@ fn check(args: &[String]) -> Result<(), String> {
             .iter()
             .map(|&a| if a == host { musl.as_str() } else { a })
             .collect();
-        musl_steps.extend(["--test", "steps_mimalloc"]);
         let musl_dir = root.join("target/check/steps-musl");
+        let mut both = musl_steps.clone();
+        both.extend(["--test", "steps_mimalloc"]);
         stages.push(
             Stage::new("steps-musl-build")
                 .after(&["steps-build"])
                 .run(steps_cargo_in(
                     &musl_dir,
-                    &[&musl_steps[..], &["--no-run"]].concat(),
+                    &[&both[..], &["--no-run"]].concat(),
                 )),
         );
-        stages.push(
-            Stage::new("steps-musl")
-                .after(&["steps-musl-build"])
-                .alone()
-                .run(steps_cargo_in(
+        if pilot.is_some() {
+            for (name, test) in [
+                ("steps-musl-malloc", "steps"),
+                ("steps-musl-mimalloc", "steps_mimalloc"),
+            ] {
+                musl_steps[steps.len() - 1] = test;
+                stages.push(Stage::new(name).alone().run(steps_cargo_in(
                     &musl_dir,
-                    &[
-                        &musl_steps[..],
-                        &[
-                            "--no-fail-fast",
-                            "--",
-                            "--skip",
-                            "slice_charges",
-                            "--test-threads=1",
-                        ],
-                    ]
-                    .concat(),
-                )),
-        );
+                    &[&musl_steps[..], &timed].concat(),
+                )));
+            }
+        } else {
+            stages.push(
+                Stage::new("steps-musl")
+                    .after(&["steps-musl-build"])
+                    .alone()
+                    .run(steps_cargo_in(
+                        &musl_dir,
+                        &[&both[..], &["--no-fail-fast"], &timed].concat(),
+                    )),
+            );
+        }
+    }
+    if let Some(pilot) = pilot {
+        return pilot.execute(&root, stages, &head, base, ir_base, &host);
     }
     if !release_gate {
         let mut kept = DEV_STAGES.to_vec();
@@ -941,7 +972,7 @@ fn check(args: &[String]) -> Result<(), String> {
         kept.retain(|name| cfg!(target_os = "linux") || !["native-ir", "musl"].contains(name));
         stages = check::keep(stages, &kept)?;
     }
-    check::run(stages, &root, serial)
+    check::run(stages, &root, serial, None)
 }
 
 /// The dev tier's stages (`cargo xtask check` before a push): what failed

@@ -84,6 +84,34 @@ gate, on musl too, with musl's `malloc` and with mimalloc: `steps-musl`);
 each stage logs to
 `target/check/logs/<stage>.log`.
 
+### Release-gate shadow runs (Linux)
+
+The stock `cargo xtask check --release-gate --base <rev>` remains
+authoritative during the three-push shadow period. On each push, take
+`HEAD_SHA` and `BASE` from the push's after and before revisions (or use
+the same explicit base as stock). Use clean checkouts of `HEAD_SHA` with
+the same full history, tags and toolchain. Add the same `--ir-base <rev>`
+to all commands if stock uses it. Leave `MM_IR_ACCEPT`, `MM_WASM_IR_ACCEPT`,
+`MM_V8_IR_ACCEPT` and `MM_BLESS` unset.
+
+- Start one `a1.3xlarge` orb (16 CPUs) for the untimed lane. In it, write
+  `cargo xtask check --release-gate --base "$BASE" --pilot-plan "$RUN_ID" "$DIR/plan.json"`.
+  Use a fresh run ID and a directory outside the worktree. Copy that exact
+  plan to three dedicated `a1.large` orbs (8 CPUs each) for the timed lanes.
+- In parallel, on each orb run
+  `cargo xtask check --release-gate --base "$BASE" --pilot-run "$DIR/plan.json" "$DIR/$LANE.json" "$(jq -er --argjson i "$LANE" '.lanes[$i] | join(",")' "$DIR/plan.json")"`.
+  Set `LANE` to `0` for untimed, `1` for glibc `steps`, `2` for musl malloc,
+  and `3` for musl mimalloc. Do not run other jobs on the timed orbs. Keep
+  the command status and stage logs, and collect the result even on failure.
+- Back on the untimed orb, collect the result files and run
+  `cargo xtask check --release-gate --base "$BASE" --pilot-join "$DIR/plan.json" "$DIR"/{0,1,2,3}.json`.
+  Compare its exit status with stock's. Compare each receipt's stage and
+  status with stock's final stage summary; combine the two split musl timed
+  results into `steps-musl`, which passes only if both pass. Match failures
+  by name and reason in the logs; stock stops at its first failure, so an
+  unrun stage is not evidence of agreement. A missing or mismatched receipt
+  is not a completed comparison. Record disagreements before changing policy.
+
 ## Working agreements
 
 - Do not preserve backwards compatibility. micro-monty is published as
