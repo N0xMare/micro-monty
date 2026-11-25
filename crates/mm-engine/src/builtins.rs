@@ -4678,6 +4678,16 @@ impl Vm {
         Ok(Sorted::More(st))
     }
 
+    #[inline(never)]
+    fn sort_pause(&mut self, st: Value, visits: u64, state: &[Value]) -> Result<Sorted, Raised> {
+        self.burn(visits);
+        if let Some(buf) = self.list_buf(st) {
+            let res = self.heap.set_values(buf, 2, state);
+            self.hx(res)?;
+        }
+        Ok(Sorted::More(st))
+    }
+
     /// One slice of the sort [`Vm::sort_by_keys`] started, from state list
     /// `st`: `[a, b, pass, i, l, r, k, reverse, kind, waited]`, merging runs of
     /// `1 << pass` items of `a` (`b` on odd passes) into the other, the
@@ -4745,16 +4755,11 @@ impl Vm {
             let mut i = at[0];
             while i < n {
                 if visits >= SORT_SLICE {
-                    self.burn(visits);
                     let state = [
                         Value::int(0).unwrap_or(Value::NONE),
                         Value::int(i as i64).unwrap_or(Value::NONE),
                     ];
-                    if let Some(buf) = self.list_buf(st) {
-                        let res = self.heap.set_values(buf, 2, &state);
-                        self.hx_hot(res)?;
-                    }
-                    return Ok(Sorted::More(st));
+                    return self.sort_pause(st, visits, &state);
                 }
                 let hi = (i + (1 << SORT_RUN_BITS)).min(n);
                 // CPython's reverse sort: reverse, stable ascending sort,
@@ -4818,14 +4823,9 @@ impl Vm {
             // at up to 32 MiB, the system allocator may zero it as it
             // allocates it, as long a step as `a`'s.
             if visits > 0 {
-                self.burn(visits);
                 let int = |x: usize| Value::int(x as i64).unwrap_or(Value::NONE);
                 let state = [int(pass), int(at[0]), int(at[1]), int(at[2]), int(at[3])];
-                if let Some(buf) = self.list_buf(st) {
-                    let res = self.heap.set_values(buf, 2, &state);
-                    self.hx_hot(res)?;
-                }
-                return Ok(Sorted::More(st));
+                return self.sort_pause(st, visits, &state);
             }
             // An array that does not fit waits for a collection and the
             // next step, once, as a bulk operation's new table does: beside
@@ -4928,14 +4928,9 @@ impl Vm {
                 }
                 Merge::Paused => {
                     // Out of visits part way through the pass: save where.
-                    self.burn(visits);
                     let int = |x: usize| Value::int(x as i64).unwrap_or(Value::NONE);
                     let state = [int(pass), int(at[0]), int(at[1]), int(at[2]), int(at[3])];
-                    if let Some(buf) = self.list_buf(st) {
-                        let res = self.heap.set_values(buf, 2, &state);
-                        self.hx_hot(res)?;
-                    }
-                    return Ok(Sorted::More(st));
+                    return self.sort_pause(st, visits, &state);
                 }
                 _ => {}
             }
@@ -4959,13 +4954,8 @@ impl Vm {
         while p < end {
             // A slice of the merge, or of this pass, per step.
             if visits >= SORT_SLICE || p >= p0 + TAIL_SLICE {
-                self.burn(visits);
                 let int = |x: usize| Value::int(x as i64).unwrap_or(Value::NONE);
-                if let Some(buf) = self.list_buf(st) {
-                    let res = self.heap.set_values(buf, 2, &[int(pass), int(p)]);
-                    self.hx_hot(res)?;
-                }
-                return Ok(Sorted::More(st));
+                return self.sort_pause(st, visits, &[int(pass), int(p)]);
             }
             // Items `p..p + m` take items `n - 1 - p..` reversed
             // (`reverse`), mapped from indexes to items (`key=`), and the
