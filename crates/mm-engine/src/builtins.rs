@@ -2404,7 +2404,9 @@ pub(crate) fn type_dict(vm: &mut Vm, owner: T) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 pub fn method_names(owner: T) -> Vec<&'static str> {
     let (table, data): (T, &[&str]) = match owner {
-        T::str | T::list | T::dict | T::tuple | T::bytes | T::set | T::frozenset => (owner, &[]),
+        T::str | T::list | T::dict | T::tuple | T::bytes | T::bytearray | T::set | T::frozenset => {
+            (owner, &[])
+        }
         T::int | T::bool => (T::int, &["denominator", "imag", "numerator", "real"]),
         T::float => (T::float, &["imag", "real"]),
         T::complex => (T::complex, &["imag", "real"]),
@@ -2424,8 +2426,14 @@ pub fn method_names(owner: T) -> Vec<&'static str> {
         ),
         _ => return Vec::new(),
     };
+    let shared = if table == T::bytearray {
+        methods_of(T::bytes)
+    } else {
+        &[]
+    };
     let mut names: Vec<&'static str> = methods_of(table)
         .iter()
+        .chain(shared)
         .map(Native::name)
         .filter(|n| !n.starts_with('_'))
         .collect();
