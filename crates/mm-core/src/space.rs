@@ -308,6 +308,10 @@ impl Space<Vec<u8>> {
         if over_cap(cap) || (new + held > old && new + held - old > avail) {
             return Err(Error::OutOfMemory);
         }
+        #[cfg(feature = "budget-fault-injection")]
+        if crate::budget_fault::reject((new + held).saturating_sub(old)) {
+            return Err(Error::OutOfMemory);
+        }
         s.data.truncate(8 + len);
         if cap * 8 > s.data.capacity() {
             s.data.reserve_exact(cap * 8 - s.data.len());
@@ -730,6 +734,10 @@ impl<S: Store> Space<S> {
         if extra > avail {
             return Err(Error::OutOfMemory);
         }
+        #[cfg(feature = "budget-fault-injection")]
+        if crate::budget_fault::reject(extra) {
+            return Err(Error::OutOfMemory);
+        }
         self.segs
             .try_reserve_exact(capacity - self.segs.len())
             .and_then(|()| self.marks.try_reserve_exact(capacity - self.marks.len()))
@@ -960,6 +968,10 @@ impl<S: Store> Space<S> {
         if cost - old > avail {
             return Err(Error::OutOfMemory);
         }
+        #[cfg(feature = "budget-fault-injection")]
+        if crate::budget_fault::reject(cost - old) {
+            return Err(Error::OutOfMemory);
+        }
         s.data.grow(cap);
         s.cap = u32::try_from(cap).unwrap_or(0);
         grow_slice(&mut s.starts, cap / 64);
@@ -1063,6 +1075,10 @@ impl<S: Store> Space<S> {
         if cost > avail {
             return Err(Error::OutOfMemory);
         }
+        #[cfg(feature = "budget-fault-injection")]
+        if crate::budget_fault::reject(cost) {
+            return Err(Error::OutOfMemory);
+        }
         let idx = self.take_index(avail - cost)?;
         if let Some(s) = self.segs.get_mut(self.bump)
             && s.present
@@ -1099,6 +1115,10 @@ impl<S: Store> Space<S> {
             .and_then(|b| b.checked_add(LARGE_OVERHEAD))
             .ok_or(Error::OutOfMemory)?;
         if cost > avail {
+            return Err(Error::OutOfMemory);
+        }
+        #[cfg(feature = "budget-fault-injection")]
+        if crate::budget_fault::reject(cost) {
             return Err(Error::OutOfMemory);
         }
         let idx = self.take_index(avail - cost)?;

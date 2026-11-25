@@ -37,6 +37,9 @@ pub const LAYOUT_HASH: u64 = include!(concat!(env!("OUT_DIR"), "/layout_hash.rs"
 
 extern crate alloc;
 
+#[cfg(feature = "budget-fault-injection")]
+#[doc(hidden)]
+pub mod budget_fault;
 mod gc;
 mod heap;
 mod snapshot;

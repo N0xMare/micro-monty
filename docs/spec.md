@@ -3193,6 +3193,11 @@ adds it for changes to the code or inputs it measures (`DEV_ADDS`,
 probe over the run, snapshot, restore or compile bound. The `memory_bound`
 fuzz target, at an 8 MiB limit, searches for inputs that break these bounds.
 
+By hand, `fuzz/budget_sweep.py` refuses one admitted charge per run
+across the own cases (`mm-core`'s test-only `budget-fault-injection`)
+and fails on a crash, a hang or a session that cannot continue after
+the `MemoryError` (fuzz/README.md).
+
 Hosts size process memory from the bound. A wasm host gives the instance
 about 3 × L + 16 MiB of linear memory, which covers the run bound and a
 snapshot. The guest frees an input or output buffer larger than 64 KiB once

@@ -29,6 +29,7 @@ ruff-oracle = ["mm-parse/ruff-oracle"]
 memory-probes = []
 # Public-native sweep, including the opt-in bundles.
 fuel-sweep = ["micro-monty/mod-uuid", "micro-monty/mod-html-entities"]
+budget-sweep = ["fuel-sweep", "mm-core/budget-fault-injection"]
 
 # Its own workspace: fuzz-only dependencies stay out of the main lockfile.
 [workspace]
@@ -128,3 +129,10 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "budget_sweep"
+path = "src/bin/budget_sweep.rs"
+required-features = ["budget-sweep"]
+test = false
+doc = false
+bench = false

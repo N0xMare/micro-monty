@@ -11,6 +11,9 @@ exclude.workspace = true
 keywords = ["python", "micro-monty", "interpreter", "gc", "arena"]
 categories = ["memory-management", "no-std"]
 
+[features]
+# Standalone QA runner only; never enabled by the facade or shipped builds.
+budget-fault-injection = []
 
 [lints]
 workspace = true

@@ -332,7 +332,12 @@ impl Scratch {
             let ceiling = heap.scratch_budget();
             self.counter
                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
-                    used.checked_add(extra).filter(|&n| n as u64 <= ceiling)
+                    let next = used.checked_add(extra).filter(|&n| n as u64 <= ceiling);
+                    #[cfg(feature = "budget-fault-injection")]
+                    if next.is_some() && crate::budget_fault::reject(extra as u64) {
+                        return None;
+                    }
+                    next
                 })
                 .map_err(|_| heap.refuse(extra as u64))?;
         } else if bytes < self.bytes {
@@ -1171,6 +1176,10 @@ impl Heap {
         if bytes > self.external_bytes && bytes - self.external_bytes > self.available_bytes() {
             return Err(self.refuse(bytes - self.external_bytes));
         }
+        #[cfg(feature = "budget-fault-injection")]
+        if crate::budget_fault::reject(bytes.saturating_sub(self.external_bytes)) {
+            return Err(self.refuse(bytes - self.external_bytes));
+        }
         self.external_bytes = bytes;
         Ok(())
     }
@@ -1267,6 +1276,10 @@ impl Heap {
         }
         let extra = (capacity - self.mark_stack.capacity()) as u64 * 4;
         if extra > self.available_bytes() {
+            return Err(self.refuse(extra));
+        }
+        #[cfg(feature = "budget-fault-injection")]
+        if crate::budget_fault::reject(extra) {
             return Err(self.refuse(extra));
         }
         // Beyond the entries a mark has on the stack: the capacity is then
