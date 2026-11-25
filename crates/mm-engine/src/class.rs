@@ -993,8 +993,9 @@ impl Vm {
         let qual_key = self.intern("__qualname__")?;
         let qualname = match self.dict_get_str(ns, qual_key) {
             Some(q) if Vm::is_str(q) => q,
-            Some(_) => {
-                return Err(self.err(T::TypeError, "type __qualname__ must be a str, not int"));
+            Some(q) => {
+                let msg = format!("type __qualname__ must be a str, not {}", self.type_name(q));
+                return Err(self.err(T::TypeError, &msg));
             }
             None => name,
         };
