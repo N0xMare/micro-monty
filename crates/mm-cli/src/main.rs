@@ -673,17 +673,19 @@ fn write_image(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
 
 fn read_image(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
     let mut file = std::fs::File::open(path)?;
-    let len = file.metadata().map_or(0, |m| m.len());
-    let mut bytes = Vec::with_capacity(usize::try_from(len).unwrap_or(0));
-    let mut piece = vec![0; IMAGE_PIECE];
-    loop {
-        match file.read(&mut piece) {
-            Ok(0) => return Ok(bytes),
-            Ok(n) => bytes.extend_from_slice(&piece[..n]),
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
-        }
-    }
+    let len = file
+        .metadata()
+        .map_or(0, |m| usize::try_from(m.len()).unwrap_or(usize::MAX));
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(len)?;
+    // Read into the image itself. If the length is unknown (e.g. a pipe),
+    // read_to_end grows the Vec geometrically; Take caps every WASI read.
+    while (&mut file)
+        .take(IMAGE_PIECE as u64)
+        .read_to_end(&mut bytes)?
+        == IMAGE_PIECE
+    {}
+    Ok(bytes)
 }
 
 /// Runs until the cell ends or stops; at a stop, saves the session and the
