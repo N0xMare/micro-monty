@@ -851,6 +851,20 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "t = s.removeprefix('b')",
         1,
     ),
+    // A long affix is compared in place, not validated and copied before
+    // the comparison. Both the matching and mismatching ends are late.
+    (
+        Row::Bounded,
+        "s = 'a' * 67_108_864\np = 'a' * 67_108_863 + 'b'",
+        "assert s.removeprefix(p) is s",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "p = 'a' * 67_108_863\ns = 'b' + p",
+        "assert s.removesuffix(p) == 'b'",
+        1,
+    ),
     (
         Row::Bounded,
         "s = ' ' + 'a' * 66_999_999",
@@ -1678,6 +1692,40 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         1,
     ),
     (Row::Bounded, "b = bytearray(67_108_864)", "del b[::2]", 1),
+    // A late byte match, a close overlapping move over demand-zero
+    // pages, and a reversal that moves a filled half into fresh pages.
+    (
+        Row::Bounded,
+        "b = bytearray(67_108_864)\nb[-2:] = b'xx'",
+        "b.remove(120)\nassert len(b) == 67_108_863 and b[-2:] == b'\\x00x'",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "b = bytearray(67_108_864)\nb[0] = 1\nb[4096] = 7",
+        "assert b.pop(0) == 1 and b[4095] == 7 and len(b) == 67_108_863",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "b = bytearray(67_108_863)\nb[:33_554_432] = b'ab' * 16_777_216",
+        "b.reverse()\nassert b[:2] == b'\\x00\\x00' and b[-2:] == b'ba' and b[33_554_431] == 98",
+        1,
+    ),
+    // Preparing the byte set can read a full object even when the data
+    // to translate or strip is tiny.
+    (
+        Row::Bounded,
+        "d = b'ab' * 33_554_432",
+        "assert b'zaab'.translate(None, d) == b'z'",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "d = b'ab' * 33_554_432",
+        "assert b'azb'.strip(d) == b'z'",
+        1,
+    ),
     // A two-way search whose every alignment fails late (the needle's
     // critical factorization).
     (

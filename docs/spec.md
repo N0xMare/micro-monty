@@ -639,7 +639,14 @@ messages; copy wording where behaviour matches.
 
   No object is bigger than 64 MiB (`mm_core::MAX_OBJECT_BYTES`, §11), so a
   native whose work over one object stays under 50 ms at that size (a copy,
-  a fill) is one step and needs no chunking. The chunked operations:
+  a fill) is one step and needs no chunking. `bytearray.remove` searches a
+  word at a time; it scans only the prefix and moves only the tail. A
+  `bytearray` reversal swaps words, and a short overlapping move goes in
+  small pieces: both skip unchanged bytes to leave demand-zero pages
+  untouched. `str.removeprefix` and `removesuffix` compare the affix in
+  place. `bytes.strip` and `translate` mark membership in a byte table
+  before packing large sets, so repeated bytes do not serialize writes to
+  the same bitset word. The chunked operations:
 
   - **Tables growing an insert at a time.** Once a full table holds 262,144
     live entries (`set::GROW_STEPS`), the insert that needs room hands the

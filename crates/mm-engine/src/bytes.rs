@@ -1464,6 +1464,28 @@ pub(crate) fn join(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(result)
 }
 
+fn byte_set(bytes: &[u8]) -> [u64; 4] {
+    let mut bits = [0u64; 4];
+    if bytes.len() <= 256 {
+        for &c in bytes {
+            bits[usize::from(c >> 6)] |= 1 << (c & 63);
+        }
+    } else {
+        // Repeated bytes would serialize read-modify-write operations
+        // on the same word. Mark membership before packing the bitset.
+        let mut seen = [0u8; 256];
+        for &c in bytes {
+            seen[usize::from(c)] = 1;
+        }
+        for (word, group) in bits.iter_mut().zip(seen.as_chunks::<64>().0) {
+            for (i, &byte) in group.iter().enumerate() {
+                *word |= u64::from(byte) << i;
+            }
+        }
+    }
+    bits
+}
+
 #[cfg_attr(mm_shipped, optimize(size))]
 fn strip_impl(
     vm: &mut Vm,
@@ -1477,12 +1499,9 @@ fn strip_impl(
         None => None,
         Some(c) => Some(vm.need_bytes(c)?),
     };
-    let mut bits = [0u64; 4];
     let set = set.map_or(&b" \t\n\r\x0b\x0c"[..], |v| vm.bytes_data(v));
     let m = set.len();
-    for &c in set {
-        bits[usize::from(c >> 6)] |= 1 << (c & 63);
-    }
+    let bits = byte_set(set);
     vm.burn_bytes(m);
     let n = vm.bytes_data(source).len();
     let mut j = Job::new(job::STRIP, source, 0, n, 0);
@@ -1953,13 +1972,12 @@ pub(crate) fn translate(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     } else {
         R_BYTES
     };
-    let mut gone = [0u64; 4];
-    if let Some(d) = delete {
+    let gone = if let Some(d) = delete {
         vm.burn_bytes(vm.bytes_data(d).len());
-        for &c in vm.bytes_data(d) {
-            gone[usize::from(c >> 6)] |= 1 << (c & 63);
-        }
-    }
+        byte_set(vm.bytes_data(d))
+    } else {
+        [0; 4]
+    };
     let mut j = if gone == [0; 4] {
         if table.is_none() {
             return vm.bytes_slice(source, 0, n);

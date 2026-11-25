@@ -1112,6 +1112,17 @@ impl Heap {
                     piece[..end].copy_from_slice(&data[..end]);
                     data[gap..gap + end].copy_from_slice(&piece[..end]);
                 }
+            } else if len >= 1 << 20 && b < a && a - b < 64 {
+                // Like `move_values`, stay below glibc's `rep movsb`
+                // threshold. A bytearray may be backed by demand-zero
+                // pages: skip unchanged chunks so the writes do not
+                // fault in those pages just to overwrite zeros.
+                for at in (0..len).step_by(2048) {
+                    let end = (at + 2048).min(len);
+                    if !crate::bytes_eq(&s.data[a + at..a + end], &s.data[b + at..b + end]) {
+                        s.data.copy_within(a + at..a + end, b + at);
+                    }
+                }
             } else {
                 s.data.copy_within(a..a + len, b);
             }

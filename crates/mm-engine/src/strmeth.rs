@@ -42,8 +42,7 @@ fn str_arg_value(vm: &mut Vm, v: Value, what: &str) -> Result<Value, Raised> {
     if Vm::is_str(v) {
         return Ok(v);
     }
-    let b = vm.unbx(v);
-    str_arg(vm, v, what).map(|_| b)
+    charged_str_arg(vm, v, what)
 }
 
 /// New strings for byte ranges of `str` `s` (char boundaries), as a list.
@@ -149,7 +148,7 @@ pub(crate) fn slice_copy(vm: &mut Vm, s: Value, st: usize, en: usize) -> Result<
 }
 
 /// The first `b` in `hay`, eight bytes at a time.
-fn find_byte(b: u8, hay: &[u8]) -> Option<usize> {
+pub(crate) fn find_byte(b: u8, hay: &[u8]) -> Option<usize> {
     const LO: u64 = 0x0101_0101_0101_0101;
     const HI: u64 = 0x8080_8080_8080_8080;
     let rep = u64::from(b) * LO;
@@ -293,14 +292,13 @@ fn each_match(hay: &str, pat: &str, max: usize, f: &mut dyn FnMut(usize)) -> usi
     n
 }
 
-/// A `str` (or str subclass, as its value) argument; `what` names it in
-/// the error ("" for CPython's bare "must be str").
-fn str_arg(vm: &mut Vm, v: Value, what: &str) -> Result<String, Raised> {
+/// A `str` (or str subclass, as its value) argument, charged as byte work;
+/// `what` names it in the error ("" for CPython's bare "must be str").
+fn charged_str_arg(vm: &mut Vm, v: Value, what: &str) -> Result<Value, Raised> {
     let b = if Vm::is_str(v) { v } else { vm.unbx(v) };
     if Vm::is_str(b) {
-        let s = String::from(vm.str_ref(b));
-        vm.burn_bytes(s.len());
-        return Ok(s);
+        vm.burn_bytes(vm.str_bytes(b).len());
+        return Ok(b);
     }
     let sp = if what.is_empty() { "" } else { " " };
     // A named argument's error says "None", as CPython's
@@ -641,7 +639,10 @@ fn strip_impl(
     let s = this_value(vm, a, name)?;
     let set: Option<Vec<char>> = match opt(vm.arg_o(a, 1)) {
         None => None,
-        Some(c) if Vm::is_str(vm.unbx(c)) => Some(str_arg(vm, c, "")?.chars().collect()),
+        Some(c) if Vm::is_str(vm.unbx(c)) => {
+            let c = charged_str_arg(vm, c, "")?;
+            Some(vm.str_ref(c).chars().collect())
+        }
         Some(_) => {
             let msg = format!("{name} arg must be None or str");
             return Err(vm.err(T::TypeError, &msg));
@@ -1937,7 +1938,8 @@ fn pad(vm: &mut Vm, a: &CallArgs, name: &str, align: char) -> Result<Value, Rais
                 );
                 return Err(vm.err(T::TypeError, &msg));
             }
-            let fs = str_arg(vm, f, "fill character")?;
+            let f = charged_str_arg(vm, f, "fill character")?;
+            let fs = vm.str_ref(f);
             let mut cs = fs.chars();
             match (cs.next(), cs.next()) {
                 (Some(c), None) => c,
@@ -2112,15 +2114,19 @@ fn partition_impl(vm: &mut Vm, a: &CallArgs, right: bool) -> Result<Value, Raise
 
 fn remove_affix(vm: &mut Vm, a: &CallArgs, name: &str, prefix: bool) -> Result<Value, Raised> {
     let s = this_value(vm, a, name)?;
-    let p = str_arg(vm, vm.arg_o(a, 1), &format!("{name}() argument"))?;
+    let p = charged_str_arg(vm, vm.arg_o(a, 1), &format!("{name}() argument"))?;
     let n = vm.str_bytes(s).len();
     vm.burn_bytes(n);
     let h = vm.str_bytes(s);
-    let (st, en) = match (prefix, p.as_bytes()) {
-        (true, p) if h.starts_with(p) => (p.len(), n),
-        (false, p) if h.ends_with(p) => (0, n - p.len()),
-        _ => (0, n),
-    };
+    let p = vm.str_bytes(p);
+    let (mut st, mut en) = (0, n);
+    if let Some(rest) = n.checked_sub(p.len()) {
+        if prefix && mm_core::bytes_eq(&h[..p.len()], p) {
+            st = p.len();
+        } else if !prefix && mm_core::bytes_eq(&h[rest..], p) {
+            en = rest;
+        }
+    }
     slice_steps(vm, s, st, en)
 }
 

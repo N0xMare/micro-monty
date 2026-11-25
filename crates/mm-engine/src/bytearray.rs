@@ -736,7 +736,7 @@ pub(crate) fn remove(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = this(vm, &a, "remove")?;
     let x = vm.byte_arg(vm.arg_o(&a, 1))?;
     let bytes = vm.bytearray_data(s);
-    let found = bytes.iter().position(|&c| c == x);
+    let found = crate::strmeth::find_byte(x, bytes);
     vm.burn_bytes(found.map_or(bytes.len(), |k| k + 1));
     let Some(k) = found else {
         return Err(vm.err(T::ValueError, "value not found in bytearray"));
@@ -763,7 +763,23 @@ pub(crate) fn reverse(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         && let Ok(d) = vm.heap.bytes_mut(b)
         && let Some(t) = d.get_mut(..n)
     {
-        t.reverse();
+        let side = n / 16 * 8;
+        let (left, rest) = t.split_at_mut(side);
+        let (middle, right) = rest.split_at_mut(n - 2 * side);
+        // A byte-by-byte swap costs a full step at the object cap. Swap
+        // words from opposite ends and reverse just the short middle.
+        let left = left.as_chunks_mut::<8>().0.iter_mut();
+        let right = right.as_chunks_mut::<8>().0.iter_mut().rev();
+        for (a, b) in left.zip(right) {
+            let lo = u64::from_ne_bytes(*a);
+            let hi = u64::from_ne_bytes(*b).swap_bytes();
+            // Leave equal words unwritten, in particular demand-zero pages.
+            if lo != hi {
+                *a = hi.to_ne_bytes();
+                *b = lo.swap_bytes().to_ne_bytes();
+            }
+        }
+        middle.reverse();
     }
     Ok(Value::NONE)
 }
