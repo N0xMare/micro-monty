@@ -623,9 +623,9 @@ const DEFS: &[Def] = &[
     n!("intersection", SE, 1, VAR, NO, NO, set_intersection),
     n!("difference", SE, 1, VAR, NO, NO, set_difference),
     n!("update", SE, 1, VAR, NO, NO, set_update),
-    n!("union", FS, 1, VAR, NO, NO, set_union),
-    n!("intersection", FS, 1, VAR, NO, NO, set_intersection),
-    n!("difference", FS, 1, VAR, NO, NO, set_difference),
+    n!("union", FS, 1, VAR, NO, NO, frozenset_union),
+    n!("intersection", FS, 1, VAR, NO, NO, frozenset_intersection),
+    n!("difference", FS, 1, VAR, NO, NO, frozenset_difference),
     n!("issubset", FS, 2, 2, NO, NO, set_issubset),
     n!("issuperset", FS, 2, 2, NO, NO, set_issuperset),
     n!("isdisjoint", FS, 2, 2, NO, NO, set_isdisjoint),
@@ -6452,7 +6452,7 @@ fn set_init(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if src == Value::UNDEFINED {
         return Ok(Value::NONE);
     }
-    set_inplace(vm, mm_compile::ast::BinOp::BitOr, s, src, true)
+    set_inplace(vm, mm_compile::ast::BinOp::BitOr, s, src)
 }
 
 /// `T.__new__(cls, *args, **kwargs)` for a builtin type `T` that classes
@@ -7871,13 +7871,12 @@ fn pl_set_hashed(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 /// int `x` removes the entry in slot `x`, a set `x` gives `s` its table
 /// ([`Vm::set_move`]), `x` being `s` settles it ([`Vm::set_settle`]),
 /// `(src,)` presizes it for a merge of `src` ([`Vm::set_presize`]), and
-/// `None` makes `s` a frozenset and gives it back. One native for the
-/// five, as each prelude native is bound at startup.
+/// `None` makes `s` a frozenset and gives it back.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn pl_set_table(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let (s, x) = (vm.arg_o(&a, 0), vm.arg_o(&a, 1));
     if s == x {
-        vm.set_settle(s)?;
+        return vm.set_settle(s);
     } else if x.is_obj_kind(ty::TUPLE as u8) {
         // `(src,)`: presized for a merge of set or dict `src`.
         let src = vm.tuple_items(x).first().copied().unwrap_or(Value::NONE);
@@ -8400,7 +8399,7 @@ pub(crate) fn dict_fill_phase(vm: &mut Vm, src: Value, reg: u64) -> Result<(Valu
     if vm.user_class(src).is_some() && vm.backing(src).is_none() {
         return Err(vm.need_py());
     }
-    Ok((vm.bulk_src(src)?, phase(act::PAIRS, 0, reg, 0)))
+    Ok((vm.bulk_src(src, false)?, phase(act::PAIRS, 0, reg, 0)))
 }
 
 /// `dict(src, **kw)` into `d` (value `res`), in steps.
@@ -9003,18 +9002,9 @@ fn set_pop(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     vm.set_pop(s)
 }
 
-/// `s <op> o` for a set method's argument `o`, any iterable: a set as
-/// the operator does it, a dict by its keys, anything else read as a list
-/// (CPython's `set_intersection`, `set_difference`, ...); in steps with
-/// `top`.
+/// `s <op> o` for a set method's argument `o`, any iterable, in steps.
 #[cfg_attr(mm_shipped, optimize(size))]
-fn set_with(
-    vm: &mut Vm,
-    op: mm_compile::ast::BinOp,
-    s: Value,
-    o: Value,
-    top: bool,
-) -> Result<Value, Raised> {
+fn set_with(vm: &mut Vm, op: mm_compile::ast::BinOp, s: Value, o: Value) -> Result<Value, Raised> {
     use crate::set::{act, phase};
     use mm_compile::ast::BinOp;
     // A set subclass's instance is read as its set (`PyAnySet_Check`).
@@ -9024,25 +9014,29 @@ fn set_with(
         o
     };
     if Vm::is_set(o) {
-        return vm.set_binop(op, s, o, false, top);
+        return vm.set_binop(op, s, o, false, true, 0);
     }
     if op == BinOp::BitAnd {
-        let (src, items) = early_src(vm, o)?;
-        let out = vm.new_set_like(s)?;
-        return vm.bulk(&[out, src, s], phase(act::AND | items, 0, 1, 2), 0, top);
+        let regs = early_srcs(vm, s, o)?;
+        return vm.bulk(&regs, phase(act::AND, 0, 1, 2), 0, true);
     }
-    let src = vm.bulk_src(o)?;
+    let probe_dict = o.is_obj_kind(ty::DICT as u8) && vm.set_len(s) >> 2 <= vm.dict_len(o);
+    let o = if op == BinOp::Sub && o.is_obj_kind(ty::DICT as u8) && !probe_dict {
+        vm.get_iter(o)?
+    } else {
+        o
+    };
+    let src = vm.bulk_src(o, true)?;
     let out = vm.new_set_like(s)?;
-    let dict = src.is_obj_kind(ty::DICT as u8);
     let prog = match op {
-        BinOp::Sub if dict && vm.set_len(s) >> 2 <= vm.dict_len(src) => phase(act::SUB, 0, 2, 1),
+        BinOp::Sub if probe_dict => phase(act::SUB, 0, 2, 1),
         BinOp::Sub => phase(act::ADD, 0, 2, 0) | phase(act::DISCARD, 0, 1, 0) << 16,
         // CPython's `set_symmetric_difference`: the set of `o`'s items
         // (its duplicates once), then each element of `s` toggled in.
         BinOp::BitXor => phase(act::ADD, 0, 1, 0) | phase(act::TOGGLE, 0, 2, 0) << 16,
         _ => phase(act::ADD, 0, 2, 0) | phase(act::ADD, 0, 1, 0) << 16,
     };
-    vm.bulk(&[out, src, s], prog, 0, top)
+    vm.bulk(&[out, src, s], prog, 0, true)
 }
 
 /// The source of an intersection or subset test with `o`, which CPython
@@ -9066,79 +9060,90 @@ fn in_place(vm: &Vm, o: Value) -> bool {
     ) || matches!(vm.type_of(o), T::dict_keys | T::dict_items)
 }
 
-/// Every `others` of an intersection read in place, or the whole call
-/// goes to the prelude twin before any of them is read.
+/// The registers of an intersection with an iterable. Dict keys are
+/// taken through its iterator, so they are hashed again and mutations
+/// during hashing or equality are detected by the iterator.
 #[cfg_attr(mm_shipped, optimize(size))]
-fn early_srcs(vm: &mut Vm, a: &CallArgs) -> Result<(), Raised> {
-    for i in 2..a.n {
-        early_src(vm, vm.arg_o(a, i))?;
-    }
-    Ok(())
+fn early_srcs(vm: &mut Vm, s: Value, o: Value) -> Result<[Value; 3], Raised> {
+    let o = if o.is_obj_kind(ty::DICT as u8) {
+        vm.get_iter(o)?
+    } else {
+        o
+    };
+    Ok([vm.new_set_like(s)?, vm.bulk_src(o, true)?, s])
 }
 
-/// A set method over `*others`: the first in steps when it is the only
-/// one, the others (rare) each at once.
+/// A set method over `*others`: the twin drives one stepped call per
+/// source, never retrying an earlier one after a later one has started.
 #[cfg_attr(mm_shipped, optimize(size))]
 fn set_many(
     vm: &mut Vm,
     a: &CallArgs,
+    owner: T,
     op: mm_compile::ast::BinOp,
     name: &str,
 ) -> Result<Value, Raised> {
-    use crate::set::{act, phase, res};
-    use mm_compile::ast::BinOp;
-    let mut s = vm.check_anyset(a, name)?;
-    let first = s;
-    if a.n == 1 {
-        // A copy, in steps.
-        let out = vm.new_set_like(s)?;
-        return vm.bulk(&[out, s], phase(act::ADD, 0, 1, 0), 0, true);
-    }
-    if op == BinOp::BitAnd {
-        early_srcs(vm, a)?;
-    }
-    s = set_with(vm, op, s, vm.arg_o(a, 1), a.n == 2)?;
-    for i in 2..a.n {
-        if op == BinOp::BitAnd {
-            s = set_with(vm, op, s, vm.arg_o(a, i), false)?;
-            continue;
+    use crate::set::{act, phase};
+    let s = vm.check_self(a, owner, name)?;
+    match a.n {
+        1 => {
+            let out = vm.new_set_like(s)?;
+            vm.bulk(&[out, s], phase(act::ADD, 0, 1, 0), 0, true)
         }
-        // CPython's `set_union` and `set_difference_multi`: the result of
-        // the first updated in place by the others, not copied again; a
-        // union skips the set itself.
-        if op == BinOp::BitOr && vm.arg_o(a, i) == first {
-            continue;
-        }
-        let (src, items) = vm.view_src(vm.arg_o(a, i))?;
-        let act = if op == BinOp::Sub {
-            act::DISCARD
-        } else {
-            act::ADD
-        };
-        vm.bulk(&[s, src], phase(act | items, 0, 1, 0), res::NONE, false)?;
+        2 => set_with(vm, op, s, vm.arg_o(a, 1)),
+        _ => Err(vm.need_py()),
     }
-    Ok(s)
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn set_union(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    set_many(vm, &a, mm_compile::ast::BinOp::BitOr, "union")
+    set_many(vm, &a, T::set, mm_compile::ast::BinOp::BitOr, "union")
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn set_intersection(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    set_many(vm, &a, mm_compile::ast::BinOp::BitAnd, "intersection")
+    set_many(
+        vm,
+        &a,
+        T::set,
+        mm_compile::ast::BinOp::BitAnd,
+        "intersection",
+    )
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn set_difference(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
-    set_many(vm, &a, mm_compile::ast::BinOp::Sub, "difference")
+    set_many(vm, &a, T::set, mm_compile::ast::BinOp::Sub, "difference")
+}
+
+fn frozenset_union(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    set_many(vm, &a, T::frozenset, mm_compile::ast::BinOp::BitOr, "union")
+}
+
+fn frozenset_intersection(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    set_many(
+        vm,
+        &a,
+        T::frozenset,
+        mm_compile::ast::BinOp::BitAnd,
+        "intersection",
+    )
+}
+
+fn frozenset_difference(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    set_many(
+        vm,
+        &a,
+        T::frozenset,
+        mm_compile::ast::BinOp::Sub,
+        "difference",
+    )
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
 fn set_symmetric_difference(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let s = vm.check_anyset(&a, "symmetric_difference")?;
-    set_with(vm, mm_compile::ast::BinOp::BitXor, s, vm.arg_o(&a, 1), true)
+    set_with(vm, mm_compile::ast::BinOp::BitXor, s, vm.arg_o(&a, 1))
 }
 
 /// `s.<op>_update(o)` in place (CPython's `set_ior` and friends; any
@@ -9149,7 +9154,6 @@ fn set_inplace(
     op: mm_compile::ast::BinOp,
     s: Value,
     o: Value,
-    top: bool,
 ) -> Result<Value, Raised> {
     use crate::set::{act, phase, res};
     use mm_compile::ast::BinOp;
@@ -9159,34 +9163,49 @@ fn set_inplace(
     } else {
         o
     };
+    if o == s {
+        match op {
+            BinOp::BitOr => return Ok(Value::NONE),
+            BinOp::Sub | BinOp::BitXor => {
+                vm.set_clear(s)?;
+                return Ok(Value::NONE);
+            }
+            _ => {}
+        }
+    }
     if Vm::is_set(o) {
-        // A request (the operation goes on in steps) or the set.
-        let v = vm.set_binop(op, s, o, true, top)?;
-        return Ok(if v == Value::UNDEFINED {
-            v
-        } else {
-            Value::NONE
-        });
+        // CPython intersects with a much larger source before deleting
+        // anything; in particular, its equality calls see the old set.
+        if op == BinOp::Sub && vm.set_len(o) >> 3 > vm.set_len(s) {
+            let tmp = vm.new_set()?;
+            let prog = phase(act::AND, 2, 0, 1) | phase(act::DISCARD, 0, 2, 0) << 16;
+            return vm.bulk(&[s, o, tmp], prog, res::NONE, true);
+        }
+        return vm.set_binop(op, s, o, true, true, res::NONE);
     }
     if op == BinOp::BitAnd {
-        let (src, items) = early_src(vm, o)?;
-        let tmp = vm.new_set()?;
-        let p = phase(act::AND | items, 2, 1, 0) | phase(act::MOVE, 0, 2, 0) << 16;
-        return vm.bulk(&[s, src, tmp], p, res::NONE, top);
+        let regs = early_srcs(vm, s, o)?;
+        let p = phase(act::AND, 0, 1, 2) | phase(act::MOVE, 2, 0, 0) << 16;
+        return vm.bulk(&regs, p, res::NONE, true);
     }
-    let src = vm.bulk_src(o)?;
-    let dict = src.is_obj_kind(ty::DICT as u8);
+    let dict = o.is_obj_kind(ty::DICT as u8);
+    let src = if op == BinOp::Sub && dict {
+        vm.get_iter(o)?
+    } else {
+        o
+    };
+    let src = vm.bulk_src(src, true)?;
     let (regs, prog): (&[Value], u64) = match op {
         BinOp::BitXor if !dict => {
             let tmp = vm.new_set()?;
             let p = phase(act::ADD, 2, 1, 0) | phase(act::TOGGLE, 0, 2, 0) << 16;
-            return vm.bulk(&[s, src, tmp], p, res::NONE, top);
+            return vm.bulk(&[s, src, tmp], p, res::NONE, true);
         }
         BinOp::BitXor => (&[s, src], phase(act::TOGGLE, 0, 1, 0)),
         BinOp::Sub => (&[s, src], phase(act::DISCARD, 0, 1, 0)),
         _ => (&[s, src], phase(act::ADD, 0, 1, 0)),
     };
-    vm.bulk(regs, prog, res::NONE, top)
+    vm.bulk(regs, prog, res::NONE, true)
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
@@ -9197,19 +9216,12 @@ fn set_update_many(
     name: &str,
 ) -> Result<Value, Raised> {
     let s = vm.check_self(a, T::set, name)?;
-    if a.n == 2 {
-        return set_inplace(vm, op, s, vm.arg_o(a, 1), true);
+    match a.n {
+        1 if op == mm_compile::ast::BinOp::BitAnd => set_inplace(vm, op, s, s),
+        1 => Ok(Value::NONE),
+        2 => set_inplace(vm, op, s, vm.arg_o(a, 1)),
+        _ => Err(vm.need_py()),
     }
-    if a.n > 2 && op == mm_compile::ast::BinOp::BitAnd {
-        // CPython swaps in the result only after every intersection.
-        let result = set_many(vm, a, op, name)?;
-        vm.set_move(s, result);
-        return Ok(Value::NONE);
-    }
-    for i in 1..a.n {
-        set_inplace(vm, op, s, vm.arg_o(a, i), false)?;
-    }
-    Ok(Value::NONE)
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
@@ -9317,7 +9329,7 @@ fn dict_fromkeys(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if c != vm.type_obj(T::dict) && vm.type_of(c) != T::dict {
         return Err(vm.need_py());
     }
-    let keys = vm.bulk_src(vm.arg_o(&a, 1))?;
+    let keys = vm.bulk_src(vm.arg_o(&a, 1), false)?;
     let v = match vm.arg_o(&a, 2) {
         Value::UNDEFINED => Value::NONE,
         v => v,

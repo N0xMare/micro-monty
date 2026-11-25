@@ -1654,53 +1654,39 @@ def _set_discard(a):
 
 def _set_update(a):
     s = a[0]
-    for other in a[1:]:
-        t = type(other)
-        if t is set or t is frozenset or t is dict:
-            # The native, which presizes `s` first as CPython's
-            # `set_merge` does (its table order depends on it).
-            set.update(s, other)
-        elif isinstance(other, set):
-            # A set subclass's instance merges as its set does.
-            set.update(s, _bx_value(other))
-        else:
-            for x in other:
-                _sadd(s, x)
+    if len(a) == 2:
+        # The native couldn't read this iterable without running Python.
+        for x in a[1]:
+            _sadd(s, x)
+        return
+    for i in range(1, len(a)):
+        set.update(s, a[i])
 
 
 def _set_union(a):
     # CPython's `set_union`: the set itself among the others is skipped.
     s = set(a[0])
-    _set_update((s,) + tuple(o for o in a[1:] if o is not a[0]))
+    for i in range(1, len(a)):
+        o = a[i]
+        if _bx_value(o) is not a[0]:
+            set.update(s, o)
     return s
 
 
 def _set_symmetric_difference(a):
     # CPython's: the set of the other's items, then each element of the
     # set toggled in.
-    s = set(a[1])
-    _set_symmetric_difference_update((s, a[0]))
+    s = set()
+    set.update(s, a[1])
+    set.symmetric_difference_update(s, a[0])
     return s
 
 
 def _set_symmetric_difference_update(a):
-    # CPython's: a set's elements toggled as they are, with their hashes,
-    # anything else's as the set of its items.
-    s = a[0]
-    o = a[1]
-    if type(o) is dict:
-        for x in o:
-            if not _sdiscard(s, x):
-                _sadd(s, x)
-        return
-    if type(o) is not set and type(o) is not frozenset:
-        o = set(o)
-    for x, h in _set_hashed(o):
-        j = _sfind(s, x, h)
-        if j >= 0:
-            _set_table(s, j)
-        else:
-            _sadd_h(s, x, h)
+    # Deduplicate the iterable before changing the receiver.
+    o = set()
+    set.update(o, a[1])
+    set.symmetric_difference_update(a[0], o)
 
 
 def _sinter(s, o):
@@ -1715,58 +1701,55 @@ def _sinter(s, o):
             if _sfind(s, x, h) >= 0:
                 _sadd_h(r, x, h)
         return r
-    n = len(s)
     for x in o:
         h = hash(x)
         if _sfind(s, x, h) >= 0:
             _sadd_h(r, x, h)
-            if len(r) >= n:
+            if len(r) >= len(s):
                 break
     return r
 
 
 def _set_intersection_update(a):
-    s = r = a[0]
-    for other in a[1:]:
-        r = _sinter(r, other)
-    _set_table(s, r)
+    # Leave the receiver alone until all the intersections have succeeded.
+    _set_table(a[0], _set_intersection(a))
 
 
 def _set_difference_update(a):
     s = a[0]
-    for other in a[1:]:
-        for x in other:
+    if len(a) == 2:
+        for x in a[1]:
             _sdiscard(s, x)
         _set_table(s, s)
+        return
+    for i in range(1, len(a)):
+        set.difference_update(s, a[i])
 
 
 def _set_difference(a):
-    # CPython's `set_difference_multi`: the first other taken as
-    # `set_difference` does (a set or dict at least a quarter of `s`'s
-    # size probed by each element of `s`; anything else removed from a
-    # copy), then the rest removed in place.
     s = a[0]
-    if len(a) > 1:
-        o = a[1]
-        t = type(o)
-        if (t is set or t is frozenset or t is dict) and len(s) >> 2 <= len(o):
-            r = set()
-            for x, h in _set_hashed(s):
-                if (_dfind(o, x, h) if t is dict else _sfind(o, x, h)) < 0:
-                    _sadd_h(r, x, h)
-            _set_difference_update((r,) + a[2:])
-            return r
-    r = set(s)
-    _set_difference_update((r,) + a[1:])
+    if len(a) == 2:
+        r = set(s)
+        set.difference_update(r, a[1])
+        return r
+    # The first difference builds the result; the rest delete from it,
+    # preserving its table order rather than making a new copy each time.
+    r = s.difference(a[1])
+    if type(r) is frozenset:
+        tmp = set()
+        _set_table(tmp, r)
+        r = tmp
+    for i in range(2, len(a)):
+        set.difference_update(r, a[i])
     return r
 
 
 def _set_intersection(a):
     s = a[0]
-    if len(a) == 1:
-        return set(s)
-    for other in a[1:]:
-        s = _sinter(s, other)
+    if len(a) == 2:
+        return _sinter(s, a[1])
+    for i in range(1, len(a)):
+        s = s.intersection(a[i])
     return s
 
 
@@ -1928,7 +1911,8 @@ def _list___init__(a):
 def _set___init__(a):
     s = a[0]
     set.clear(s)
-    _set_update(a)
+    if len(a) == 2:
+        set.update(s, a[1])
 
 
 def _dict___init__(a, kw):
@@ -6301,7 +6285,7 @@ def _bulk(r, prog, pc, i, res):
                 if j >= 0:
                     _set_table(out, j)
                 elif a == 5:
-                    _set_insert(out, x, h)
+                    _sadd_h(out, x, h)
             else:
                 if type(other) is dict:
                     has = _dfind(other, x, h) >= 0

@@ -1112,25 +1112,32 @@ impl Vm {
             .map(|_| ())
     }
 
-    /// A source a bulk operation reads in place (a list, tuple, set, dict,
-    /// range, or a builtin iterator that runs no Python code, an item at a
-    /// time as CPython reads it), or a list of the items of any other
-    /// iterable.
+    /// A bulk source read in place, or a rewindable native iterator. Callers
+    /// that must interleave iteration with hashing go to their twin before
+    /// pulling anything if the iterator needs Python; other callers can
+    /// collect it first.
     #[cfg_attr(mm_shipped, optimize(size))]
-    pub(crate) fn bulk_src(&mut self, v: Value) -> Result<Value, Raised> {
+    pub(crate) fn bulk_src(&mut self, v: Value, stream: bool) -> Result<Value, Raised> {
         if matches!(
             v.obj_kind().map(u16::from),
             Some(ty::LIST | ty::TUPLE | ty::SET | ty::DICT | ty::RANGE)
-        ) || self.iter_pos(v, &mut [None; 16], &mut 0, 0)
-        {
+        ) {
             return Ok(v);
+        }
+        let src = if stream { self.get_iter(v)? } else { v };
+        if self.iter_pos(src, &mut [None; 16], &mut 0, 0) {
+            return Ok(src);
+        }
+        if stream {
+            return Err(self.need_py());
         }
         let items = self.collect(v)?;
         self.new_list(&items)
     }
 
     /// `a <op> b` for two sets (`&`, `|`, `-`, `^`; in place for a set
-    /// `a`, which a frozenset never is), in steps when `top`.
+    /// `a`, which a frozenset never is), in steps when `top`. The bulk
+    /// result is the set for operators and `None` for update methods.
     pub(crate) fn set_binop(
         &mut self,
         op: mm_compile::ast::BinOp,
@@ -1138,6 +1145,7 @@ impl Vm {
         b: Value,
         inplace: bool,
         top: bool,
+        res: u64,
     ) -> Result<Value, Raised> {
         use mm_compile::ast::BinOp;
         let inplace = inplace && !self.set_frozen(a);
@@ -1159,10 +1167,10 @@ impl Vm {
                         phase(act::AND, 3, 1, 2)
                     };
                     let prog = first | phase(act::MOVE, 0, 3, 0) << 16;
-                    return self.bulk(&regs, prog, 0, top);
+                    return self.bulk(&regs, prog, res, top);
                 }
             };
-            return self.bulk(&[a, b], prog, 0, top);
+            return self.bulk(&[a, b], prog, res, top);
         }
         let out = self.new_set_like(a)?;
         let regs = [out, a, b];
@@ -1182,7 +1190,7 @@ impl Vm {
             // each element of `a` toggled in.
             _ => phase(act::ADD, 0, 2, 0) | phase(act::TOGGLE, 0, 1, 0) << 16,
         };
-        self.bulk(&regs, prog, 0, top)
+        self.bulk(&regs, prog, res, top)
     }
 
     /// `a <= b`, raising.
@@ -1552,6 +1560,15 @@ impl Vm {
             if b.nk != Value::UNDEFINED {
                 // `out`'s table is rebuilt a slice per step; the items wait.
                 *units += self.bulk_rebuild(b, out, left.min(REBUILD_SLICE), &mut free)?;
+                // The last match may have started this rebuild. Finish
+                // the phase without taking another item from its iterator.
+                if a == act::AND
+                    && b.nk == Value::UNDEFINED
+                    && Self::is_set(other)
+                    && self.set_len(out) >= self.set_len(other)
+                {
+                    b.pc = (b.pc & 7) + 1;
+                }
                 continue;
             }
             if b.pc & BEGUN == 0 {
@@ -1714,13 +1731,10 @@ impl Vm {
         }
     }
 
-    /// The end of a `difference_update` in the prelude twins (`_bulk`,
-    /// `_set_difference_update`): [`Vm::set_dummies_minused`] at once.
-    pub(crate) fn set_settle(&mut self, s: Value) -> Result<(), Raised> {
-        match self.set_dummies_minused(s) {
-            Some(minused) => self.set_resize(s, minused, false),
-            None => Ok(()),
-        }
+    /// The end of a `difference_update` in the prelude twins: the same
+    /// stepped table rebuild as at the end of a native `DISCARD` phase.
+    pub(crate) fn set_settle(&mut self, s: Value) -> Result<Value, Raised> {
+        self.bulk(&[s], phase(act::DISCARD, 0, 1, 0), res::NONE, true)
     }
 
     /// The entries set or dict `src` gives a merge.

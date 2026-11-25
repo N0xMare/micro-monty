@@ -657,6 +657,12 @@ messages; copy wording where behaviour matches.
     all garbage until its remark, and near the limit that fails
     allocations the one-step growth survives. A chunked native that fills
     a dict of its own moves it a slice a step with `Vm::dict_grow_slice`.
+  - **Set methods with several sources.** The prelude drives one stepped
+    native operation per source, in argument order. Iterables are read one
+    item at a time, so an error in hashing or comparison leaves the rest
+    unread. `intersection_update` installs the result only after all
+    sources succeed; `update` and `difference_update` retain their changes
+    up to the error.
   - **Numbers.** `int()`, `float()` and `complex()` read a long text 2 MB
     (a non-ASCII char counting 32) per step in one chunked text engine
     (`op::NUM_TEXT`: one char loop and step, a grammar per op), keeping a

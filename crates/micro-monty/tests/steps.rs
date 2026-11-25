@@ -446,6 +446,9 @@ macro_rules! intern_crowd_every_table {
     };
 }
 
+const SET_METHOD_SETUP: &str =
+    "s = set(range(750_000))\na = list(range(500_000))\nb = list(range(250_000, 750_000))";
+
 /// (row, setup, the operation, times it repeats as straight-line code):
 /// each at about the largest size the default limits allow. The phase 2
 /// packages add their sites here.
@@ -1195,6 +1198,47 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         Row::Bounded,
         "a = set(range(2_500_000))\nxs = list(range(1_250_000, 3_750_000))",
         "c = a.intersection(xs)",
+        1,
+    ),
+    // Variadic set methods drive one bounded operation per source. The
+    // later arguments are large too, including beyond three sources.
+    (
+        Row::Bounded,
+        SET_METHOD_SETUP,
+        "s.update(a, iter(b), (), (), b)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        SET_METHOD_SETUP,
+        "r = s.union(a, iter(b), (), (), b)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        SET_METHOD_SETUP,
+        "s.intersection_update(a, b)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        SET_METHOD_SETUP,
+        "r = s.intersection(a, b)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        SET_METHOD_SETUP,
+        "s.difference_update(a, b)",
+        1,
+    ),
+    (Row::Bounded, SET_METHOD_SETUP, "r = s.difference(a, b)", 1),
+    // A Python iterator's deletes are already stepped; settling their
+    // dummies at the end must not rebuild its whole table in one step.
+    (
+        Row::Bounded,
+        "s = set(range(2_000_000))",
+        "s.difference_update((i for i in range(1_100_000)), ())",
         1,
     ),
     (

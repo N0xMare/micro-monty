@@ -189,6 +189,11 @@ estimate. A forced `gc.collect()` is not charged to fuel, so fuel alone
 does not bound CPU time (4,000 calls with 100,000 live lists: 5 s for
 120,076 units \[M\]); set a deadline too.
 
+Set methods that take several iterables process them in order. If a key's
+hash or comparison raises, the remaining items of that iterator stay unread.
+`update` and `difference_update` keep the changes already made;
+`intersection_update` replaces the set only after all inputs succeed.
+
 **Fuel is per cell.** Each `start` gives the cell `Limits::fuel`, unless
 `set_fuel` was called since the last cell (then the next cell gets that,
 once). On a parked cell, `set_fuel` refuels it before `Continue`. With

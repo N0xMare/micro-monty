@@ -291,7 +291,7 @@ impl Vm {
             // A set subclass's instance is read as its set
             // (`PyAnySet_Check`), whatever its `__iter__`.
             _ if self.backing(v).is_some_and(Vm::is_set) => Ok((self.unbx(v), 0)),
-            _ => Ok((self.bulk_src(v)?, 0)),
+            _ => Ok((self.bulk_src(v, false)?, 0)),
         }
     }
 
@@ -619,7 +619,7 @@ impl Vm {
                 T::set | T::frozenset,
                 T::set | T::frozenset,
             ) => {
-                return self.set_binop(op, a, b, inplace, top);
+                return self.set_binop(op, a, b, inplace, top, 0);
             }
             (BinOp::BitOr, T::dict, T::dict) => {
                 use crate::set::{act, phase};
