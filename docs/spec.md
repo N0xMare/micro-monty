@@ -2420,9 +2420,10 @@ every entry within `INTERN_WALK_CAP` slots of its hash's with no free slot
 between and with its hash's byte; a template's own image, restored unchecked,
 was written by this build from a table that held all of it),
 every code object (`Code::verify`: operands in range, jumps on instruction
-starts, only `JUMP_LOOP` backward, sane handler ranges, a terminator last;
-and, for stored code, every `YIELD_FROM` right after its `SEND`), frame and
-generator pcs, frame bounds, code indices, tasks and host-call state, every
+starts, only `JUMP_LOOP` backward, sane handler ranges, a terminator last,
+parameters within the registers and names; and, for stored code, every
+`YIELD_FROM` right after its `SEND`), frame and generator pcs, frame bounds
+(summed with checked arithmetic), code indices, tasks and host-call state, every
 dict's index (entry bits, duplicates, tags, probe reachability, length),
 continuation targets and registers, shape transitions, class size hints and
 bundled-module entries. A generator's code is its function's in every state;

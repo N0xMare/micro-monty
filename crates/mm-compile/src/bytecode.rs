@@ -432,10 +432,14 @@ pub struct ParamSpec {
 }
 
 impl ParamSpec {
-    /// Registers the parameters take.
+    /// Registers the parameters take: four `u32` counts, summed where a
+    /// decoded code's cannot overflow ([`Code::verify`] bounds it).
     #[must_use]
-    pub fn total(&self) -> u32 {
-        self.argcount + self.kwonly + u32::from(self.varargs) + u32::from(self.varkw)
+    pub fn total(&self) -> u64 {
+        u64::from(self.argcount)
+            + u64::from(self.kwonly)
+            + u64::from(self.varargs)
+            + u64::from(self.varkw)
     }
 
     /// Plain positional only: no defaults needed, no `*`/`**`/keyword-only.
@@ -784,8 +788,8 @@ impl Code {
         matches!(
             last,
             op::RETURN | op::JUMP | op::JUMP_LOOP | op::RAISE | op::RERAISE | op::ASSERT_FAIL
-        ) && p.total() as usize <= n
-            && p.total() as usize <= self.varnames.len()
+        ) && p.total() <= n as u64
+            && p.total() <= self.varnames.len() as u64
             && p.posonly <= p.argcount
             && self.freevars.iter().all(|&r| usize::from(r) < n)
             && self

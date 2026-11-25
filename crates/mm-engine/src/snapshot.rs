@@ -1477,7 +1477,8 @@ fn check_state(
 ) -> Res<State> {
     bundled.load(codes, s.ci)?;
     let code = need(codes.get(s.ci as usize), "state code")?;
-    if !code.code.is_instr_start(s.pc) || s.base + code.code.nregs as usize > stack_len {
+    let top = s.base.checked_add(code.code.nregs as usize);
+    if !code.code.is_instr_start(s.pc) || top.is_none_or(|t| t > stack_len) {
         return Err(SnapError::Corrupt("state"));
     }
     Ok(State {
@@ -1529,10 +1530,13 @@ fn check_frames(
         let code = need(codes.get(f.code as usize), "frame code")?;
         let at = |pc: u32| code.code.is_instr_start(pc as usize);
         let nregs = code.code.nregs as usize;
+        // The callee's header sits in this frame's window, past its own.
+        let low = (f.base as usize).checked_add(HDR);
+        let high = low.and_then(|l| l.checked_add(nregs));
         let ok = at(f.call_pc)
             && at(f.ret_pc)
-            && f.base as usize + HDR <= callee
-            && callee <= f.base as usize + code.code.nregs as usize + HDR;
+            && low.is_some_and(|l| l <= callee)
+            && high.is_some_and(|h| callee <= h);
         callee = f.base as usize;
         let cont_ok = f.cont == 0
             || match conts.get(f.cont as usize - 1) {

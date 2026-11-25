@@ -168,6 +168,26 @@ fn the_stopped_frame_must_fit_its_stack() {
         let base = vm.saved.as_ref().expect("stopped").base;
         vm.stack.truncate(base + 1);
     });
+    // A base whose frame would end past `usize` on a 32-bit target, where
+    // the sum wrapped to a window inside the stack.
+    refuses(UNPACKING, holds_cont, "state", |vm| {
+        vm.saved.as_mut().expect("stopped").base = u32::MAX as usize - 1;
+    });
+}
+
+#[test]
+fn a_codes_parameters_fit_its_registers() {
+    // Counts whose `u32` sum wraps to 0.
+    refuses(
+        "x = 1\n",
+        |_| false,
+        "code verification",
+        |vm| {
+            let code = Arc::get_mut(&mut user_code(vm).code).expect("uniquely owned");
+            code.params.argcount = u32::MAX;
+            code.params.kwonly = 1;
+        },
+    );
 }
 
 #[test]
