@@ -9176,8 +9176,11 @@ fn set_update_many(
     if a.n == 2 {
         return set_inplace(vm, op, s, vm.arg_o(a, 1), true);
     }
-    if op == mm_compile::ast::BinOp::BitAnd {
-        early_srcs(vm, a)?;
+    if a.n > 2 && op == mm_compile::ast::BinOp::BitAnd {
+        // CPython swaps in the result only after every intersection.
+        let result = set_many(vm, a, op, name)?;
+        vm.set_move(s, result);
+        return Ok(Value::NONE);
     }
     for i in 1..a.n {
         set_inplace(vm, op, s, vm.arg_o(a, i), false)?;

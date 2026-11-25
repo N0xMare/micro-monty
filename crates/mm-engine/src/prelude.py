@@ -1726,9 +1726,10 @@ def _sinter(s, o):
 
 
 def _set_intersection_update(a):
-    s = a[0]
+    s = r = a[0]
     for other in a[1:]:
-        _set_table(s, _sinter(s, other))
+        r = _sinter(r, other)
+    _set_table(s, r)
 
 
 def _set_difference_update(a):
