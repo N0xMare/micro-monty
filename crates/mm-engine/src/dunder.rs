@@ -597,6 +597,8 @@ impl Vm {
                 } else if b.is_obj_kind(ty::VIEW as u8) && self.type_of(b) == T::dict_values {
                     // A step of bounded work, then more in `_steps`.
                     return self.dv_in(b, a, neg);
+                } else if Vm::one_shot(b) {
+                    return self.iter_in(b, a, neg);
                 }
             }
             _ => {}

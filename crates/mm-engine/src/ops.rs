@@ -1376,43 +1376,6 @@ impl Vm {
                 let items = self.collect(container)?;
                 Ok(self.find_eq(&items, item)?.is_some())
             }
-            T::list_iterator
-            | T::tuple_iterator
-            | T::str_iterator
-            | T::str_ascii_iterator
-            | T::bytes_iterator
-            | T::bytearray_iterator
-            | T::range_iterator
-            | T::dict_keyiterator
-            | T::dict_valueiterator
-            | T::dict_itemiterator
-            | T::dict_reversekeyiterator
-            | T::dict_reversevalueiterator
-            | T::dict_reverseitemiterator
-            | T::set_iterator
-            | T::enumerate
-            | T::zip
-            | T::list_reverseiterator => {
-                // Iterators are consumed up to the first match, one fuel
-                // unit per item. An iterator need not end (a range's can
-                // run for hours), so past the walk budget the prelude twin
-                // goes on from here in bytecode, which parks on fuel,
-                // deadlines and requests.
-                let mut n = 0;
-                while let Some(x) = self.iter_next(container)? {
-                    n += 1;
-                    if self.eq_elem(x, item)? {
-                        self.burn(u64::from(n));
-                        return Ok(true);
-                    }
-                    if n == crate::dict::WALK {
-                        self.burn(u64::from(n));
-                        return Err(self.need_py());
-                    }
-                }
-                self.burn(u64::from(n));
-                Ok(false)
-            }
             _ => {
                 // A builtin container's subclass keeps its `__contains__`,
                 // whatever `__iter__`/`__getitem__` it overrides.
@@ -1435,6 +1398,36 @@ impl Vm {
                 Err(self.err(T::TypeError, &msg))
             }
         }
+    }
+
+    /// `x in it` (or `not in`): a one-shot iterator must not lose the
+    /// current item when equality needs Python code.
+    pub(crate) fn iter_in(&mut self, it: Value, x: Value, neg: bool) -> Result<Value, Raised> {
+        let mut n = 0;
+        while let Some(y) = self.iter_next(it)? {
+            n += 1;
+            match self.eq_elem(y, x) {
+                Ok(true) => {
+                    self.burn(u64::from(n));
+                    return Ok(Value::from_bool(!neg));
+                }
+                Ok(false) => {}
+                Err(Raised) if self.slow => {
+                    self.slow = false;
+                    self.burn(u64::from(n - 1));
+                    let args = alloc::vec![it, x, y, Value::from_bool(neg)];
+                    return self.prelude_request("_iter_contains", args, crate::cont::Cont::None);
+                }
+                Err(e) => return Err(e),
+            }
+            // An iterator need not end; the twin goes on from here.
+            if n == crate::dict::WALK {
+                self.burn(u64::from(n));
+                return Err(self.need_py());
+            }
+        }
+        self.burn(u64::from(n));
+        Ok(Value::from_bool(neg))
     }
 
     /// `x in s` (`not in` with `neg`) for list or tuple `s`, compared by

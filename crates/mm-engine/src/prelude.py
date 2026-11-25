@@ -387,6 +387,15 @@ def _op_not_contains(c, x):
     return not _op_contains(c, x)
 
 
+def _iter_contains(it, x, y, neg):
+    if y is x or y == x:
+        return not neg
+    for y in it:
+        if y is x or y == x:
+            return not neg
+    return neg
+
+
 # ---------------------------------------------------------- subscripts
 
 
