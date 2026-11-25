@@ -2337,6 +2337,8 @@ fn token_done(
 /// A step of the long token in `wd` (reading at most `room` input bytes):
 /// the token's value and end once read, `None` while more remain, or a
 /// failure.
+#[cold]
+#[inline(never)]
 #[cfg_attr(mm_shipped, optimize(size))]
 fn long_step(
     vm: &mut Vm,
