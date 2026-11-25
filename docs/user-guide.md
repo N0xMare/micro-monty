@@ -1742,7 +1742,9 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
 - **`bytearray`** works (constructors, item and slice assignment, the
   list-like mutators, the bytes methods, `struct.pack_into`), but not its
   subclasses, `bytearray % args`, bytearray host values, or bytearray
-  arguments to `hashlib`, `re` and `json`.
+  arguments to `hashlib`, `re` and `json`. Contiguous slice edits charge
+  fuel for the incoming bytes and any tail moved in place, not for the
+  untouched portion of the bytearray.
 - **Parts of bundled modules:** `logging.handlers`, `logging.config` and
   file handlers; `difflib.HtmlDiff`; `zlib` beyond `crc32` and `adler32` (no
   deflate; `gzip` and `zipfile` do not exist); `calendar` locales other than

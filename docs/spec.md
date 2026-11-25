@@ -1401,6 +1401,11 @@ template restore replace the heap, and the table with it.
   CPython: an append within 1.125× grows to `n + n/8 + (3 or 6)`, a larger
   jump to exactly `n`; a length under a quarter of a capacity above 64
   bytes reallocates to fit, so `clear()` and `del` give memory back.
+- **Splice fuel.** Contiguous replacements charge one unit per 64 incoming
+  bytes and, separately, per 64 bytes of tail shifted in place. If growth
+  moves the tail directly into a new block, the block charge covers that
+  move; a tail shifted before shrinking or after a stepped growth still
+  costs fuel.
 - **Snapshots.** Nothing special: a bytearray is an ordinary object plus a
   byte block, written and validated with the segments. The spare capacity
   is saved with it. A length past the block (only a corrupt image) reads

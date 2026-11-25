@@ -784,6 +784,39 @@ b2 = b1 * b1
 }
 
 #[test]
+fn bytearray_splice_charges_source_and_in_place_tail() {
+    let engine = Engine::new(EngineConfig::default());
+    for (trim, end, insert, tail, resize) in [
+        (0, 577, 320, 0, 0),               // same length
+        (1024, 321, 320, 7168 - 321, 0),   // spare capacity
+        (0, 321, 320, 0, 9510),            // moves the tail into a new block
+        (0, 7001, 128, 8192 - 7001, 1576), // shifts before shrinking the block
+    ] {
+        let out = Arc::new(Mutex::new(String::new()));
+        let mut s = session(&engine, &out);
+        let setup = format!(
+            "b = bytearray(b'a' * 257 + b'z' * (8192 - 257))\n\
+             del b[8192 - {trim}:]\nsrc = b'x' * {insert}\n"
+        );
+        let p = s.start(&engine.compile(&setup, "setup.py").expect("compiles"));
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        let splice = format!("b[257:{end}] = src\n");
+        let total = 10_000;
+        s.set_fuel_total(Some(total));
+        let p = s.start(&engine.compile(&splice, "splice.py").expect("compiles"));
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        assert_eq!(
+            total - s.fuel_total().expect("total"),
+            insert / 64 + tail / 64 + resize / 64,
+            "trim {trim}, end {end}, insert {insert}"
+        );
+        let check = format!("assert b == b'a' * 257 + src + b'z' * (8192 - {trim} - {end})\n");
+        let p = s.start(&engine.compile(&check, "check.py").expect("compiles"));
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+    }
+}
+
+#[test]
 fn class_regex_and_parse_error_work_charges_fuel_in_proportion() {
     // Fuel-audit sweep: work that charged nothing beyond its instruction.
     // `B.x = v` revisits every subclass (and was quadratic in them), class

@@ -98,9 +98,11 @@ impl Vm {
     /// length opens its gap there instead: the bytes from `at` on move to
     /// the end (into a new block directly), and the caller fills the gap.
     /// Growth that does not fit raises `MemoryError` before anything changes.
-    pub(crate) fn ba_resize(&mut self, v: Value, n: usize, at: usize) -> Result<(), Raised> {
+    /// Returns the number of tail bytes moved in place, not covered by a
+    /// new block's fuel charge.
+    pub(crate) fn ba_resize(&mut self, v: Value, n: usize, at: usize) -> Result<usize, Raised> {
         let (Some(r), Some(b)) = (v.as_obj(), self.ba_block(v)) else {
-            return Ok(());
+            return Ok(0);
         };
         let old = self.bytearray_data(v).len();
         // A growth's gap: the bytes from `at` on move to the end.
@@ -119,7 +121,7 @@ impl Vm {
                 self.hx_hot(res)?;
             }
             self.set_raw_hot(r, 1, n as u64);
-            return Ok(());
+            return Ok(old - at);
         }
         let alloc = if shrink { n } else { grown_block(cap, n) };
         if alloc >= 64 {
@@ -130,7 +132,7 @@ impl Vm {
             // A failed shrink keeps the larger block.
             Err(_) if shrink => {
                 self.set_raw_hot(r, 1, n as u64);
-                return Ok(());
+                return Ok(0);
             }
             Err(e) => return self.hx_hot(Err(e)),
         };
@@ -142,7 +144,7 @@ impl Vm {
         }
         self.set_slot_hot(r, 0, Value::from_byte_ref(nb));
         self.set_raw_hot(r, 1, n as u64);
-        Ok(())
+        Ok(0)
     }
 
     /// Does growing bytearray `v` to `need` bytes move more than a step's
@@ -238,14 +240,16 @@ impl Vm {
         let hi = hi.clamp(lo, old);
         let n = src.map_or(0, |s| self.bytes_data(s).len());
         let gone = hi - lo;
-        self.burn(old as u64 / 64);
+        self.burn_bytes(n);
         if n > gone {
             let Some(len) = old.checked_add(n - gone) else {
                 return Err(self.err(T::MemoryError, ""));
             };
-            self.ba_resize(v, len, hi)?;
+            let shifted = self.ba_resize(v, len, hi)?;
+            self.burn_bytes(shifted);
         } else if n < gone {
             if let Some(b) = self.ba_block(v) {
+                self.burn_bytes(old - hi);
                 let res = self.heap.copy_bytes(b, hi, b, lo + n, old - hi);
                 self.hx_hot(res)?;
             }
