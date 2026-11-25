@@ -1465,11 +1465,11 @@ impl Vm {
             let Some(n) = self.int_of_o(limit) else {
                 return Err(self.err(T::TypeError, "limit must be an integer or None"));
             };
-            let n = usize::try_from(n.unsigned_abs()).unwrap_or(usize::MAX);
-            if limit.as_int().is_some_and(|l| l >= 0) {
-                frames.truncate(n);
+            let count = usize::try_from(n.unsigned_abs()).unwrap_or(usize::MAX);
+            if n >= 0 {
+                frames.truncate(count);
             } else {
-                frames.drain(..frames.len().saturating_sub(n));
+                frames.drain(..frames.len().saturating_sub(count));
             }
         }
         let mut out = Vec::with_capacity(frames.len());
