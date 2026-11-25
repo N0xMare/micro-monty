@@ -2428,7 +2428,7 @@ walked once for all the pcs it holds), frame bounds
 (summed with checked arithmetic), code indices, tasks and host-call state, every
 dict's index (entry bits, duplicates, slots naming live entries, tags, probe
 reachability, length; in time linear in its table however its probes
-collide),
+collide, with a scratch bit per entry and per slot),
 continuation targets and registers, shape transitions, class size hints and
 bundled-module entries. A generator's code is its function's in every state;
 a frame that runs for a generator or coroutine runs that object's code while

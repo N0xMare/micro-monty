@@ -209,6 +209,25 @@ impl Geo {
         self.mask.saturating_add(14)
     }
 
+    /// The place of slot `x` along the `5i + 1` cycle from slot 0: the `k`
+    /// with `4x + 1 = 5^k` modulo four times the slots, as `4(5i + 1) + 1`
+    /// is `5(4i + 1)`. Found a bit at a time: a factor `5^(2^j)` flips bit
+    /// `j + 2` of a power of 5 and keeps the bits below it.
+    fn place(self, x: u32) -> u64 {
+        let n = self.mask.count_ones();
+        let m = (4u64 << n) - 1;
+        let y = (4 * u64::from(x) + 1) & m;
+        let (mut p, mut pow, mut k) = (1u64, 5u64, 0);
+        for j in 0..n {
+            if (p ^ y) >> (j + 2) & 1 != 0 {
+                p = p.wrapping_mul(pow) & m;
+                k |= 1 << j;
+            }
+            pow = pow.wrapping_mul(pow) & m;
+        }
+        k
+    }
+
     /// The tag bits of `h`.
     #[allow(clippy::cast_possible_truncation, reason = "high half of h")]
     pub(crate) fn tag(self, h: u64) -> u32 {
@@ -230,12 +249,14 @@ impl Geo {
 /// probe is followed while its hash still perturbs it (at most 13 steps),
 /// then it walks the `5i + 1` cycle, which reaches its slot first exactly
 /// when both lie in one run of nonzero slots, the slot later along it.
-/// `None` when the check's own tables cannot be allocated.
+/// The scratch is a bit per entry and per slot, as the restored heap is
+/// charged to the limit and the check is not. `None` when it cannot be
+/// allocated.
 pub(crate) fn check_indexes(heap: &mm_core::Heap) -> Option<bool> {
     let (mut ok, mut room) = (true, true);
-    // The slot of each entry, and for each slot its place on the cycle
-    // and (high half) the place of the zero slot that starts its run.
-    let (mut slot_of, mut cycle): (Vec<u64>, Vec<u64>) = (Vec::new(), Vec::new());
+    // A bit for each entry, set once a slot names it, then one for each
+    // slot whose entry's probe is past its perturbed steps without it.
+    let mut bits: Vec<u64> = Vec::new();
     heap.for_each_object(&mut |r, h| {
         if !ok || h.type_id() != ty::DICT {
             return;
@@ -274,13 +295,24 @@ pub(crate) fn check_indexes(heap: &mm_core::Heap) -> Option<bool> {
         let g = Geo::new(cap32);
         let hash = |e: usize| words[cap + e];
         let undefined = Value::UNDEFINED.to_bits();
-        slot_of.clear();
-        if slot_of.try_reserve_exact(used).is_err() {
+        // Where the probe of `h` stops before or at slot `s`: at `s`, at a
+        // zero slot or where its hash no longer perturbs it.
+        let perturbed = |h: u64, s: u32| {
+            let (mut i, mut perturb) = (g.start(h), h);
+            while i != s && perturb != 0 && islot(words, i) != 0 {
+                i = g.next(i, &mut perturb);
+            }
+            i
+        };
+        bits.clear();
+        let n = used.div_ceil(64) + cap.div_ceil(32);
+        if bits.try_reserve_exact(n).is_err() {
             (ok, room) = (false, false);
             return;
         }
-        slot_of.resize(used, u64::MAX);
-        let mut zero = None;
+        bits.resize(n, 0);
+        let (seen, far) = bits.split_at_mut(used.div_ceil(64));
+        let (mut zero, mut named, mut walk) = (None, 0, false);
         for i in 0..2 * cap32 {
             let w = islot(words, i);
             if w == 0 {
@@ -292,59 +324,52 @@ pub(crate) fn check_indexes(heap: &mm_core::Heap) -> Option<bool> {
             let e = (w & g.emask) as usize;
             if e == 0
                 || e > used
-                || slot_of[e - 1] != u64::MAX
+                || seen[(e - 1) / 64] >> ((e - 1) % 64) & 1 != 0
                 || kvs[2 * (e - 1)] == undefined
                 || w & !g.emask != g.tag(hash(e - 1))
             {
                 ok = false;
                 return;
             }
-            slot_of[e - 1] = u64::from(i);
-        }
-        cycle.clear();
-        let mut live = 0;
-        for e in 0..used {
-            if kvs[2 * e] == undefined {
-                continue;
-            }
-            live += 1;
-            let s = slot_of[e];
-            let h = hash(e);
-            let (mut i, mut perturb) = (g.start(h), h);
-            while u64::from(i) != s && perturb != 0 && islot(words, i) != 0 {
-                i = g.next(i, &mut perturb);
-            }
-            // Found on the perturbed steps; or past them, in a table without
-            // a zero slot, which a lookup walks whole within `steps()`.
-            let Some(z) = zero.filter(|_| u64::from(i) != s) else {
-                if s == u64::MAX {
+            seen[(e - 1) / 64] |= 1 << ((e - 1) % 64);
+            named += 1;
+            let at = perturbed(hash(e - 1), i);
+            if at != i {
+                if islot(words, at) == 0 {
                     ok = false;
                     return;
                 }
-                continue;
-            };
-            if cycle.is_empty() {
-                if cycle.try_reserve_exact(2 * cap).is_err() {
-                    (ok, room) = (false, false);
-                    return;
-                }
-                cycle.resize(2 * cap, 0);
-                let (mut at, mut run, mut none) = (z, 0, 0);
-                for k in 0..u64::from(2 * cap32) {
-                    if islot(words, at) == 0 {
-                        run = k;
-                    }
-                    cycle[at as usize] = run << 32 | k;
-                    at = g.next(at, &mut none);
-                }
-            }
-            let (from, to) = (cycle[i as usize], cycle.get(s as usize).copied());
-            if islot(words, i) == 0 || to.is_none_or(|t| t >> 32 != from >> 32 || t < from) {
-                ok = false;
-                return;
+                far[(i / 64) as usize] |= 1 << (i % 64);
+                walk = true;
             }
         }
-        ok = live == len;
+        // Each slot names a different live entry: every live one is named
+        // when they are as many.
+        let live = (0..used).filter(|&e| kvs[2 * e] != undefined).count();
+        ok = named == live && live == len;
+        // A table without a zero slot a lookup walks whole within `steps()`.
+        let Some(z) = zero.filter(|_| ok && walk) else {
+            return;
+        };
+        // Along the cycle from `z`: at slot place `k`, the run of nonzero
+        // slots started after place `run`, and a far entry's probe joins
+        // the cycle in it, at or before its slot.
+        let (from, mask) = (g.place(z), u64::from(g.mask));
+        let (mut s, mut none, mut run) = (z, 0, 0);
+        for k in 0..=mask {
+            let w = islot(words, s);
+            if w == 0 {
+                run = k;
+            } else if far[(s / 64) as usize] >> (s % 64) & 1 != 0 {
+                let at = perturbed(hash((w & g.emask) as usize - 1), s);
+                let p = g.place(at).wrapping_sub(from) & mask;
+                if p <= run || p > k {
+                    ok = false;
+                    return;
+                }
+            }
+            s = g.next(s, &mut none);
+        }
     });
     room.then_some(ok)
 }
