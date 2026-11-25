@@ -821,6 +821,9 @@ def _op_setop(a, b, op, inplace):
         if b is not a:
             set.update(out, b)
         return out
+    if op == 1 and inplace:
+        set.difference_update(a, b)
+        return a
     out = set()
     if op == 9 and b is a:
         # `set_intersection` of a set with itself: a copy.

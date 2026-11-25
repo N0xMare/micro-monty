@@ -1140,6 +1140,13 @@ impl Vm {
             // CPython's `set_ior`, `set_iand`, `set_isub`, `set_ixor`.
             let prog = match op {
                 BinOp::BitOr => phase(act::ADD, 0, 1, 0),
+                BinOp::Sub if lb >> 3 > la => {
+                    // `set_difference_update_internal` intersects a much
+                    // larger source before the first deletion.
+                    let tmp = self.new_set()?;
+                    let prog = phase(act::AND, 2, 0, 1) | phase(act::DISCARD, 0, 2, 0) << 16;
+                    return self.bulk(&[a, b, tmp], prog, res, top);
+                }
                 BinOp::Sub => phase(act::DISCARD, 0, 1, 0),
                 BinOp::BitXor => phase(act::TOGGLE, 0, 1, 0),
                 _ => {

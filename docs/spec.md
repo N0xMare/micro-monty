@@ -671,7 +671,9 @@ messages; copy wording where behaviour matches.
     item at a time, so an error in hashing or comparison leaves the rest
     unread. `intersection_update` installs the result only after all
     sources succeed; `update` and `difference_update` retain their changes
-    up to the error.
+    up to the error. For a set source whose size shifted right by three
+    exceeds the receiver's size, `difference_update` and `-=` first build
+    the intersection, as CPython does, so no deletion precedes it.
   - **Numbers.** `int()`, `float()` and `complex()` read a long text 2 MB
     (a non-ASCII char counting 32) per step in one chunked text engine
     (`op::NUM_TEXT`: one char loop and step, a grammar per op), keeping a

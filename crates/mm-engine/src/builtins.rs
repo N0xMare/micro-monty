@@ -9164,13 +9164,6 @@ fn set_inplace(
         }
     }
     if Vm::is_set(o) {
-        // CPython intersects with a much larger source before deleting
-        // anything; in particular, its equality calls see the old set.
-        if op == BinOp::Sub && vm.set_len(o) >> 3 > vm.set_len(s) {
-            let tmp = vm.new_set()?;
-            let prog = phase(act::AND, 2, 0, 1) | phase(act::DISCARD, 0, 2, 0) << 16;
-            return vm.bulk(&[s, o, tmp], prog, res::NONE, true);
-        }
         return vm.set_binop(op, s, o, true, true, res::NONE);
     }
     if op == BinOp::BitAnd {

@@ -197,6 +197,8 @@ order. If a key's hash or comparison raises, the remaining items of that
 iterator stay unread.
 `update` and `difference_update` keep the changes already made;
 `intersection_update` replaces the set only after all inputs succeed.
+Like CPython, `difference_update` and `-=` intersect with a much larger
+set before they remove anything.
 
 **Fuel is per cell.** Each `start` gives the cell `Limits::fuel`, unless
 `set_fuel` was called since the last cell (then the next cell gets that,

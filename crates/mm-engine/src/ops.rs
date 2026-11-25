@@ -809,9 +809,14 @@ impl Vm {
             // A dict subclass's instance beside a view is iterated, not
             // presized from (`dictviews_to_set`): the twin.
             let sub_dict = (x != a && ta == T::dict) || (y != b && tb == T::dict);
-            let bulk = (set(ta) && set(tb))
-                || (ta == T::dict && op == BinOp::BitOr && (tb == T::dict || inplace));
-            if (view(ta) || view(tb)) && (long || sub_dict) || bulk && long {
+            let sets = set(ta) && set(tb);
+            let bulk = sets || (ta == T::dict && op == BinOp::BitOr && (tb == T::dict || inplace));
+            // In-place subtraction must not hand off after partially
+            // deleting. The twin uses the stepped method on the backing set.
+            if (view(ta) || view(tb)) && (long || sub_dict)
+                || bulk && long
+                || ta == T::set && sets && inplace && op == BinOp::Sub
+            {
                 return Err(self.need_py());
             }
         }
