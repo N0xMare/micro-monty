@@ -500,7 +500,10 @@ impl Vm {
                     }
                 }
             } else {
-                let (first, step, len) = (first as usize, step as usize, j.w[W_A + 2] as usize);
+                // A stride past `usize` deletes one byte, as `usize::MAX`
+                // does: truncated, it could be 0 on wasm32.
+                let step = usize::try_from(step).unwrap_or(usize::MAX);
+                let (first, len) = (first as usize, j.w[W_A + 2] as usize);
                 let mut w = j.w[W_A + 3] as usize;
                 for r in i..(i + k).min(d.len()) {
                     let off = r - first;

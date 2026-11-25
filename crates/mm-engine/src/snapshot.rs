@@ -2790,6 +2790,10 @@ fn step_ok(vm: &Vm, o: u8, v: &dyn Fn(usize) -> Value, w: &[u64]) -> bool {
     use crate::nstep::op;
     let w = |i: usize| w.get(i).copied().unwrap_or(u64::MAX);
     let n = |x: Value| vm.job_data(x).len() as u64;
+    // Positions and counts in an object, which a step takes as a `usize`
+    // without a check: within the largest object, as every state the steps
+    // write, so a step indexes alike on 32- and 64-bit targets.
+    let small = |i: &[usize]| i.iter().all(|&i| w(i) <= mm_core::MAX_OBJECT_BYTES);
     // The chars in the first `o` bytes of a str build's block `out`, if
     // it has `o` bytes and they are UTF-8, its last char begun (counted)
     // but cut unless `whole`: a copy goes on from it ([`crate::strmeth`]
@@ -2967,12 +2971,16 @@ fn step_ok(vm: &Vm, o: u8, v: &dyn Fn(usize) -> Value, w: &[u64]) -> bool {
         // scan's words `flags, digits, significant, start, end`, then the
         // conversion's `idx, len`): its digits counted in the text, the
         // significant and converted ones among them.
-        // A power-of-two digit text (`kind` `DIGITS`) becomes a `str` of
-        // its whole block, which holds ASCII digits and zeros.
-        op::NUM_TEXT if w(0) == crate::builtins::DIGITS => v(1)
-            .as_byte_ref()
-            .and_then(|b| vm.heap.bytes(b).ok())
-            .is_some_and(<[u8]>::is_ascii),
+        // A power-of-two digit text (`kind` `DIGITS`, then `at, done`)
+        // becomes a `str` of its whole block, which holds ASCII digits and
+        // zeros; it writes down from `at` in it, and has read `done` of the
+        // int's bytes.
+        op::NUM_TEXT if w(0) == crate::builtins::DIGITS => {
+            v(1).as_byte_ref()
+                .and_then(|b| vm.heap.bytes(b).ok())
+                .is_some_and(|b| b.is_ascii() && w(1) <= b.len() as u64)
+                && small(&[2])
+        }
         op::NUM_TEXT => w(0) == 0 || (w(3) <= 1 << 40 && w(4) <= w(3) && w(7) <= w(3)),
         op::BYTES => {
             // Any byte job (its kind, then its words): a pass starts at or
@@ -2982,7 +2990,8 @@ fn step_ok(vm: &Vm, o: u8, v: &dyn Fn(usize) -> Value, w: &[u64]) -> bool {
             use crate::bytes::{R_STR, W_CH, W_END, W_I, W_I0, W_O, W_PASS, W_RES};
             let j = |i: usize| w(i + 1);
             let text = j(W_RES) == R_STR && j(W_PASS) != 0;
-            j(W_I0) <= j(W_I)
+            small(&[W_I + 1, W_END + 1, W_I0 + 1])
+                && j(W_I0) <= j(W_I)
                 && j(W_I0) <= j(W_END)
                 && j(W_O) <= 1 << 40
                 && j(W_CH) <= j(W_O)
@@ -3005,10 +3014,20 @@ fn byte_job_ok(vm: &Vm, v: &dyn Fn(usize) -> Value, w: &dyn Fn(usize) -> u64) ->
         job::REPEAT => !vm.job_data(v(0)).is_empty(),
         job::DEL_STRIDE => {
             // `first, step, len, write`: the bytes kept move down, to
-            // before the one read, from the first deleted.
+            // before the one read, from the first deleted, and a count of
+            // bytes deleted. Not against the bytearray's length: a state
+            // its cell's cancel left in the heap names a bytearray later
+            // cells may shrink, and its step is safe for any count.
             let (first, step, i) = (w(W_A), w(W_A + 1), w(W_I));
-            step >= 1 && i64::try_from(step).is_ok() && first <= i && w(W_A + 3) <= i
+            step >= 1
+                && i64::try_from(step).is_ok()
+                && first <= i
+                && w(W_A + 3) <= i
+                && w(W_A + 2) <= mm_core::MAX_OBJECT_BYTES
         }
+        // A SHAKE digest's output: what is written of it.
+        #[cfg(feature = "hashlib")]
+        job::SQUEEZE => w(crate::bytes::W_O) <= w(crate::bytes::W_END),
         // `[lo:hi] = src` after the growth: `lo` in the bytearray.
         job::GROW if w(W_A) == fin::SPLICE => w(W_A + 1) <= vm.bytearray_data(v(3)).len() as u64,
         // A strict decode's error (`job::DECODE_ERR`): its source read to

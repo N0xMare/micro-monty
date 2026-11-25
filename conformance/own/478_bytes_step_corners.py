@@ -161,3 +161,10 @@ z.extend({7, 8})
 show(lambda: z)
 show(lambda: z.extend(set(range(140_000))))
 show(lambda: z)
+# A stride past 32 bits deletes one byte on every target.
+z = bytearray(b'abcdef')
+del z[1::2**40]
+show(lambda: z)
+z = bytearray(b'abcdef')
+del z[-1::-2**40]
+show(lambda: z)

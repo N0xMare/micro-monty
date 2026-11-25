@@ -700,6 +700,21 @@ fn a_forged_search_or_digit_word_never_panics() {
     };
     let src = "t = format(1 << 6_000_000, '_b')\n";
     resume_forged(src, op::NUM_TEXT, digits, 2 + 3, 3);
+    // Writing from past its block, or having read past the largest
+    // object: a 32-bit target would read either cut to 32 bits.
+    let parked = |vm: &Vm| step_state(vm, op::NUM_TEXT).is_some();
+    refuses(src, parked, "native step", |vm| {
+        let block = step_state(vm, op::NUM_TEXT)
+            .and_then(|r| vm.heap.get(r, 1).ok())
+            .and_then(Value::as_byte_ref)
+            .and_then(|b| vm.heap.bytes(b).ok())
+            .map(<[u8]>::len)
+            .expect("a block");
+        set_step_word(vm, op::NUM_TEXT, 2, block as u64 + 1);
+    });
+    refuses(src, parked, "native step", |vm| {
+        set_step_word(vm, op::NUM_TEXT, 3, (1 << 32) + 5);
+    });
 }
 
 #[test]
@@ -1451,6 +1466,32 @@ fn a_parked_byte_job_keeps_its_progress_in_range() {
         let i = word(vm, job::DEL_STRIDE, W_I);
         set(vm, job::DEL_STRIDE, W_A + 3, i + 1);
     });
+    // A count of bytes deleted and an end past the largest object, which
+    // a 32-bit target would read cut to 32 bits.
+    refuses(src, running(job::DEL_STRIDE), "native step", |vm| {
+        set(vm, job::DEL_STRIDE, W_A + 2, mm_core::MAX_OBJECT_BYTES + 1);
+    });
+    refuses(src, running(job::DEL_STRIDE), "native step", |vm| {
+        set(
+            vm,
+            job::DEL_STRIDE,
+            crate::bytes::W_END,
+            (1 << 32) + 9_000_000,
+        );
+    });
+    // A SHAKE digest written past its length.
+    #[cfg(feature = "hashlib")]
+    refuses(src, running(job::DEL_STRIDE), "native step", |vm| {
+        use crate::bytes::{W_END, W_O};
+        let (r, n) = job_state(vm, job::DEL_STRIDE).expect("a job");
+        vm.heap
+            .set_raw(r, n + 1, u64::from(job::SQUEEZE))
+            .expect("kind");
+        let end = raw(vm, r, n + 2 + u32::try_from(W_END).expect("small"));
+        vm.heap
+            .set_raw(r, n + 2 + u32::try_from(W_O).expect("small"), end + 1)
+            .expect("slot");
+    });
     // A splice's `lo` past the bytearray (`clamp(lo, old)` asserts).
     let splice = |vm: &Vm| running(job::GROW)(vm) && word(vm, job::GROW, W_A) == fin::SPLICE;
     refuses(src, splice, "native step", |vm| {
@@ -1468,6 +1509,31 @@ fn a_parked_byte_job_keeps_its_progress_in_range() {
         set(vm, job::SPLIT, W_S + S_POS, 0);
         set(vm, job::SPLIT, W_I, u64::MAX - 10);
     });
+}
+
+/// A cell cancelled inside a bytearray's extended-slice deletion leaves its
+/// state in the heap until a collection frees it; a later cell that
+/// shrinks the bytearray leaves an idle image that restores.
+#[test]
+fn a_cancelled_steps_state_is_not_judged_by_later_cells() {
+    use crate::bytes::job;
+    let src = "ba = bytearray(9_000_000)\ndel ba[::2]\n";
+    let mut vm = session(src, |vm| job_state(vm, job::DEL_STRIDE).is_some());
+    assert!(vm.cancel(), "parked in the deletion");
+    let then = "del ba[:]\n";
+    let prog = mm_compile::compile(
+        &mm_parse::parse(then).expect("parses"),
+        mm_compile::Options::default(),
+    )
+    .expect("compiles");
+    let entry = vm.load(&prog, "then.py", then).expect("loads");
+    vm.set_fuel(None);
+    assert!(matches!(vm.run(entry), Exit::Complete(_)));
+    assert!(
+        job_state(&vm, job::DEL_STRIDE).is_some(),
+        "the cancelled state is still in the heap"
+    );
+    assert_eq!(restore(&mut vm).err(), None);
 }
 
 #[test]

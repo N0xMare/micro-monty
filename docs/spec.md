@@ -2431,7 +2431,9 @@ it is running (`Corrupt("frame owner")`). Each continuation slot is held by
 one frame at most, and the free list names each empty slot once. A dict
 without an index uses no more entries than it holds. A chunked native's
 state (`NSTATE`) keeps the words its next step trusts as an index, a stride,
-a count or a slice's bounds in range (`Corrupt("native step")`); a set's or
+a count or a slice's bounds in range (`Corrupt("native step")`), and a word
+a step reads as a `usize` without a check within the largest object, so 32-
+and 64-bit targets read it alike; a set's or
 dict's rebuild into new tables (a bulk operation's, or json's growth of an
 object) holds in them exactly the live entries of the old table it has
 moved; the bytes a str build has written are UTF-8 holding the chars it
