@@ -2415,7 +2415,8 @@ free-block bodies need not have corresponding bytes in the input: their
 admission is bounded by the memory limit (`TooLarge`, §11 "Restore admission").
 
 Validated on restore: segment indices, run tiling, every block header, every
-`str` (UTF-8, char count, flags), the intern table (identity, count, load,
+`str` (UTF-8, char count, flags, a data block no other `str` has, each read
+once), the intern table (identity, count, load,
 every entry within `INTERN_WALK_CAP` slots of its hash's with no free slot
 between and with its hash's byte; a template's own image, restored unchecked,
 was written by this build from a table that held all of it),

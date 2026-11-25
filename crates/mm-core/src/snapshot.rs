@@ -588,13 +588,44 @@ impl Heap {
 
     /// Checks every word-space object mm-core gives meaning to: each `str`
     /// has its layout, valid UTF-8 data, the right char count and ASCII flag
-    /// (and hash, if cached); each intern table entry is an interned `str`.
+    /// (and hash, if cached), and a data block no other `str` has (each is
+    /// made over a block of its own), so the check reads each block once;
+    /// each intern table entry is an interned `str`.
     #[cfg_attr(mm_shipped, optimize(size))]
     fn check_objects(&self) -> Result<(), Error> {
+        // A bit for each byte-space unit, laid out as the segments' start
+        // bitmaps: set where a `str`'s data block starts.
+        let mut at = Vec::with_capacity(self.bytes.segs.len());
+        let mut words = 0;
+        for s in &self.bytes.segs {
+            at.push(words);
+            words += s.starts.len();
+        }
+        let mut owned = Vec::new();
+        owned
+            .try_reserve_exact(words)
+            .map_err(|_| Error::OutOfMemory)?;
+        owned.resize(words, 0u64);
+        let mut claim = |v: Value| {
+            let Some((i, o)) = v.as_byte_ref().map(|b| split(b.raw())) else {
+                return false;
+            };
+            let Some(w) = at.get(i).and_then(|&k| owned.get_mut(k + o / 64)) else {
+                return false;
+            };
+            let bit = 1 << (o % 64);
+            let first = *w & bit == 0;
+            *w |= bit;
+            first
+        };
         let mut bad_str = false;
         let mut tables = Ok(());
         self.for_each_object(&mut |r, h| match h.type_id() {
-            types::STR => bad_str |= self.check_str(r, h).is_err(),
+            types::STR => {
+                bad_str = bad_str
+                    || !self.get(r, 0).is_ok_and(&mut claim)
+                    || self.check_str(r, h).is_err();
+            }
             types::INTERN_TABLE => {
                 if tables.is_ok() {
                     tables = self.check_intern_table(r, h);

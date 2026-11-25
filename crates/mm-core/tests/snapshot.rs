@@ -819,3 +819,29 @@ fn xxh64_matches_reference_vectors() {
     );
     assert_eq!(xxh64(b"0123456789ab", 0), 0x862E_2923_26B8_A4FC);
 }
+
+/// Each `str` is made over a data block of its own: a restore refuses two
+/// over one, whose block it would otherwise read once for each.
+#[test]
+fn two_strs_never_share_a_data_block() {
+    let mut heap = Heap::new(HeapConfig {
+        memory_limit: 64 << 20,
+        ..HeapConfig::default()
+    });
+    let a = heap.new_str("shared-é").unwrap();
+    let b = heap.new_str("shared-é").unwrap();
+    let holder = heap.alloc(T, 0, 2, 0).unwrap();
+    heap.set(holder, 0, Value::from_ref(a, 0)).unwrap();
+    heap.set(holder, 1, Value::from_ref(b, 0)).unwrap();
+    let roots = [Value::from_ref(holder, 0)];
+    heap.collect(&mut |t| t.values(&roots));
+    let bytes = image(&heap);
+    let restores = |b: &[u8]| Heap::read_snapshot(&mut Reader::new(b), u64::MAX).map(drop);
+    assert_eq!(restores(&bytes), Ok(()));
+    // `b`'s data reference (its first slot) set to `a`'s.
+    let (data_a, data_b) = (word_at(&bytes, a.raw())(1), word_at(&bytes, b.raw())(1));
+    assert_ne!(bytes[data_a..data_a + 8], bytes[data_b..data_b + 8]);
+    let mut shared = bytes.clone();
+    shared.copy_within(data_a..data_a + 8, data_b);
+    assert_eq!(restores(&shared), Err(Error::BadSnapshot));
+}
