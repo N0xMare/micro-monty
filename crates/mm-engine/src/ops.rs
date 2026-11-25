@@ -1106,16 +1106,16 @@ impl Vm {
     /// Unary `-`, `+`, `~`.
     pub(crate) fn unary(&mut self, op: u8, v: Value) -> Result<Value, Raised> {
         use mm_compile::bytecode::op as o;
+        if op == o::POS && Vm::is_heap_int(v) {
+            // `+x` is `x` for an exact int, but `+True` is `int(1)`.
+            return Ok(v);
+        }
         if let Some(i) = self.int_of(v) {
             return match op {
                 o::NEG => self.int_from_i128(-i128::from(i)),
                 o::POS => self.new_int(i),
                 _ => self.new_int(!i),
             };
-        }
-        if op == o::POS && Vm::is_heap_int(v) {
-            // `+x` is `x` for an exact int.
-            return Ok(v);
         }
         if let Some(b) = self.big_of(v) {
             // Byte work on a long int (C4; only `op_unary` calls this).

@@ -3,6 +3,12 @@ print(2 ** 10, 2 ** -1, (-2) ** 3, 10 ** 15, 3 ** 0)
 print(1 << 40, -1 >> 3, 5 & 3, 5 | 3, 5 ^ 3, ~5, -(-3), +4)
 big = 2 ** 47
 print(big, big * 2, big * 4 - 1, -big * 2, (big * 4) // 3)
+negative = -big - 1
+wider = 2 ** 64
+assert (+big) is big
+assert (+negative) is negative
+assert (+wider) is wider
+assert type(+True) is int and +True == 1
 print(140737488355328 + 140737488355328, 9223372036854775807)
 print(abs(-5), abs(-2.5), int(3.9), int(-3.9), int("  -42 "), int("ff", 16), int(True))
 print(hash(1), hash(-1), hash(0), hash(True), 5 == 5.0, hash(5) == hash(5.0))
