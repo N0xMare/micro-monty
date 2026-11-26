@@ -300,13 +300,19 @@ fn charged_str_arg(vm: &mut Vm, v: Value, what: &str) -> Result<Value, Raised> {
         vm.burn_bytes(vm.str_bytes(b).len());
         return Ok(b);
     }
+    let tn = vm.type_name(v);
+    if what == "sep" {
+        // split and rsplit accept None as well as str.
+        let msg = format!("must be str or None, not {tn}");
+        return Err(vm.err(T::TypeError, &msg));
+    }
     let sp = if what.is_empty() { "" } else { " " };
     // A named argument's error says "None", as CPython's
     // `_PyArg_BadArgument`; `partition`'s (no name) gives the type name.
     let tn = if v == Value::NONE && !what.is_empty() {
         "None"
     } else {
-        vm.type_name(v)
+        tn
     };
     let msg = format!("{what}{sp}must be str, not {tn}");
     Err(vm.err(T::TypeError, &msg))
