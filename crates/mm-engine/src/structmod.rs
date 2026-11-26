@@ -8,6 +8,7 @@
 //! 3 `complex`), so no user code runs from here.
 
 use crate::bigint::Big;
+use crate::bytes::{R_BYTES, W_A, job};
 use crate::scratch::{NativeValues, NativeVec};
 use crate::types::T;
 use crate::vm::{CallArgs, Raised, Vm};
@@ -33,6 +34,28 @@ struct Format {
     /// Values packed or unpacked.
     len: u64,
     little: bool,
+}
+
+impl Format {
+    /// A large `s` field is one contiguous copy, possibly with zero padding.
+    fn large_byte_field(&self) -> bool {
+        self.size / 8 >= crate::nstep::STEP_WORK
+            && self.size <= mm_core::MAX_OBJECT_BYTES
+            && matches!(&*self.items, [item] if item.code == b's')
+    }
+}
+
+fn byte_field(
+    vm: &mut Vm,
+    src: Value,
+    at: usize,
+    size: usize,
+    unpack: bool,
+) -> Result<Value, Raised> {
+    vm.burn(1); // one field
+    let mut j = vm.job_fixed(job::STRIDE, src, 0, 0, R_BYTES, size)?;
+    (j.w[W_A], j.w[W_A + 1], j.w[W_A + 2]) = (at as u64, 1, u64::from(unpack));
+    vm.job_run(j)
 }
 
 /// Size and alignment of `c` (`None` for a bad char).
@@ -412,6 +435,14 @@ pub(crate) fn pack(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     else {
         return Err(vm.err(T::MemoryError, ""));
     };
+    if f.large_byte_field() {
+        // Refused before the field's charge and buffer, as the loop
+        // below would refuse it after them.
+        if !Vm::is_bytes_like(args[0]) {
+            return vm.new_str("argument for 's' must be a bytes object");
+        }
+        return byte_field(vm, args[0], 0, size, false);
+    }
     vm.burn(f.size / 8 + args.len() as u64);
     let mut out = Vec::new();
     if out.try_reserve_exact(size).is_err() {
@@ -512,8 +543,11 @@ pub(crate) fn unpack(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             return vm.new_str(&m);
         }
     }
-    vm.burn(f.size / 8 + f.len);
     let base = usize::try_from(off).unwrap_or(0);
+    if f.large_byte_field() {
+        return byte_field(vm, buf, base, size as usize, true);
+    }
+    vm.burn(f.size / 8 + f.len);
     let mut values = NativeValues::default();
     let res = values.reserve(&mut vm.heap, f.len as usize);
     vm.hx(res)?;

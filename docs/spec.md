@@ -655,7 +655,10 @@ messages; copy wording where behaviour matches.
   untouched. `str.removeprefix` and `removesuffix` compare the affix in
   place. `bytes.strip` and `translate` mark membership in a byte table
   before packing large sets, so repeated bytes do not serialize writes to
-  the same bitset word. The chunked operations:
+  the same bitset word. `struct.pack` and `unpack` of a format that is one
+  large `s` field copy it through the strided byte job (stride one,
+  zero-padded past its source), a step's budget at a time. The chunked
+  operations:
 
   - **Tables growing an insert at a time.** Once a full table holds 262,144
     live entries (`set::GROW_STEPS`), the insert that needs room hands the

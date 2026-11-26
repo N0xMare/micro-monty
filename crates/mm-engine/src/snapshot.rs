@@ -79,7 +79,7 @@ const CODE_PRELUDE: u8 = 5;
 ///   set tables;
 /// - what an opcode's operands mean, with the same format;
 /// - how frames, generators or coroutines keep their state.
-pub(crate) const SNAPSHOT_EPOCH: u32 = 19;
+pub(crate) const SNAPSHOT_EPOCH: u32 = 20;
 
 /// This build's engine fingerprint for snapshot build ids: what an image
 /// written by this engine means. The layout epoch; the codecs and every
@@ -3092,6 +3092,18 @@ fn byte_job_ok(vm: &Vm, v: &dyn Fn(usize) -> Value, w: &dyn Fn(usize) -> u64) ->
         job::SQUEEZE => w(crate::bytes::W_O) <= w(crate::bytes::W_END),
         // `[lo:hi] = src` after the growth: `lo` in the bytearray.
         job::GROW if w(W_A) == fin::SPLICE => w(W_A + 1) <= vm.bytearray_data(v(3)).len() as u64,
+        #[cfg(feature = "struct")]
+        job::STRIDE if w(W_A + 1) == 1 => {
+            use crate::bytes::{R_BYTES, W_O, W_RES};
+            Vm::is_bytes_like(v(0))
+                && w(W_A) <= mm_core::MAX_OBJECT_BYTES
+                && w(W_A + 2) <= 1
+                && w(W_RES) == R_BYTES
+                && v(2)
+                    .as_byte_ref()
+                    .and_then(|b| vm.heap.bytes(b).ok())
+                    .is_some_and(|b| w(W_O) <= b.len() as u64)
+        }
         // A strict decode's error (`job::DECODE_ERR`): its source read to
         // its end from `W_I0`, its copy not yet allocated (nothing written)
         // or a block of that many bytes, its reason a `str`, and the bytes

@@ -1726,6 +1726,38 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "assert b'azb'.strip(d) == b'z'",
         1,
     ),
+    // A single large struct field must not debit its entire byte cost
+    // before the next safepoint.
+    #[cfg(feature = "mod-struct")]
+    (
+        Row::Bounded,
+        "import struct\nb = b'ab' * 33_554_432",
+        "out = struct.pack('67108864s', b)\nassert out[:2] == b'ab' and out[-2:] == b'ab' and len(out) == len(b)",
+        1,
+    ),
+    #[cfg(feature = "mod-struct")]
+    (
+        Row::Bounded,
+        "import struct\nb = b'ab' * 33_554_432",
+        "(out,) = struct.unpack('67108864s', b)\nassert out[:2] == b'ab' and out[-2:] == b'ab' and len(out) == len(b)",
+        1,
+    ),
+    // A second item in the format takes the one-step path, which copies
+    // the field whole (44 to 86 ms at 32 MiB [M]).
+    #[cfg(feature = "mod-struct")]
+    (
+        Row::Open,
+        "import struct\nb = b'ab' * 33_554_431 + b'a'",
+        "out = struct.pack('67108863sx', b)\nassert len(out) == len(b) + 1",
+        1,
+    ),
+    #[cfg(feature = "mod-struct")]
+    (
+        Row::Open,
+        "import struct\nb = b'ab' * 33_554_432",
+        "(out,) = struct.unpack('67108863sx', b)\nassert len(out) == 67_108_863",
+        1,
+    ),
     // A two-way search whose every alignment fails late (the needle's
     // critical factorization).
     (

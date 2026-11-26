@@ -3491,7 +3491,9 @@ impl Vm {
     }
 
     /// A [`job::STRIDE`] job: byte `start + k * step` (`W_A`, `W_A + 1`)
-    /// of the source for each `k` of the block.
+    /// of the source for each `k` of the block. A `struct` byte field
+    /// uses stride one, zero-padding past the input; `W_A + 2` marks
+    /// unpacking, whose result is a singleton tuple.
     #[cfg_attr(mm_shipped, optimize(size))]
     fn job_stride(&mut self, j: &mut Job, start: u64) -> Result<Option<Value>, Raised> {
         let Some(out) = j.v[2].as_byte_ref() else {
@@ -3499,6 +3501,7 @@ impl Vm {
         };
         let total = self.heap.bytes(out).map_or(0, <[u8]>::len);
         let (first, step) = (j.w[W_A] as i64, j.w[W_A + 1] as i64);
+        let byte_field = cfg!(feature = "struct") && step == 1;
         let mut o = j.at(W_O);
         while o < total {
             // Reads far apart: a fuel unit per 8.
@@ -3528,10 +3531,16 @@ impl Vm {
             if !ok {
                 return Err(self.bad_step());
             }
-            self.burn(n.div_ceil(8) as u64);
+            let units = if byte_field { n / 8 } else { n.div_ceil(8) };
+            self.burn(units as u64);
             o += n;
         }
-        self.job_wrap(j, out, 0).map(Some)
+        let v = self.job_wrap(j, out, 0)?;
+        if byte_field && j.w[W_A + 2] != 0 {
+            self.alloc_tuple(&[v]).map(Some)
+        } else {
+            Ok(Some(v))
+        }
     }
 
     /// A window-by-window job ([`job::MAP`] to [`job::TABS`]): each window
