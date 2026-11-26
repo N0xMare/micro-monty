@@ -1300,6 +1300,11 @@ def _object___repr__(a):
     return _repr_of(a[0])
 
 
+def _object___new__(a, kw=None):
+    # Only for a class with abstract methods (`object_new`).
+    __import__('abc')._refuse(a[0])
+
+
 # ------------------------------------------------------------ builtins
 
 

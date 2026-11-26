@@ -49,6 +49,15 @@ def _abstracts(cls, own):
     return frozenset(abstracts)
 
 
+def _refuse(cls):
+    # Also `object.__new__`'s error for an abstract class (the prelude).
+    missing = cls.__abstractmethods__
+    names = ', '.join(f"'{n}'" for n in sorted(missing))
+    s = '' if len(missing) == 1 else 's'
+    raise TypeError(f"Can't instantiate abstract class {cls.__name__} "
+                    f"without an implementation for abstract method{s} {names}")
+
+
 class ABCMeta(type):
     """Metaclass for defining Abstract Base Classes (ABCs)."""
 
@@ -68,12 +77,8 @@ class ABCMeta(type):
         return cls
 
     def __call__(cls, /, *args, **kwargs):
-        missing = cls.__abstractmethods__
-        if missing:
-            names = ', '.join(f"'{n}'" for n in sorted(missing))
-            s = '' if len(missing) == 1 else 's'
-            raise TypeError(f"Can't instantiate abstract class {cls.__name__} "
-                            f"without an implementation for abstract method{s} {names}")
+        if cls.__abstractmethods__:
+            _refuse(cls)
         return super().__call__(*args, **kwargs)
 
     def register(cls, subclass):

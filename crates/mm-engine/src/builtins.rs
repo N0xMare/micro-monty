@@ -6709,6 +6709,15 @@ fn object_new(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
                 return Err(vm.err(T::TypeError, &msg));
             }
         }
+        // CPython's abstract-class check (`Py_TPFLAGS_IS_ABSTRACT`, set by
+        // `abc` through `__abstractmethods__`); the twin words the error.
+        let k = vm.intern("__abstractmethods__")?;
+        if let Some(m) = vm.own_lookup(c, k)
+            && matches!(vm.type_of(m), T::set | T::frozenset)
+            && vm.set_len(m) > 0
+        {
+            return Err(vm.need_py());
+        }
         return vm.alloc_of_class(c, &[]);
     }
     if c == vm.type_obj(T::object) {
