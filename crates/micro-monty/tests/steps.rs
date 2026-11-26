@@ -3511,6 +3511,13 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "names = s = None\njunk = [[i] for i in range(400_000)]\njunk = None\njunk = [[i] for i in range(400_000)]\njunk = None\njunk = [[i] for i in range(400_000)]",
         1,
     ),
+    // Slice assignment must convert a long list in steps.
+    (
+        Row::Bounded,
+        "xs = [65] * 8_388_608; b = bytearray(b'xyz')",
+        "b[1:2] = xs\nassert len(b) == len(xs) + 2 and b[:2] == b'xA' and b[-2:] == b'Az'",
+        1,
+    ),
 ];
 
 /// How many more times a bounded row over the limit runs. This host has

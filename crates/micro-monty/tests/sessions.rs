@@ -2682,6 +2682,22 @@ fn a_missed_module_attribute_charges_fuel_for_its_hint() {
 }
 
 #[test]
+fn a_keys_view_lookup_stays_within_budget_on_collisions() {
+    let mut c = Cells::new();
+    assert_eq!(
+        c.start(
+            "m = (1 << 61) - 1\nd = dict.fromkeys(k * m for k in range(1, 2049))\ns = {2049 * m}"
+        ),
+        Progress::Complete(None)
+    );
+    // Allow one fuel unit per colliding key, plus room for slot visits and
+    // call overhead. A lookup that stops and resumes every few slots does
+    // not fit this budget.
+    c.session.set_fuel(Some(2048 * 5 / 4));
+    assert_eq!(c.value("d.keys().isdisjoint(s)"), "True");
+}
+
+#[test]
 fn never_awaited_coroutines_are_collected_and_reported_once() {
     // Coroutines that die unstarted are garbage (CPython warns as each
     // dies); the end of the cell still names each once, in creation order,
