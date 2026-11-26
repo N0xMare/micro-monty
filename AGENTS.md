@@ -84,15 +84,19 @@ gate, on musl too, with musl's `malloc` and with mimalloc: `steps-musl`);
 each stage logs to
 `target/check/logs/<stage>.log`.
 
-### Release-gate shadow runs (Linux)
+### Release gate on Linux: the split
 
-The stock `cargo xtask check --release-gate --base <rev>` remains
-authoritative during the three-push shadow period. On each push, take
-`HEAD_SHA` and `BASE` from the push's after and before revisions (or use
-the same explicit base as stock). Use clean checkouts of `HEAD_SHA` with
-the same full history, tags and toolchain. Add the same `--ir-base <rev>`
-to all commands if stock uses it. Leave `MM_IR_ACCEPT`, `MM_WASM_IR_ACCEPT`,
-`MM_V8_IR_ACCEPT` and `MM_BLESS` unset.
+After each push to main, the release gate runs split across four orbs:
+it judges the push as `cargo xtask check --release-gate` does on one
+machine, in about 30 minutes instead of 70 (owner, 2026-11-26, after
+three shadow runs agreed with stock on every stage). Stock `cargo xtask
+check --release-gate` stays the gate before a tag and wherever the four
+orbs cannot run. Take `HEAD_SHA` and `BASE` from the push's after and
+before revisions (or use an explicit base). Use clean checkouts of
+`HEAD_SHA` with the same full history, tags and toolchain. Add the same
+`--ir-base <rev>` to all commands when the push needs one. Leave
+`MM_IR_ACCEPT`, `MM_WASM_IR_ACCEPT`, `MM_V8_IR_ACCEPT` and `MM_BLESS`
+unset.
 
 - Start one `a1.3xlarge` orb (16 CPUs) for the untimed lane. In it, write
   `cargo xtask check --release-gate --base "$BASE" --pilot-plan "$RUN_ID" "$DIR/plan.json"`.
@@ -105,12 +109,8 @@ to all commands if stock uses it. Leave `MM_IR_ACCEPT`, `MM_WASM_IR_ACCEPT`,
   the command status and stage logs, and collect the result even on failure.
 - Back on the untimed orb, collect the result files and run
   `cargo xtask check --release-gate --base "$BASE" --pilot-join "$DIR/plan.json" "$DIR"/{0,1,2,3}.json`.
-  Compare its exit status with stock's. Compare each receipt's stage and
-  status with stock's final stage summary; combine the two split musl timed
-  results into `steps-musl`, which passes only if both pass. Match failures
-  by name and reason in the logs; stock stops at its first failure, so an
-  unrun stage is not evidence of agreement. A missing or mismatched receipt
-  is not a completed comparison. Record disagreements before changing policy.
+  Its exit status is the gate's verdict. A missing receipt or a lane that
+  did not finish is a failure, not a pass.
 
 ## Working agreements
 
@@ -174,7 +174,8 @@ to all commands if stock uses it. Leave `MM_IR_ACCEPT`, `MM_WASM_IR_ACCEPT`,
   `cargo xtask check --release-gate`, every stage (the timed step oracle,
   memory probes, package, wasm-ir, v8-ir, replay-ir, the wasip1 runs,
   wasm-host, js-host, codemode, the real replay). It runs on main's tip after
-  each push, in the background, and always before a tag; main may be
+  each push, in the background (on Linux as the split, under "Release
+  gate on Linux"), and always before a tag; main may be
   pushed on the dev tier, and a release-gate failure on main is fixed or
   reverted in the next push, before anything else lands. A commit that
   expects a wasm-ir, v8-ir or replay-ir rise runs that gate by hand
