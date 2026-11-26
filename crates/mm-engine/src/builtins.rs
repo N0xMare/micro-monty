@@ -64,8 +64,9 @@ pub(crate) fn keeps_instance(n: &Native) -> bool {
     match n.owner {
         Some(T::str) => matches!(n.name(), "partition" | "rpartition"),
         // Its view records that it was made through a subclass; a
-        // subclass's `__missing__` answers `dict.__getitem__`'s misses.
-        Some(T::dict) => matches!(n.name(), "keys" | "__getitem__"),
+        // subclass's `__missing__` answers `dict.__getitem__`'s misses;
+        // `copy` reads a subclass's own `__iter__`.
+        Some(T::dict) => matches!(n.name(), "keys" | "__getitem__" | "copy"),
         _ => false,
     }
 }
@@ -9090,7 +9091,17 @@ fn dict_update(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[cfg_attr(mm_shipped, optimize(size))]
 fn dict_copy(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     use crate::set::{act, phase};
-    let d = vm.check_self(&a, T::dict, "copy")?;
+    // A subclass's instance as itself (`keeps_instance`): one with its own
+    // `__iter__` copies as `dict(s)` does, CPython's `dict_merge`.
+    let s = vm.arg_o(&a, 0);
+    let d = vm.unbx(s);
+    if vm.type_of(d) != T::dict {
+        vm.check_self(&a, T::dict, "copy")?;
+    }
+    if vm.uflags(s) & crate::class::f::ITER != 0 {
+        let t = vm.alloc_tuple(&[s])?;
+        return vm.prelude_request("_dict", alloc::vec![t, vm.missing], Cont::None);
+    }
     let out = vm.new_dict()?;
     vm.bulk(&[out, d], phase(act::DICT, 0, 1, 0), 0, true)
 }

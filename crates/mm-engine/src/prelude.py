@@ -800,6 +800,12 @@ def _op_binop(a, b, op, inplace):
         dict.update(ua, b)
         return a
     if tu is dict and type(ub) is dict and op == 10:
+        # CPython's `dict_merge` reads a subclass with its own `__iter__`
+        # through `keys()` and `__getitem__` (`binop_bx`).
+        if not inplace and type(a).__iter__ is not dict.__iter__:
+            ua = a
+        if type(b).__iter__ is not dict.__iter__:
+            ub = b
         out = ua if inplace else _dict((ua,), _MISSING)
         _dict_fill(out, ub)
         return a if inplace else out

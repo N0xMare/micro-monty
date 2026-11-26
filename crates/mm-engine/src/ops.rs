@@ -800,6 +800,15 @@ impl Vm {
         {
             return Err(self.unsupported_binop(op, a, b, true));
         }
+        // A dict subclass with its own `__iter__` merges through keys()
+        // and `__getitem__` (`_op_binop`), as CPython's `dict_merge`.
+        if op == BinOp::BitOr
+            && (self.uflags(b) | if inplace { 0 } else { self.uflags(a) }) & f::ITER != 0
+            && x.is_obj_kind(ty::DICT as u8)
+            && y.is_obj_kind(ty::DICT as u8)
+        {
+            return Err(self.need_py());
+        }
         if op == BinOp::Mod && matches!(self.type_of(x), T::str | T::bytes) {
             // `%` formats its right operand as given, as CPython's
             // `PyUnicode_Format` does: a str subclass's `__str__`, a
