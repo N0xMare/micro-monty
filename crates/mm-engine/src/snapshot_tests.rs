@@ -2886,3 +2886,37 @@ fn strptime_restores_both_scans_and_refuses_a_forged_index() {
         vm.heap.set(r, 2, Value::from_byte_ref(fmt)).expect("index");
     });
 }
+
+#[test]
+fn an_affix_with_no_window_can_park_at_max_object_size() {
+    use crate::bytes::{W_I, job};
+    let src = "s = b'a' * 67_108_864\nassert not s.startswith((b'',) * 140_000, len(s) + 1)\n";
+    let mut vm = session(src, |vm| job_state(vm, job::AFFIX).is_some());
+    let (r, n) = job_state(&vm, job::AFFIX).expect("parked between candidates");
+    let lo = n + 2 + u32::try_from(W_I).expect("small");
+    let mut restored = restore(&mut vm).expect("empty window fits the image");
+    restored.set_fuel(None);
+    assert!(matches!(restored.resume(), Exit::Complete(_)));
+    vm.heap.set_raw(r, lo, 2).expect("word");
+    assert_eq!(
+        restore(&mut vm).err(),
+        Some(SnapError::Corrupt("native step"))
+    );
+}
+
+#[test]
+fn an_affix_comparison_cannot_resume_past_its_candidate() {
+    use crate::bytes::{W_O, job};
+    let src = "s = b'a' * 9_000_001\np = b'a' * 9_000_000 + b'b'\nx = s.endswith((p,))\n";
+    let parked = |vm: &Vm| job_state(vm, job::AFFIX).is_some();
+    let mut vm = session(src, parked);
+    let (r, n) = job_state(&vm, job::AFFIX).expect("parked inside an affix");
+    let o = n + 2 + u32::try_from(W_O).expect("small");
+    assert!(raw(&vm, r, o) > 0);
+    assert!(restore(&mut vm).is_ok());
+    vm.heap.set_raw(r, o, 9_000_002).expect("word");
+    assert_eq!(
+        restore(&mut vm).err(),
+        Some(SnapError::Corrupt("native step"))
+    );
+}

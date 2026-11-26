@@ -3128,6 +3128,30 @@ fn byte_job_ok(vm: &Vm, v: &dyn Fn(usize) -> Value, w: &dyn Fn(usize) -> u64) ->
         job::SQUEEZE => w(crate::bytes::W_O) <= w(crate::bytes::W_END),
         // `[lo:hi] = src` after the growth: `lo` in the bytearray.
         job::GROW if w(W_A) == fin::SPLICE => w(W_A + 1) <= vm.bytearray_data(v(3)).len() as u64,
+        // Tuple affixes: the fixed window, and the compared bytes of its
+        // current candidate. A discarded job can still name a bytearray
+        // a later cell resized; the step checks its actual slice on use.
+        job::AFFIX => {
+            use crate::bytes::{NO_AFFIX_WINDOW, W_END, W_I0, W_O};
+            let (src, pats) = (v(0), v(1));
+            let (lo, hi, done) = (w(W_I), w(W_END), w(W_O));
+            let i = w(W_C);
+            let p = vm.unbx(vm.vslot(pats, i as u32));
+            let len = |s| {
+                if Vm::is_bytearray(s) {
+                    mm_core::MAX_OBJECT_BYTES
+                } else {
+                    vm.job_data(s).len() as u64
+                }
+            };
+            (Vm::is_str(src) || Vm::is_bytes_like(src))
+                && pats.is_obj_kind(ty::TUPLE as u8)
+                && i < vm.tuple_len(pats) as u64
+                && w(W_A) <= 1
+                && w(W_I0) == 0
+                && ((lo as usize, hi as usize) == NO_AFFIX_WINDOW || lo <= hi && hi <= len(src))
+                && (done == 0 || done < len(p) && done <= hi.saturating_sub(lo))
+        }
         #[cfg(feature = "struct")]
         job::STRIDE if w(W_A + 1) == 1 => {
             use crate::bytes::{R_BYTES, W_O, W_RES};

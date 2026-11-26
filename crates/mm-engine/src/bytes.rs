@@ -1297,43 +1297,61 @@ pub(crate) fn count(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 fn affix(vm: &mut Vm, a: &CallArgs, name: &str, prefix: bool) -> Result<Value, Raised> {
     let s = this_value(vm, a, name)?;
     let pat = vm.arg_o(a, 1);
-    let tuple = pat.is_obj_kind(ty::TUPLE as u8);
     let len = vm.bytes_data(s).len();
     let (st, en) = window(vm, len, vm.arg_o(a, 2), vm.arg_o(a, 3))?;
-    // Each pattern compared, as byte work and at least one unit.
-    let pats = if tuple { vm.tuple_len(pat) } else { 1 };
-    let bytes: usize = (0..pats)
-        .filter_map(|i| {
-            let p = if tuple { vm.vslot(pat, i as u32) } else { pat };
-            vm.bytes_like(p).map(<[u8]>::len)
-        })
-        .sum();
-    vm.burn(pats as u64 + bytes as u64 / 64);
-    let s = vm.bytes_data(s);
-    let n = s.len() as i64;
-    for i in 0..pats {
-        let p = if tuple { vm.vslot(pat, i as u32) } else { pat };
-        let Some(pb) = vm.bytes_like(p) else {
-            let msg = format!(
-                "{name} first arg must be bytes or a tuple of bytes, not {}",
-                vm.type_name(p)
-            );
-            return Err(vm.err(T::TypeError, &msg));
-        };
-        let pl = pb.len() as i64;
-        if st > n || en - st < pl {
-            continue;
-        }
-        let hit = if prefix {
-            s[st as usize..].starts_with(pb)
-        } else {
-            s[..en as usize].ends_with(pb)
-        };
-        if hit {
-            return Ok(Value::TRUE);
-        }
+    let window = if st > en {
+        NO_AFFIX_WINDOW
+    } else {
+        (st as usize, en as usize)
+    };
+    let p = vm.unbx(pat);
+    if p.is_obj_kind(ty::TUPLE as u8) {
+        return tuple_affix(vm, s, p, window, prefix);
     }
-    Ok(Value::FALSE)
+    let Some(pb) = vm.bytes_like(p) else {
+        vm.burn(1);
+        let msg = format!(
+            "{name} first arg must be bytes or a tuple of bytes, not {}",
+            vm.type_name(pat)
+        );
+        return Err(vm.err(T::TypeError, &msg));
+    };
+    let units = 1 + pb.len() as u64 / 64;
+    let hit = affix_window(vm.bytes_data(s).get(window.0..window.1), pb.len(), prefix)
+        .is_some_and(|part| mm_core::bytes_eq(part, pb));
+    vm.burn(units);
+    Ok(Value::from_bool(hit))
+}
+
+/// An inverted search never matches, not even an empty candidate. Keep
+/// the marker inside the snapshot's position limits at maximum size.
+pub(crate) const NO_AFFIX_WINDOW: (usize, usize) = (1, 0);
+
+/// The exact prefix or suffix to compare, if it fits in the search window.
+#[inline(never)]
+pub(crate) fn affix_window(hay: Option<&[u8]>, n: usize, prefix: bool) -> Option<&[u8]> {
+    let hay = hay?;
+    if prefix {
+        hay.get(..n)
+    } else {
+        hay.get(hay.len().checked_sub(n)?..)
+    }
+}
+
+/// `startswith` and `endswith` over a tuple, for both text and bytes.
+#[inline(never)]
+pub(crate) fn tuple_affix(
+    vm: &mut Vm,
+    src: Value,
+    pats: Value,
+    (lo, hi): (usize, usize),
+    prefix: bool,
+) -> Result<Value, Raised> {
+    let mut j = Job::new(job::AFFIX, src, 0, hi, 0);
+    j.w[W_I] = lo as u64;
+    j.v[1] = pats;
+    j.w[W_A] = u64::from(prefix);
+    vm.job_run(j)
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]
@@ -2094,6 +2112,8 @@ pub(crate) mod job {
     /// What a strict decode became at bytes it cannot decode, when its
     /// error's `object` is a copy ([`crate::vm::Vm::job_decode_err`]).
     pub const DECODE_ERR: u8 = 28;
+    /// Tuple affixes: pattern `W_C`, `W_O` of its bytes compared so far.
+    pub const AFFIX: u8 = 29;
 }
 
 /// Input position, end and start (where each pass starts).
@@ -2628,8 +2648,66 @@ impl Vm {
             job::GROW => self.ba_grow_step(j, start),
             job::PAD => self.job_pad(j, start),
             job::DECODE_ERR => self.job_decode_err(j, start),
+            job::AFFIX => self.job_affix(j, start),
             _ => Err(self.bad_step()),
         }
+    }
+
+    /// Visits only the patterns CPython would see. A long comparison can
+    /// stop inside an item; compare in small windows so a miss near the
+    /// start of a large pattern does not pay for the whole pattern.
+    #[inline(never)]
+    fn job_affix(&mut self, j: &mut Job, start: u64) -> Result<Option<Value>, Raised> {
+        let (src, pats) = (j.v[0], j.v[1]);
+        let (lo, hi) = (j.at(W_I), j.at(W_END));
+        let (mut i, mut done) = (j.at(W_C), j.at(W_O));
+        let text = Vm::is_str(src);
+        let prefix = j.w[W_A] != 0;
+        let count = self.tuple_len(pats);
+        while i < count {
+            let room = self.job_room(start);
+            if room == 0 {
+                (j.w[W_C], j.w[W_O]) = (i as u64, done as u64);
+                return Ok(None);
+            }
+            if done == 0 && (!text || count >= 8) {
+                self.burn(1);
+            }
+            let arg = self.vslot(pats, i as u32);
+            let p = self.unbx(arg);
+            if text && !Vm::is_str(p) {
+                let name = if prefix { "startswith" } else { "endswith" };
+                let msg = format!(
+                    "tuple for {name} must only contain str, not {}",
+                    self.type_name(arg)
+                );
+                return Err(self.err(T::TypeError, &msg));
+            }
+            if !text && !Vm::is_bytes_like(p) {
+                return self.need_bytes(arg).map(Some);
+            }
+            let needle = self.job_data(p);
+            let hay = self.job_data(src).get(lo..hi);
+            if let Some(hay) = affix_window(hay, needle.len(), prefix) {
+                let len = needle.len();
+                let (Some(hay), Some(needle)) = (hay.get(done..), needle.get(done..)) else {
+                    return Err(self.bad_step());
+                };
+                let n = needle.len().min(room).min(1 << 16);
+                let hit = mm_core::bytes_eq(&hay[..n], &needle[..n]);
+                self.burn_bytes(n);
+                if hit {
+                    done += n;
+                    if done == len {
+                        return Ok(Some(Value::TRUE));
+                    }
+                    continue;
+                }
+            }
+            i += 1;
+            done = 0;
+        }
+        Ok(Some(Value::FALSE))
     }
 
     /// The data a job reads: a `str`'s UTF-8 or bytes-like data.

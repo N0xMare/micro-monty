@@ -1779,6 +1779,32 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "assert strptime(' 2024', f).tm_year == 2024",
         1,
     ),
+    // A tuple can compare the same large candidate many times. Its
+    // progress is bounded both inside one comparison and between items.
+    (
+        Row::Bounded,
+        "s = 'a' * 33_554_432\np = 'a' * 33_554_431 + 'b'\nt = (p,) * 128",
+        "assert not s.startswith(t)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "s = 'a' * 33_554_432\np = 'a' * 33_554_431 + 'b'\nt = (p,) * 128",
+        "assert not s.endswith(t)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "s = b'a' * 33_554_432\np = b'a' * 33_554_431 + b'b'\nt = (p,) * 128",
+        "assert not s.startswith(t)",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "s = bytearray(b'a' * 33_554_432)\np = b'a' * 33_554_431 + b'b'\nt = (p,) * 128",
+        "assert not s.endswith(t)",
+        1,
+    ),
     // A single large struct field must not debit its entire byte cost
     // before the next safepoint.
     #[cfg(feature = "mod-struct")]

@@ -818,41 +818,27 @@ fn affix(vm: &mut Vm, a: &CallArgs, name: &str, prefix: bool) -> Result<Value, R
     } else {
         window(vm, s, vm.arg_o(a, 2), vm.arg_o(a, 3))?
     };
-    let pat = vm.arg_o(a, 1);
-    let tuple = pat.is_obj_kind(ty::TUPLE as u8);
-    let pats: Vec<Value> = if tuple {
-        vm.tuple_items(pat)
+    let (st, en) = if st == usize::MAX {
+        crate::bytes::NO_AFFIX_WINDOW
     } else {
-        alloc::vec![pat]
+        (st, en)
     };
-    // Elements are checked in order, up to the first match; each is
-    // charged as byte work, and a long tuple one unit per element.
-    if pats.len() >= 8 {
-        vm.burn(pats.len() as u64);
+    let arg = vm.arg_o(a, 1);
+    let p = vm.unbx(arg);
+    if p.is_obj_kind(ty::TUPLE as u8) {
+        return crate::bytes::tuple_affix(vm, s, p, (st, en), prefix);
     }
-    for p in pats {
-        let p = if Vm::is_str(p) { p } else { vm.unbx(p) };
-        if !Vm::is_str(p) {
-            let tn = vm.type_name(p);
-            let msg = if tuple {
-                format!("tuple for {name} must only contain str, not {tn}")
-            } else {
-                format!("{name} first arg must be str or a tuple of str, not {tn}")
-            };
-            return Err(vm.err(T::TypeError, &msg));
-        }
-        // An empty window (a start past the end) matches nothing.
-        let hay = (st != usize::MAX).then(|| vm.str_bytes(s).get(st..en).unwrap_or(&[]));
-        let ps = vm.str_bytes(p);
-        let n = ps.len();
-        let hit =
-            hay.is_some_and(|h| (prefix && h.starts_with(ps)) || (!prefix && h.ends_with(ps)));
-        vm.burn_bytes(n);
-        if hit {
-            return Ok(Value::TRUE);
-        }
+    if !Vm::is_str(p) {
+        let tn = vm.type_name(arg);
+        let msg = format!("{name} first arg must be str or a tuple of str, not {tn}");
+        return Err(vm.err(T::TypeError, &msg));
     }
-    Ok(Value::FALSE)
+    let ps = vm.str_bytes(p);
+    let n = ps.len();
+    let hit = crate::bytes::affix_window(vm.str_bytes(s).get(st..en), n, prefix)
+        .is_some_and(|part| mm_core::bytes_eq(part, ps));
+    vm.burn_bytes(n);
+    Ok(Value::from_bool(hit))
 }
 
 pub(crate) fn startswith(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {

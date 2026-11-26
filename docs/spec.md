@@ -653,7 +653,11 @@ messages; copy wording where behaviour matches.
   `bytearray` reversal swaps words, and a short overlapping move goes in
   small pieces: both skip unchanged bytes to leave demand-zero pages
   untouched. `str.removeprefix` and `removesuffix` compare the affix in
-  place. `bytes.strip` and `translate` mark membership in a byte table
+  place. With tuple affixes, `startswith` and `endswith` on text and
+  bytes-like receivers visit only the candidates up to a match or error.
+  A byte job keeps its candidate and the bytes compared so far, charging
+  the windows it compares, not later candidates. `bytes.strip` and
+  `translate` mark membership in a byte table
   before packing large sets, so repeated bytes do not serialize writes to
   the same bitset word. `struct.pack` and `unpack` of a format that is one
   `s` field of 1 MiB or more copy it through the strided byte job (stride
