@@ -1064,15 +1064,19 @@ impl Vm {
             } else {
                 self.inst_attr_names(obj)
             };
+            let mut builtin = Vec::new();
             for k in self.mro_of(c) {
                 if Vm::is_class(k) {
                     let d = self.vslot(k, crate::class::cls::DICT);
                     names.extend(self.dict_items_vec(d).into_iter().map(|(n, _)| n));
+                } else if let Some(t) = self.type_of_typeobj(k) {
+                    builtin.extend(crate::builtins::method_names(t));
                 }
             }
             let owned = self.hint_names(&names, &wrong)?;
             // `dir(obj)`, sorted (the first of equally near names wins).
             let mut cands: Vec<&str> = owned.iter().map(String::as_str).collect();
+            cands.extend(builtin);
             crate::ops::heap_sort_by(&mut cands, |a, b| a < b);
             cands.dedup();
             return self
@@ -1148,7 +1152,11 @@ impl Vm {
                         owned.push(n.to_string());
                     }
                 }
-                let cands: Vec<&str> = owned.iter().map(String::as_str).collect();
+                let cands: Vec<&str> = owned
+                    .iter()
+                    .map(String::as_str)
+                    .chain(["False", "None", "True"])
+                    .collect();
                 if let Some(c) = self.suggest_charged(&cands, name) {
                     let _ = write!(hint, ". Did you mean: '{c}'?");
                     s = Some(());
