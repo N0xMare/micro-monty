@@ -2452,6 +2452,8 @@ impl Spec {
                 s.zero = false;
             }
         }
+        // An explicit `0=` is not that implicit `=` (`{:0=05}` of a str).
+        s.zero &= !fill_given;
         Ok(s)
     }
 
