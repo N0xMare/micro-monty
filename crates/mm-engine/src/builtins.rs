@@ -1834,7 +1834,7 @@ pub static NATIVES: &[Native] = &NATIVE_ARRAY;
 /// included (about 33 KB more).
 static NATIVE_ARRAY: [Native; COUNT] = PACKED.natives;
 
-/// Every name in [`NATIVES`], each stored once.
+/// Every name in [`NATIVES`], with bytes shared by overlapping names.
 static BLOB: &str = match core::str::from_utf8(&BLOB_BYTES) {
     Ok(s) => s,
     Err(_) => "",
@@ -1929,8 +1929,9 @@ struct Packed {
     sigs_len: usize,
     modules: [Sref; 64],
     modules_len: usize,
-    strs: [Sref; STR_CAP],
-    strs_len: usize,
+    // Const-eval search index: offsets plus one, zero for no match.
+    latest: [u16; 256],
+    previous: [u16; STR_CAP],
     owner_start: [u16; crate::types::NTYPES + 1],
     twins: [(u16, u16); TWINS],
     builtin_fns: [u16; COUNT],
@@ -2049,36 +2050,48 @@ const fn name_before(a: &[u8], b: &[u8]) -> bool {
 #[cfg_attr(mm_shipped, optimize(size))]
 const fn add_str(p: &mut Packed, s: &str) -> Sref {
     let b = s.as_bytes();
-    let mut k = 0;
-    while k < p.strs_len {
-        let r = p.strs[k];
-        if r.len as usize == b.len() {
-            let at = r.off as usize;
-            let mut j = 0;
-            while j < b.len() && p.blob[at + j] == b[j] {
+    if b.is_empty() {
+        return Sref { off: 0, len: 0 };
+    }
+    let mut off = p.blob_len;
+    let mut overlap = 0;
+    let mut pos = p.latest[b[0] as usize];
+    while pos != 0 {
+        let at = (pos - 1) as usize;
+        let left = p.blob_len - at;
+        let n = if left < b.len() { left } else { b.len() };
+        if n >= overlap {
+            let mut j = 1;
+            while j < n && p.blob[at + j] == b[j] {
                 j += 1;
             }
-            if j == b.len() {
-                return r;
+            // The earliest full match stays canonical as the blob grows.
+            // Failing that, reuse the longest matching suffix.
+            if j == n {
+                off = at;
+                overlap = n;
             }
         }
-        k += 1;
+        pos = p.previous[at];
     }
-    let off = p.blob_len;
-    let mut j = 0;
-    while j < b.len() {
-        p.blob[off + j] = b[j];
-        j += 1;
+
+    assert!(off + b.len() <= u16::MAX as usize && b.len() <= u8::MAX as usize);
+    if overlap != b.len() {
+        let mut j = overlap;
+        while j < b.len() {
+            let at = off + j;
+            let key = b[j] as usize;
+            p.blob[at] = b[j];
+            p.previous[at] = p.latest[key];
+            p.latest[key] = (at + 1) as u16;
+            j += 1;
+        }
+        p.blob_len = off + b.len();
     }
-    p.blob_len += b.len();
-    assert!(p.blob_len <= u16::MAX as usize && b.len() <= u8::MAX as usize);
-    let r = Sref {
+    Sref {
         off: off as u16,
         len: b.len() as u8,
-    };
-    p.strs[p.strs_len] = r;
-    p.strs_len += 1;
-    r
+    }
 }
 
 #[allow(
@@ -2191,8 +2204,8 @@ const fn pack() -> Packed {
         sigs_len: 0,
         modules: [none; 64],
         modules_len: 0,
-        strs: [none; STR_CAP],
-        strs_len: 0,
+        latest: [0; 256],
+        previous: [0; STR_CAP],
         owner_start: [0; crate::types::NTYPES + 1],
         twins: [(0, 0); TWINS],
         builtin_fns: [0; COUNT],
