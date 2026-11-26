@@ -2379,7 +2379,9 @@ header   magic "MMSNAP\0\x01", format u16 = 1 (SNAPSHOT_FORMAT), build_id [u8;32
          (bytes 10..42, a permanent layout: micro_monty::image_build_id),
          returns_last_expr, want_value, the stop (phase byte: 0 idle,
          1 host call, 2 waiting, 3 parked; then the stop as reported),
-         text_limit, fuel total (0, or 1 and a u64)
+         text_limit, fuel total (0, or 1 and a u64), the next cell's fuel
+         set between cells (0 none, 1 unlimited, 2 a budget; then a u64,
+         the budget or 0)
 heap     memory limit, GC ratio and floor, GC statistics, intern table;
          per space: segment-table size, bump segment, vacant indices,
          each segment's capacity (a dedicated segment's room past its

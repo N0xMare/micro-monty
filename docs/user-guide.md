@@ -217,7 +217,7 @@ and what is left of `n`, and every unit charged under a fuel limit comes
 off the total; once it is spent, every cell parks on fuel at its first
 safepoint and `fuel_total()` is `Some(0)`. Refuelling a parked cell is the
 host's decision and is not capped. Snapshots and templates keep what is
-left of the total.
+left of the total, and a budget `set_fuel` set for the next cell.
 
 ```rust
 # use micro_monty::*; fn main() -> Result<(), Box<dyn std::error::Error>> {

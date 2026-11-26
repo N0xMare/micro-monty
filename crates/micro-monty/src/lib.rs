@@ -1394,6 +1394,7 @@ impl Engine {
             stop,
             text_limit,
             fuel_total,
+            next_fuel,
         } = image::read(self, bytes, trusted)?;
         vm.set_host_code_in_snapshots(self.host_code_in_snapshots);
         vm.set_known_modules(mm_stdlib::ALL_MODULES);
@@ -1409,7 +1410,7 @@ impl Engine {
             text_cut: TextCut::Head,
             int_bits_text: false,
             cell_fuel: self.config.limits.fuel,
-            next_fuel: None,
+            next_fuel,
             fuel_total,
             poisoned: None,
             reset_mark: mm_engine::Counters::default(),
@@ -1917,7 +1918,7 @@ impl Session {
     /// stopped cell, for example after [`ParkReason::Fuel`], it is the
     /// cell's new budget. Between cells it is the next cell's budget,
     /// instead of [`Limits::fuel`]; every later cell gets `Limits::fuel`
-    /// again.
+    /// again. Snapshots and templates keep a budget set for the next cell.
     pub fn set_fuel(&mut self, fuel: Option<u64>) {
         self.vm.set_fuel(fuel);
         self.next_fuel = self.stop.is_empty().then_some(fuel);

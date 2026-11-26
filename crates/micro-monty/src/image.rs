@@ -53,6 +53,11 @@ pub(crate) struct Image {
     pub(crate) stop: Vec<u8>,
     pub(crate) text_limit: usize,
     pub(crate) fuel_total: Option<u64>,
+    #[allow(
+        clippy::option_option,
+        reason = "not set, or set to a budget that may be unlimited"
+    )]
+    pub(crate) next_fuel: Option<Option<u64>>,
 }
 
 /// Session `s` as an image of at most `max_bytes`, the checksum included
@@ -76,6 +81,15 @@ pub(crate) fn write(s: &mut Session, max_bytes: usize) -> Result<Vec<u8>, Snapsh
             header.extend_from_slice(&total.to_le_bytes());
         }
     }
+    // The next cell's budget, set between cells: none (0), unlimited (1)
+    // or a number of units (2), then the units (0 for the first two).
+    let (tag, fuel) = match s.next_fuel {
+        None => (0, 0),
+        Some(None) => (1, 0),
+        Some(Some(fuel)) => (2, fuel),
+    };
+    header.push(tag);
+    header.extend_from_slice(&fuel.to_le_bytes());
     // One buffer of the image's exact size, the checksum included.
     let mut out =
         s.vm.write_snapshot_sized(&header, 8, max_bytes)
@@ -150,6 +164,12 @@ pub(crate) fn read(engine: &Engine, bytes: &[u8], trusted: bool) -> Result<Image
         Some(1) => Some(r.u64().ok_or_else(|| corrupt("session"))?),
         _ => return Err(corrupt("session")),
     };
+    let next_fuel = match (r.u8(), r.u64()) {
+        (Some(0), Some(0)) => None,
+        (Some(1), Some(0)) => Some(None),
+        (Some(2), fuel @ Some(_)) => Some(fuel),
+        _ => return Err(corrupt("session")),
+    };
     let cache = engine.module_cache();
     let read = if trusted {
         Vm::read_snapshot_trusted
@@ -191,6 +211,7 @@ pub(crate) fn read(engine: &Engine, bytes: &[u8], trusted: bool) -> Result<Image
         stop,
         text_limit,
         fuel_total,
+        next_fuel,
     })
 }
 

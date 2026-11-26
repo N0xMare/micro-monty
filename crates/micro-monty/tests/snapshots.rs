@@ -4084,3 +4084,27 @@ fn a_record_constant_restores_to_the_same_image() {
     let mut restored = e.restore(&image).expect("restores");
     assert!(restored.snapshot().expect("snapshot") == image);
 }
+
+/// A budget set between cells is the next cell's in a session restored
+/// from an image taken then, as in the session itself, which finishes
+/// the cell where the engine's budget would not.
+#[test]
+fn a_restored_session_keeps_the_next_cells_fuel() {
+    let e = Engine::new(EngineConfig::new().with_limits(Limits::new().with_fuel(Some(60))));
+    let code = e
+        .compile("n = 0\nfor i in range(100):\n    n += i\nn", "cell.py")
+        .expect("compiles");
+    for fuel in [Some(5_000), None] {
+        let mut s = Session::new(&e).expect("session");
+        s.set_fuel(fuel);
+        let mut restored = e
+            .restore(&s.snapshot().expect("snapshot"))
+            .expect("restores");
+        let ends = [&mut s, &mut restored].map(|s| {
+            let p = s.start(&code);
+            assert!(matches!(p, Progress::Complete(_)), "{fuel:?}: {p:?}");
+            s.fuel()
+        });
+        assert_eq!(ends[0], ends[1], "{fuel:?}");
+    }
+}
