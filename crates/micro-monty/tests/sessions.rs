@@ -2697,6 +2697,23 @@ fn a_keys_view_lookup_stays_within_budget_on_collisions() {
     assert_eq!(c.value("d.keys().isdisjoint(s)"), "True");
 }
 
+#[cfg(feature = "mod-datetime")]
+#[test]
+fn strptime_backtracks_past_a_failed_literal_within_budget() {
+    let mut c = Cells::new();
+    assert_eq!(
+        c.start("from datetime import datetime\nd = datetime.strptime('2024-01-03', '%Y-%m-%d')"),
+        Progress::Complete(None)
+    );
+    // The month first consumes both digits. The following literal fails,
+    // so the parser must try the shorter month rather than retry the literal.
+    c.session.set_fuel(Some(512));
+    assert_eq!(
+        c.value("datetime.strptime('2024-12X3', '%Y-%m2X%d').isoformat()"),
+        "'2024-01-03T00:00:00'"
+    );
+}
+
 #[test]
 fn never_awaited_coroutines_are_collected_and_reported_once() {
     // Coroutines that die unstarted are garbage (CPython warns as each
