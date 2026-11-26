@@ -1779,6 +1779,21 @@ fn vm_bytecode_deref_of_a_non_cell_does_not_panic() {
     vm_bytecode_input::run(&std::fs::read(path).expect("seed"));
 }
 
+/// The `vm_bytecode` crash from the 0.0.4 campaign: two edits leave a code
+/// object that verifies with a live table `check_live` refuses (pc 10
+/// reads register 1, dead there). A collection cleared the register, and
+/// in a build with debug assertions the dispatch loop's read of the poison
+/// panicked; a shipped build reads `UNDEFINED` and raises `TypeError`. The
+/// target now drops such a table where the poison is on.
+#[test]
+fn vm_bytecode_wrong_live_table_does_not_panic() {
+    let path = format!(
+        "{}/../../conformance/breadth/fuzz/artifacts/vm_bytecode-crash-dead-live-c36f0bbc-min",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    vm_bytecode_input::run(&std::fs::read(path).expect("seed"));
+}
+
 #[test]
 fn a_caught_name_error_costs_no_hint_until_it_is_rendered() {
     // Every NameError (and AttributeError) computed its "Did you mean"
