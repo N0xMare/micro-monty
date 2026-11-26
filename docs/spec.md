@@ -2122,7 +2122,11 @@ timer deadlines.
   `__eq__` go to the prelude twin), `MAKE_FUNCTION`, `MAKE_CELL`, and a
   plain `CALL` of a builtin exception type, of `str`, `int` or `float`
   with builtin scalar arguments (int, float, bool, `None`, str, bytes,
-  bytearray), or of a user class with no `__init__`, `__new__`, metaclass
+  bytearray), of `str` of a builtin exception other than a `SyntaxError`
+  or a Unicode error whose arguments are such scalars
+  (`Vm::exc_str_plain`: its text comes from them natively; CPython's
+  `str(e)` cannot fail there, and `traceback` printed `<exception str()
+  failed>`), or of a user class with no `__init__`, `__new__`, metaclass
   or builtin base other than an exception (`Vm::call_only_allocates`),
   all read at the fault exit (`Vm::oom_retry_fault`). These are what an
   `except MemoryError` handler runs first: dropping the data that filled
@@ -2135,9 +2139,11 @@ timer deadlines.
   collected. For example: a class with `__init__` or `__new__` and `str`,
   `int` or `float` of any other value (user code's result is checked back
   at the `CALL`, where a failure cannot be told from the first; these run
-  when the callee's own frame reaches a safepoint first; `str(e)` of an
-  exception allocates its text, so it can raise `MemoryError` where
-  CPython's returns the argument it holds, and `traceback` then prints
+  when the callee's own frame reaches a safepoint first; so is `str(e)`
+  of an instance of a user exception class, of a `SyntaxError` or a
+  Unicode error (whose texts read attributes any value can be set to), or
+  of an exception holding any other argument: these can still raise
+  `MemoryError` where CPython's cannot, and `traceback` prints it as
   `<exception str() failed>`, as CPython's `_safe_string` does), keyword forms
   of these calls, `raise E` of a class not yet instantiated, an exception
   the engine raises itself (a failing `assert` raises `MemoryError`),

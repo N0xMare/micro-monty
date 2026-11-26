@@ -536,6 +536,35 @@ impl Vm {
         }
     }
 
+    /// Whether `str(e)` is built natively from [`Vm::plain_scalar`]
+    /// arguments only, so it runs no user code and allocates nothing but
+    /// its text (`Vm::call_only_allocates`): a builtin exception other than
+    /// a `SyntaxError` or a Unicode error, whose texts read attributes any
+    /// value can be set to.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn exc_str_plain(&self, e: Value) -> bool {
+        // A builtin exception's type slot is its type object; a user
+        // class's is not one.
+        let Some(t) = e
+            .is_obj_kind(ty::EXC as u8)
+            .then(|| self.type_of_typeobj(self.vslot(e, exc_slot::TYPE)))
+            .flatten()
+        else {
+            return false;
+        };
+        let args = self.vslot(e, exc_slot::ARGS);
+        !matches!(
+            t,
+            T::SyntaxError
+                | T::IndentationError
+                | T::TabError
+                | T::UnicodeDecodeError
+                | T::UnicodeEncodeError
+        ) && args.is_obj_kind(ty::TUPLE as u8)
+            && (0..self.tuple_len(args)).all(|i| Self::plain_scalar(self.vslot(args, i as u32)))
+    }
+
     /// Field `i` of [`UNICODE_ATTRS`] as a Unicode error keeps it in its
     /// [`HINT`] slot, a tuple of the five that its constructor writes:
     /// `UNDEFINED` where none was set or it was deleted (CPython's `NULL`),

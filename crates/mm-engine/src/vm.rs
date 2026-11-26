@@ -2280,6 +2280,18 @@ impl Vm {
         f.is_obj_kind(ty::FUNC as u8).then_some(f)
     }
 
+    /// A builtin scalar: an int, float, bool, `None`, str, bytes or
+    /// bytearray, which `str`, `int` and `float` convert natively.
+    #[inline(never)]
+    pub(crate) fn plain_scalar(v: Value) -> bool {
+        v.is_int()
+            || v.as_float().is_some()
+            || [Value::NONE, Value::TRUE, Value::FALSE].contains(&v)
+            || Self::is_str(v)
+            || Self::is_heap_int(v)
+            || Self::is_bytes_like(v)
+    }
+
     /// Whether a plain `CALL` of `f` with the arguments at stack indexes
     /// `args` does nothing but allocate what it returns, so one refused
     /// for room ran no user code and changed nothing
@@ -2290,7 +2302,8 @@ impl Vm {
     ///   None, str, bytes, bytearray), which convert natively: any other
     ///   argument may run a user `__str__`, `__int__` or `__repr__`, whose
     ///   result is checked back at this instruction, where a failure
-    ///   would run it a second time;
+    ///   would run it a second time; and `str` of a builtin exception
+    ///   whose text comes from such scalars only ([`Vm::exc_str_plain`]);
     /// - a user class with no `__init__` or `__new__` of its own or
     ///   inherited, no metaclass and no builtin base other than an
     ///   exception: `Vm::call_class` allocates the instance and returns
@@ -2307,15 +2320,9 @@ impl Vm {
         }
         match self.type_of_typeobj(f) {
             Some(t) if t.is_exception() => true,
-            Some(T::str | T::int | T::float) => self.stack.get(args).is_some_and(|a| {
-                a.iter().all(|&v| {
-                    v.is_int()
-                        || v.as_float().is_some()
-                        || [Value::NONE, Value::TRUE, Value::FALSE].contains(&v)
-                        || Self::is_str(v)
-                        || Self::is_heap_int(v)
-                        || Self::is_bytes_like(v)
-                })
+            Some(t @ (T::str | T::int | T::float)) => self.stack.get(args).is_some_and(|a| {
+                a.iter()
+                    .all(|&v| Self::plain_scalar(v) || (t == T::str && self.exc_str_plain(v)))
             }),
             _ => false,
         }

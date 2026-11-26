@@ -1367,6 +1367,45 @@ fn a_first_set_exception_whose_unit_does_not_fit_waits_for_a_collection() {
     assert!(ran > 30, "{ran} headrooms ran the cell");
 }
 
+/// `str(e)` of a builtin exception whose arguments are scalars builds
+/// only its text, so when the text does not fit it waits for a collection
+/// and runs again, as `str` of a scalar does: the oracle's cannot fail there,
+/// and `traceback` printed `<exception str() failed>` (235 of the budget
+/// sweep's review lines clear). A `KeyError` (its text is the argument's repr)
+/// and an `OSError` (`[Errno n] text: 'file'`) with 1 MiB of garbage and
+/// 4 to 60 KB free at 8 MiB; before, the `KeyError` raised `MemoryError`
+/// already at 4 KB free [M].
+#[test]
+fn str_of_a_builtin_exception_waits_for_a_collection() {
+    let mut ran = 0;
+    for e in ["KeyError('k' * 20000)", "OSError(2, 'gone', 'f' * 20000)"] {
+        for free in (4..61).step_by(4).map(|k| k * 1000) {
+            let setup = format!(
+                "import gc\ne = {e}\nwant = str(e)\n\
+                 def fits(n):\n    try:\n        bytes(n)\n    except MemoryError:\n        return False\n\
+                 \x20   return True\nlo, hi = 1 << 16, 1 << 24\nwhile lo < hi:\n    mid = (lo + hi + 1) // 2\n\
+                 \x20   ok = fits(mid)\n    gc.collect()\n    lo, hi = (mid, hi) if ok else (lo, mid - 1)\n\
+                 pad = bytes(lo - (1 << 20) - {free})\ng = bytes(1 << 20)\n"
+            );
+            let cell =
+                "g = None\ntry:\n    r = str(e) == want\nexcept MemoryError:\n    r = 'ME'\nr\n";
+            let ps = run_cells_at(8, &[&setup, cell]);
+            assert_eq!(ps[0], Progress::Complete(None), "{e}, {free} B free");
+            // Where the cell's own code does not fit, it raises before it runs.
+            if matches!(&ps[1], Progress::Error(x) if x.traceback == "MemoryError\n") {
+                continue;
+            }
+            ran += 1;
+            assert!(
+                matches!(&ps[1], Progress::Complete(Some(c)) if c.repr == "True"),
+                "{e}, {free} B free: {:?}",
+                ps[1]
+            );
+        }
+    }
+    assert!(ran > 25, "{ran} headrooms ran the cell");
+}
+
 /// A `ModuleNotFoundError` whose `name` has no room raises `MemoryError`,
 /// as the oracle would not make the error: it was raised with
 /// `name` `None` and the refusal dropped (7 strs freed at 8 MiB [M]).

@@ -1277,7 +1277,8 @@ an `except MemoryError` handler that first drops the data that filled
 memory (`xs = None`, or a fill inside a function the error left) can
 allocate again: a list, tuple, set, dict or slice display, a string
 operation or f-string, a lambda or `def`, `str`, `int` or `float` of a
-number, str or bytes, a builtin exception, an instance of a class without
+number, str or bytes, a builtin exception and `str` of one made from such
+values, an instance of a class without
 `__init__` or `__new__`, a call of a Python function (its frame waits
 too), the stack a builtin call needs (a builtin called first in a deep
 function), and anything after such a call or a loop iteration, each waiting
