@@ -3344,6 +3344,10 @@ fn match_pattern_errors_are_cpythons_compile_errors() {
             "mapping pattern checks duplicate key (b'a')",
         ),
         (
+            r"case {b'\xa7': 1, b'\xa7': 2}:",
+            r"mapping pattern checks duplicate key (b'\xa7')",
+        ),
+        (
             "case {1e999: 1, 1e999: 2}:",
             "mapping pattern checks duplicate key (inf)",
         ),
