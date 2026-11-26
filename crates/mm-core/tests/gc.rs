@@ -110,17 +110,17 @@ fn deep_chain_marks_without_recursion() {
 #[test]
 fn incremental_collection_yields_then_finishes() {
     let mut heap = Heap::new(HeapConfig::default());
-    let head = chain(&mut heap, 3);
+    let first = chain(&mut heap, 3);
     heap.set_incremental(4, 0);
     heap.force_collection();
 
-    let mut step = || heap.collect_step(&mut |t| t.value(Value::from_ref(head, 0)), &mut |_| {});
+    let mut step = || heap.collect_step(&mut |t| t.value(Value::from_ref(first, 0)), &mut |_| {});
     assert!(step().is_none(), "the first step starts the mark");
     assert!(step().is_none(), "one slice cannot mark the whole chain");
     (0..4)
         .find_map(|_| step())
         .expect("the mark finishes once the chain is scanned");
-    assert_eq!(heap.get_raw(head, 1), Ok(2));
+    assert_eq!(heap.get_raw(first, 1), Ok(2));
 }
 
 #[test]
@@ -140,6 +140,7 @@ fn wide_object_and_cycles() {
     let stats = heap.collect(&mut |_| {});
     assert_eq!(stats.live_bytes, 0);
     assert_eq!(heap.committed_bytes(), SEGMENT_BYTES + 32 * 1024);
+    assert_eq!(stats.committed_bytes, SEGMENT_BYTES + 32 * 1024);
 }
 
 #[test]
