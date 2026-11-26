@@ -27,6 +27,9 @@
 //!   (a fixed subset) also at `FINE` (1:1000): a small case parks at every
 //!   call and loop iteration. `--fine N:M` sets another cap for the subset
 //!   (`cargo xtask check`'s dev tier runs 1:100; `--release-gate`, 1:1000).
+//! - `--short-corpus` runs the release fine subset's complement at stride 1,
+//!   skipping cases that spend more than 1,000 fuel unparked. Together the
+//!   release stages cover every short passing corpus case (502 [M]).
 //!
 //! `--cross-target` instead runs the own cases at `COARSE` with every
 //! snapshot restored on the other target: the parked chain alternates
@@ -76,6 +79,8 @@ const FINE: &str = "1:1000";
 pub(crate) const DEV_FINE: &str = "1:100";
 /// Every this many corpus cases (in name order) is in the subset.
 const FINE_STRIDE: usize = 3;
+/// The release gate covers the rest of the passing corpus up to this fuel.
+const SHORT_MAX_FUEL: &str = "1000";
 /// CPU seconds one `mm` process may take (the oracle's `--timeout`;
 /// `--timeout` overrides it; `conformance/oracle.py`'s `MM_TIMEOUT`).
 const MM_TIMEOUT_SECS: u64 = 20;
@@ -117,6 +122,7 @@ struct Recorded {
 struct Job {
     case: PathBuf,
     spec: String,
+    max_fuel: Option<&'static str>,
     /// Cross-target: which target writes the first snapshot.
     first: Option<&'static str>,
 }
@@ -148,6 +154,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut fine = FINE.to_owned();
     let mut timeout = MM_TIMEOUT_SECS;
     let mut cross = false;
+    let mut short_corpus = false;
     let mut built = false;
     let mut record = false;
     let mut no_digest = false;
@@ -155,6 +162,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--filter" => filter = Some(it.next().ok_or("--filter needs a substring")?.clone()),
+            "--short-corpus" => short_corpus = true,
             "--cross-target" => cross = true,
             "--cross-target-built" => {
                 cross = true;
@@ -172,6 +180,12 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             }
             other => return Err(format!("durability: unknown option `{other}`")),
         }
+    }
+    if short_corpus && (cross || every.is_some() || fine != FINE || no_digest || record) {
+        return Err(
+            "--short-corpus runs only its own native policy, without --record or --no-digest"
+                .to_owned(),
+        );
     }
     if record && (filter.is_some() || every.is_some() || fine != FINE || no_digest) {
         return Err(
@@ -194,11 +208,15 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         None
     };
 
-    let mut own: Vec<PathBuf> = fs::read_dir(root.join("conformance/own"))
-        .map_err(|e| format!("cannot read conformance/own: {e}"))?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "py"))
-        .collect();
+    let mut own: Vec<PathBuf> = if short_corpus {
+        Vec::new()
+    } else {
+        fs::read_dir(root.join("conformance/own"))
+            .map_err(|e| format!("cannot read conformance/own: {e}"))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "py"))
+            .collect()
+    };
     own.sort();
     let results = root.join("conformance/results/micro-monty.jsonl");
     let text = fs::read_to_string(&results)
@@ -225,12 +243,24 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         if !keep(case) {
             continue;
         }
-        let is_own = k < own.len();
+        let in_fine = k < own.len() || (k - own.len()).is_multiple_of(FINE_STRIDE);
+        if short_corpus {
+            if !in_fine {
+                jobs.push(Job {
+                    case: case.clone(),
+                    spec: "1".to_owned(),
+                    max_fuel: Some(SHORT_MAX_FUEL),
+                    first: None,
+                });
+            }
+            continue;
+        }
         if cross {
             for first in ["native", "wasm"] {
                 jobs.push(Job {
                     case: case.clone(),
                     spec: every.clone().unwrap_or_else(|| COARSE.to_owned()),
+                    max_fuel: None,
                     first: Some(first),
                 });
             }
@@ -240,6 +270,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             jobs.push(Job {
                 case: case.clone(),
                 spec: n.clone(),
+                max_fuel: None,
                 first: None,
             });
             continue;
@@ -247,9 +278,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         jobs.push(Job {
             case: case.clone(),
             spec: COARSE.to_owned(),
+            max_fuel: None,
             first: None,
         });
-        if is_own || (k - own.len()).is_multiple_of(FINE_STRIDE) {
+        if in_fine {
             // `--record` runs the subset at both gates' policies: which park
             // differs depends on the policy (463's `parks` digest differs at
             // 1:1000 only), so an entry goes only when no gate would see it.
@@ -262,6 +294,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
                 jobs.push(Job {
                     case: case.clone(),
                     spec: (*spec).to_owned(),
+                    max_fuel: None,
                     first: None,
                 });
             }
@@ -275,6 +308,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     // longest), then by name. The order changes no run's result.
     let times_file = root.join(if cross {
         "target/durability/times-cross.tsv"
+    } else if short_corpus {
+        "target/durability/times-short.tsv"
     } else {
         "target/durability/times.tsv"
     });
@@ -301,6 +336,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     }
     let (scratch, place) = scratch_dir(workers.min(jobs.len()));
     let policy = match &every {
+        _ if short_corpus => format!("at 1 for cases spending at most {SHORT_MAX_FUEL} fuel"),
         _ if cross => format!(
             "at {}, each snapshot restored on the other target (native <-> wasm32-wasip1, \
              both directions)",
@@ -321,7 +357,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         "durability: {} own + {} corpus cases ({} runs), parked {policy} and at every host \
          call, one mm process per park ({}), {workers} workers, scratch {place}",
         own.iter().filter(|p| keep(p)).count(),
-        corpus.iter().filter(|p| keep(p)).count(),
+        if short_corpus {
+            jobs.len()
+        } else {
+            corpus.iter().filter(|p| keep(p)).count()
+        },
         jobs.len(),
         mm.display()
     );
@@ -465,7 +505,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             })
         })
         .collect();
-    if filter.is_none() && every.is_none() && !no_digest {
+    if filter.is_none() && every.is_none() && !no_digest && !short_corpus {
         for (file, mode, column) in &stale {
             println!(
                 "  note: {file} {mode} {column} is recorded in {RESULTS} but no run differed in it"
@@ -811,6 +851,9 @@ fn run_job(
         .arg(&job.spec)
         .arg("--mm")
         .arg(mm);
+    if let Some(max_fuel) = job.max_fuel {
+        command.args(["--max-fuel", max_fuel]);
+    }
     if let Some(dir) = scratch {
         // The oracle's scratch directories (`tempfile.mkdtemp`).
         command.env("TMPDIR", dir);

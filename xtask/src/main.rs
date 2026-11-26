@@ -165,6 +165,8 @@ tasks:
                              conformance/durability-results.txt records
       --every <n>            fuel units between parks (default: the gate's policy)
       --fine <n:m>           the own cases' and subset's cap (default 1:1000)
+      --short-corpus         stride 1 for cases outside the fine subset that
+                             spend at most 1,000 fuel (release gate only)
       --filter <substring>   only cases whose path contains it
       --timeout <s>          seconds per mm process (default 20)
       --cross-target         own cases only, each snapshot restored on the other
@@ -665,16 +667,23 @@ fn check(args: &[String]) -> Result<(), String> {
             "--engines",
             "cpython,micro-monty",
         ])),
-        // The own cases against CPython and the corpus against its results,
-        // on `mm` built natively as shipped (`shipped_build`:
+        // Conformance and the short-corpus durability run use `mm` built
+        // natively as shipped (`shipped_build`:
         // `-Cpanic=immediate-abort`, `#[optimize(size)]` under
-        // `mm_shipped`); the step-time oracle runs on shipped codegen too
-        // (`steps_cargo`), every other native gate on plain-stable builds.
+        // `mm_shipped`); the step-time oracle also uses shipped codegen
+        // (`steps_cargo`).
         Stage::new("shipped-mm").after(&["mm"]).run({
             let mut build = shipped_build(&host);
             build.args(["--package", "mm-cli", "--bin", "mm"]);
             build
         }),
+        Stage::new("durability-short")
+            .after(&["shipped-mm", "durability"])
+            .run({
+                let mut short = task(&["durability", "--short-corpus"]);
+                short.env("MM", &shipped_mm);
+                short
+            }),
         Stage::new("shipped-cases")
             .after(&["shipped-mm", "test"])
             .run({

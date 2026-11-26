@@ -3644,7 +3644,12 @@ opens a draft release.
   `conformance/durability-results.txt` does not record fails. Every case
   parks at `5:50` (every 5 units, or every ⌈fuel / 50⌉ for a long case); the
   own cases and every third corpus case also park at `1:100` in the dev
-  tier and `1:1000` in the release gate.
+  tier and `1:1000` in the release gate. The release-only
+  `durability --short-corpus` stage covers the rest of the passing corpus
+  cases whose unparked run spends at most 1,000 fuel units [S]. Together
+  the release durability stages cover all 502 such corpus cases at stride
+  1 [M]. The short-corpus stage runs on shipped native `mm`, also parks
+  at every host call, and restores every park in a fresh process.
   `--cross-target` runs the own cases with every snapshot restored on the
   other target: the chain alternates between the native `mm` and `mm` for
   `wasm32-wasip1` under wasmtime, once starting on each.

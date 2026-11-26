@@ -13,6 +13,7 @@ Usage: python3.14 conformance/oracle.py CASE.py [CASE.py ...]
        python3.14 conformance/oracle.py --engine micro-monty [--mm MM | --wasm MODULE --wasmtime WASMTIME]
            [--timeout S] CASE.py [...]
        python3.14 conformance/oracle.py --engine micro-monty --durability N[:M] [--mm MM] [--timeout S]
+           [--max-fuel F]
            [--alternate MODULE --wasmtime WASMTIME [--alternate-first native|wasm]] CASE.py [...]
 
 The second form runs each case through micro-monty's `mm exec --json` (`--mm`,
@@ -33,7 +34,8 @@ fuel units and at every host call, each park saved to a snapshot by one `mm`
 process and continued by a new one ("restore", `mm exec --snapshot-every N`,
 then `mm resume` until done). With `N:M`, a case whose unparked run uses
 more than N * M fuel parks every ceil(fuel / M) units instead, so no case
-parks much more than M times. Each parked mode's report (stdout, result,
+parks much more than M times. With `--max-fuel F`, skip cases whose
+unparked run spends more than F fuel. Each parked mode's report (stdout, result,
 exception), fuel (every `mm` prints the fuel spent, counted exactly) and
 final-state digest (the checksum of the session's image at the end) are
 compared with the unparked run's (docs/spec.md §5.1, clause 4), and the
@@ -950,7 +952,7 @@ def durability_scratch():
     return root, scratch
 
 
-def run_durability_case(path, mm, every, max_parks, timeout, alternate=None):
+def run_durability_case(path, mm, every, max_parks, timeout, alternate=None, *, max_fuel=None):
     """`alternate`: None, or (wasmtime, module, wasm_first) for a cross-target chain."""
     name = os.path.basename(path)
     with open(path, encoding='utf-8', newline='') as f:
@@ -979,8 +981,11 @@ def run_durability_case(path, mm, every, max_parks, timeout, alternate=None):
         with open(os.path.join(scratch, name), 'w', encoding='utf-8', newline='') as f:
             f.write(code)
         plain = mm_json_line([mm, 'exec', '--json', '--report-fuel', '--digest', *flags, name], scratch, timeout, zone)
+        fuel = plain.get('fuel', 0)
+        if max_fuel is not None and fuel > max_fuel:
+            return {'file': name, 'status': 'skip', 'parks': 0, 'reason': f'{fuel} fuel exceeds {max_fuel}'}
         if max_parks:
-            every = max(every, -(-plain.get('fuel', 0) // max_parks))
+            every = max(every, -(-fuel // max_parks))
         # One process runs what the parked chain splits over up to about M
         # + 1 processes, each with `timeout` seconds of CPU: a snapshot at
         # each of 1,000 parks took own case 466 past 20 s [M]. The chain's
@@ -1123,6 +1128,7 @@ usage: python3.14 conformance/oracle.py CASE.py [CASE.py ...]
        python3.14 conformance/oracle.py --engine micro-monty [--mm MM | --wasm MODULE --wasmtime WASMTIME]
            [--timeout S] CASE.py [...]
        python3.14 conformance/oracle.py --engine micro-monty --durability N[:M] [--mm MM] [--timeout S]
+           [--max-fuel F]
            [--alternate MODULE --wasmtime WASMTIME [--alternate-first native|wasm]] CASE.py [...]"""
 
 
@@ -1130,7 +1136,7 @@ def main(argv):
     args = argv[1:]
     engine, mm, timeout = 'cpython', os.environ.get('MM') or None, MM_TIMEOUT
     durability = None
-    max_parks = None
+    max_parks, max_fuel = None, None
     alternate, wasmtime, wasm_first, wasm = None, None, 0, False
     while args and args[0].startswith('--') and len(args) > 1:
         option, value, args = args[0], args[1], args[2:]
@@ -1150,6 +1156,8 @@ def main(argv):
         elif option == '--durability' and re.fullmatch(r'[1-9]\d*(:[1-9]\d*)?', value):
             durability, _, cap = value.partition(':')
             durability, max_parks = int(durability), int(cap) if cap else None
+        elif option == '--max-fuel' and re.fullmatch(r'[1-9]\d*', value):
+            max_fuel = int(value)
         else:
             print(USAGE, file=sys.stderr)
             return 2
@@ -1158,6 +1166,7 @@ def main(argv):
         not paths
         or paths[0] in ('-h', '--help')
         or (durability is not None and engine != 'micro-monty')
+        or (max_fuel is not None and durability is None)
         or (alternate is not None and not wasmtime)
         or (alternate is not None and (durability is None) != wasm)
     ):
@@ -1175,7 +1184,7 @@ def main(argv):
         if durability is not None:
             for path in paths:
                 cross = (wasmtime, alternate, wasm_first) if alternate else None
-                result = run_durability_case(path, mm, durability, max_parks, timeout, cross)
+                result = run_durability_case(path, mm, durability, max_parks, timeout, cross, max_fuel=max_fuel)
                 print(json.dumps(result), flush=True)
             return 0
         # Each case is its own mm process; nothing runs in this interpreter.

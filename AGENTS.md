@@ -173,7 +173,8 @@ unset.
   musl-only seccomp rules are built and tested. **Release gate**:
   `cargo xtask check --release-gate`, every stage (the timed step oracle,
   memory probes, package, wasm-ir, v8-ir, replay-ir, the wasip1 runs,
-  wasm-host, js-host, codemode, the real replay). It runs on main's tip after
+  `durability-short` on shipped native `mm`, wasm-host, js-host, codemode,
+  the real replay). It runs on main's tip after
   each push, in the background (on Linux as the split, under "Release
   gate on Linux"), and always before a tag; main may be
   pushed on the dev tier, and a release-gate failure on main is fixed or
