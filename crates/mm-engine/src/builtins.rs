@@ -2338,6 +2338,7 @@ pub(crate) fn is_classmethod(n: &Native) -> bool {
             | (Some(T::int), "from_bytes")
             | (Some(T::dict), "fromkeys")
             | (Some(T::complex), "from_number")
+            | (Some(T::object), "__init_subclass__")
     )
 }
 

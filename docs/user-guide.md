@@ -1754,6 +1754,9 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
 - PEP 695 `type` aliases (a compile error); `locals()`, and `vars()` without
   an argument; `memoryview`; `inspect`; a metaclass with `__prepare__`
   (other metaclasses work).
+- The builtin `type` methods `__subclasses__`, `__prepare__`,
+  `__instancecheck__`, `__subclasscheck__` and `__sizeof__` are not provided.
+  `type.__new__` is callable with an explicit metaclass, but has no `__self__`.
 - **Evaluated annotations.** An annotation is kept as its source text:
   `C.__annotations__` is `{'x': 'int'}`, functions have no
   `__annotations__`, and `typing.get_type_hints` and
