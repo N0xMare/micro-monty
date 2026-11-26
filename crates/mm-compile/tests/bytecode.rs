@@ -153,6 +153,41 @@ fn the_live_table_names_the_registers_a_collection_clears() {
 }
 
 #[test]
+fn becoming_live_requires_a_store() {
+    use mm_compile::{
+        bytecode::{Code, LiveEntry},
+        live::{LiveError, Rule},
+    };
+
+    let code = Code {
+        bytecode: vec![u32::from(op::NOP), u32::from(op::RETURN)],
+        nregs: 1,
+        live: vec![
+            LiveEntry {
+                pc: 0,
+                top: 0,
+                unset: 0,
+            },
+            LiveEntry {
+                pc: 1,
+                top: 1,
+                unset: 0,
+            },
+        ],
+        ..Code::default()
+    };
+    assert_eq!(
+        code.check_live(),
+        Err(LiveError {
+            rule: Rule::LiveUnstored,
+            pc: 0,
+            to: 1,
+            reg: 0
+        })
+    );
+}
+
+#[test]
 fn assemble_maps_byte_pcs_and_rejects_bad_targets() {
     // 0: LDA_SMI 7 (3 bytes) / 3: JUMP_IF_FALSE -> 15 / 8: CALL r1 b0 u2
     // 13: NOP / 14: NOP / 15: FOR_PREP r0 b1 -> 22 / 22: RETURN.
