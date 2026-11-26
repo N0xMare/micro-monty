@@ -428,20 +428,27 @@ impl Vm {
     }
 
     /// Sets `name` (and `name_from`, unless `UNDEFINED`) on the
-    /// `ImportError` being raised.
+    /// `ImportError` being raised. Unlike a hint, these are the error's
+    /// own attributes: when one has no room the `MemoryError` is raised
+    /// instead, as CPython's error would not have been made.
     pub(crate) fn set_import_names(&mut self, name: &str, from: Value) {
         let e = self.exc;
+        if e == self.memory_error {
+            return;
+        }
         let set = |vm: &mut Vm, k: &str, v: Value| -> Result<(), Raised> {
             let k = vm.intern(k)?;
             vm.inst_set(e, k, v).map(drop)
         };
-        if let Ok(n) = self.new_str(name) {
-            let _ = set(self, "name", n);
-        }
-        if from != Value::UNDEFINED {
-            let _ = set(self, "name_from", from);
-        }
-        self.keep_raising(e);
+        let _ = self
+            .new_str(name)
+            .and_then(|n| set(self, "name", n))
+            .and_then(|()| {
+                if from == Value::UNDEFINED {
+                    return Ok(());
+                }
+                set(self, "name_from", from)
+            });
     }
 
     /// A `SyntaxError`'s `msg`, `filename`, `lineno`, `offset`, `text`,

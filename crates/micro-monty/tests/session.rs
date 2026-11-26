@@ -1332,6 +1332,29 @@ fn a_builtin_call_whose_stack_does_not_fit_waits_for_a_collection() {
     }
 }
 
+/// A `ModuleNotFoundError` whose `name` has no room raises `MemoryError`,
+/// as the oracle would not make the error: it was raised with
+/// `name` `None` and the refusal dropped (7 strs freed at 8 MiB [M]).
+/// Swept across the room freeing 1 to 12 strs of a fill leaves.
+#[test]
+fn an_import_error_without_room_for_its_name_raises_memory_error() {
+    for keep in 1..13 {
+        let cell = format!(
+            "import gc\nxs = []\ntry:\n    while True:\n        xs.append(str(len(xs)))\n\
+             except MemoryError:\n    k = {keep}\n    while k:\n        xs.pop()\n        k -= 1\n\
+             \x20   gc.collect()\ntry:\n    __import__('nope.sub')\n\
+             except ModuleNotFoundError as e:\n    r = e.name\nexcept MemoryError:\n    r = 'ME'\n\
+             xs = None\nr\n"
+        );
+        let ps = run_cells_at(8, &[&cell]);
+        assert!(
+            matches!(&ps[0], Progress::Complete(Some(c)) if c.repr == "'nope'" || c.repr == "'ME'"),
+            "{keep} freed: {:?}",
+            ps[0]
+        );
+    }
+}
+
 /// The limit of that: a handler that keeps the data has only the room the
 /// fill left, which may be none. A collection frees nothing, so the
 /// handler's allocation raises `MemoryError` again, uncaught here. The
