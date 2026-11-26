@@ -2115,9 +2115,12 @@ impl Vm {
     /// starred tuple display's tuple of its list); `UNPACK_EX` from a list or tuple (a
     /// starred target's list, written to its registers only once it
     /// exists); `LIST_EXTEND` from a list or tuple (the list grows once,
-    /// to its final length, before any item is written); and `CALL_EX` of a
-    /// Python function (its `*args` tuple and bound arguments are built
-    /// before its frame is entered, so the function has not started). An
+    /// to its final length, before any item is written); and a `CALL`,
+    /// `CALL_METHOD`, `CALL_KW`, `CALL_METHOD_KW` or `CALL_EX` of a Python
+    /// function or a method bound to one, or an `async with` exit of a
+    /// coroutine function (its arguments are bound and its frame entered,
+    /// or its generator or coroutine made, before any of its code runs,
+    /// so the function has not started). An
     /// iterator either may have drained is not retried, nor a call of
     /// anything else, which may have run code or changed its arguments.
     /// Read from the faulting frame, where `st.pc` and `st.acc` are still
@@ -2183,12 +2186,40 @@ impl Vm {
             // it ends (`Vm::seq_items_left`), or `collect` marks what it
             // took (`oom_rerun`).
             Some(op::LIST_EXTEND) => self.seq_items_left(st.acc).is_some(),
+            // A call of a Python function, or of a method bound to one,
+            // binds its arguments and enters its frame (or makes its
+            // generator or coroutine) before any of its code runs, and
+            // goes on in its frame once entered: a failure at the call
+            // ran none. It has no continuation, so no failure after the
+            // callee returns is reported here.
+            Some(op::CALL_METHOD | op::CALL_KW | op::CALL_METHOD_KW) => self
+                .stack
+                .get(st.base + operand(bc, st.pc, 0))
+                .is_some_and(|&f| self.python_fn_of(f).is_some()),
+            // An `async with` exit (b 2 and 3) of a coroutine function
+            // only makes its coroutine, an awaitable its check passes
+            // (`check::AEXIT`). A plain exit's frame runs, and a failure
+            // in its continuation is reported here after it returned.
+            Some(op::WITH_EXIT) => {
+                operand(bc, st.pc, 1) >= 2
+                    && self
+                        .stack
+                        .get(st.base + operand(bc, st.pc, 0))
+                        .and_then(|&f| self.python_fn_of(f))
+                        .and_then(|f| {
+                            let cidx = self.raw(f.as_obj()?, fn_slot::CODE);
+                            self.codes.get(usize::try_from(cidx).ok()?)
+                        })
+                        .is_some_and(|c| c.code.is_coroutine)
+            }
             // A builtin type called as a constructor that copies its
             // argument (`list(l)`, `dict(x, **kw)`); a builtin called
             // directly retries in `call_native`, one called through `*` or
             // `**` here (`max(*a)` retries when its arguments do not fit,
             // `Vm::oom_retry_expansion`). A plain `CALL` that only
-            // allocates its result too (`Vm::call_only_allocates`).
+            // allocates its result too (`Vm::call_only_allocates`). A call
+            // of a Python function or of a method bound to one, as
+            // `CALL_METHOD` above.
             Some(o @ (op::CALL | op::CALL_EX)) => {
                 let at = st.base + operand(bc, st.pc, 0);
                 let f = self.stack.get(at).copied().unwrap_or(Value::NONE);
@@ -2200,7 +2231,7 @@ impl Vm {
                 } else {
                     None
                 };
-                (o == op::CALL_EX && f.is_obj_kind(ty::FUNC as u8))
+                self.python_fn_of(f).is_some()
                     || builtin
                         .or_else(|| self.type_of_typeobj(f).and_then(|t| self.ctor_of(t)))
                         .and_then(crate::native)
@@ -2222,6 +2253,17 @@ impl Vm {
         let retry = self.oom_retry_if(true, Self::op_at(st));
         self.oom_wait = false;
         retry
+    }
+
+    /// The Python function a call of `f` runs: `f`, or the function a
+    /// bound method `f` binds.
+    fn python_fn_of(&self, f: Value) -> Option<Value> {
+        let f = if f.is_obj_kind(ty::METHOD as u8) {
+            self.vslot(f, 1)
+        } else {
+            f
+        };
+        f.is_obj_kind(ty::FUNC as u8).then_some(f)
     }
 
     /// Whether a plain `CALL` of `f` with the arguments at stack indexes

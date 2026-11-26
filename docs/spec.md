@@ -2042,7 +2042,18 @@ timer deadlines.
   operand first (an in-place operator on a dict or set, or on an instance
   of a subclass of one), an f-string's `BUILD_STRING`, a starred display's
   `LIST_TO_TUPLE`, `UNPACK_EX` from a list or tuple, `LIST_EXTEND` from a
-  list or tuple or an iterator over one, `CALL_EX` of a Python function,
+  list or tuple or an iterator over one, a call of a Python function or of
+  a method bound to one (`CALL`, `CALL_METHOD`, `CALL_KW`,
+  `CALL_METHOD_KW` and `CALL_EX`: it binds its arguments and enters its
+  frame, or makes its generator or coroutine, before any of its code
+  runs, so one refused its frame, its stack or its arguments ran none;
+  these instructions carry no continuation, so a failure after the
+  callee returned is never reported at them), an `async with` exit
+  (`WITH_EXIT` b 2 and 3) of a coroutine function or a method bound to
+  one, which only makes its coroutine (the prelude's `_invoke` that calls
+  a bound one, loaded on first use, included; a plain `with` exit is
+  not, as its continuation's failure after the exit returned is reported
+  at the same instruction), `CALL_EX`
   of a builtin type whose constructor copies its argument
   (`dict(x, **kw)`) or of a builtin that changes nothing before its result
   is allocated (`'{k}'.format(**kw)`), and any `CALL_EX` whose arguments

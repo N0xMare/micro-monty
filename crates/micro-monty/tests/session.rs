@@ -841,6 +841,191 @@ print(r)
     }
 }
 
+/// A call of a Python function or of a method bound to one refused the
+/// memory for its frame (the stack's growth, its coroutine) before any of
+/// its code ran waits for a collection and runs again, once. `pad` leaves
+/// 1 MiB of the 8 MiB limit and `g` all but `d` bytes of it; dropping `g`
+/// leaves 1 MiB of garbage no safepoint has collected yet when a call of
+/// a 400-deep recursion (positional, a method with a keyword, a bound
+/// method through `*`) grows the stack past what is free. They raised
+/// `MemoryError` there: the positional one 84 to 340 calls deep from
+/// 5,000 to 17,000 bytes free, the `*` one at 10 of 26 fills even once
+/// the positional one was retried [M]. The count of calls shows no frame
+/// ran twice; with `g` kept (`h`), the rerun is refused again and raises;
+/// and the cell parked every 5, 61 or 900 fuel units, in one session or
+/// restored at every park, prints and spends what it does unparked.
+///
+/// An `async with` exit under `asyncio.run` calls a bound `__aexit__`
+/// through the prelude's `_invoke`, by `*`: its body dropping `g`, the
+/// 200 locals of the exit's coroutine were refused with the exit never
+/// run (63 fills from 11,884 bytes free [M]). A plain `with` exit is not
+/// retried (a failure after it returned is reported at the same
+/// instruction), so refused, it still raises with its `__exit__` not run.
+#[test]
+fn a_python_call_refused_its_frame_runs_again_after_a_collection() {
+    let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(8 << 20)));
+    let run = |setup: &str, src: &str, slice: Option<u64>, restore: bool| {
+        let out = Arc::new(Mutex::new(String::new()));
+        let hook = |s: &mut Session| {
+            let sink = Arc::clone(&out);
+            s.set_output(Box::new(move |t: &str| {
+                sink.lock().expect("output lock").push_str(t);
+            }));
+        };
+        let mut s = Session::new(&engine).expect("session");
+        hook(&mut s);
+        let p = s.start(&engine.compile(setup, "setup.py").expect("compiles"));
+        assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+        let total = 1 << 40;
+        s.set_fuel_total(Some(total));
+        s.set_fuel(slice);
+        let mut spent = 0;
+        let mut p = s.start(&engine.compile(src, "test.py").expect("compiles"));
+        while let Progress::Parked { .. } = p {
+            if restore {
+                let image = s.snapshot().expect("snapshot");
+                spent += total - s.fuel_total().expect("a total");
+                s = engine.restore(&image).expect("restores");
+                hook(&mut s);
+                s.set_fuel_total(Some(total));
+            }
+            s.set_fuel(Some(slice.unwrap_or(0).max(s.fuel_wanted())));
+            p = s.resume(Resume::Continue).expect("resumes");
+        }
+        spent += total - s.fuel_total().expect("a total");
+        let text = out.lock().expect("output lock").clone();
+        (p, text, spent)
+    };
+    for call in ["r(400)", "o.m(n=400)", "o.e(400)"] {
+        let src = format!(
+            "g = None\ntry:\n    out = {call}\nexcept MemoryError:\n    out = 'MemoryError'\nh = None\ngc.collect()\nprint(out, calls)\n"
+        );
+        for d in (4000..30_000).step_by(1000) {
+            let (p, text, _) = run(&refused_call_setup(d, false), &src, None, false);
+            assert!(matches!(p, Progress::Complete(_)), "{call} {d}: {p:?}");
+            assert_eq!(text, "400 401\n", "{call} {d}");
+        }
+        let mut raised = 0;
+        for d in [5000, 11_000, 17_000] {
+            let (p, kept, _) = run(&refused_call_setup(d, true), &src, None, false);
+            assert!(
+                matches!(p, Progress::Complete(_)),
+                "{call} {d}, kept: {p:?}"
+            );
+            if let Some(n) = kept.strip_prefix("MemoryError ") {
+                assert!(
+                    n.trim_end().parse::<u32>().is_ok_and(|n| n < 401),
+                    "{call} {d}: {kept}"
+                );
+                raised += 1;
+            } else {
+                assert_eq!(kept, "400 401\n", "{call} {d}, kept");
+            }
+        }
+        assert!(raised > 0, "{call}: no kept fill was refused");
+        let setup = refused_call_setup(11_000, false);
+        let (_, text, fuel) = run(&setup, &src, None, false);
+        for slice in [5, 61, 900] {
+            for restore in [false, true] {
+                let (p, t, f) = run(&setup, &src, Some(slice), restore);
+                assert!(matches!(p, Progress::Complete(_)), "{p:?}");
+                assert_eq!(
+                    (t, f),
+                    (text.clone(), fuel),
+                    "{call}: slice {slice}, restored {restore}"
+                );
+            }
+        }
+    }
+    let with = |call: &str| {
+        format!(
+            "try:\n    {call}\nexcept MemoryError:\n    flags[2] = 1\nh = None\ngc.collect()\nprint(flags)\n"
+        )
+    };
+    let skipped = "[1, 0, 1]\n";
+    let src = with("asyncio.run(body())");
+    for d in (11_000..14_000).step_by(64) {
+        let (_, text, _) = run(&refused_call_setup(d, false), &src, None, false);
+        assert_ne!(text, skipped, "async with, {d}: __aexit__ not run");
+    }
+    let src = with("pbody()");
+    let refused = (2900..3700)
+        .step_by(32)
+        .filter(|&d| run(&refused_call_setup(d, false), &src, None, false).1 == skipped)
+        .count();
+    assert!(refused > 0, "no fill refused a plain with exit");
+}
+
+/// The setup of `a_python_call_refused_its_frame_runs_again_after_a_collection`:
+/// `d` bytes of the 8 MiB limit free once `g` is dropped, or kept with `h`.
+fn refused_call_setup(d: u64, keep: bool) -> String {
+    format!(
+        "\\
+import asyncio
+import gc
+calls = 0
+flags = [0, 0, 0]
+def r(n):
+    global calls
+    calls += 1
+    return r(n - 1) + 1 if n else 0
+class O:
+    def m(self, n):
+        global calls
+        calls += 1
+        return self.m(n=n - 1) + 1 if n else 0
+    def e(self, n):
+        global calls
+        calls += 1
+        return e(*(n - 1,)) + 1 if n else 0
+o = O()
+e = o.e
+class A:
+    async def __aenter__(self):
+        flags[0] = 1
+    async def __aexit__(self, *e):
+        {locs}0
+        flags[1] = 1
+async def body():
+    global g
+    async with A():
+        g = None
+class P:
+    def __enter__(self):
+        flags[0] = 1
+    def __exit__(self, *e):
+        flags[1] = 1
+def pbody():
+    global g
+    with P():
+        g = None
+def fits(n):
+    try:
+        bytes(n)
+    except MemoryError:
+        return False
+    return True
+lo, hi = 1 << 16, 1 << 24
+while lo < hi:
+    mid = (lo + hi + 1) // 2
+    ok = fits(mid)
+    gc.collect()
+    if ok:
+        lo = mid
+    else:
+        hi = mid - 1
+pad = bytes(lo - (1 << 20))
+g = bytes((1 << 20) - {d})
+h = {keep}
+",
+        keep = if keep { "g" } else { "None" },
+        locs = (0..200)
+            .map(|k| format!("a{k} = "))
+            .collect::<Vec<_>>()
+            .concat()
+    )
+}
+
 /// An exhausted builtin iterator drops its sequence, as python3.14's do:
 /// three exhausted iterators over 8 MB lists kept the lists, so the next
 /// three raised `MemoryError` under a 32 MiB limit. Each kind of iterator

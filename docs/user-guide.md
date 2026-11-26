@@ -1269,8 +1269,9 @@ memory (`xs = None`, or a fill inside a function the error left) can
 allocate again: a list, tuple, set, dict or slice display, a string
 operation or f-string, a lambda or `def`, `str`, `int` or `float` of a
 number, str or bytes, a builtin exception, an instance of a class without
-`__init__` or `__new__`, and anything after a call of a Python function
-or a loop iteration, each waiting once for a collection, charged as
+`__init__` or `__new__`, a call of a Python function (its frame waits
+too), and anything after such a call or a loop iteration, each waiting
+once for a collection, charged as
 below \[M\]. Any other first statement may still raise `MemoryError`
 there, for example an instance of a class with `__init__`, `raise E`
 without a call, a failing `assert`, `object()`, `range(5)`, `slice(1, n)`
