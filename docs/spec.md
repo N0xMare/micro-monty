@@ -2586,6 +2586,11 @@ output callback, the wall clock, entropy, the zone source, the text cut,
 per run, and `Session::set_gc_yield`, which a host sets again after a
 restore. Inline caches start empty.
 
+A text limit (`Session::set_text_limit`) past 4 GiB, written by a 64-bit
+build, is read by a 32-bit one as the largest it holds, 4 GiB − 1, and
+that session's next image holds 4 GiB − 1. Only the image differs: no
+completion text that long fits a 32-bit target's memory.
+
 **Bundled code on restore.** An image names bundled-module and prelude
 code by reference, and a restore decodes each program it names without its
 instructions: it unpacks the string, index and metadata sections and
