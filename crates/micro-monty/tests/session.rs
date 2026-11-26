@@ -1332,6 +1332,41 @@ fn a_builtin_call_whose_stack_does_not_fit_waits_for_a_collection() {
     }
 }
 
+/// `Future.set_exception` hands off to its prelude twin, whose unit loads
+/// on its first call: when the unit's code does not fit, nothing ran, so
+/// the call waits for a collection and runs again. With 1 MiB of garbage
+/// at 8 MiB it raised `MemoryError` (here at 4,000 B free [M]); in a loop
+/// callback (shield's `_inner_done_callback`) that left the shield
+/// unfinished, and the run ended with every task waiting.
+#[test]
+fn a_first_set_exception_whose_unit_does_not_fit_waits_for_a_collection() {
+    let mut ran = 0;
+    for free in (2..40).map(|k| k * 1000) {
+        let setup = format!(
+            "import asyncio, gc\nloop = asyncio.new_event_loop()\nfut = loop.create_future()\n\
+             def fits(n):\n    try:\n        bytes(n)\n    except MemoryError:\n        return False\n\
+             \x20   return True\nlo, hi = 1 << 16, 1 << 24\nwhile lo < hi:\n    mid = (lo + hi + 1) // 2\n\
+             \x20   ok = fits(mid)\n    gc.collect()\n    lo, hi = (mid, hi) if ok else (lo, mid - 1)\n\
+             pad = bytes(lo - (1 << 20) - {free})\ng = bytes(1 << 20)\n"
+        );
+        let cell = "g = None\ntry:\n    fut.set_exception(ValueError('x'))\n\
+                    \x20   r = type(fut.exception()).__name__\nexcept MemoryError:\n    r = 'ME'\nr\n";
+        let ps = run_cells_at(8, &[&setup, cell]);
+        assert_eq!(ps[0], Progress::Complete(None), "{free} B free");
+        // Where the cell's own code does not fit, it raises before it runs.
+        if matches!(&ps[1], Progress::Error(e) if e.traceback == "MemoryError\n") {
+            continue;
+        }
+        ran += 1;
+        assert!(
+            matches!(&ps[1], Progress::Complete(Some(c)) if c.repr == "'ValueError'"),
+            "{free} B free: {:?}",
+            ps[1]
+        );
+    }
+    assert!(ran > 30, "{ran} headrooms ran the cell");
+}
+
 /// A `ModuleNotFoundError` whose `name` has no room raises `MemoryError`,
 /// as the oracle would not make the error: it was raised with
 /// `name` `None` and the refusal dropped (7 strs freed at 8 MiB [M]).

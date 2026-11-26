@@ -1861,7 +1861,9 @@ they allocate, so after `MemoryError` they too wait for a collection and
 run once more (§9.2, `Vm::native_pure`): `asyncio.sleep`,
 `loop.create_future()`, a timer's deadline, `call_soon`'s queue entry,
 `add_done_callback`, `remove_done_callback`, `set_result`,
-`set_exception`'s settle, `cancel` and a task's name; `create_task`,
+`set_exception` (its hand-off to the prelude, whose unit loads on first
+use and is taken out again when it does not fit, and its settle),
+`cancel` and a task's name; `create_task`,
 `gather`, `wait`'s and `as_completed`'s waits and `current_task()` do not (each takes a task number or slot, queues or
 registers before an allocation that can fail), nor does making a prelude
 object (`Handle`, `Event`, `Lock`, `Queue`), nor `result()` and

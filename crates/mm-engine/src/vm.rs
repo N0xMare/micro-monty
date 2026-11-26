@@ -2022,7 +2022,10 @@ impl Vm {
             {
                 true
             }
-            Some(T::Future) => n.name() == "set_result",
+            // `set_exception` only hands off to its prelude twin, whose
+            // unit, loaded on first use, is taken out again when it does
+            // not fit (`Vm::load_in`).
+            Some(T::Future) => matches!(n.name(), "set_result" | "set_exception"),
             Some(T::Task) => matches!(n.name(), "get_name" | "set_name"),
             None if n.module() == Some("_mm") => matches!(
                 n.name(),
