@@ -246,8 +246,28 @@ class PurePath(os.PathLike):
         return self._root == other._root and self._tail[:len(other._tail)] == other._tail
 
     def full_match(self, pattern, *, case_sensitive=None):
-        from fnmatch import fnmatchcase
-        return fnmatchcase(str(self), str(pattern))
+        from fnmatch import _translate
+        import re
+        if not hasattr(pattern, 'with_segments'):
+            pattern = self.with_segments(pattern)
+        path = str(self) if self.parts else ''
+        parts = (str(pattern) if pattern.parts else '').split('/')
+        pieces = []
+        for i, part in enumerate(parts):
+            last = i == len(parts) - 1
+            if part == '**':
+                if last:
+                    pieces.append('.*')
+                elif parts[i + 1] != '**':
+                    pieces.append('(?:.+/)?')
+            else:
+                pieces.extend(['[^/]+'] if part == '*' else _translate(part, '[^/]*', '[^/]')[0])
+                if not last:
+                    pieces.append('/')
+        flags = re.DOTALL
+        if case_sensitive is not None and not case_sensitive:
+            flags |= re.IGNORECASE
+        return re.fullmatch(''.join(pieces), path, flags) is not None
 
     def match(self, path_pattern, *, case_sensitive=None):
         from fnmatch import fnmatchcase
@@ -393,4 +413,3 @@ class Path(PurePath):
 
 class PosixPath(Path, PurePosixPath):
     """Path subclass for non-Windows systems."""
-
