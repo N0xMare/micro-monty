@@ -12,7 +12,7 @@ use crate::nstep::{STEP_WORK, op};
 use crate::types::{T, ty};
 use crate::vm::{CallArgs, Raised, Vm};
 use alloc::{format, string::String};
-use mm_core::{MAX_OBJECT_BYTES, Value};
+use mm_core::{ByteRef, MAX_OBJECT_BYTES, Value};
 
 /// One format item. Layout is computed before narrowing any object bounds.
 struct Item {
@@ -371,7 +371,9 @@ fn pack_one(vm: &Vm, code: u8, little: bool, v: Value, out: &mut [u8]) -> Packed
 }
 
 // Value slots: format, source tuple or buffer, private result, and the
-// offset argument (preflight only). W_O counts values, not bytes.
+// offset argument, converted value, or pending unpack field's block.
+// W_O counts values. In a wide `s`, SINGLE is the number of bytes passed,
+// AT is the byte cursor in the record, and REPEAT is the remaining width.
 pub(crate) const MODE: usize = W_A;
 pub(crate) const BASE: usize = W_A + 1;
 pub(crate) const SIZE: usize = W_A + 2;
@@ -387,6 +389,7 @@ const FROM: u64 = 2;
 const SCAN: u64 = 0;
 const EMIT: u64 = 1;
 const CONVERT: u64 = 2;
+const WIDE: u64 = STEP_WORK * 8;
 
 /// `_pack(fmt, args)` starts the job; `_pack(ticket, value)` consumes a
 /// conversion ticket and writes the converted scalar in the same position.
@@ -537,7 +540,7 @@ impl Vm {
                 }
             }
         }
-        if j.w[SINGLE] == 1 && size as u64 / 8 >= STEP_WORK {
+        if j.w[SINGLE] == 1 && size as u64 >= WIDE {
             let src = if pack {
                 let v = self.vslot(src, 0);
                 if !Self::is_bytes_like(v) {
@@ -622,10 +625,9 @@ impl Vm {
                     return Err(self.bad_step());
                 }
                 if matches!(it.code, b's' | b'p') {
-                    let at = it.offset as usize;
                     let width = it.num as usize;
                     let pascal = it.code == b'p';
-                    if let Some(block) = block {
+                    if pack {
                         let v = self.vslot(src, j.w[W_O] as u32);
                         if !Self::is_bytes_like(v) {
                             let m = format!(
@@ -634,44 +636,17 @@ impl Vm {
                             );
                             return self.new_str(&m).map(Some);
                         }
-                        let head = usize::from(pascal && width != 0);
-                        let copy = self.bytes_data(v).len().min(width - head);
-                        if copy > 0 {
-                            let source = self
-                                .data_block(v)
-                                .filter(|&b| b != block)
-                                .ok_or_else(|| self.bad_step())?;
-                            let res = self.heap.copy_bytes(source, 0, block, at + head, copy);
-                            self.hx(res)?;
+                    }
+                    if !pascal && it.num >= WIDE {
+                        if !pack {
+                            j.v[3] = Value::from_byte_ref(self.job_block(width)?);
                         }
-                        if head != 0 {
-                            let res = self
-                                .heap
-                                .bytes_mut(block)
-                                .map(|d| d[at] = copy.min(255) as u8);
-                            self.hx(res)?;
-                        }
-                    } else {
-                        let at = base + at;
-                        let d = &self.bytes_data(src)[at..at + width];
-                        let (skip, n) = if pascal {
-                            (
-                                1,
-                                d.first()
-                                    .map_or(0, |&n| usize::from(n).min(width.saturating_sub(1))),
-                            )
-                        } else {
-                            (0, width)
-                        };
-                        let b = self.job_block(n)?;
-                        if n != 0 {
-                            let source = self.data_block(src).ok_or_else(|| self.bad_step())?;
-                            let res = self.heap.copy_bytes(source, at + skip, b, 0, n);
-                            self.hx(res)?;
-                        }
-                        let v = self.job_wrap(j, b, 0)?;
-                        let tuple = tuple.ok_or_else(|| self.bad_step())?;
-                        self.set_slot(tuple, j.w[W_O] as u32, v);
+                        (j.w[AT], j.w[CODE], j.w[REPEAT]) = (it.offset, u64::from(b's'), it.num);
+                        continue;
+                    }
+                    let b = self.struct_copy_field(j, width, pascal)?;
+                    if !pack {
+                        self.struct_store_field(j, b)?;
                     }
                     j.w[AT] = it.end;
                     j.w[W_O] += 1;
@@ -680,6 +655,13 @@ impl Vm {
                 (j.w[AT], j.w[CODE], j.w[REPEAT]) = (it.offset, u64::from(it.code), n);
             }
             let code = j.w[CODE] as u8;
+            if code == b's' {
+                let left = self.job_left(start) - (j.w[AT] / 8 + j.w[W_O] - before);
+                if !self.struct_wide(j, left)? {
+                    return Ok(None);
+                }
+                continue;
+            }
             let (size, _) = code_size(code, native).ok_or_else(|| self.bad_step())?;
             let at = j.at(AT);
             let mut wire = [0; 16];
@@ -733,6 +715,80 @@ impl Vm {
             j.w[REPEAT] -= 1;
         }
         Ok(None)
+    }
+
+    /// Advance through one `s` field without exposing its private output.
+    /// Pack padding is already zero; it pays the same tariff as copied bytes.
+    fn struct_wide(&mut self, j: &mut Job, left: u64) -> Result<bool, Raised> {
+        let (at, rem) = (j.at(AT), j.at(REPEAT));
+        let n = rem.min((left * 8) as usize - at % 8);
+        let b = self.struct_copy_field(j, n, false)?;
+        j.w[AT] += n as u64;
+        if n != rem {
+            j.w[SINGLE] += n as u64;
+            j.w[REPEAT] -= n as u64;
+            return Ok(false);
+        }
+        if j.w[MODE] != PACK {
+            self.struct_store_field(j, b)?;
+            j.v[3] = Value::NONE;
+        }
+        (j.w[SINGLE], j.w[CODE], j.w[REPEAT]) = (0, 0, 0);
+        j.w[W_O] += 1;
+        Ok(true)
+    }
+
+    /// Copy one window of a byte field. The record cursor is separate
+    /// from the copy size: `s` pads, and `p` also has a length byte.
+    #[inline(never)]
+    fn struct_copy_field(&mut self, j: &Job, n: usize, pascal: bool) -> Result<ByteRef, Raised> {
+        let (at, done) = (j.at(AT), j.at(SINGLE));
+        let head = usize::from(pascal && n != 0);
+        let pack = j.w[MODE] == PACK;
+        let (src, from, dst, to, copy) = if pack {
+            let src = self.vslot(j.v[1], j.w[W_O] as u32);
+            let copy = (n - head).min(self.bytes_data(src).len().saturating_sub(done));
+            let dst = j.v[2].as_byte_ref().ok_or_else(|| self.bad_step())?;
+            (src, done, dst, at + head, copy)
+        } else {
+            let src = j.v[1];
+            let at = j.at(BASE) + at;
+            let copy = if head != 0 {
+                usize::from(self.bytes_data(src)[at]).min(n - head)
+            } else {
+                n
+            };
+            let dst = if let Some(b) = j.v[3].as_byte_ref() {
+                b
+            } else {
+                self.job_block(copy)?
+            };
+            (src, at + head, dst, done, copy)
+        };
+        if copy != 0 {
+            let src = self
+                .data_block(src)
+                .filter(|&b| b != dst)
+                .ok_or_else(|| self.bad_step())?;
+            let res = self.heap.copy_bytes(src, from, dst, to, copy);
+            self.hx(res)?;
+        }
+        if pack && head != 0 {
+            let res = self
+                .heap
+                .bytes_mut(dst)
+                .map(|d| d[at] = copy.min(255) as u8);
+            self.hx(res)?;
+        }
+        Ok(dst)
+    }
+
+    #[inline(never)]
+    fn struct_store_field(&mut self, j: &Job, b: ByteRef) -> Result<(), Raised> {
+        let v = self.job_wrap(j, b, 0)?;
+        let tuple = j.v[2].as_obj().ok_or_else(|| self.bad_step())?;
+        self.set_slot(tuple, j.w[W_O] as u32, v);
+        Ok(())
     }
 }
 
@@ -823,8 +879,6 @@ pub(crate) fn job_ok(vm: &Vm, v: &dyn Fn(usize) -> Value, w: &dyn Fn(usize) -> u
             };
     }
     if w(W_PASS) > CONVERT
-        || v(3) != Value::NONE
-        || w(SINGLE) != 0
         || at > size
         || k > len
         || size > MAX_OBJECT_BYTES
@@ -834,7 +888,40 @@ pub(crate) fn job_ok(vm: &Vm, v: &dyn Fn(usize) -> Value, w: &dyn Fn(usize) -> u
         return false;
     }
     let code = u8::try_from(w(CODE)).ok();
-    if reps != 0 {
+    if code == Some(b's') {
+        let done = w(SINGLE);
+        if w(W_PASS) != EMIT
+            || reps == 0
+            || reps > size - at
+            || done > at
+            || (done != 0 && !at.is_multiple_of(8))
+            || done + reps < WIDE
+            || k == len
+            || count != 0
+            || i.checked_sub(1).and_then(|i| fmt.get(i as usize)) != Some(&b's')
+        {
+            return false;
+        }
+        if mode == PACK {
+            let field = vm.vslot(src, k as u32);
+            if done == 0
+                || v(3) != Value::NONE
+                || !Vm::is_bytes_like(field)
+                || v(2).as_byte_ref() == vm.data_block(field)
+            {
+                return false;
+            }
+        } else if v(3)
+            .as_byte_ref()
+            .filter(|&b| Some(b) != vm.data_block(src) && Some(b) != vm.data_block(v(0)))
+            .and_then(|b| vm.heap.bytes(b).ok())
+            .is_none_or(|b| b.len() as u64 != done + reps)
+        {
+            return false;
+        }
+    } else if v(3) != Value::NONE || w(SINGLE) != 0 {
+        return false;
+    } else if reps != 0 {
         let Some(c) = code.filter(|c| !matches!(c, b'x' | b's' | b'p')) else {
             return false;
         };

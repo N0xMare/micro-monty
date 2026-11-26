@@ -1846,20 +1846,34 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "(out,) = struct.unpack('67108864s', b)\nassert out[:2] == b'ab' and out[-2:] == b'ab' and len(out) == len(b)",
         1,
     ),
-    // A second item in the format still leaves the field copy in one
-    // step (44 to 86 ms at 32 MiB on the previous path [M]).
+    // A wide field in a mixed record steps both with padding and with
+    // real scalar values immediately before and after it.
     #[cfg(feature = "mod-struct")]
     (
-        Row::Open,
+        Row::Bounded,
         "import struct\nb = b'ab' * 33_554_431 + b'a'",
-        "out = struct.pack('67108863sx', b)\nassert len(out) == len(b) + 1",
+        "out = struct.pack('67108863sx', b)\nassert len(out) == len(b) + 1 and out[-2:] == b'a\\x00'",
         1,
     ),
     #[cfg(feature = "mod-struct")]
     (
-        Row::Open,
+        Row::Bounded,
         "import struct\nb = b'ab' * 33_554_432",
-        "(out,) = struct.unpack('67108863sx', b)\nassert len(out) == 67_108_863",
+        "(out,) = struct.unpack('67108863sx', b)\nassert len(out) == 67_108_863 and out[-2:] == b'ba'",
+        1,
+    ),
+    #[cfg(feature = "mod-struct")]
+    (
+        Row::Bounded,
+        "import struct\nb = b'ab' * 33_554_428",
+        "out = struct.pack('<I67108856sI', 3, b, 5)\nassert len(out) == 67_108_864 and out[:6] == b'\\x03\\x00\\x00\\x00ab' and out[-6:] == b'ab\\x05\\x00\\x00\\x00'",
+        1,
+    ),
+    #[cfg(feature = "mod-struct")]
+    (
+        Row::Bounded,
+        "import struct\nb = b'\\x03\\x00\\x00\\x00' * 16_777_216",
+        "a, out, z = struct.unpack('<I67108856sI', b)\nassert a == z == 3 and len(out) == 67_108_856 and out[-4:] == b'\\x03\\x00\\x00\\x00'",
         1,
     ),
     // A two-way search whose every alignment fails late (the needle's

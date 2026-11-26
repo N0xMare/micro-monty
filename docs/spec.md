@@ -661,15 +661,16 @@ messages; copy wording where behaviour matches.
   before packing large sets, so repeated bytes do not serialize writes to
   the same bitset word. `struct.pack` and `unpack` of a format that is one
   `s` field of 1 MiB or more copy it through the strided byte job (stride
-  one, zero-padded past its source), a step's budget at a time. In a mixed
-  format, each byte field is still copied whole in one step (the `Open`
-  rows of `tests/steps.rs`). Public `struct` size and arity queries still
-  scan the format in one step. The chunked operations:
+  one, zero-padded past its source), a step's budget at a time. Public
+  `struct` size and arity queries still scan the format in one step. The
+  chunked operations:
 
-  - **`struct` scalar fields.** Pack and unpack preflight the immutable
-    format in byte windows, checking layout before converting any values.
+  - **`struct` mixed and scalar formats.** Pack and unpack preflight the
+    immutable format in byte windows, checking layout before converting any values.
     They reread it to fill one arena bytes block or tuple in steps, even
-    for one item with many repeats. A Python conversion resumes at its
+    for one item with many repeats. A mixed `s` field of 1 MiB or more
+    continues inside the arena copy, keeping its byte offset and any
+    unfinished unpack output private. A Python conversion resumes at its
     field using a private single-use ticket; it does not repack previous
     fields, which could read a bytearray the conversion has since edited.
 
@@ -1010,9 +1011,8 @@ are the rules above. Where the code falls short, the clause says so under
    checked on every `Bounded` row, and by hand over every public native
    in 64-unit slices (`fuzz/src/bin/fuel_sweep.rs`, fuzz/README.md):
    `struct.pack` and `struct.unpack` of a single 32 MiB `s` field overdraw
-   by at most 655,304 and 655,303 units, respectively [M]. The sweep does
-   not exercise large `s` fields in multi-item formats such as `Nsx`,
-   which still copy the field in one step.
+   by at most 655,304 and 655,303 units, respectively [M]. The step oracle
+   also bounds wide `s` fields in mixed formats, with padding or scalars.
 4. **Results do not depend on how the host slices the run.** Output,
    exceptions, the values left and the fuel spent are the same, with the
    exceptions under Today, whether the cell runs unparked, in fuel slices

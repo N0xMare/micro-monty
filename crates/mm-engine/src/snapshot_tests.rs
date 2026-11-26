@@ -3008,3 +3008,88 @@ fn a_forged_struct_scalar_job_is_refused() {
         );
     }
 }
+
+#[cfg(feature = "struct")]
+#[test]
+fn a_forged_struct_mixed_field_is_refused() {
+    use crate::bytes::{W_I, W_O, W_PASS, job};
+    use crate::structmod::{AT, BASE, CODE, REPEAT, SINGLE};
+    let program = mm_compile::compile(
+        &mm_parse::parse("pass\n").expect("parses"),
+        mm_compile::Options::default(),
+    )
+    .expect("compiles");
+    let stdlib: &'static [StdModule] = Box::leak(Box::new([StdModule {
+        name: "struct",
+        code: Box::leak(mm_compile::pack::pack(&program.encode()).into_boxed_slice()),
+        packing: None,
+    }]));
+    let pack = "import struct\nb = b'ab' * 1_600_000\nv = struct._pack('3100000s100000x', (b,))\nassert len(v) == len(b) and v[3099998:3100002] == b'ab\\0\\0'\n";
+    let unpack = "import struct\nb = bytearray(b'ab' * 1_550_000)\nv = struct._unpack('3100000s0x', b, 0, False)\nassert len(v[0]) == len(b) and v[0][-2:] == b'ab'\n";
+    let state = |vm: &Vm| job_state(vm, job::STRUCT);
+    let parked = |src| {
+        session_with(
+            src,
+            1361,
+            |vm| {
+                state(vm).is_some_and(|(r, n)| {
+                    vm.raw(r, n + 2 + CODE as u32) == u64::from(b's')
+                        && vm.raw(r, n + 2 + SINGLE as u32) != 0
+                })
+            },
+            stdlib,
+        )
+    };
+    for src in [pack, unpack] {
+        let mut vm = parked(src);
+        assert!(state(&vm).is_some(), "park in wide s: {src}");
+        let mut restored = restore(&mut vm).expect("genuine partial copy restores");
+        restored.set_fuel(None);
+        assert!(matches!(restored.resume(), Exit::Complete(_)), "{src}");
+        for (word, bad) in [
+            (AT, 1),
+            (SINGLE, u64::MAX),
+            (REPEAT, 0),
+            (REPEAT, 3_200_000),
+            (W_O, 1),
+            (W_I, 2),
+            (W_PASS, 2),
+        ] {
+            let mut vm = parked(src);
+            let (r, n) = state(&vm).expect("struct job");
+            vm.heap.set_raw(r, n + 2 + word as u32, bad).expect("word");
+            assert_eq!(
+                restore(&mut vm).err(),
+                Some(SnapError::Corrupt("native step")),
+                "word {word} = {bad} of {src}"
+            );
+        }
+
+        // The source block happens to be exactly the destination's size
+        // in each fixture, so a check of lengths alone would accept it.
+        let mut vm = parked(src);
+        let (r, _) = state(&vm).expect("struct job");
+        let operand = vm.slot(r, 1);
+        let (from, to) = if src == pack {
+            (vm.vslot(operand, 0), 2)
+        } else {
+            (operand, 3)
+        };
+        vm.heap.set(r, to, vm.vslot(from, 0)).expect("alias slot");
+        assert_eq!(
+            restore(&mut vm).err(),
+            Some(SnapError::Corrupt("native step")),
+            "alias of {src}"
+        );
+    }
+    for (word, bad) in [(BASE, mm_core::MAX_OBJECT_BYTES), (REPEAT, 1_900_000)] {
+        let mut vm = parked(unpack);
+        let (r, n) = state(&vm).expect("struct job");
+        vm.heap.set_raw(r, n + 2 + word as u32, bad).expect("word");
+        assert_eq!(
+            restore(&mut vm).err(),
+            Some(SnapError::Corrupt("native step")),
+            "word {word} = {bad} of {unpack}"
+        );
+    }
+}
