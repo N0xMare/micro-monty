@@ -737,6 +737,38 @@ fn a_bundled_module_enters_inside_its_codes() {
     );
 }
 
+#[test]
+fn the_next_call_id_is_above_every_id_handed_out() {
+    let mut vm = Vm::new(VmConfig::default()).expect("vm");
+    vm.define_host_module("", &["ask"], &[], &HostValue::None, None)
+        .expect("defines");
+    let src = "x = ask()\n";
+    let prog = mm_compile::compile(
+        &mm_parse::parse(src).expect("parses"),
+        mm_compile::Options::default(),
+    )
+    .expect("compiles");
+    let entry = vm.load(&prog, "crafted.py", src).expect("loads");
+    assert!(matches!(vm.run(entry), Exit::HostCall(_)));
+    assert!(restore(&mut vm).is_ok(), "the session itself restores");
+    let next = vm.next_call;
+    // The pending call's id handed out again by the next call.
+    vm.next_call = next - 1;
+    assert_eq!(
+        restore(&mut vm).err(),
+        Some(SnapError::Corrupt("registers"))
+    );
+    // The call log's entry for it, once it is answered.
+    vm.host_call = None;
+    assert_eq!(restore(&mut vm).err(), Some(SnapError::Corrupt("call log")));
+    // No id left for the next call.
+    vm.next_call = u64::MAX;
+    assert_eq!(
+        restore(&mut vm).err(),
+        Some(SnapError::Corrupt("registers"))
+    );
+}
+
 #[cfg(feature = "asyncio")]
 #[test]
 fn a_task_index_names_a_task() {

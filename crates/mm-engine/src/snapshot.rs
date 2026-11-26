@@ -2178,6 +2178,12 @@ impl Vm {
         let next_call = need(r.u64(), "registers")?;
         let has_call = need(r.bool(), "registers")?;
         let call = (need(r.u64(), "registers")?, need(r.u32(), "registers")?);
+        // Every call id handed out (the pending call, the futures, the
+        // log) is below the next one, which never runs out: a reused id
+        // would misorder the log and replace a pending future.
+        if next_call == u64::MAX || (has_call && call.0 >= next_call) {
+            return Err(SnapError::Corrupt("registers"));
+        }
         let host_call = has_call.then_some(call);
         let next_version = need(r.u64(), "registers")?;
         let want_text = need(r.bool(), "registers")?;
@@ -2315,7 +2321,7 @@ impl Vm {
         let mut futures = Vec::with_capacity(nfut);
         for _ in 0..nfut {
             let id = need(r.u64(), "futures")?;
-            if futures.last().is_some_and(|&(prev, _)| prev >= id) {
+            if futures.last().is_some_and(|&(prev, _)| prev >= id) || id >= next_call {
                 return Err(SnapError::Corrupt("futures"));
             }
             futures.push((id, need(r.value(), "futures")?));
@@ -2399,7 +2405,7 @@ impl Vm {
                 r.u8().and_then(crate::host::CallStatus::from_code),
                 "call log",
             )?;
-            if call_log.last().is_some_and(|&(prev, _, _)| prev >= id) {
+            if call_log.last().is_some_and(|&(prev, _, _)| prev >= id) || id >= next_call {
                 return Err(SnapError::Corrupt("call log"));
             }
             call_log.push((id, function, status));

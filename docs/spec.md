@@ -2526,7 +2526,8 @@ starts, only `JUMP_LOOP` backward, sane handler ranges, a terminator last,
 parameters within the registers and names; and, for stored code, every
 `YIELD_FROM` right after its `SEND`), frame and generator pcs (a code
 walked once for all the pcs it holds), frame bounds
-(summed with checked arithmetic), code indices, tasks and host-call state, every
+(summed with checked arithmetic), code indices, tasks and host-call state
+(every call id the image holds below the next one), every
 dict's index (entry bits, duplicates, slots naming live entries, tags, probe
 reachability, length; in time linear in its table however its probes
 collide, with a scratch bit per entry and per slot),
