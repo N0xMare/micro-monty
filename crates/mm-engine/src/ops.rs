@@ -1195,8 +1195,19 @@ impl Vm {
     pub(crate) fn compare(&mut self, opcode: u8, a: Value, b: Value) -> Result<Value, Raised> {
         use mm_compile::bytecode::op as o;
         let r = match opcode {
-            o::TEST_EQ => self.eq_values(a, b)?,
-            o::TEST_NE => !self.eq_values(a, b)?,
+            o::TEST_EQ | o::TEST_NE => {
+                // Direct set equality probes colliding keys even against
+                // itself; container element comparisons keep identity first.
+                let eq = if a == b
+                    && let s = self.unbx(a)
+                    && Vm::is_set(s)
+                {
+                    self.set_issubset_r(s, s)?
+                } else {
+                    self.eq_values(a, b)?
+                };
+                eq == (opcode == o::TEST_EQ)
+            }
             o::TEST_IS => a == b,
             o::TEST_IS_NOT => a != b,
             o::TEST_IN => self.contains(b, a)?,

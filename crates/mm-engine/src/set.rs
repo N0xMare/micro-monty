@@ -1185,7 +1185,8 @@ impl Vm {
 
     /// `a <op> b` for two sets (`&`, `|`, `-`, `^`; in place for a set
     /// `a`, which a frozenset never is), in steps when `top`. The bulk
-    /// result is the set for operators and `None` for update methods.
+    /// result is the receiver for in-place operators (which may be a
+    /// subclass instance), a new set otherwise, or `None` for update methods.
     pub(crate) fn set_binop(
         &mut self,
         op: mm_compile::ast::BinOp,
@@ -1196,6 +1197,8 @@ impl Vm {
         res: u64,
     ) -> Result<Value, Raised> {
         use mm_compile::ast::BinOp;
+        let recv = a;
+        let a = if inplace { self.unbx(a) } else { a };
         let inplace = inplace && !self.set_frozen(a);
         let (la, lb) = (self.set_len(a), self.set_len(b));
         if inplace {
@@ -1204,34 +1207,42 @@ impl Vm {
                 if op != BinOp::BitOr {
                     self.set_clear(a)?;
                 }
-                return Ok(if res == res::NONE { Value::NONE } else { a });
+                return Ok(if res == res::NONE { Value::NONE } else { recv });
             }
+            // Work on the backing set, but return the subclass instance
+            // even when the operation parks or calls a Python comparison.
+            let mut regs = [a, b, Value::NONE, Value::NONE, Value::NONE];
+            let res = if recv != a && res == 0 {
+                regs[4] = recv;
+                4
+            } else {
+                res
+            };
             let prog = match op {
                 BinOp::BitOr => phase(act::ADD, 0, 1, 0),
                 BinOp::Sub if lb >> 3 > la => {
                     // `set_difference_update_internal` intersects a much
                     // larger source before the first deletion.
-                    let tmp = self.new_set()?;
-                    let prog = phase(act::AND, 2, 0, 1) | phase(act::DISCARD, 0, 2, 0) << 16;
-                    return self.bulk(&[a, b, tmp], prog, res, top);
+                    regs[2] = self.new_set()?;
+                    phase(act::AND, 2, 0, 1) | phase(act::DISCARD, 0, 2, 0) << 16
                 }
                 BinOp::Sub => phase(act::DISCARD, 0, 1, 0),
                 BinOp::BitXor => phase(act::TOGGLE, 0, 1, 0),
                 _ => {
-                    let tmp = self.new_set()?;
                     let (small, big) = if lb > la { (a, b) } else { (b, a) };
-                    let regs = [a, small, big, tmp];
+                    regs[1] = small;
+                    regs[2] = big;
+                    regs[3] = self.new_set()?;
                     // `set_intersection` of a set with itself: a copy.
                     let first = if a == b {
                         phase(act::ADD, 3, 1, 0)
                     } else {
                         phase(act::AND, 3, 1, 2)
                     };
-                    let prog = first | phase(act::MOVE, 0, 3, 0) << 16;
-                    return self.bulk(&regs, prog, res, top);
+                    first | phase(act::MOVE, 0, 3, 0) << 16
                 }
             };
-            return self.bulk(&[a, b], prog, res, top);
+            return self.bulk(&regs, prog, res, top);
         }
         let out = self.new_set_like(a)?;
         let regs = [out, a, b];

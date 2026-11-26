@@ -215,6 +215,27 @@ impl Vm {
         b: Value,
         stage: u8,
     ) -> Result<Next, Raised> {
+        let bop = BinOp::ALL
+            .get((opb & 0x7f) as usize)
+            .copied()
+            .unwrap_or(BinOp::Add);
+        // The inherited mutable set slot accepts any set or frozenset,
+        // including subclasses, before either plain operator is tried.
+        if stage == 0
+            && opb & 0x80 != 0
+            && matches!(
+                bop,
+                BinOp::Sub | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor
+            )
+            && let lhs = self.unbx(a)
+            && Vm::is_set(lhs)
+            && !self.set_frozen(lhs)
+        {
+            let rhs = self.unbx(b);
+            if Vm::is_set(rhs) && self.dunder(a, BINOP_DUNDERS[bop as usize][2]).is_none() {
+                return self.set_binop(bop, a, rhs, true, true, 0).map(Next::Acc);
+            }
+        }
         let cands = self.binop_cands(opb, a, b);
         if let Some(&(m, s, o)) = cands.get(stage as usize) {
             return self.call_dunder(
@@ -229,10 +250,6 @@ impl Vm {
                 },
             );
         }
-        let bop = BinOp::ALL
-            .get((opb & 0x7f) as usize)
-            .copied()
-            .unwrap_or(BinOp::Add);
         let (ua, ub) = (self.unbx(a), self.unbx(b));
         if ua != a || ub != b {
             // An in-place dunder that declined (`NotImplemented`): as in
