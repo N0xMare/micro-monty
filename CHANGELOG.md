@@ -12,6 +12,8 @@ hashes are pre-release history, kept in the private archive
 
 ## Unreleased
 
+- Shipped Linux binaries pack relative relocations (RELR); GNU/Linux now
+  requires glibc 2.36 or newer, and the musl build remains static.
 - `Session::snapshot` leaves its source unchanged, even during a collection.
   On the same target, restoring preserves the collector's progress, code
   reclamation debt and charged capacities: later outcomes, fuel and final

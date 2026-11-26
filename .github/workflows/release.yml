@@ -10,10 +10,10 @@ name: Release
 # - `mm` and `mm-cell-worker` for macOS arm64/x86_64 and Linux x86_64/arm64,
 #   and static for Linux x86_64 musl, built as shipped (`cargo xtask
 #   shipped-build`: release profile, std rebuilt with
-#   `-Cpanic=immediate-abort`, `--cfg mm_shipped`, LTO, stripped). Linux
-#   builds run on Ubuntu 22.04 (glibc 2.35); arm64 is cross-linked there and
-#   smoke-tested under qemu. The musl binaries allocate through mimalloc,
-#   compiled with musl-gcc (`.cargo/config.toml`).
+#   `-Cpanic=immediate-abort`, `--cfg mm_shipped`, LTO, stripped). GNU/Linux
+#   builds link with RELR and run in Debian 12 (glibc 2.36), including the
+#   arm64 cross-build smoke-tested under qemu. The musl binaries allocate
+#   through mimalloc, compiled with musl-gcc (`.cargo/config.toml`).
 # - The shipped wasm facade examples (`hello`, `roundtrip`) for
 #   wasm32-wasip1 and wasm32-unknown-unknown, built and checked by
 #   `cargo xtask wasm` (shipped build, `wasm-opt` with the shipped arguments,
@@ -40,18 +40,28 @@ jobs:
   native:
     name: native ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - { os: macos-15, target: aarch64-apple-darwin, run: "" }
           - { os: macos-15-intel, target: x86_64-apple-darwin, run: "" }
-          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, run: "" }
-          - { os: ubuntu-22.04, target: x86_64-unknown-linux-musl, run: "" }
-          - os: ubuntu-22.04
+          - { os: ubuntu-24.04, container: 'debian:12', target: x86_64-unknown-linux-gnu, run: "" }
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-musl, run: "" }
+          - os: ubuntu-24.04
+            container: 'debian:12'
             target: aarch64-unknown-linux-gnu
             run: qemu-aarch64 -L /usr/aarch64-linux-gnu
     steps:
+      - name: GNU/Linux build tools (glibc 2.36)
+        if: matrix.container
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential ca-certificates curl git
+          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: actions/checkout@v4
       - name: Toolchain (rust-toolchain.toml)
         run: |
@@ -60,8 +70,7 @@ jobs:
       - name: Cross linker and qemu (Linux arm64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+          apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
       - name: musl-gcc (mimalloc on musl)
         if: matrix.target == 'x86_64-unknown-linux-musl'
@@ -76,6 +85,15 @@ jobs:
         run: |
           cargo xtask shipped-build --target ${{ matrix.target }} --package mm-cli
           cargo xtask shipped-build --target ${{ matrix.target }} --package mm-cell-worker
+      - name: Check GNU/Linux RELR
+        if: matrix.container
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          for binary in mm mm-cell-worker; do
+            readelf -dW "target/$TARGET/release/$binary" | grep -F '(RELR)'
+            readelf -VW "target/$TARGET/release/$binary" | grep -F GLIBC_ABI_DT_RELR
+          done
       - name: Smoke test and build ids
         env:
           TARGET: ${{ matrix.target }}
@@ -103,7 +121,7 @@ jobs:
           if-no-files-found: error
 
   wasm:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain (rust-toolchain.toml; wasm targets, rust-src)
@@ -164,7 +182,7 @@ jobs:
 
   release:
     needs: [native, wasm]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:

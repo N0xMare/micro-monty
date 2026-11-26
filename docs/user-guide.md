@@ -1374,7 +1374,7 @@ with `Session::restore` instead.
 stdlib modules (`uuid`, `unicodedata`, `html.entities`, `ast`) and the
 default limits (256 MiB, no fuel limit). Get it from a release's archive
 (`micro-monty-<target>.tar.gz` for macOS arm64 and x86_64, Linux x86_64
-and arm64 with glibc, and Linux x86_64 with musl, static; with
+and arm64 with glibc 2.36 or newer, and Linux x86_64 with musl, static; with
 `mm-cell-worker` beside it), or build it:
 
 ```text
@@ -1588,15 +1588,10 @@ facade's example, `wasm32-unknown-unknown`) 2,259,536 B, native `hello`
 (x86_64 Linux) 2,451,824 B, `mm_wasm_guest.wasm` 2,355,222 B and
 `mm_wasm_guest_bundle.wasm` 2,354,493 B.
 
-**Native embedders: link with `-Wl,-z,pack-relative-relocs`.** It takes
-35,960 B off native `hello` by shrinking `.rela.dyn` from 37,368 B to under
-1.3 KB \[M\], costs no instructions and needs glibc 2.36 or later (not in
-the measured `hello`). In your `.cargo/config.toml`:
-
-```toml
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-Wl,-z,pack-relative-relocs"]
-```
+**Native RELR.** Shipped GNU/Linux executables use packed relative
+relocations and require glibc 2.36 or newer. Embedders enable RELR at their
+own final link with `-Clink-arg=-Wl,-z,pack-relative-relocs`; library crates
+cannot pass this flag on.
 
 **An allocator for `wasm32-unknown-unknown` (optional).** There, std's
 allocator is the `dlmalloc` crate, whose `free` and `realloc` check the

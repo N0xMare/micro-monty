@@ -243,10 +243,19 @@ pub(crate) const SHIPPED_CARGO: [&str; 3] =
 
 /// [`shipped_build_in`] with another cargo `subcommand` (`rustc`).
 fn shipped_cargo(subcommand: &str, target: &str, src: &Path) -> Command {
+    let mut flags = SHIPPED_RUSTFLAGS.to_owned();
+    if target.contains("-linux-gnu") || target == "x86_64-unknown-linux-musl" {
+        flags.push_str(" -Clink-arg=-Wl,-z,pack-relative-relocs");
+    }
+    if target == "aarch64-unknown-linux-gnu" {
+        // Debian 12's AArch64 GNU ld ignores -z pack-relative-relocs.
+        // Retain rustc's bundled LLD when using an explicit cross GCC driver.
+        flags.push_str(" -Clinker-flavor=gnu-lld-cc");
+    }
     let mut command = tree_cargo(src);
     command
         .env("RUSTC_BOOTSTRAP", "1")
-        .env("RUSTFLAGS", SHIPPED_RUSTFLAGS)
+        .env("RUSTFLAGS", flags)
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .arg(subcommand)
         .args(SHIPPED_CARGO)

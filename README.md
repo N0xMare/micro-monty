@@ -28,8 +28,10 @@ Measured on v0.0.3 (the release commit, on `0c970b8` and its landing) [M]:
 ## Platforms
 
 Tested on Linux x86_64, with glibc and with musl (`x86_64-unknown-linux-musl`,
-static), and macOS on Apple Silicon; every other platform is untested. musl
-runs every case and recorded session as glibc does, but slower: its `malloc`,
+static), and macOS on Apple Silicon; every other platform is untested.
+The shipped GNU/Linux binaries require glibc 2.36 or newer for RELR.
+
+musl runs every case and recorded session as glibc does, but slower: its `malloc`,
 `memcpy` and `memcmp` add 54% to recorded agent sessions' engine time in
 memory and 82% with a snapshot and restore at every host call [M, 0.0.3];
 a global allocator such as mimalloc in the host binary recovers half to
@@ -66,8 +68,9 @@ The `mm` CLI and the `mm-cell-worker` binary (a worker process for the cell
 protocol of [plak](https://github.com/N0xMare/plak), an open-source agent
 harness; [spec §10.2](docs/spec.md)) are attached to each
 [GitHub release](https://github.com/N0xMare/micro-monty/releases) for Linux
-and macOS, x86_64 and arm64 each (only the two platforms above are tested),
-with SHA256SUMS; releases after v0.0.1 also attach the two mm-wasm guests. From source, with the toolchain pinned in
+and macOS, x86_64 and arm64 each, with SHA256SUMS. From v0.0.4, the
+GNU/Linux archives require glibc 2.36 or newer. Releases after v0.0.1 also
+attach the two mm-wasm guests. From source, with the toolchain pinned in
 `rust-toolchain.toml`:
 
 ```bash

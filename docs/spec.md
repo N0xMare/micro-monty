@@ -1151,9 +1151,12 @@ builds with `--cfg mm_size_wasm` runs it too; `cargo xtask size` fails on
 one written otherwise. Tests,
 clippy and every other build stay on plain stable; `cargo xtask wasm`
 builds its examples as shipped too. Native binaries stay
-position-independent (the worker runs untrusted code). Shipped wasm modules
-then go through binaryen's `wasm-opt -Oz` (version 133, installed by
-`.agents/setup`) with exactly the features rustc enables.
+position-independent (the worker runs untrusted code). Shipped Linux
+executables pack relative relocations (RELR); the GNU builds require
+glibc 2.36 or newer, and the static musl builds relocate themselves.
+
+Shipped wasm modules go through binaryen's `wasm-opt -Oz` (version 133,
+installed by `.agents/setup`) with exactly the features rustc enables.
 `wasm32-unknown-unknown` repeats the optimization with `--converge`;
 `wasm32-wasip1` instead caps inlining at 16 KiB per function.
 `xtask/src/wasm.rs` (`wasm_opt_args`) owns those arguments. Output goes into
