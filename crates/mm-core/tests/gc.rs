@@ -144,6 +144,30 @@ fn wide_object_and_cycles() {
 }
 
 #[test]
+fn stats_count_space_swept_by_allocation() {
+    let mut heap = Heap::new(HeapConfig::default());
+    heap.set_incremental(1024, 0);
+    let block = 64 * 1024;
+    let per_segment = SEGMENT_BYTES as usize / block;
+    let mut roots = Vec::new();
+    // Fill every segment. Keep all of the last segment so allocation has
+    // to sweep an earlier one, where only half of the blocks are live.
+    for i in 0..17 * per_segment {
+        let b = heap.alloc_bytes_zeroed(block - 8).unwrap();
+        if i % 2 == 0 || i >= 16 * per_segment {
+            roots.push(Value::from_byte_ref(b));
+        }
+    }
+    let stats = heap.collect(&mut |t| t.values(&roots));
+    assert!(heap.sweeping());
+    heap.alloc_bytes_zeroed(block - 8).unwrap();
+    assert_eq!(
+        heap.stats().live_bytes,
+        stats.live_bytes - SEGMENT_BYTES / 2
+    );
+}
+
+#[test]
 fn object_prefix_traces_only_the_prefix() {
     let mut heap = Heap::new(HeapConfig::default());
     let a = heap.alloc(T, 0, 0, 1).unwrap();
