@@ -141,4 +141,11 @@ fn scoping_errors_are_syntax_errors() {
         assert_eq!(err.kind, "SyntaxError", "{src}");
         assert_eq!(err.msg, msg, "{src}");
     }
+
+    // CPython points at the star on the continuation line, not at `from`.
+    let module = mm_parse::parse("def f():\n    from a import \\\n        *\n").expect("parses");
+    let err = build(&module).expect_err("star import in a function");
+    assert_eq!(err.kind, "SyntaxError");
+    assert_eq!(err.msg, "import * only allowed at module level");
+    assert_eq!((err.pos.line, err.pos.col), (3, 8));
 }

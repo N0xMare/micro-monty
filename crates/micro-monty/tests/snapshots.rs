@@ -2236,15 +2236,27 @@ fn a_stop_the_vm_is_not_at_is_corrupt() {
             assert_eq!(outcome(&p), format!("complete {want}"));
         }
     }
-    let mut other = images[1].0.clone();
-    other[45] ^= 0x40;
-    fuzz_input::reseal(&mut other);
-    assert_eq!(
-        e.restore(&other).err(),
-        Some(SnapshotError::Corrupt {
-            what: "stop".into()
-        })
-    );
+    let mut wrong_call = images[1].0.clone();
+    wrong_call[45] ^= 0x40;
+    // A wait header has a u32 count followed by that many u64 call ids.
+    let mut unknown_future = images[2].0.clone();
+    unknown_future[49..57].copy_from_slice(&3u64.to_le_bytes());
+    let mut empty_wait = images[2].0.clone();
+    drop(empty_wait.splice(45..57, 0u32.to_le_bytes()));
+    for (case, mut other) in [
+        ("wrong call id", wrong_call),
+        ("unknown future", unknown_future),
+        ("empty wait", empty_wait),
+    ] {
+        fuzz_input::reseal(&mut other);
+        assert_eq!(
+            e.restore(&other).err(),
+            Some(SnapshotError::Corrupt {
+                what: "stop".into()
+            }),
+            "{case}"
+        );
+    }
 }
 
 /// One settings value for a new session, a restore and a template's
