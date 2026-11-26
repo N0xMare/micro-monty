@@ -472,7 +472,8 @@ impl Vm {
             if let Some((sections, _)) = locate(&parts, at, len, ALL_PARTS)
                 && let Some(record) = parts[RECORDS].get(at..at + len)
             {
-                let mut flat = Vec::new();
+                let size = sections.iter().map(|s| s.len()).sum::<usize>() + record.len();
+                let mut flat = Vec::with_capacity(size);
                 let mut ends = [0; PARTS];
                 for (s, end) in sections.iter().chain([&record]).zip(&mut ends) {
                     flat.extend_from_slice(s);

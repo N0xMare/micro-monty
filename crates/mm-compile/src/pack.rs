@@ -300,20 +300,23 @@ fn decode_with(n: usize, lit: &Huff, dist: &Huff, body: &[u8]) -> Option<Vec<u8>
     let mut out = vec![0u8; n];
     let mut pos = 0;
     while pos < n {
-        // One token takes at most 15 + 5 + 15 + 13 bits.
-        if let Some(w) = body
-            .get(at..at + 8)
-            .and_then(|c| <[u8; 8]>::try_from(c).ok())
-        {
-            buf |= u64::from_le_bytes(w) << nb;
-            let k = (63 - nb) >> 3;
-            at += k as usize;
-            nb += k * 8;
-        } else {
-            while nb <= 56 {
-                buf |= u64::from(body.get(at).copied().unwrap_or(0)) << nb;
-                at += 1;
-                nb += 8;
+        // Refill only when the buffer might not hold a whole token:
+        // 15 + 5 bits for length and 15 + 13 for distance at most.
+        if nb < 48 {
+            if let Some(w) = body
+                .get(at..at + 8)
+                .and_then(|c| <[u8; 8]>::try_from(c).ok())
+            {
+                buf |= u64::from_le_bytes(w) << nb;
+                let k = (63 - nb) >> 3;
+                at += k as usize;
+                nb += k * 8;
+            } else {
+                while nb <= 56 {
+                    buf |= u64::from(body.get(at).copied().unwrap_or(0)) << nb;
+                    at += 1;
+                    nb += 8;
+                }
             }
         }
         let (s, l) = lit.decode(buf)?;
