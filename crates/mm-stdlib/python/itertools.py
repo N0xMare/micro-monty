@@ -666,13 +666,13 @@ class product:
                     self._done = True
                     raise StopIteration
             self._indices = [0] * len(pools)
-            return tuple(p[0] for p in pools)
+            return tuple([p[0] for p in pools])
         indices = self._indices
         i = len(pools) - 1
         while i >= 0:
             indices[i] += 1
             if indices[i] < len(pools[i]):
-                return tuple(pools[k][indices[k]] for k in range(len(pools)))
+                return tuple([pools[k][indices[k]] for k in range(len(pools))])
             indices[i] = 0
             i -= 1
         self._done = True
@@ -714,7 +714,7 @@ class permutations:
         n = len(pool)
         if not self._started:
             self._started = True
-            return tuple(pool[i] for i in indices[:r])
+            return tuple([pool[i] for i in indices[:r]])
         if n:
             for i in reversed(range(r)):
                 cycles[i] -= 1
@@ -724,7 +724,7 @@ class permutations:
                 else:
                     j = cycles[i]
                     indices[i], indices[-j] = indices[-j], indices[i]
-                    return tuple(pool[i] for i in indices[:r])
+                    return tuple([pool[i] for i in indices[:r]])
         self._done = True
         raise StopIteration
 
@@ -750,7 +750,7 @@ class combinations:
         n = len(pool)
         if not self._started:
             self._started = True
-            return tuple(pool[i] for i in indices)
+            return tuple([pool[i] for i in indices])
         for i in reversed(range(r)):
             if indices[i] != i + n - r:
                 break
@@ -760,7 +760,7 @@ class combinations:
         indices[i] += 1
         for j in range(i + 1, r):
             indices[j] = indices[j - 1] + 1
-        return tuple(pool[i] for i in indices)
+        return tuple([pool[i] for i in indices])
 
 
 class combinations_with_replacement:
@@ -784,7 +784,7 @@ class combinations_with_replacement:
         n = len(pool)
         if not self._started:
             self._started = True
-            return tuple(pool[i] for i in indices)
+            return tuple([pool[i] for i in indices])
         for i in reversed(range(r)):
             if indices[i] != n - 1:
                 break
@@ -792,7 +792,7 @@ class combinations_with_replacement:
             self._done = True
             raise StopIteration
         indices[i:] = [indices[i] + 1] * (r - i)
-        return tuple(pool[i] for i in indices)
+        return tuple([pool[i] for i in indices])
 
 
 for _c in (count, cycle, repeat, accumulate, batched, chain, compress, dropwhile,
