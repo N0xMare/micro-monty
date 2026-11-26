@@ -1775,7 +1775,9 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
   `ReadOnly` in a `TypedDict` field, use the functional form, such as
   `TypedDict('Row', {'id': Required[int]})`. Class syntax rejects qualifiers
   it recognizes by looking in the class and module namespaces; it does not
-  consult function-local bindings.
+  consult function-local bindings. `functools.singledispatch`'s `register`
+  cannot take the type from an annotation (`@f.register` over
+  `def _(x: int)` raises `TypeError`); name it: `@f.register(int)`.
 - **`bytearray`** works (constructors, item and slice assignment, the
   list-like mutators, the bytes methods, `struct.pack_into`), but not its
   subclasses, `bytearray % args`, bytearray host values, or bytearray
@@ -1812,9 +1814,13 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
   and a module's `__doc__`; `sys.getsizeof`, `sys.intern` and
   `sys.getrefcount`; `function.__globals__` and `__code__`; `traceback`'s
   stack-walking functions; `string.Formatter`; `re.Scanner`;
-  `functools.Placeholder`; the dunders of builtin types as type attributes
-  (`dict.__or__`); `xml`'s DOM, SAX and expat, and ElementTree's
-  `iterparse`, `XMLPullParser`, C14N, `ElementInclude` and DTD validation
+  `functools.Placeholder`; the dunders of builtin types as type or instance
+  attributes (`dict.__or__`, `{}.__ior__`, `(1.5).__round__`); the data
+  descriptors of builtin types as type attributes (`int.real`), so
+  `getattr(int, 'real', d)` silently gives `d`; a generator's `gi_frame`
+  and `gi_yieldfrom`; a dict view's `mapping`; `xml`'s DOM, SAX and
+  expat, and ElementTree's `iterparse`, `XMLPullParser`, C14N,
+  `ElementInclude` and DTD validation
   (`parse` and `write` of a file name need a host `open`); `email` beyond
   `email.utils`'s date functions.
 - **Subclassing** `frozenset`, `complex`, `property`, `classmethod`,
@@ -2128,9 +2134,9 @@ differs:
   imports; one the sandbox leaves out gets its redirect sentence instead,
   and the other stdlib module names CPython hints (213 with the default
   modules) get none ("Did you forget to import" above).
-- **Special methods with other errors or results.** Loud where CPython is,
-  with another type or text \[M, the 0.0.3 class and container
-  generators\]:
+- **Special methods and builtins with other errors or results.** Loud
+  where CPython is, with another type or text \[M, the 0.0.3 class and
+  container generators and the 0.0.4 difffuzz blocks\]:
   - `del obj.a` for a data descriptor with `__set__` and no `__delete__`
     raises `AttributeError: 'K' object has no attribute 'a'` (CPython:
     `AttributeError: __delete__`).
@@ -2153,11 +2159,53 @@ differs:
     dictionary changed size during iteration` (CPython: `OrderedDict
     mutated during iteration`), also where CPython goes on: when the
     iterator is at the last item, or the dict has one.
+  - `hash`, `len` and `iter` of an instance of a builtin type's
+    subclass that does not support them name the base type:
+    `unhashable type: 'list'`, `object of type 'int' has no len()`,
+    `'int' object is not iterable` (CPython names the subclass, `'LS'`).
+  - In a key or element error, a class defined in a function is named
+    without its qualifier: `cannot use 'P' as a set element (unhashable
+    type: 'P')` (CPython: `'f.<locals>.P'`).
+  - `object(1)` raises `object() takes no arguments (1 given)` (CPython:
+    `object() takes no arguments`), `filter(None)` `filter() missing 1
+    required positional argument: 'iterable'` (CPython: `filter expected
+    2 arguments, got 1`), and `reversed()` `reversed() takes exactly one
+    argument (0 given)` (CPython: `reversed expected 1 argument, got 0`).
+  - `format(True, 's')` and `format(True, 'zs')` name `'int'`, and the
+    second says `Negative zero coercion (z) not allowed in integer format
+    specifier` (CPython: `Unknown format code 's' for object of type
+    'bool'` for both). A str spec with grouping and a precision, such as
+    `'{:.8_n}'.format('')`, raises `Unknown format code 'n' for object of
+    type 'str'` (CPython: `Cannot specify '_' with 'n'.`).
+  - `heapq.heappop([])` raises `IndexError: pop from empty list`
+    (CPython: `index out of range`).
+  - `itertools.islice(it, start, stop)` with `stop` below -1 raises
+    `Stop argument for islice() must be None or an integer: 0 <= x <=
+    sys.maxsize.` (CPython: `Indices for islice() ...`, and `Stop
+    argument` only for -1).
+  - `range(2 ** 70, 'ab')` raises `OverflowError: Python int too large
+    to convert to C ssize_t` (CPython: `TypeError: 'str' object cannot be
+    interpreted as an integer`): an argument past 64 bits is refused
+    before a later one's type is checked.
+  - `str % x` for a right operand that is a `bytearray` raises
+    `TypeError: not all arguments converted during string formatting`,
+    where CPython takes it as a mapping with nothing to look up
+    (`'3' % bytearray(b'q')` is `'3'`).
+  - `slice` objects do not order: `slice(1, 2) < slice(1, 3)` raises
+    `TypeError: '<' not supported between instances of 'slice' and
+    'slice'` (CPython compares them as tuples), so a `sorted()` of slices
+    raises.
 
-  Two are silent:
+  Four are silent:
   - `type(C.__hash__)` and `type(C().__init__)` are
     `builtin_function_or_method` (CPython: `wrapper_descriptor` and
     `method-wrapper`).
+  - `type(reversed(t))` of a tuple is `list_reverseiterator`, and of an
+    object reversed through its `__len__` and `__getitem__` (a tuple
+    subclass that overrides them too) `generator` (CPython: `reversed`
+    for both); neither has `__length_hint__`.
+  - `type(iter(o))` of an object that has only `__getitem__` is
+    `generator` (CPython: `iterator`).
   - `list(o)`, `sorted(o)`, `bytes(o)` and `list.extend(o)`
     do not call `__len__` or `__length_hint__` as a length hint, so a
     hint that is negative (CPython: `ValueError: __len__() should return
@@ -2167,9 +2215,10 @@ differs:
   coroutine, a host future or a gather ends its report with `. Did you forget
   'await'?`, which CPython does not print; `str(e)` and `e.args` are
   CPython's ("Did you forget 'await'" above).
-- **Smaller ones.** `io.StringIO.seek` accepts a float; a set display of
-  constants whose hashes collide can iterate in another order; a
-  dataclass's generated `__doc__` shows an annotation as written
+- **Smaller ones.** `~` on a bool writes no `DeprecationWarning` (CPython
+  3.14 warns that it is deprecated); `io.StringIO.seek` accepts a float;
+  a set display of constants whose hashes collide can iterate in another
+  order; a dataclass's generated `__doc__` shows an annotation as written
   (`typing.Optional[int]`, CPython's `int | None`; a user class `R`,
   CPython's `__main__.R`; `typing.Any` written so, CPython's `Any`) and is `None` with `init=False` and a hand-written
   `__init__`; `re`'s ignore-case matching
