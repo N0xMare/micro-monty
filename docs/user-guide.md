@@ -1467,7 +1467,7 @@ Releases after v0.0.1 attach both guests
 (`mm_wasm_guest-wasm32-unknown-unknown.wasm` and
 `mm_wasm_guest_bundle-wasm32-unknown-unknown.wasm`); restore snapshots on
 the guests of the release that wrote them. `cargo xtask size` builds them
-as shipped (release, `panic=immediate-abort`, binaryen's `wasm-opt -Oz`)
+as shipped (release, `panic=immediate-abort`, binaryen's `wasm-opt -Oz --converge`)
 under `target/wasm32-unknown-unknown/shipped/` and
 `target/mm-wasm-bundle/wasm32-unknown-unknown/shipped/`.
 

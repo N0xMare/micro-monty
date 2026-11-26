@@ -1153,9 +1153,10 @@ clippy and every other build stay on plain stable; `cargo xtask wasm`
 builds its examples as shipped too. Native binaries stay
 position-independent (the worker runs untrusted code). Shipped wasm modules
 then go through binaryen's `wasm-opt -Oz` (version 133, installed by
-`.agents/setup`) with exactly the features rustc enables and, on
-`wasm32-wasip1` only, inlining capped at 16 KiB per function
-(xtask/src/wasm.rs `wasm_opt_args`, the arguments' one owner), into
+`.agents/setup`) with exactly the features rustc enables.
+`wasm32-unknown-unknown` repeats the optimization with `--converge`;
+`wasm32-wasip1` instead caps inlining at 16 KiB per function.
+`xtask/src/wasm.rs` (`wasm_opt_args`) owns those arguments. Output goes into
 `target/<target>/release/shipped/`. It saves about 145 KB
 on `hello.wasm`; plain `-Oz`, before the cap, cost 8–13% wall time on the
 dispatch-heavy bench programs (fib, loop, closure) under wasmtime [M], and
@@ -1179,10 +1180,10 @@ opt 3 (`cargo rustc -- -Copt-level=3`), as an embedder's binary is.
 
 | Budget | Artifact | Name in the gate |
 |---|---|---|
-| Primary | `wasm32-unknown-unknown` `hello.wasm`, the in-process embedding, after `wasm-opt -Oz` | `hello.wasm` |
+| Primary | `wasm32-unknown-unknown` `hello.wasm`, the in-process embedding, after `wasm-opt -Oz --converge` | `hello.wasm` |
 | Secondary | native stripped `hello` (x86-64 Linux, PIE) | `hello` |
-| Guest | `wasm32-unknown-unknown` `mm_wasm_guest.wasm` (the mm-wasm guest, no `test-hooks`), after `wasm-opt -Oz` | `mm_wasm_guest.wasm` |
-| Bundle guest | `wasm32-unknown-unknown` `mm_wasm_guest_bundle.wasm` (the guest built with `host-bundle`: its stdlib and prelude bytecode in the custom sections `mm.prelude` and `mm.stdlib`, served by the host through `mm_host.bundle_read`), after `wasm-opt -Oz`, sections included | `mm_wasm_guest_bundle.wasm` |
+| Guest | `wasm32-unknown-unknown` `mm_wasm_guest.wasm` (the mm-wasm guest, no `test-hooks`), after `wasm-opt -Oz --converge` | `mm_wasm_guest.wasm` |
+| Bundle guest | `wasm32-unknown-unknown` `mm_wasm_guest_bundle.wasm` (the guest built with `host-bundle`: its stdlib and prelude bytecode in the custom sections `mm.prelude` and `mm.stdlib`, served by the host through `mm_host.bundle_read`), after `wasm-opt -Oz --converge`, sections included | `mm_wasm_guest_bundle.wasm` |
 
 `cargo xtask size [--base REV]` builds each artifact as shipped, and the
 same for two more revisions built on the same host, each in a worktree

@@ -64,13 +64,13 @@ pub(crate) const WASM_FEATURES: [&str; 8] = [
 /// fib,loop,closure,classes`, whose cache key holds these arguments).
 ///
 /// `wasm32-unknown-unknown` (the mm-wasm guests and examples V8 and
-/// Workers run) keeps plain `-Oz`: counted in V8's TurboFan code the cap
-/// makes all 12 bench programs worse, geomean 1.0154 (loop 1.045,
-/// generators 1.040) [M, performance review].
+/// Workers run) repeats `-Oz` until the size converges. It keeps no inline
+/// cap: counted in V8's TurboFan code the cap makes all 12 bench programs
+/// worse, geomean 1.0154 (loop 1.045, generators 1.040) [M, performance review].
 pub(crate) fn wasm_opt_args(target: &str) -> Result<&'static [&'static str], String> {
     match target {
         "wasm32-wasip1" => Ok(&["-Oz", "--inline-max-combined-binary-size=16384"]),
-        "wasm32-unknown-unknown" => Ok(&["-Oz"]),
+        "wasm32-unknown-unknown" => Ok(&["-Oz", "--converge"]),
         other => Err(format!(
             "no shipped wasm-opt arguments for target `{other}`"
         )),
