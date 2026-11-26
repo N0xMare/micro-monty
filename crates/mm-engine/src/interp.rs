@@ -2405,6 +2405,36 @@ impl Vm {
         String::from(self.str_ref(self.vslot(func, fn_slot::QUALNAME)))
     }
 
+    /// CPython's `positional_only_passed_as_keyword`, raised at the first
+    /// keyword no parameter takes when there is no `**kwargs`: every
+    /// positional-only parameter any keyword names, in parameter order,
+    /// in one quoted list.
+    #[cold]
+    #[inline(never)]
+    fn posonly_as_keyword(
+        &mut self,
+        name: &str,
+        posonly: &[String],
+        kws: &[(Value, Value)],
+    ) -> Option<Raised> {
+        let mut list = String::new();
+        for n in posonly {
+            if kws.iter().any(|&(k, _)| self.str_ref(k) == n) {
+                if !list.is_empty() {
+                    list.push_str(", ");
+                }
+                list.push_str(n);
+            }
+        }
+        if list.is_empty() {
+            return None;
+        }
+        let msg = format!(
+            "{name}() got some positional-only arguments passed as keyword arguments: '{list}'"
+        );
+        Some(self.err(T::TypeError, &msg))
+    }
+
     /// The general argument binder for Python functions: positional,
     /// keywords, defaults, `*args`, `**kwargs`, keyword-only (CPython's
     /// rules and messages). Writes the parameters from `base`. `rest`, when
@@ -2501,7 +2531,6 @@ impl Vm {
             None
         };
         // Keywords.
-        let mut posonly_kw: Vec<String> = Vec::new();
         for &(k, v) in kws {
             let key = String::from(self.str_ref_hot(k));
             let found = names.iter().position(|n| *n == key);
@@ -2515,7 +2544,6 @@ impl Vm {
                     }
                     self.stack[base + i] = v;
                 }
-                Some(_) if kwdict.is_none() => posonly_kw.push(key),
                 _ => {
                     if let Some(d) = kwdict {
                         if self.dict_get(d, k)?.is_some() {
@@ -2528,6 +2556,11 @@ impl Vm {
                         }
                         self.dict_set(d, k, v)?;
                     } else {
+                        if let Some(e) =
+                            self.posonly_as_keyword(&name, &names[..p.posonly as usize], kws)
+                        {
+                            return Err(e);
+                        }
                         let cands: Vec<&str> = names.iter().map(String::as_str).collect();
                         let mut msg =
                             format!("{name}() got an unexpected keyword argument '{key}'");
@@ -2540,17 +2573,6 @@ impl Vm {
                     }
                 }
             }
-        }
-        if !posonly_kw.is_empty() {
-            let list = posonly_kw
-                .iter()
-                .map(|n| format!("'{n}'"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(self.err(
-                T::TypeError,
-                &format!("{name}() got some positional-only arguments passed as keyword arguments: {list}"),
-            ));
         }
         if let Some(msg) = overflow {
             return Err(self.err(T::TypeError, &msg));
