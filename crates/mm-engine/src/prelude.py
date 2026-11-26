@@ -1419,7 +1419,10 @@ def _mcall(f, args, kw):
         if name == 'math.fsum':
             new.append(_pulled(a, f, _mreal, _is_float))
             changed = True
-        elif _lazy(a, 1) or (type(a) in (list, tuple) and (
+        # An iterable with `__index__` was handed back for its int (`hex`,
+        # `range`, `list.pop`; `bytes` asks for it before iterating, as
+        # CPython's), except by `extend`, which only iterates.
+        elif _lazy(a, 1) and (name == 'extend' or not _has_index(a)) or (type(a) in (list, tuple) and (
                 (name == 'bytes' or name == 'bytearray') and not new
                 or name == 'extend' and len(new) == 1 and isinstance(new[0], bytearray))):
             # Byte items (also in a list or tuple) take `__index__`, one
@@ -2651,12 +2654,19 @@ def _bytes_fromhex(a):
 
 
 def _int_from_bytes(a, signed):
-    # An object with `__bytes__`, as CPython's `PyObject_Bytes` reads it,
-    # or items with `__index__`, as `bytes()` reads them; `a[0]` is the
-    # class, maybe a subclass.
+    # An object with `__bytes__`, else its items with `__index__`, as
+    # CPython's `PyObject_Bytes` reads it (never its own `__index__`, which
+    # `bytes()` reads first); `a[0]` is the class, maybe a subclass.
     b = a[1]
     f = getattr(type(b), '__bytes__', None)
-    b = bytes(b) if f is None else _call_bytes(f, b)
+    if f is not None:
+        b = _call_bytes(f, b)
+    else:
+        try:
+            it = iter(b)
+        except TypeError:
+            raise TypeError(f"cannot convert '{_type_name(b)}' object to bytes") from None
+        b = bytes(it)
     return a[0].from_bytes(b, *a[2:], signed=False if signed is _MISSING else signed)
 
 
