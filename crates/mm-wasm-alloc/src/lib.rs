@@ -58,22 +58,22 @@ mod imp {
     // that `dealloc`/`realloc` use the layout-free C entry points, which
     // accept any pointer this allocator returned.
     unsafe impl GlobalAlloc for Allocator {
-        #[inline]
+        #[inline(never)]
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             unsafe { (*self.0.get()).malloc(layout.size(), layout.align()) }
         }
 
-        #[inline]
+        #[inline(never)]
         unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
             unsafe { (*self.0.get()).calloc(layout.size(), layout.align()) }
         }
 
-        #[inline]
+        #[inline(never)]
         unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
             unsafe { (*self.0.get()).c_free(ptr) }
         }
 
-        #[inline]
+        #[inline(never)]
         unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
             let heap = unsafe { &mut *self.0.get() };
             if layout.align() <= NATURAL {
