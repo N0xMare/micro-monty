@@ -9269,10 +9269,13 @@ fn view_isdisjoint(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         }
         (v, o) = (o, v);
     }
+    if !in_place(vm, o) {
+        return Err(vm.need_py());
+    }
     // A dict's keys probed by items read in place go in steps, a lookup
     // along a long chain a slice per step (AE1, `Vm::dict_has_from`).
     let d = view_dict(vm, v);
-    if vm.type_of(v) == T::dict_keys && d.is_obj_kind(ty::DICT as u8) && in_place(vm, o) {
+    if vm.type_of(v) == T::dict_keys && d.is_obj_kind(ty::DICT as u8) {
         use crate::set::{act, phase, res};
         let (src, items) = vm.view_src(o)?;
         return vm.bulk(
