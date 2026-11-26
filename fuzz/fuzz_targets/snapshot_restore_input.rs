@@ -293,8 +293,22 @@ pub fn reseal(b: &mut [u8]) {
 /// The most fuel a parked operation may ask for and still be resumed.
 const MAX_WANTED: u64 = 1 << 20;
 
-fn drive(e: &Engine, mut s: Session) {
-    s.set_output(Box::new(|_| {}));
+/// Drives a restored session through a few deterministic resumes, a
+/// snapshot, a cancel and a new cell, and gives what a host sees of it:
+/// each progress, the output, the fuel left and the image it writes.
+fn drive(e: &Engine, mut s: Session) -> Vec<String> {
+    let out = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let sink = out.clone();
+    s.set_output(Box::new(move |t| {
+        if let Ok(mut o) = sink.lock() {
+            o.push_str(t);
+        }
+    }));
+    let mut seen = Vec::new();
+    let mut note = |s: &Session, what: String| {
+        let printed = out.lock().map(|mut o| std::mem::take(&mut *o));
+        seen.push(format!("{what} {:?} {printed:?}", s.fuel()));
+    };
     s.set_fuel(Some(1_000));
     // An int operation the fuel could not pay parks before it starts, and
     // the next resume runs it whatever the fuel (docs/spec.md §5, "Natives
@@ -313,6 +327,7 @@ fn drive(e: &Engine, mut s: Session) {
             },
         }
     };
+    note(&s, format!("{p:?}"));
     for _ in 0..4 {
         s.set_fuel(Some(1_000));
         let r = match p {
@@ -329,15 +344,23 @@ fn drive(e: &Engine, mut s: Session) {
         };
         p = match s.resume(r) {
             Ok(p) => p,
-            Err(_) => break,
+            Err(err) => {
+                note(&s, format!("{err:?}"));
+                break;
+            }
         };
+        note(&s, format!("{p:?}"));
     }
-    let _ = s.snapshot();
+    let image = s.snapshot();
+    note(&s, format!("{:?}", image.map(|b| mm_core::xxh64(&b, 0))));
     s.cancel();
     s.set_fuel(Some(1_000));
     if let Ok(code) = e.compile("x = [str(i) for i in range(50)]\nlen(x)", "after.py") {
-        let _ = s.start(&code);
+        let p = s.start(&code);
+        note(&s, format!("{p:?}"));
     }
+    drop(note);
+    seen
 }
 
 /// One fuzz input: raw bytes, or edits to a valid snapshot (see the target's
@@ -356,7 +379,13 @@ pub fn run(data: &[u8]) {
         engine()
     };
     let bytes = if mode % 8 == 0 {
-        rest.to_vec()
+        // Bit 6: raw bytes with the checksum recomputed, so a mutated
+        // image the engine wrote (own cases, goldens) reaches the decoder.
+        let mut b = rest.to_vec();
+        if mode & 0x40 != 0 {
+            reseal(&mut b);
+        }
+        b
     } else {
         let Some((&pick, edits)) = rest.split_first() else {
             return;
@@ -434,7 +463,27 @@ pub fn run(data: &[u8]) {
             );
         }
     }
-    if let Ok(s) = restored {
+    let Ok(mut s) = restored else {
+        return;
+    };
+    // Bit 7: the restored session writes its own image, whose restore
+    // must go on exactly as the session does (docs/spec.md §9.3: outputs,
+    // outcomes, fuel and next image), whatever the edits made of it.
+    if mode & 0x80 == 0 {
         drive(e, s);
+        return;
     }
+    let Ok(own) = s.snapshot() else {
+        drive(e, s);
+        return;
+    };
+    let again = match e.restore(&own) {
+        Ok(again) => again,
+        Err(err) => panic!("an accepted image's session writes an image it refuses: {err:?}"),
+    };
+    let (a, b) = (drive(e, s), drive(e, again));
+    assert!(
+        a == b,
+        "restored from its own image, the session goes on otherwise:\n{a:#?}\n{b:#?}"
+    );
 }

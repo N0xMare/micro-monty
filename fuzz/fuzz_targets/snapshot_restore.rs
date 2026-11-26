@@ -19,7 +19,11 @@
 //! 0xF0..=0xF2 edit images that hold collector state in flight, which a
 //! restore validates: an incremental mark (marks, mark stack, partial
 //! scans), a lazy sweep's pending segments beside free lists, and a long
-//! str's char positions.
+//! str's char positions. Raw bytes with bit 6 set get their checksum
+//! recomputed, so images the engine wrote (own cases, goldens) seed it.
+//! With bit 7 set, a session that restores writes its own image, and the
+//! session restored from that must go on exactly as it does: the same
+//! outcomes, output, fuel and next image (§9.3).
 //!
 //! ```bash
 //! cd fuzz && cargo +nightly fuzz run snapshot_restore
