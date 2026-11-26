@@ -373,7 +373,7 @@ impl Callable<'_> {
         let _ = writeln!(src, "{indent}    return {raw}({})", names.join(", "));
     }
 
-    /// The `_mm.signature(...)` call for `_host_impl{i}`; defaults and the
+    /// The `_host_signature(...)` call for `_host_impl{i}`; defaults and the
     /// docstring are `_host_data[i]`: `[defaults, kwdefaults, doc]`.
     fn signature_call(&self, i: usize, qualname: &str) -> String {
         let quote = |names: Vec<&str>| {
@@ -406,7 +406,7 @@ impl Callable<'_> {
             .map(|p| p.name.as_str())
             .collect();
         let f = format!(
-            "_host_doc(_mm.signature('{}', '{qualname}', {}, {}, tuple(_host_data[{i}][0]) or None, \
+            "_host_doc(_host_signature('{}', '{qualname}', {}, {}, tuple(_host_data[{i}][0]) or None, \
              _host_data[{i}][1] or None, _host_impl{i}), _host_data[{i}][2], _host_module)",
             self.sig.name,
             quote(positional),
@@ -500,7 +500,6 @@ fn docstring(doc: &str) -> String {
 
 /// The helpers every generated program starts with.
 const PRELUDE: &str = concat!(
-    "import _mm\n",
     "def _host_doc(f, doc, module):\n",
     "    f.__doc__ = doc or None\n",
     "    f.__module__ = module\n",
@@ -633,7 +632,7 @@ pub(crate) fn rebuild_host_program(
 /// spec codec, the generator or the compiler change the probe's code, the
 /// test `the_codegen_probe_matches_its_recorded_hash` fails and prints the
 /// new value to set here, which changes the build id.
-pub(crate) const CODEGEN_PROBE: u64 = 0xe9b2_dd25_5c52_24a8;
+pub(crate) const CODEGEN_PROBE: u64 = 0xb5ce_ad43_e8c4_33cc;
 
 /// What [`CODEGEN_PROBE`] hashes, or why the probe definition does not
 /// generate or compile (a bug).
@@ -956,7 +955,7 @@ fn check_names(module: &HostModule) -> Result<(), DefineError> {
         }
         // `import` finds micro-monty's own modules first, so a host module
         // of such a name could never be reached.
-        if name == "builtins"
+        if matches!(name, "builtins" | "_mm")
             || mm_engine::is_bundled(name)
             || mm_stdlib::MODULES.iter().any(|m| m.name == name)
         {

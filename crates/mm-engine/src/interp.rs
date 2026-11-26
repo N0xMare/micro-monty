@@ -5357,13 +5357,7 @@ impl Vm {
             }
             op::IMPORT_NAME => {
                 let name = code.names[opd!(0)];
-                let user = code.gslot == crate::vm::GSLOT_USER;
-                op_result!(
-                    self.import_checked(name, opd!(1) != 0, user),
-                    4,
-                    Cont::None,
-                    ("", &[])
-                );
+                op_result!(self.import(name, opd!(1) != 0), 4, Cont::None, ("", &[]));
             }
             op::IMPORT_FROM => {
                 let m = reg!(opd!(0));

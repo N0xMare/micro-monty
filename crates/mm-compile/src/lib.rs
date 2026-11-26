@@ -44,6 +44,7 @@ pub const LAYOUT_HASH: u64 = include!(concat!(env!("OUT_DIR"), "/layout_hash.rs"
 extern crate alloc;
 
 pub mod ast;
+pub mod bundled;
 pub mod bytecode;
 mod compiler;
 mod encode;
@@ -52,6 +53,8 @@ pub mod live;
 pub mod pack;
 pub mod symtable;
 
+#[cfg(feature = "bundled")]
+pub use compiler::compile_bundled;
 pub use compiler::{MAX_NESTING, Options, compile, match_kind};
 pub use encode::{DecodeError, SharedStrings, section};
 pub use error::{CompileError, ErrorData};

@@ -1828,8 +1828,8 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
   nothing, and the assignments CPython refuses raise CPython's own
   `TypeError` (a builtin type on either side, user classes with different
   builtin bases, a value that is not a class, `del o.__class__`).
-- **Module registry:** `sys.modules` is live but read-only. It does not
-  expose the engine's internal `_mm` module. `importlib` provides only
+- **Module registry:** `sys.modules` is live but read-only. The engine's
+  private helpers are not an importable module. `importlib` provides only
   `import_module` (including relative names with a package), using the
   session's importer without path or loader hooks.
 

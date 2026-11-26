@@ -336,6 +336,9 @@ pub enum Konst {
     Bytes(Vec<u8>),
     /// A complex number (real, imaginary).
     Complex(f64, f64),
+    /// An immediate function, indexed within the private native range.
+    /// Only trusted bundled source can produce one.
+    Native(u8),
 }
 
 /// One exception-table entry: a handler for `start..end`.

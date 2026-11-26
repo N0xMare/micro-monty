@@ -16,7 +16,7 @@ mm-engine.workspace = true
 
 # The Python modules (python/) are compiled at build time.
 [build-dependencies]
-mm-compile.workspace = true
+mm-compile = { workspace = true, features = ["bundled"] }
 mm-parse.workspace = true
 
 # A disabled module contributes no code: modules register their types through

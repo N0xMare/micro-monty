@@ -4857,7 +4857,7 @@ d.set_result(0)
 loop.call_later(0.01, on_timer)
 tasks = [asyncio.create_task(work()) for _ in range(20)]
 # Nothing below allocates until `pad = None`: the sleeps are made first.
-sleeps = [asyncio.sleep(0) for _ in range({spins})]
+sleeps = [asyncio.sleep(0) for _ in range({sleeps})]
 spare = bytearray({spare})
 try:
     while queued < 300000:
@@ -4881,10 +4881,11 @@ for _ in range(3):
 print(queued, ran, soon, timer, started, errors, first)
 ";
 
-fn start_rule_cell(spins: u64, spare: u64) -> String {
+fn start_rule_cell(spins: &str, sleeps: u64, spare: u64) -> String {
     START_RULE_CELL
         .replace("{fill}", &LEAVE_FREE.replace("{free}", "600_000"))
-        .replace("{spins}", &spins.to_string())
+        .replace("{sleeps}", &sleeps.to_string())
+        .replace("{spins}", spins)
         .replace("{spare}", &spare.to_string())
 }
 
@@ -4931,9 +4932,11 @@ fn queue_entries_with_no_room_to_start_run_once_memory_is_freed() {
     for limit in (16..=32).map(|q| q << 18) {
         let charge = limit / 64;
         for spare in [0, 200_000] {
-            let mut fuels = Vec::new();
+            let mut outcomes = Vec::new();
             for spins in [4, 40] {
-                let (p, out, fuel) = run_fueled(limit, &start_rule_cell(spins, spare));
+                // Hold preallocation and source size fixed so only the awaits differ.
+                let (p, out, fuel) =
+                    run_fueled(limit, &start_rule_cell(&format!("{spins:2}"), 40, spare));
                 let at = format!("{limit} B, spare {spare}, {spins} spins: {p:?} {out}");
                 assert!(matches!(p, Progress::Complete(_)), "{at}");
                 let [queued, ran, soon, timer, started, errors, first] = start_rule_outcome(&out);
@@ -4946,10 +4949,14 @@ fn queue_entries_with_no_room_to_start_run_once_memory_is_freed() {
                     assert!(fuel >= spins * charge, "{at}: fuel {fuel}");
                 }
                 regimes[usize::from(errors == 0)] = true;
-                fuels.push((errors, fuel));
+                outcomes.push((errors, queued, fuel));
             }
-            if let [(0, a), (0, b)] = fuels[..] {
-                assert!(b - a < charge, "{limit} B, spare {spare}: fuel {a} {b}");
+            if let [(0, queued_a, a), (0, queued_b, b)] = outcomes[..] {
+                assert_eq!(queued_a, queued_b, "{limit} B, spare {spare}: callbacks");
+                assert!(
+                    b.checked_sub(a).is_some_and(|extra| extra < charge),
+                    "{limit} B, spare {spare}: fuel {a} {b}"
+                );
             }
         }
     }
@@ -5056,7 +5063,7 @@ print(got)
 /// a start's edge: docs/spec.md §5.1 clause 4.)
 #[test]
 fn the_start_rule_survives_a_restore_at_every_park() {
-    let src = start_rule_cell(4, 0);
+    let src = start_rule_cell("4", 4, 0);
     let engine = Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(6 << 20)));
     let code = engine.compile(&src, "t.py").expect("compiles");
     for restore in [false, true] {
@@ -5847,13 +5854,11 @@ fn a_cancel_long_by_a_tasks_waiters_is_the_same_parked_and_restored() {
 
 /// Own case 579 (cancels longer than a step) charges this fuel, run whole
 /// or parked every 1,000 units: a long cancel's steps charge what its
-/// first pass visits and `_steps`' calls, and a park moves neither. (Each
-/// of its nine `asyncio.run` calls pays a unit to ask for the async
-/// generators to close: 3,550,819 before that.)
+/// first pass visits and `_steps`' calls, and a park moves neither.
 #[test]
 fn the_long_cancels_charge_the_same_fuel_whole_and_sliced() {
     // Includes eager construction of asyncio's package on first import.
-    const FUEL: u64 = 3_550_919;
+    const FUEL: u64 = 3_550_840;
     let src = include_str!("../../../conformance/own/579_asyncio_cancel_long.py");
     let run = |slice: u64| {
         let engine = Engine::new(EngineConfig::default());

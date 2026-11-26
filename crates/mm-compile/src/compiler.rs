@@ -48,14 +48,39 @@ pub struct Options {
 }
 
 /// Compiles a module.
-#[cfg_attr(mm_shipped, optimize(size))]
 pub fn compile(module: &Module, opts: Options) -> Result<Program, CompileError> {
+    compile_in(
+        module,
+        opts,
+        #[cfg(feature = "bundled")]
+        None,
+    )
+}
+
+/// Compiles trusted bundled source, binding its private native imports.
+#[cfg(feature = "bundled")]
+pub fn compile_bundled(
+    module: &Module,
+    opts: Options,
+    natives: crate::bundled::Natives,
+) -> Result<Program, CompileError> {
+    compile_in(module, opts, Some(natives))
+}
+
+#[cfg_attr(mm_shipped, optimize(size))]
+fn compile_in(
+    module: &Module,
+    opts: Options,
+    #[cfg(feature = "bundled")] natives: Option<crate::bundled::Natives>,
+) -> Result<Program, CompileError> {
     let st = symtable::build(module)?;
     let mut c = Compiler {
         st: &st,
         codes: Vec::new(),
         units: Vec::new(),
         depth: 0,
+        #[cfg(feature = "bundled")]
+        natives,
     };
     c.codes.push(None);
     c.begin_unit(0, "<module>", "<module>", 1, true)?;
@@ -293,6 +318,8 @@ struct Compiler<'a> {
     codes: Vec<Option<Code>>,
     units: Vec<Unit<'a>>,
     depth: u32,
+    #[cfg(feature = "bundled")]
+    natives: Option<crate::bundled::Natives>,
 }
 
 const NO_LOC: Loc = Loc {
@@ -1390,6 +1417,24 @@ impl<'a> Compiler<'a> {
             }
             StmtKind::Match(subject, cases) => self.match_stmt(subject, cases),
             StmtKind::ImportFrom(module, names) => {
+                #[cfg(feature = "bundled")]
+                if let Some(natives) = self.natives
+                    && module == "_mm"
+                {
+                    for alias in names {
+                        let i = natives.index(&alias.name).ok_or_else(|| {
+                            CompileError::syntax(
+                                format!("unknown private native {}", alias.name),
+                                s.pos,
+                            )
+                        })?;
+                        let k = self.konst(Konst::Native(i))?;
+                        self.at_pos(s.pos);
+                        self.emit_u(op::LDA_CONST, k);
+                        self.store_name(alias.asname.as_deref().unwrap_or(&alias.name))?;
+                    }
+                    return Ok(());
+                }
                 let n = self.name(module)?;
                 self.at_pos(s.pos);
                 self.emit(op::IMPORT_NAME);

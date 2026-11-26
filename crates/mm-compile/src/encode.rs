@@ -293,6 +293,10 @@ impl<P: Strings> Out<'_, P> {
                     self.u64(re.to_bits());
                     self.u64(im.to_bits());
                 }
+                Konst::Native(i) => {
+                    self.byte(10);
+                    self.byte(*i);
+                }
             }
         }
         self.strs(&c.names);
@@ -771,6 +775,7 @@ impl<'a> In<'a> {
             7 => Konst::BigInt(self.str()?),
             8 => Konst::Bytes(self.bytes()?),
             9 => Konst::Complex(f64::from_bits(self.u64()?), f64::from_bits(self.u64()?)),
+            10 => Konst::Native(self.byte()?),
             _ => return None,
         })
     }

@@ -1408,7 +1408,8 @@ impl Vm {
     /// of `key: value`), loads its shared code, runs it in the prelude's
     /// globals, hidden from tracebacks, with `_host_raw` (a list of plain
     /// host functions made from `raws`, `(call name, name)` pairs),
-    /// `_host_msgs` and `_host_data` bound, and keeps every entry. Then
+    /// `_host_msgs`, `_host_data` and `_host_signature` bound, and keeps
+    /// every entry. Then
     /// [`Vm::define_host_module`] builds the module from them. Run it
     /// between cells; the entries live in the heap, so they survive
     /// `reset` and snapshots.
@@ -1462,6 +1463,7 @@ impl Vm {
             ("_host_raw", self.new_list(&fns)?),
             ("_host_msgs", self.py_value(msgs)?),
             ("_host_data", self.py_value(data)?),
+            ("_host_signature", Value::native(crate::builtins::SIGNATURE)),
         ];
         for (name, v) in binds {
             let k = self.intern(name)?;

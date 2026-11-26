@@ -1207,8 +1207,8 @@ impl Vm {
         // `import` finds in this build is named, so the hint never leads to
         // a failing import; a module the sandbox leaves out gets the
         // sentence its import would add, and any other name nothing.
-        let importable = name != "_mm"
-            && (crate::BUNDLED.contains(&name) || self.stdlib.iter().any(|m| m.name == name));
+        let importable =
+            crate::BUNDLED.contains(&name) || self.stdlib.iter().any(|m| m.name == name);
         if importable {
             if s.is_some() {
                 let _ = write!(hint, " Or did you forget to import '{name}'?");

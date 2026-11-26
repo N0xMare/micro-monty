@@ -1099,10 +1099,10 @@ def _unicode_init(e, decode, a, ret):
     # one at a time in its constructor's order: a `start` or `end` with its
     # own `__index__`, or a decode's `bytearray`, whose `bytes` copy is the
     # field (made a step at a time).
-    import _mm
+    from _mm import unicode_fields
     a = list(a)
     while True:
-        i = _mm.unicode_fields(e, decode, tuple(a))
+        i = unicode_fields(e, decode, tuple(a))
         if i is None:
             return ret
         a[i] = bytes(a[i]) if i == 1 else _index(a[i])
@@ -1147,8 +1147,8 @@ def _str(a):
         # CPython's order: `reason`'s and `encoding`'s `str()`, which may
         # run Python code, then `object` checked and the rest from the
         # fields; joined here, a step at a time for long ones.
-        import _mm
-        u = _mm.unicode_str
+        from _mm import unicode_str
+        u = unicode_str
         r = str(u(x, True))
         c = str(u(x, False))
         m = u(x)
@@ -2001,9 +2001,9 @@ def _type___dir__(args):
 
 
 def _module___dir__(args):
-    import _mm
+    from _mm import module_dict
     # Reading the names does not read the values of lazy exports.
-    d = _mm.module_dict(args[0])
+    d = module_dict(args[0])
     if '__dir__' in d:
         return d['__dir__']()
     return list(d) + ['__name__']
@@ -2523,8 +2523,8 @@ def open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None,
         raise ValueError('must have exactly one of create/read/write/append mode')
     if 'b' in seen and 't' in seen:
         raise ValueError("can't have text and binary mode at once")
-    import _mm
-    hint = _mm.hint('os')
+    from _mm import hint as _hint
+    hint = _hint('os')
     raise PermissionError("open() is not available: this sandbox has no ambient filesystem"
                           + ('. ' + hint if hint else ''))
 
@@ -3107,13 +3107,13 @@ def help(*args, **kwds):
     # The stub of a host function, class or module (the host's signature
     # and docstring), else the object's name and docstring. CPython's
     # pydoc pages are not reproduced.
-    import _mm
+    from _mm import host_help
     if not args:
         print("Call help(obj) on a function, class or module to see its signature "
               "and documentation.")
         return
     obj = args[0]
-    text = _mm.host_help(obj)
+    text = host_help(obj)
     if text is None:
         name = getattr(obj, '__qualname__', None) or getattr(obj, '__name__', None)
         if not isinstance(name, str):
@@ -3652,8 +3652,8 @@ __name__ = 'asyncio.futures'
 
 
 def Future():
-    import _mm
-    return _mm.aio_future()
+    from _mm import aio_future
+    return aio_future()
 
 
 __name__ = 'asyncio.locks'
@@ -3691,13 +3691,13 @@ class Semaphore:
         return self._value == 0 or any(not w.cancelled() for w in (self._waiters or ()))
 
     async def acquire(self):
-        import _mm
+        from _mm import aio_future
         if not self.locked():
             self._value -= 1
             return True
         if self._waiters is None:
             self._waiters = []
-        fut = _mm.aio_future()
+        fut = aio_future()
         self._waiters.append(fut)
         try:
             try:
@@ -3729,14 +3729,14 @@ class Semaphore:
             raise
 
     def _wake_up_next(self):
-        import _mm
+        from _mm import aio_set
         if not self._waiters:
             return False
         for fut in self._waiters:
             if not fut.done():
                 # Settled first: `aio_set` can raise MemoryError with
                 # nothing changed.
-                _mm.aio_set(fut, True)
+                aio_set(fut, True)
                 self._value -= 1
                 return True
         return False
@@ -3794,13 +3794,13 @@ class Lock:
         return self._locked
 
     async def acquire(self):
-        import _mm
+        from _mm import aio_future
         if not self._locked and (self._waiters is None or all(w.cancelled() for w in self._waiters)):
             self._locked = True
             return True
         if self._waiters is None:
             self._waiters = []
-        fut = _mm.aio_future()
+        fut = aio_future()
         self._waiters.append(fut)
         try:
             try:
@@ -3863,10 +3863,10 @@ class Event:
         self._value = False
 
     async def wait(self):
-        import _mm
+        from _mm import aio_future
         if self._value:
             return True
-        fut = _mm.aio_future()
+        fut = aio_future()
         self._waiters.append(fut)
         try:
             await fut
@@ -3901,10 +3901,10 @@ class Condition:
         self.release()
 
     async def wait(self):
-        import _mm
+        from _mm import aio_future
         if not self.locked():
             raise RuntimeError('cannot wait on un-acquired lock')
-        fut = _mm.aio_future()
+        fut = aio_future()
         self.release()
         try:
             try:
@@ -4060,22 +4060,22 @@ _aio_set = None
 
 def run(main):
     # The main task runs in a copy of the caller's context.
-    import _mm
+    from _mm import aio_running, ctx_copy
     global _aio_the
-    if not _mm.aio_running():
+    if not aio_running():
         _aio_the = None
-    return _aio_run_in(main, _mm.ctx_copy(), False)
+    return _aio_run_in(main, ctx_copy(), False)
 
 
 def _aio_run_in(main, ctx, open):
     # `open`: run_until_complete(), which leaves the loop open (2: of a
     # future, which takes no task of its own).
-    import _mm
-    old = _mm.ctx_swap(ctx)
+    from _mm import ctx_swap, aio_run
+    old = ctx_swap(ctx)
     try:
-        return _mm.aio_run(main, _aio_main(main, open), open)
+        return aio_run(main, _aio_main(main, open), open)
     finally:
-        _mm.ctx_swap(old)
+        ctx_swap(old)
 
 
 async def _aio_await(aw):
@@ -4111,9 +4111,9 @@ class Runner:
         if self._state != 'initialized':
             return
         # shutdown_asyncgens() and shutdown_default_executor(), each a task.
-        import _mm
-        self._loop._mm_run(_aio_shutdown_asyncgens(), _mm.ctx_copy(), True)
-        self._loop._mm_run(_aio_noop(), _mm.ctx_copy(), True)
+        from _mm import ctx_copy
+        self._loop._mm_run(_aio_shutdown_asyncgens(), ctx_copy(), True)
+        self._loop._mm_run(_aio_noop(), ctx_copy(), True)
         if self._set_event_loop:
             set_event_loop(None)
         self._loop.close()
@@ -4125,9 +4125,9 @@ class Runner:
         return self._loop
 
     def run(self, coro, **kwargs):
-        import _mm
+        from _mm import aio_running
         context, = _aio_opt('Runner.run', (), kwargs, ('context',), (None,))
-        if _mm.aio_running():
+        if aio_running():
             raise RuntimeError('Runner.run() cannot be called from a running event loop')
         self._lazy_init()
         if type(coro) is not coroutine:
@@ -4160,49 +4160,49 @@ async def _aio_main(main, open):
     # `asyncio.run`'s task, then `Runner.close()`: the loop stops at the end
     # of the iteration after `main` ends, then the tasks left are cancelled
     # and run until their cancellation is done.
-    import _mm
+    from _mm import aio_main_end, aio_stop, aio_tasks, aio_asyncgens, aio_escape
     try:
         try:
             r = await main
         except BaseException as e:
-            _mm.aio_main_end(False, e)
+            aio_main_end(False, e)
             raise
-        return _mm.aio_main_end(True, r)
+        return aio_main_end(True, r)
     finally:
         _aio_unretrieved()
-        await _mm.aio_stop(2)
-        tasks = _mm.aio_tasks()
+        await aio_stop(2)
+        tasks = aio_tasks()
         if tasks:
             for t in tasks:
                 t.cancel()
             import asyncio
             await asyncio.gather(*tasks, return_exceptions=True)
-            await _mm.aio_stop(1)
+            await aio_stop(1)
             for t in tasks:
                 if not t.cancelled() and t.exception() is not None:
                     _aio_report(t)
             # `shutdown_asyncgens()` and `shutdown_default_executor()` run
             # the loop two iterations each.
             if not open:
-                await _mm.aio_stop(4)
+                await aio_stop(4)
         if not open:
-            gens = _mm.aio_asyncgens(tasks)
+            gens = aio_asyncgens(tasks)
             if gens is not None:
                 await _aio_close_asyncgens(gens)
                 # Those first stepped while the others were closed, once:
                 # a `finally` that always steps a new one ends the run.
-                gens = _mm.aio_asyncgens()
+                gens = aio_asyncgens()
                 if gens is not None:
                     await _aio_close_asyncgens(gens)
         _aio_unretrieved()
         # A KeyboardInterrupt or SystemExit a task raised leaves the run.
-        _mm.aio_escape()
+        aio_escape()
 
 
 async def _aio_shutdown_asyncgens():
     # `Runner.close()`'s task for it.
-    import _mm
-    gens = _mm.aio_asyncgens()
+    from _mm import aio_asyncgens
+    gens = aio_asyncgens()
     if gens is not None:
         await _aio_close_asyncgens(gens)
 
@@ -4218,8 +4218,8 @@ async def _aio_close_asyncgens(gens):
         # done callback of a task that ended as the main coroutine did):
         # CPython's `shutdown_asyncgens()` and `shutdown_default_executor()`
         # each run the loop two iterations, in which they run.
-        import _mm
-        await _mm.aio_stop(4)
+        from _mm import aio_stop
+        await aio_stop(4)
         return
     import asyncio
     for i in range(0, len(gens), 256):
@@ -4235,8 +4235,8 @@ async def _aio_close_asyncgens(gens):
 
 def _aio_unretrieved():
     # What CPython's Future.__del__ reports when the last reference goes.
-    import _mm
-    for f in _mm.aio_unretrieved():
+    from _mm import aio_unretrieved
+    for f in aio_unretrieved():
         kind = 'Task' if type(f) is Task else 'Future'
         _aio_exc_handler({'message': f'{kind} exception was never retrieved',
                           'exception': f.exception(), 'future': f})
@@ -4254,10 +4254,10 @@ __name__ = 'asyncio.tasks'
 
 
 def _aio_ensure(aw):
-    import _mm
+    from _mm import aio_spawn
     if type(aw) is Task or type(aw) is _AioFuture:
         return aw
-    return _mm.aio_spawn(aw)
+    return aio_spawn(aw)
 
 
 # The scheduler's timer tasks are given their deadline, made where the
@@ -4285,7 +4285,7 @@ def _aio_insert_timeout(exc_val):
 
 
 async def wait_for(fut, timeout):
-    import _mm
+    from _mm import aio_first, aio_current_task, aio_spawn_internal, aio_deadline
     # CPython 3.12+: the awaitable runs in the calling task, and the
     # deadline cancels that task (timeouts.py); the CancelledError becomes
     # TimeoutError unless another cancel is pending.
@@ -4294,17 +4294,17 @@ async def wait_for(fut, timeout):
         if fut.done():
             return fut.result()
         fut.cancel()
-        await _mm.aio_first([fut])
+        await aio_first([fut])
         try:
             return fut.result()
         except CancelledError as exc:
             raise TimeoutError from exc
     if timeout is None:
         return await fut
-    task = _mm.aio_current_task()
+    task = aio_current_task()
     cancelling = task.cancelling()
     fired = [False]
-    timer = _mm.aio_spawn_internal(_aio_timer(_mm.aio_deadline(timeout), task, fired))
+    timer = aio_spawn_internal(_aio_timer(aio_deadline(timeout), task, fired))
     try:
         r = await fut
     except BaseException as exc:
@@ -4324,7 +4324,7 @@ class _AsCompletedIterator:
     # CPython's: results come in the order the awaitables finish.
 
     def __init__(self, aws, timeout):
-        import _mm
+        from _mm import aio_spawn_internal, aio_deadline
         todo = []
         for aw in aws:
             if not any(aw is t for t in todo):
@@ -4333,7 +4333,7 @@ class _AsCompletedIterator:
         self._todo_left = len(self._todo)
         self._timer = None
         if self._todo and timeout is not None:
-            self._timer = _mm.aio_spawn_internal(_aio_wait(_mm.aio_deadline(timeout)))
+            self._timer = aio_spawn_internal(_aio_wait(aio_deadline(timeout)))
 
     def __aiter__(self):
         return self
@@ -4357,10 +4357,10 @@ class _AsCompletedIterator:
         return (await self._wait_for_one()).result()
 
     async def _wait_for_one(self):
-        import _mm
+        from _mm import aio_first
         if self._timer is None or not self._timer.done():
             waits = self._todo if self._timer is None else self._todo + [self._timer]
-            f = await _mm.aio_first(waits)
+            f = await aio_first(waits)
         else:
             f = self._timer
         if f is self._timer:
@@ -4461,11 +4461,11 @@ class Queue:
         return self.qsize() >= self._maxsize
 
     async def put(self, item):
-        import _mm
+        from _mm import aio_future
         while self.full():
             if self._is_shutdown:
                 raise QueueShutDown
-            putter = _mm.aio_future()
+            putter = aio_future()
             self._putters.append(putter)
             try:
                 await putter
@@ -4491,11 +4491,11 @@ class Queue:
         self._wakeup_next(self._getters)
 
     async def get(self):
-        import _mm
+        from _mm import aio_future
         while self.empty():
             if self._is_shutdown and self.empty():
                 raise QueueShutDown
-            getter = _mm.aio_future()
+            getter = aio_future()
             self._getters.append(getter)
             try:
                 await getter
@@ -4582,12 +4582,12 @@ __name__ = 'asyncio.events'
 class Handle:
 
     def __init__(self, callback, args, context):
-        import _mm
+        from _mm import ctx_copy
         self._callback = callback
         self._args = args
         self._cancelled = False
         # The context it runs in: a copy of the scheduler's, as CPython's.
-        self._ctx = _mm.ctx_copy() if context is None else context._data
+        self._ctx = ctx_copy() if context is None else context._data
 
     def __repr__(self):
         if self._cancelled:
@@ -4689,20 +4689,20 @@ def _aio_exc_handler(context):
 async def _aio_later(h, deadline):
     # As `_aio_timer`: the deadline is made as the timer is accepted.
     await deadline
-    import _mm
+    from _mm import aio_fire
     h._task = None
     # First in the run queue, so it runs in this iteration, as a timer's
     # handle CPython moves to the ready queue when it is due.
-    _mm.aio_fire(h)
+    aio_fire(h)
 
 
 def _aio_call_at(when, callback, args, kwargs):
-    import _mm
+    from _mm import aio_spawn_internal, aio_deadline, aio_time
     for k in kwargs:
         if k != 'context':
             raise TypeError(f"call_at() got an unexpected keyword argument '{k}'")
     h = TimerHandle(when, callback, args, kwargs.get('context'))
-    h._task = _mm.aio_spawn_internal(_aio_later(h, _mm.aio_deadline(when - _mm.aio_time())))
+    h._task = aio_spawn_internal(_aio_later(h, aio_deadline(when - aio_time())))
     return h
 
 
@@ -4714,12 +4714,12 @@ class _UnixSelectorEventLoop:
         return f'<_UnixSelectorEventLoop running={self.is_running()} closed=False debug=False>'
 
     def time(self):
-        import _mm
-        return _mm.aio_time()
+        from _mm import aio_time
+        return aio_time()
 
     def is_running(self):
-        import _mm
-        return _mm.aio_running() and _aio_the_loop() is self
+        from _mm import aio_running
+        return aio_running() and _aio_the_loop() is self
 
     def is_closed(self):
         return getattr(self, '_mm_closed', False)
@@ -4728,21 +4728,21 @@ class _UnixSelectorEventLoop:
         return False
 
     def create_future(self):
-        import _mm
-        return _mm.aio_future()
+        from _mm import aio_future
+        return aio_future()
 
     def create_task(self, coro, **kwargs):
         # A loop that is not running takes tasks too, as CPython's.
-        import _mm
-        return _mm.aio_create_task(coro, **kwargs)
+        from _mm import aio_create_task
+        return aio_create_task(coro, **kwargs)
 
     def call_soon(self, callback, *args, **kwargs):
-        import _mm
+        from _mm import aio_soon
         for k in kwargs:
             if k != 'context':
                 raise TypeError(f"call_soon() got an unexpected keyword argument '{k}'")
         h = Handle(callback, args, kwargs.get('context'))
-        _mm.aio_soon(h)
+        aio_soon(h)
         return h
 
     def call_later(self, delay, callback, *args, **kwargs):
@@ -4757,20 +4757,20 @@ class _UnixSelectorEventLoop:
     def run_until_complete(self, future):
         # A whole asyncio.run(): the tasks it leaves are cancelled at its
         # end, where CPython keeps them pending in the loop.
-        import _mm
+        from _mm import ctx_copy
         open = True
         if type(future) is not coroutine:
             open = 2 if isfuture(future) else True
             if not (open == 2 or hasattr(future, '__await__')):
                 raise TypeError('An asyncio.Future, a coroutine or an awaitable is required')
             future = _aio_await(future)
-        return self._mm_run(future, _mm.ctx_copy(), open)
+        return self._mm_run(future, ctx_copy(), open)
 
     def _mm_run(self, main, ctx, open):
-        import _mm
+        from _mm import aio_running
         if self.is_closed():
             raise RuntimeError('Event loop is closed')
-        if _mm.aio_running():
+        if aio_running():
             if self.is_running():
                 raise RuntimeError('This event loop is already running')
             raise RuntimeError('Cannot run the event loop while another loop is running')
@@ -4815,14 +4815,14 @@ EventLoop = _UnixSelectorEventLoop
 
 
 def _aio_unavailable(what, group):
-    import _mm
-    hint = _mm.hint(group)
+    from _mm import hint as _hint
+    hint = _hint(group)
     raise RuntimeError(f'micro-monty: {what} is not available' + ('. ' + hint if hint else ''))
 
 
 def _aio_the_loop():
-    import _mm
-    if not _mm.aio_running():
+    from _mm import aio_running
+    if not aio_running():
         raise RuntimeError('no running event loop')
     global _aio_the
     loop = _aio_the
@@ -4836,8 +4836,8 @@ def get_running_loop():
 
 
 def get_event_loop():
-    import _mm
-    if _mm.aio_running():
+    from _mm import aio_running
+    if aio_running():
         return _aio_the_loop()
     loop = _aio_set
     if loop is None:
@@ -4868,7 +4868,7 @@ __name__ = 'asyncio.futures'
 
 
 def _aio_set_exception(fut, exc):
-    import _mm
+    from _mm import aio_set_exc
     if isinstance(exc, type):
         exc = exc()
     if type(exc) is StopIteration:
@@ -4876,7 +4876,7 @@ def _aio_set_exception(fut, exc):
         new.__cause__ = exc
         new.__context__ = exc
         exc = new
-    _mm.aio_set_exc(fut, exc)
+    aio_set_exc(fut, exc)
 
 
 def isfuture(obj):
@@ -4892,32 +4892,32 @@ ALL_COMPLETED = 'ALL_COMPLETED'
 
 
 def _aio_create_ctx(coro, name, context):
-    import _mm
-    t = _mm.aio_create_task(coro, name=name)
-    _mm.aio_task_ctx(t, context._data)
+    from _mm import aio_create_task, aio_task_ctx
+    t = aio_create_task(coro, name=name)
+    aio_task_ctx(t, context._data)
     return t
 
 
 def _aio_create_named(coro, name):
-    import _mm
-    return _mm.aio_create_task(coro, name=str(name))
+    from _mm import aio_create_task
+    return aio_create_task(coro, name=str(name))
 
 
 def _aio_set_name(task, value):
-    import _mm
-    _mm.aio_name_set(task, str(value))
+    from _mm import aio_name_set
+    aio_name_set(task, str(value))
 
 
 def current_task(loop=None):
-    import _mm
+    from _mm import aio_current_task
     _aio_the_loop()
-    return _mm.aio_current_task()
+    return aio_current_task()
 
 
 def all_tasks(loop=None):
-    import _mm
+    from _mm import aio_all_tasks
     _aio_the_loop()
-    return set(_mm.aio_all_tasks())
+    return set(aio_all_tasks())
 
 
 def ensure_future(coro_or_future, *, loop=None):
@@ -4993,11 +4993,11 @@ def _aio_log_on_exception(fut):
 
 
 def shield(arg):
-    import _mm
+    from _mm import aio_future
     inner = ensure_future(arg)
     if inner.done():
         return inner
-    outer = _mm.aio_future()
+    outer = aio_future()
 
     def _inner_done_callback(inner):
         if outer.cancelled():
@@ -5612,7 +5612,7 @@ def _class_big(name, bases, ns, kwargs, cell, meta):
     # A count per class of the tails that hold it, and a heap of the lists
     # whose head is free, keep it from rescanning every list per pick. The
     # heap is its own: a guest can patch `heapq`.
-    import _mm
+    from _mm import make_class
     seqs = []
     seen = {}
     for b in bases:
@@ -5688,20 +5688,20 @@ def _class_big(name, bases, ns, kwargs, cell, meta):
             'Cannot create a consistent method resolution order (MRO) for bases '
             + ', '.join(names)
         )
-    return _mm.make_class(name, bases, ns, kwargs, cell, meta, tuple(mro))
+    return make_class(name, bases, ns, kwargs, cell, meta, tuple(mro))
 
 
 def _exc_match_any(e, types):
     # `except types` with a tuple longer than a native walk, a walk's worth
     # of items per call: every item checked first (CPython's
     # `check_except_type_valid`), then matched against `e`'s class.
-    import _mm
+    from _mm import exc_match_part
     i = 0
     while i < len(types):
-        i = _mm.exc_match_part(e, types, i, True)
+        i = exc_match_part(e, types, i, True)
     i = 0
     while i < len(types):
-        i = _mm.exc_match_part(e, types, i, False)
+        i = exc_match_part(e, types, i, False)
         if i is None:
             return True
     return False
@@ -5957,8 +5957,8 @@ __name__ = 'builtins'
 def globals():
     # Decision G2 (docs/spec.md §4): a read-only view of the calling
     # module's globals. Reads work as on CPython's dict; writes raise.
-    import _mm
-    c = _mm.caller(1, ())
+    from _mm import caller
+    c = caller(1, ())
     return _GlobalsView(c[2] if c is not None else {})
 
 
@@ -6145,7 +6145,7 @@ def _star_match(st, typ):
     # except*'s CHECK_EG_MATCH over the state [orig, rest, raised...]:
     # the matching part of the rest (a naked exception wrapped in a group
     # whose traceback is this frame), which leaves the rest in st[1].
-    import _mm
+    from _mm import exc_tb_here
     items = typ if type(typ) is tuple else (typ,)
     for t in items:
         if not (isinstance(t, type) and issubclass(t, BaseException)):
@@ -6161,7 +6161,7 @@ def _star_match(st, typ):
             match = rest
         else:
             match = BaseExceptionGroup('', (rest,))
-            _mm.exc_tb_here(match)
+            exc_tb_here(match)
         st[1] = None
         return match
     if isinstance(rest, BaseExceptionGroup):
@@ -6186,7 +6186,7 @@ def _star_leaves(e, ids):
 def _star_prep(st):
     # _PyExc_PrepReraiseStar: re-raised parts keep their place in the
     # original group; new exceptions join them in a new group.
-    import _mm
+    from _mm import exc_same_meta
     orig = st[0]
     excs = st[2:]
     excs.append(st[1])
@@ -6197,7 +6197,7 @@ def _star_prep(st):
     for e in excs:
         if e is None:
             continue
-        if _mm.exc_same_meta(e, orig):
+        if exc_same_meta(e, orig):
             _star_leaves(e, ids)
         else:
             raised.append(e)
@@ -6380,29 +6380,24 @@ __name__ = 'sys'
 
 class _SysModules:
     # Live lookups, but no guest writes into the engine's import table.
-    def __init__(self, hidden):
-        self._hidden = hidden
+    def __init__(self):
+        pass
 
     def __setattr__(self, name, value):
         # The prelude shares this view across resets, just like _StructSeq.
         raise AttributeError('the module registry is read-only')
 
     def __getitem__(self, name):
-        import _mm
-        m = _mm.module_dict()[name]
-        if m is _mm:
-            raise KeyError(name)
-        return m
+        from _mm import module_dict
+        return module_dict()[name]
 
     def __iter__(self):
-        import _mm
-        for name in _mm.module_dict():
-            if name != self._hidden:
-                yield name
+        from _mm import module_dict
+        return iter(module_dict())
 
     def __len__(self):
-        import _mm
-        return len(_mm.module_dict()) - 1
+        from _mm import module_dict
+        return len(module_dict())
 
     def __contains__(self, name):
         return self.get(name) is not None
@@ -6430,7 +6425,7 @@ class _SysModules:
         return dict(self.items())
 
 
-modules = _SysModules('_mm')
+modules = _SysModules()
 
 
 # ------------------------------------------------------------ importlib

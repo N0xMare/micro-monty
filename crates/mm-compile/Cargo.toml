@@ -11,6 +11,10 @@ exclude.workspace = true
 keywords = ["python", "micro-monty", "interpreter", "bytecode", "compiler"]
 categories = ["compilers", "no-std"]
 
+[features]
+# Resolve private imports only when compiling the engine's bundled Python.
+bundled = []
+
 # Path only, so packaging drops it: mm-parse depends on this crate.
 [dev-dependencies]
 mm-parse = { path = "../mm-parse" }

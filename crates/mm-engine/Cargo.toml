@@ -20,11 +20,12 @@ mm-parse.workspace = true
 
 # The prelude (src/prelude.py) is compiled at build time.
 [build-dependencies]
-mm-compile.workspace = true
+mm-compile = { workspace = true, features = ["bundled"] }
 mm-parse.workspace = true
 
 # Snapshot tests run real programs: parse them as the facade does.
 [dev-dependencies]
+mm-compile = { workspace = true, features = ["bundled"] }
 mm-parse.workspace = true
 
 # Native parts of stdlib modules; mm-stdlib's `mod-*` features turn them on,

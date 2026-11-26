@@ -2077,6 +2077,15 @@ impl Vm {
                     if len != u32::try_from(ns.len()).ok() {
                         return Err(SnapError::Corrupt("code constants"));
                     }
+                } else if let Konst::Native(offset) = k {
+                    let range = crate::builtins::PRIVATE_NATIVE_RANGE;
+                    let i = range.start + u32::from(*offset);
+                    if (unit_at.is_none() && std_at.is_none())
+                        || i >= range.end
+                        || *v != Value::native(i)
+                    {
+                        return Err(SnapError::Corrupt("code constants"));
+                    }
                 }
             }
             let ic_base = n_ics;

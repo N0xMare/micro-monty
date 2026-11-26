@@ -15,8 +15,8 @@ tempdir = None
 
 
 def _unavailable(name):
-    import _mm
-    hint = _mm.hint("os")
+    from _mm import hint as _hint
+    hint = _hint("os")
     raise PermissionError(f"tempfile.{name}() is not available: this sandbox has no "
                           "ambient filesystem" + (". " + hint if hint else ""))
 

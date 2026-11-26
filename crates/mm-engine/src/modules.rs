@@ -1,5 +1,5 @@
-//! Modules: the bundled native ones (`asyncio`, `json`, `math`, `sys`,
-//! `_mm`), the bundled Python modules (compiled at build time, loaded and
+//! Modules: the bundled native ones (`asyncio`, `json`, `math`, `sys`),
+//! the bundled Python modules (compiled at build time, loaded and
 //! run on first import), host modules registered by the embedder, and
 //! `import`. Nothing else is importable (docs/spec.md §4, §12).
 //!
@@ -295,8 +295,8 @@ impl Vm {
                     Binding::Int(i) => self.new_int(spec::integer(i))?,
                     Binding::None => Value::NONE,
                     Binding::BuiltinNames => {
-                        let mut names = [Value::NONE; BUNDLED.len() - 1];
-                        for (&n, v) in BUNDLED[1..].iter().zip(&mut names) {
+                        let mut names = [Value::NONE; BUNDLED.len()];
+                        for (&n, v) in BUNDLED.iter().zip(&mut names) {
                             *v = self.new_str(n)?;
                         }
                         self.alloc_tuple(&names)?
@@ -373,24 +373,6 @@ impl Vm {
     pub(crate) fn is_package(&self, name: &str) -> bool {
         matches!(name, "collections" | "json" | "asyncio" | "urllib" | "html")
             || self.host_modules.iter().any(|h| h.name == name)
-    }
-
-    /// [`Vm::import`] for code that runs in user globals (`user`) or for
-    /// `__import__`: `_mm`, the bundled modules' engine helpers, is not
-    /// found there, as if it did not exist.
-    #[cfg_attr(mm_shipped, optimize(size))]
-    pub(crate) fn import_checked(
-        &mut self,
-        dotted: Value,
-        top: bool,
-        user: bool,
-    ) -> Result<Value, Raised> {
-        if user && self.str_ref(dotted).split('.').next() == Some("_mm") {
-            let e = self.err(T::ModuleNotFoundError, "No module named '_mm'");
-            self.set_import_names("_mm", Value::UNDEFINED);
-            return Err(e);
-        }
-        self.import(dotted, top)
     }
 
     /// `import dotted`: the leaf module, or the top-level one if `top`.

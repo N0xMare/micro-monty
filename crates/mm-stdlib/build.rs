@@ -170,10 +170,14 @@ fn compile_module(path: &Path) -> Result<Program, String> {
     let src = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut module = mm_parse::parse(&src).map_err(|e| format!("{}: {e:?}", path.display()))?;
     strip_docs(&mut module.body);
-    let mut program = mm_compile::compile(
+    let mut program = mm_compile::compile_bundled(
         &module,
         mm_compile::Options {
             last_expr_value: false,
+        },
+        mm_compile::bundled::Natives {
+            datetime: cfg!(feature = "mod-datetime"),
+            asyncio: false,
         },
     )
     .map_err(|e| format!("{}: {e:?}", path.display()))?;

@@ -384,8 +384,8 @@ pub(crate) fn mm_tzif(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let Some(source) = vm.zone_source.as_mut() else {
         return Ok(Value::FALSE);
     };
-    // `zoneinfo` validates keys first, but guests can import `_mm`: the
-    // host sees only relative, normalized keys (docs/user-guide.md).
+    // Enforce the host's relative, normalized keys at the host boundary
+    // even when called directly (docs/user-guide.md).
     if key.contains('\0') || key.split('/').any(|p| matches!(p, "" | "." | "..")) {
         return Ok(Value::NONE);
     }

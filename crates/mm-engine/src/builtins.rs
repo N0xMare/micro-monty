@@ -1952,32 +1952,70 @@ struct Packed {
     clippy::cast_possible_truncation,
     reason = "pack checks the table bound"
 )]
-const fn function_order() -> ([u16; COUNT], usize) {
+const fn function_order() -> ([u16; COUNT], usize, core::ops::Range<u32>) {
     let mut order = [0; COUNT];
     let mut n = 0;
+    let mut private = 0..0;
     let mut group = 0;
     while group <= module_specs::BUNDLED.len() {
         let mut i = 0;
         while i < COUNT {
             let d = &DEFS[i];
-            if (d.owner.is_none() || is_unbound(d)) && module_specs::native_group(d.module) == group
+            if (d.owner.is_none() || is_unbound(d))
+                && !matches!(d.module, Some(m) if str_eq(m, "_mm"))
+                && module_specs::native_group(d.module) == group
             {
                 order[n] = i as u16;
                 n += 1;
             }
             i += 1;
         }
+        if group == 0 {
+            private = n as u32..n as u32;
+            while let Some(name) = PRIVATE_NATIVES.name((private.end - private.start) as usize) {
+                let mut i = 0;
+                while i < COUNT {
+                    let d = &DEFS[i];
+                    if matches!(d.module, Some(m) if str_eq(m, "_mm")) && str_eq(d.name, name) {
+                        assert!(d.owner.is_none());
+                        break;
+                    }
+                    i += 1;
+                }
+                assert!(i < COUNT, "missing private native definition");
+                order[n] = i as u16;
+                n += 1;
+                private.end += 1;
+            }
+            assert!(private.end - private.start <= u8::MAX as u32 + 1);
+        }
         group += 1;
     }
-    (order, n)
+    let mut i = 0;
+    while i < COUNT {
+        if matches!(DEFS[i].module, Some(m) if str_eq(m, "_mm")) {
+            let mut p = private.start as usize;
+            while p < private.end as usize && order[p] as usize != i {
+                p += 1;
+            }
+            assert!(p < private.end as usize, "private native has no index");
+        }
+        i += 1;
+    }
+    (order, n, private)
 }
 
-const FUNCTION_ORDER: ([u16; COUNT], usize) = function_order();
+const PRIVATE_NATIVES: mm_compile::bundled::Natives = mm_compile::bundled::Natives {
+    datetime: cfg!(feature = "datetime"),
+    asyncio: cfg!(feature = "asyncio"),
+};
+const FUNCTION_ORDER: ([u16; COUNT], usize, core::ops::Range<u32>) = function_order();
+pub(crate) const PRIVATE_NATIVE_RANGE: core::ops::Range<u32> = FUNCTION_ORDER.2;
 
 /// [`NATIVES`]' index of the function `name` of module `module`, found at
 /// compile time (`u32::MAX` if none).
 const fn function_index(module: &str, name: &str) -> u32 {
-    let (order, functions) = &FUNCTION_ORDER;
+    let (order, functions, _) = &FUNCTION_ORDER;
     let mut i = 0;
     while i < *functions {
         let d = &DEFS[order[i] as usize];
@@ -1999,6 +2037,11 @@ const fn function_index(module: &str, name: &str) -> u32 {
 /// `_mm.rec_new`, a host record class's `__new__` (`Vm::record_class`).
 pub(crate) const REC_NEW: u32 = function_index("_mm", "rec_new");
 const _: () = assert!(REC_NEW != u32::MAX, "no native _mm.rec_new");
+
+pub(crate) const SIGNATURE: u32 = function_index("_mm", "signature");
+const _: () = assert!(SIGNATURE != u32::MAX, "no native _mm.signature");
+pub(crate) const CTX_SWAP: u32 = function_index("_mm", "ctx_swap");
+const _: () = assert!(CTX_SWAP != u32::MAX, "no native _mm.ctx_swap");
 
 // The index helpers are bound on first use, so they do not fill the prelude
 // globals of sessions that never need user-defined index conversion.
@@ -2250,7 +2293,7 @@ const fn pack() -> Packed {
         bundled: module_specs::PackedModules::EMPTY,
     };
     // The functions are already grouped; insertion-sort the methods.
-    let (mut order, functions) = FUNCTION_ORDER;
+    let (mut order, functions, _) = FUNCTION_ORDER;
     let mut n = functions;
     let mut i = 0;
     while i < COUNT {
@@ -8180,7 +8223,7 @@ fn bi_import(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         _ => false,
     };
     if empty {
-        return vm.import_checked(name, true, true);
+        return vm.import(name, true);
     }
     let pkg = Value::from_bool(vm.is_package(&String::from(vm.str_ref(name))));
     vm.prelude_request(

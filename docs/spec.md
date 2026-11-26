@@ -3315,9 +3315,13 @@ features `asyncio` and `json`): their natives, prelude units and, for
 forwards every `mod-*` feature and its `default` feature is the default set
 (mm-stdlib's own default is empty). `math`, `cmath`, `sys` and `importlib`
 are engine modules, always built, with no feature. `sys.modules` is a live
-read-only view of the session's import registry, hiding the internal `_mm`
-module. `importlib.import_module` uses the same importer, with no path or
-loader hooks. Module features are part of the build id (§9.3). Native
+read-only view of the session's import registry. The prelude and bundled
+Python modules bind private engine functions with `from _mm import name`
+at build time. The encoded constant indexes the private native range; it
+needs no module, namespace or interned import name. `_mm` is not a module
+and user imports of it fail normally. `importlib.import_module` uses the
+same importer, with no path or loader hooks. Module features are part of
+the build id (§9.3). Native
 module namespaces are packed at build time in
 insertion order, with unique keys and a contiguous range for each module's
 native functions. On first import the engine charges one unit of fuel per

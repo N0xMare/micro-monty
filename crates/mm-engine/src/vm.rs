@@ -2707,6 +2707,16 @@ impl Vm {
                         }
                         Konst::Bytes(b) => self.new_bytes(b)?,
                         Konst::Complex(re, im) => self.new_complex(*re, *im)?,
+                        Konst::Native(offset) => {
+                            let range = crate::builtins::PRIVATE_NATIVE_RANGE;
+                            let i = range.start + u32::from(*offset);
+                            if gslot == GSLOT_USER || i >= range.end {
+                                return Err(
+                                    self.err(T::SystemError, "invalid private native constant")
+                                );
+                            }
+                            Value::native(i)
+                        }
                         Konst::Names(ns) => {
                             let mut items = Vec::with_capacity(ns.len());
                             for n in ns {

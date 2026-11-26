@@ -2868,10 +2868,7 @@ impl Vm {
                 // is `_mm.ctx_swap(context)`, whose `TypeError` is reported
                 // as the callback's, as `Handle._run`'s swap raised it.
                 if context != Value::NONE && !context.is_obj_kind(ty::DICT as u8) {
-                    let k = self.intern("_mm")?;
-                    let m = self.import(k, false)?;
-                    let k = self.intern("ctx_swap")?;
-                    let swap = self.module_attr(m, k)?.unwrap_or(Value::NONE);
+                    let swap = Value::native(crate::builtins::CTX_SWAP);
                     let call_args = self.alloc_tuple(&[context])?;
                     return self
                         .start_in_slot(f, args, h, Value::NONE, swap, call_args)
@@ -3102,7 +3099,6 @@ impl Vm {
     /// (tasks or futures) to finish, at once if one already has.
     #[cfg(feature = "asyncio")]
     pub(crate) fn first_of(&mut self, items: &[Value]) -> Result<Value, Raised> {
-        // `_mm` is importable: check every item before reading its slots.
         if !items
             .iter()
             .all(|c| matches!(c.obj_kind().map(u16::from), Some(ty::TASK | ty::FUTURE)))

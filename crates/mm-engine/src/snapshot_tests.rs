@@ -20,9 +20,13 @@ fn bundled() -> &'static [StdModule] {
     );
     #[cfg(feature = "datetime")]
     let src = src.as_str();
-    let program = mm_compile::compile(
+    let program = mm_compile::compile_bundled(
         &mm_parse::parse(src).expect("parses"),
         mm_compile::Options::default(),
+        mm_compile::bundled::Natives {
+            datetime: cfg!(feature = "datetime"),
+            asyncio: false,
+        },
     )
     .expect("compiles");
     Box::leak(Box::new([StdModule {

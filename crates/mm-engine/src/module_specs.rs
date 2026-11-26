@@ -4,9 +4,8 @@
 use super::{COUNT, DEFS, PACKED, Packed, Sref, T, add_str, prefix, str_eq};
 use core::ops::Range;
 
-/// Top-level native modules (including `_mm`, private to the engine).
+/// Top-level native modules.
 pub const BUNDLED: &[&str] = &[
-    "_mm",
     #[cfg(feature = "asyncio")]
     "asyncio",
     "cmath",

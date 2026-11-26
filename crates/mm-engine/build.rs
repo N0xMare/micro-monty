@@ -135,10 +135,14 @@ fn record(u: &Unit, sections: &[Vec<u8>; mm_compile::section::COUNT]) -> Vec<u8>
 }
 
 fn compile(m: &Module) -> Result<Program, String> {
-    mm_compile::compile(
+    mm_compile::compile_bundled(
         m,
         mm_compile::Options {
             last_expr_value: false,
+        },
+        mm_compile::bundled::Natives {
+            datetime: cfg!(feature = "datetime"),
+            asyncio: cfg!(feature = "asyncio"),
         },
     )
     .map_err(|e| format!("prelude.py: {e:?}"))
@@ -361,8 +365,8 @@ fn class_unit(stmt: &Stmt, module: Option<&str>) -> Result<Option<Unit>, String>
     }))
 }
 
-/// The attributes `__init__` stores, in order, if its body is only
-/// `self.<attr> = <parameter>` for each parameter in order.
+/// The attributes `__init__` stores, in order, if its body is `pass`
+/// with no arguments, or `self.<attr> = <parameter>` for each argument.
 fn plain_init(stmt: &Stmt) -> Option<Vec<String>> {
     let StmtKind::ClassDef(class) = &stmt.kind else {
         return None;
@@ -377,6 +381,17 @@ fn plain_init(stmt: &Stmt) -> Option<Vec<String>> {
         return None;
     }
     let (me, params) = ps.args.split_first()?;
+    if params.is_empty()
+        && matches!(
+            init.body.as_slice(),
+            [Stmt {
+                kind: StmtKind::Pass,
+                ..
+            }]
+        )
+    {
+        return Some(Vec::new());
+    }
     if init.body.len() != params.len() {
         return None;
     }
