@@ -2163,6 +2163,11 @@ differs:
     subclass that does not support them name the base type:
     `unhashable type: 'list'`, `object of type 'int' has no len()`,
     `'int' object is not iterable` (CPython names the subclass, `'LS'`).
+    So do `len` and `iter` of a class whose metaclass is `M`:
+    `object of type 'type' has no len()` (CPython: `'M'`).
+  - `type('D', (1,), {})` raises `bases must be types, not int` (CPython:
+    `metaclass conflict: the metaclass of a derived class must be a
+    (non-strict) subclass of the metaclasses of all its bases`).
   - In a key or element error, a class defined in a function is named
     without its qualifier: `cannot use 'P' as a set element (unhashable
     type: 'P')` (CPython: `'f.<locals>.P'`).
