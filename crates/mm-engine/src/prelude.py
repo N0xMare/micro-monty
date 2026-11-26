@@ -1218,11 +1218,7 @@ def _complex_part(x):
         if not isinstance(c, complex):
             raise TypeError('__complex__ returned non-complex (type ' + type(c).__name__ + ')')
         return c
-    if hasattr(t, '__float__'):
-        return float(x)
-    if hasattr(t, '__index__'):
-        return float(t.__index__(x))
-    return x
+    return _mreal(x)
 
 
 def _complex_real(x):
@@ -1318,7 +1314,9 @@ def _mreal(x):
     if t is float or t is int or t is bool:
         return x
     if getattr(t, '__float__', None) is not None:
-        return float(x)
+        # A float subclass's own value, never its `__float__`, as
+        # CPython's `PyFloat_AsDouble` (also one-argument `complex()`).
+        return _bx_value(x) if isinstance(x, float) else float(x)
     return float(_index(x)) if _has_index(x) else x
 
 
@@ -1442,9 +1440,11 @@ def _mcall(f, args, kw):
         elif real and name == 'math.ldexp' and new:
             # Its exponent is an int, never converted (CPython's PyLong_Check).
             new.append(a)
-        elif real and type(a) not in (int, bool, float) and (
-                getattr(type(a), '__float__', None) is not None or _has_index(a)):
-            new.append(_mreal(a))
+        elif real and (t := type(a)) not in (int, bool, float) and (
+                (fl := getattr(t, '__float__', None)) is not None or _has_index(a)):
+            # `_mreal`, with the class's `__float__` already read.
+            new.append(float(_index(a)) if fl is None else
+                       _bx_value(a) if isinstance(a, float) else float(a))
             changed = True
         elif real and changed and type(a) not in (int, bool, float):
             # Not a real number: CPython converts no argument after it, and
@@ -2930,8 +2930,8 @@ def _divmod_slot(t):
 def _divmod_call(slot, v, w):
     if slot == 'b':
         if isinstance(v, (int, float)) and isinstance(w, (int, float)):
-            return divmod(float(v) if isinstance(v, float) else _int_value(v),
-                          float(w) if isinstance(w, float) else _int_value(w))
+            return divmod(_bx_value(v) if isinstance(v, float) else _int_value(v),
+                          _bx_value(w) if isinstance(w, float) else _int_value(w))
         return NotImplemented
     return _slot_full(v, w, '__divmod__', '__rdivmod__', _divmod_slot)
 
