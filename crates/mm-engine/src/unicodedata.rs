@@ -551,8 +551,7 @@ pub(crate) fn lookup(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     } else if Vm::is_bytes(v) {
         vm.bytes_data(v).iter().map(|&b| char::from(b)).collect()
     } else {
-        let msg = format!("a bytes-like object is required, not '{}'", vm.type_name(v));
-        return Err(vm.err(T::TypeError, &msg));
+        return Err(vm.not_bytes_like(v));
     };
     if text.len() > 256 {
         let k = vm.new_str("name too long")?;

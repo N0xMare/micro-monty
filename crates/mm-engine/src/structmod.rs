@@ -508,11 +508,7 @@ pub(crate) fn unpack(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     };
     let buf = vm.arg_o(&a, 1);
     if !Vm::is_bytes_like(buf) {
-        let m = format!(
-            "a bytes-like object is required, not '{}'",
-            vm.type_name(buf)
-        );
-        return Err(vm.err(T::TypeError, &m));
+        return Err(vm.not_bytes_like(buf));
     }
     let whole = vm.truthy(vm.arg_o(&a, 3));
     let mut off = vm.int_of_o(vm.arg_o(&a, 2)).unwrap_or(0);

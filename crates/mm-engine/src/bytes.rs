@@ -613,11 +613,7 @@ impl Vm {
         } else if Vm::is_intlike(item) {
             j.w[W_A + 2] = u64::from(self.byte_value(item)?);
         } else {
-            let msg = format!(
-                "a bytes-like object is required, not '{}'",
-                self.type_name(item)
-            );
-            return Err(self.err(T::TypeError, &msg));
+            return Err(self.not_bytes_like(item));
         }
         seek_init(&mut j.w[W_S..], n);
         self.job_run(j)
@@ -635,11 +631,7 @@ impl Vm {
             let byte = self.byte_value(item)?;
             return Ok(self.bytes_data(b).contains(&byte));
         }
-        let msg = format!(
-            "a bytes-like object is required, not '{}'",
-            self.type_name(item)
-        );
-        Err(self.err(T::TypeError, &msg))
+        Err(self.not_bytes_like(item))
     }
 
     /// An int in `range(0, 256)`.
@@ -834,11 +826,17 @@ impl Vm {
         if Self::is_bytes_like(v) {
             return Ok(v);
         }
+        Err(self.not_bytes_like(v))
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn not_bytes_like(&mut self, v: Value) -> Raised {
         let msg = format!(
             "a bytes-like object is required, not '{}'",
             self.type_name(v)
         );
-        Err(self.err(T::TypeError, &msg))
+        self.err(T::TypeError, &msg)
     }
 }
 
@@ -991,11 +989,7 @@ impl Vm {
         // An int subclass (IntEnum) is its value.
         let x = self.int_unbx(x);
         if !Vm::is_intlike(x) {
-            let msg = format!(
-                "'{}' object cannot be interpreted as an integer",
-                self.type_name(x)
-            );
-            return Err(self.err(T::TypeError, &msg));
+            return Err(self.not_integer(x));
         }
         match self.int_of_o(x).and_then(|i| u8::try_from(i).ok()) {
             Some(b) => Ok(b),
@@ -1890,11 +1884,7 @@ pub(crate) fn hex(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         Some(v) => {
             let v = vm.int_unbx(v);
             if !Vm::is_intlike(v) {
-                let msg = format!(
-                    "'{}' object cannot be interpreted as an integer",
-                    vm.type_name(v)
-                );
-                return Err(vm.err(T::TypeError, &msg));
+                return Err(vm.not_integer(v));
             }
             match vm.int_of_o(v).filter(|&i| i32::try_from(i).is_ok()) {
                 Some(i) => i,

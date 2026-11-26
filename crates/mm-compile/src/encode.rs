@@ -488,11 +488,7 @@ impl<'a> In<'a> {
     /// An empty vector with room for `n` elements and the pending spare
     /// room, charged first.
     fn room<T>(&mut self, n: usize) -> Option<Vec<T>> {
-        let cap = n.checked_add(core::mem::take(&mut self.spare))?;
-        if cap == 0 {
-            return Some(Vec::new());
-        }
-        self.charge((cap as u64).checked_mul(size_of::<T>() as u64)?)?;
+        let cap = self.admit_capacity(n, size_of::<T>() as u64)?;
         if cap == n {
             // Lengths are bounded by the input; only stored spare capacity
             // can request a large allocation from a few encoded bytes.
@@ -504,6 +500,16 @@ impl<'a> In<'a> {
             return None;
         }
         Some(values)
+    }
+
+    // Keep the admission check shared by every element type.
+    #[inline(never)]
+    fn admit_capacity(&mut self, n: usize, element_bytes: u64) -> Option<usize> {
+        let cap = n.checked_add(core::mem::take(&mut self.spare))?;
+        if cap != 0 {
+            self.charge((cap as u64).checked_mul(element_bytes)?)?;
+        }
+        Some(cap)
     }
 
     fn charge(&mut self, bytes: u64) -> Option<()> {

@@ -2604,13 +2604,7 @@ impl Vm {
                 "Python int too large to convert to C ssize_t",
             )),
             None if self.uflags(v) & crate::class::f::INDEX != 0 => Err(self.need_py()),
-            None => Err(self.err(
-                T::TypeError,
-                &format!(
-                    "'{}' object cannot be interpreted as an integer",
-                    self.type_name(v)
-                ),
-            )),
+            None => Err(self.not_integer(v)),
         }
     }
 

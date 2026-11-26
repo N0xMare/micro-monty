@@ -55,11 +55,7 @@ impl Vm {
         if let Some(b) = self.backing(v).and_then(|b| self.big_of(b)) {
             return Ok(b);
         }
-        let msg = format!(
-            "'{}' object cannot be interpreted as an integer",
-            self.type_name(v)
-        );
-        Err(self.err(T::TypeError, &msg))
+        Err(self.not_integer(v))
     }
 
     #[cfg_attr(mm_shipped, optimize(size))]

@@ -311,11 +311,7 @@ impl Vm {
                     Cont::None,
                 ));
             }
-            let msg = format!(
-                "can't multiply sequence by non-int of type '{}'",
-                self.type_name(n)
-            );
-            return Err(self.err(T::TypeError, &msg));
+            return Err(self.non_integer_repeat(n));
         }
         if bop == BinOp::Mod && matches!(ta, T::str | T::bytes) {
             return Ok(Next::Invoke(
@@ -325,17 +321,7 @@ impl Vm {
                 Cont::None,
             ));
         }
-        let sym = match (opb & 0x80 != 0, bop) {
-            (false, BinOp::Pow) => String::from("** or pow()"),
-            (true, _) => format!("{}=", bop.symbol()),
-            _ => bop.symbol().into(),
-        };
-        let msg = format!(
-            "unsupported operand type(s) for {sym}: '{}' and '{}'",
-            String::from(self.type_name(a)),
-            self.type_name(b)
-        );
-        Err(self.err(T::TypeError, &msg))
+        Err(self.unsupported_binop(bop, a, b, opb & 0x80 != 0))
     }
 
     /// `a <op> b` as the dispatch loop runs it.

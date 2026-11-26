@@ -299,11 +299,7 @@ impl Vm {
             if self.uflags(v) & crate::class::f::INDEX != 0 {
                 return Err(self.need_py());
             }
-            let msg = format!(
-                "'{}' object cannot be interpreted as an integer",
-                self.type_name(v)
-            );
-            return Err(self.err(T::TypeError, &msg));
+            return Err(self.not_integer(v));
         }
         self.byte_value(v)
     }

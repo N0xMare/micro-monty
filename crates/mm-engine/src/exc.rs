@@ -186,6 +186,16 @@ fn dedent(lines: &[String]) -> Vec<String> {
 }
 
 impl Vm {
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn not_integer(&mut self, v: Value) -> Raised {
+        let msg = format!(
+            "'{}' object cannot be interpreted as an integer",
+            self.type_name(v)
+        );
+        self.err(T::TypeError, &msg)
+    }
+
     /// The `T` of an exception instance.
     pub(crate) fn exc_type(&self, e: Value) -> T {
         self.type_of(e)
@@ -774,13 +784,7 @@ impl Vm {
                 2 | 3 => match self.unicode_ssize(v)? {
                     Some(n) => n,
                     None if self.uflags(v) & crate::class::f::INDEX != 0 => return Ok(Some(i)),
-                    None => {
-                        let msg = format!(
-                            "'{}' object cannot be interpreted as an integer",
-                            self.type_name(v)
-                        );
-                        return Err(self.err(T::TypeError, &msg));
-                    }
+                    None => return Err(self.not_integer(v)),
                 },
                 1 if decode && Vm::is_bytes(b) => v,
                 1 if decode && Vm::is_bytearray(b) => return Ok(Some(1)),

@@ -655,11 +655,7 @@ impl Vm {
     /// The result of `__len__` (or `__len__` in a truth test).
     fn check_len(&mut self, v: Value) -> Result<i64, Raised> {
         let Some(n) = self.int_of(v) else {
-            let msg = format!(
-                "'{}' object cannot be interpreted as an integer",
-                String::from(self.type_name(v))
-            );
-            return Err(self.err(T::TypeError, &msg));
+            return Err(self.not_integer(v));
         };
         if n < 0 {
             return Err(self.err(T::ValueError, "__len__() should return >= 0"));

@@ -591,11 +591,7 @@ impl Vm {
                     if self.uflags(n) & f::INDEX != 0 {
                         return Err(self.need_py());
                     }
-                    let msg = format!(
-                        "can't multiply sequence by non-int of type '{}'",
-                        self.type_name(n)
-                    );
-                    return Err(self.err(T::TypeError, &msg));
+                    return Err(self.non_integer_repeat(n));
                 };
                 // `n *= seq` repeats `seq` into a new object: only the left
                 // operand's repetition is in place.
@@ -643,17 +639,39 @@ impl Vm {
             }
             _ => {}
         }
-        let sym = match (inplace, op) {
-            (false, BinOp::Pow) => String::from("** or pow()"),
-            (true, _) => format!("{}=", op.symbol()),
-            _ => op.symbol().into(),
+        Err(self.unsupported_binop(op, a, b, inplace))
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn unsupported_binop(
+        &mut self,
+        op: BinOp,
+        a: Value,
+        b: Value,
+        inplace: bool,
+    ) -> Raised {
+        let (sym, suffix) = match (inplace, op) {
+            (false, BinOp::Pow) => ("** or pow()", ""),
+            (true, _) => (op.symbol(), "="),
+            _ => (op.symbol(), ""),
         };
         let msg = format!(
-            "unsupported operand type(s) for {sym}: '{}' and '{}'",
-            String::from(self.type_name(a)),
+            "unsupported operand type(s) for {sym}{suffix}: '{}' and '{}'",
+            self.type_name(a),
             self.type_name(b)
         );
-        Err(self.err(T::TypeError, &msg))
+        self.err(T::TypeError, &msg)
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn non_integer_repeat(&mut self, n: Value) -> Raised {
+        let msg = format!(
+            "can't multiply sequence by non-int of type '{}'",
+            self.type_name(n)
+        );
+        self.err(T::TypeError, &msg)
     }
 
     /// `a <op> b` (`&`, `|`, `-`, `^`) with a set-like dict view: a plain
@@ -780,12 +798,7 @@ impl Vm {
                 && self.dunder(b, Dn::Rmul).is_none()
                 || self.type_name(b) == "collections.deque")
         {
-            let msg = format!(
-                "unsupported operand type(s) for *=: '{}' and '{}'",
-                String::from(self.type_name(a)),
-                self.type_name(b)
-            );
-            return Err(self.err(T::TypeError, &msg));
+            return Err(self.unsupported_binop(op, a, b, true));
         }
         if op == BinOp::Mod && matches!(self.type_of(x), T::str | T::bytes) {
             // `%` formats its right operand as given, as CPython's
@@ -830,27 +843,13 @@ impl Vm {
                 // Unsupported for the values: report the subclasses.
                 let msg = self.exc_str(self.exc).unwrap_or_default();
                 if msg.starts_with("unsupported operand") {
-                    let sym = match (inplace, op) {
-                        (false, BinOp::Pow) => String::from("** or pow()"),
-                        (true, _) => format!("{}=", op.symbol()),
-                        _ => op.symbol().into(),
-                    };
-                    let msg = format!(
-                        "unsupported operand type(s) for {sym}: '{}' and '{}'",
-                        String::from(self.type_name(a)),
-                        self.type_name(b)
-                    );
-                    return Err(self.err(T::TypeError, &msg));
+                    return Err(self.unsupported_binop(op, a, b, inplace));
                 }
                 if msg.starts_with("can't multiply sequence") {
                     let seq =
                         |t: T| matches!(t, T::str | T::list | T::tuple | T::bytes | T::bytearray);
                     let n = if seq(self.type_of(x)) { b } else { a };
-                    let msg = format!(
-                        "can't multiply sequence by non-int of type '{}'",
-                        self.type_name(n)
-                    );
-                    return Err(self.err(T::TypeError, &msg));
+                    return Err(self.non_integer_repeat(n));
                 }
                 return Err(Raised);
             }
@@ -1093,17 +1092,7 @@ impl Vm {
                 }
                 r
             }
-            _ => {
-                return Err(self.err(
-                    T::TypeError,
-                    &format!(
-                        "unsupported operand type(s) for {}: '{}' and '{}'",
-                        op.symbol(),
-                        self.type_name(a),
-                        self.type_name(b)
-                    ),
-                ));
-            }
+            _ => return Err(self.unsupported_binop(op, a, b, false)),
         };
         Ok(Value::float(r))
     }
