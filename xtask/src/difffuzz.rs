@@ -14,6 +14,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
+            "--park" => pass.push(arg.clone()),
             "--seeds" | "--start" | "--jobs" | "--minutes" | "--timeout" | "--out" => {
                 let value = it.next().ok_or(format!("{arg} needs a value"))?;
                 pass.extend([arg.clone(), value.clone()]);

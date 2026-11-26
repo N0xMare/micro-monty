@@ -280,6 +280,8 @@ tasks:
                              fuzz/difffuzz/divergences/
       --seeds <n>            programs (default 100), --start <s> first seed
       --minutes <m>          stop after m minutes; --jobs <j> processes
+      --park                 also run each agreeing program parked and as a
+                             snapshot chain; compare with its unparked run
   bench [options]            time bench/*.py and bench/*.js per engine
       --engines <a,b,..>     cpython,qjs,monty,micro-monty (default); also
                              dquickts,qpy,djs,micro-monty-main

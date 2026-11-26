@@ -15,7 +15,7 @@ one valid source).
 
 Usage (normally through `cargo xtask difffuzz`):
     python3.14 fuzz/difffuzz/difffuzz.py --mm target/release/mm \\
-        [--seeds N] [--start S] [--jobs J] [--timeout T] [--out DIR] [--minutes M]
+        [--seeds N] [--start S] [--jobs J] [--timeout T] [--out DIR] [--minutes M] [--park]
     python3.14 fuzz/difffuzz/difffuzz.py --show SEED    # print one program
 
 Half the blocks are `EXTRA_BLOCKS`: builtins called with values of every
@@ -53,6 +53,17 @@ deadline exits with status 3 and `mm: a native step ran ...` on stderr,
 which counts as a divergence. Leave room for the load of `--jobs`, such as
 `MM_STEP_MS=250`.
 
+With `--park`, a program both engines agree on is run three more ways on
+mm through `mm exec --json --main-module --digest`: unparked
+(`--report-fuel`), parked every N fuel units in one process with a snapshot
+at every stop (`--park-every N --snapshot-continue`), and as a chain of
+snapshots, each restored by `mm resume` in a new process
+(`--snapshot-every N --snapshot-dir`). N is 1, 7, 61 or 1009 by seed, or
+more for a long program (at most about 200 and 25 stops); each parked run
+must give the unparked run's output, result, exception, exit, fuel and
+final-state digest (docs/spec.md §13), else it is a `park` divergence,
+saved unminimized.
+
 `mm run` has a 256 MiB heap (docs/spec.md §11). A program is counted
 `memory` when mm's first differing line names `MemoryError` and CPython,
 rerun alone, peaked above 128 MiB (`heap_limit`).
@@ -61,11 +72,13 @@ rerun alone, peaked above 128 MiB (`heap_limit`).
 import argparse
 import ast
 import collections
+import json
 import math
 import multiprocessing
 import os
 import random
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -93,7 +106,7 @@ FLOAT_FMT = ['', '.2f', '.0f', '>10.3f', 'e', '.3e', 'g', '.4g', '%', '.1%', '+.
 EXTRA_BLOCKS = ['builtin_errors', 'format_spec', 'floats', 'bigint', 'strings', 'bytes', 'struct',
                 'collections', 'views', 'sets', 'subclass_builtin', 'dispatch', 'class_protocols',
                 'generator_protocol', 'args', 'exceptions', 'iterstd', 'lru', 'records', 'json', 'regex',
-                'asyncio']
+                'asyncio', 'metaclass', 'dates_typing_text']
 STR_FMT = ['', '>8', '<8', '^8', '*^9', '.2', '10.3', '!r', '!r:>12', '!s', '!a']
 
 # Results of libm functions and float `**` (correctly rounded in neither
@@ -1548,6 +1561,117 @@ class Gen:
                     '        log.append(("event", ev.is_set()))']
         return head + body + ['print(asyncio.run(main()), log)']
 
+    def b_metaclass(self):
+        """A metaclass's `__new__`, `__init__`, `__call__` and class-level
+        protocols (`len(C)`, `C[k]`, `x in C`, `isinstance` hooks), class
+        keywords, `type(name, bases, ns)` and metaclass conflicts. Without
+        `__prepare__`, `__slots__` or `__init_subclass__`: the first two are
+        refused by design (docs/user-guide.md), the last belongs to the
+        types lane."""
+        m, c = self.fresh('Meta'), self.fresh('K')
+        out = [f'class {m}(type):', '    made = []']
+        if self.chance(0.7):
+            out += ['    def __new__(mcls, name, bases, ns, **kw):', '        ns.setdefault("tag", name.lower())',
+                    '        cls = super().__new__(mcls, name, bases, ns)', '        mcls.made.append((name, sorted(kw)))',
+                    '        return cls']
+        if self.chance(0.5):
+            out += ['    def __init__(cls, name, bases, ns, **kw):', '        super().__init__(name, bases, ns)',
+                    '        cls.kw = kw']
+        if self.chance(0.5):
+            out += ['    def __call__(cls, *a, **kw):', '        obj = super().__call__(*a, **kw)',
+                    f'        obj.via = {self.pick(["cls.__name__", "len(a)", "sorted(kw)"])}', '        return obj']
+        if self.chance(0.5):
+            out += ['    def __len__(cls):', f'        return {self.pick(["3", "len(cls.__name__)", "-1", "2 ** 70", "True"])}',
+                    '    def __getitem__(cls, k):', '        return (cls.__name__, k)',
+                    '    def __iter__(cls):', '        return iter(cls.__name__)',
+                    '    def __contains__(cls, x):', '        return x == cls.__name__']
+        if self.chance(0.4):
+            out += ['    def __instancecheck__(cls, x):', f'        return {self.pick(["isinstance(x, int)", "True", "False", "x == 1"])}',
+                    '    def __subclasscheck__(cls, s):', f'        return {self.pick(["s is bool", "True", "issubclass(s, int)"])}']
+        if self.chance(0.4):
+            out += ['    def __repr__(cls):', '        return f"<{cls.__name__} via meta>"', '    @property',
+                    '    def plural(cls):', '        return cls.__name__ + "s"', '    def hello(cls):', '        return "meta hello"']
+        if self.chance(0.3):
+            out += ['    def __getattr__(cls, name):', '        if name.startswith("x"):', '            return name.upper()',
+                    '        raise AttributeError(name)']
+        kw = self.pick(['', ', flag=1', ', a=1, b="two"'])
+        out += [f'class {c}(metaclass={m}{kw}):', '    def __init__(self, v=0):', '        self.v = v',
+                '    def hello(self):', '        return "instance hello"', f'class Sub{c}({c}):', '    pass']
+        return out + self.probes([
+            f'type({c}).__name__', f'type(Sub{c}).__name__', f'{m}.made', f'getattr({c}, "kw", None)', f'{c}.tag',
+            f'Sub{c}.tag', f'{c}(5).v', f'getattr({c}(1, ), "via", None)', f'{c}(v=2).via if hasattr({c}(), "via") else 0',
+            f'len({c})', f'{c}[3]', f'list({c})', f'"{c}" in {c}', f'1 in {c}', f'isinstance(1, {c})', f'isinstance({c}(), {c})',
+            f'issubclass(bool, {c})', f'issubclass(Sub{c}, {c})', f'repr({c})', f'str(Sub{c})', f'{c}.plural', f'{c}.hello()',
+            f'{c}().hello()', f'{c}.xyz', f'{c}.nope', f'{c}.__mro__ == ({c}, object)', f'[k.__name__ for k in Sub{c}.__mro__]',
+            f'isinstance({c}, {m})', f'isinstance({c}, type)', f'{m}.__mro__[1].__name__', f'{c}.__class__ is {m}',
+            f'type("Dyn", ({c},), {{"w": 1}}).w', f'type("Dyn", ({c},), {{}}).tag', f'type(type("D", (), {{}})).__name__',
+            'type("D", (1,), {})', 'type("D")', 'type("D", (), {}, 1)', f'{m}("Made", (), {{}}).tag',
+            f'type({m}("Made", (), {{"q": 2}})()).__name__',
+            f'(lambda M2: type("X", ({c}, M2("Y", (), {{}})), {{}}))(type("M2", (type,), {{}}))',
+            f'sorted(vars({c}).keys() - {{"__module__", "__dict__", "__weakref__", "__doc__", "__qualname__", "__firstlineno__", "__static_attributes__"}})',
+        ])
+
+    def b_dates_typing_text(self):
+        """datetime arithmetic, parsing and formatting with fixed values
+        (no clock), typing's runtime objects, and textwrap."""
+        k = self.r.randint(0, 2)
+        if k == 0:
+            d = f'datetime.date({self.r.randint(1, 9999)}, {self.r.randint(1, 12)}, {self.r.randint(1, 28)})'
+            t = (f'datetime.datetime({self.r.randint(1970, 2100)}, {self.r.randint(1, 12)}, {self.r.randint(1, 28)}, '
+                 f'{self.r.randint(0, 23)}, {self.r.randint(0, 59)}, {self.r.randint(0, 59)}, {self.pick(["0", "1", "999999", "500000"])})')
+            td = (f'datetime.timedelta({self.pick(["days", "hours", "seconds", "microseconds", "weeks", "minutes"])}='
+                  f'{self.pick(["1", "-1", "1.5", "-0.5", "86399", "10 ** 6", "1e-7", "2.675"])})')
+            tz = f'datetime.timezone(datetime.timedelta(hours={self.r.randint(-23, 23)}, minutes={self.pick(["0", "30", "45"])}))'
+            fmts = ['%Y-%m-%d', '%d/%m/%y %H:%M', '%A %B %j', '%a %b %d %I %p', '%U %W %w', '%%%f', '%G-W%V-%u', '%c', '%x %X', '%z %Z']
+            isos = ['"2024-02-29"', '"2023-02-29"', '"2024-13-01"', '"20240102"', '"2024-W05-3"', '"2024-01-02T03:04:05"',
+                    '"2024-01-02 03:04:05.123+05:30"', '"2024-01-02T25:00"', '"T03:04"', '""', '"2024-01-02T03:04:05Z"']
+            return ['import datetime'] + self.probes([
+                f'{d}', f'{d}.isoformat()', f'{d}.weekday()', f'{d}.isocalendar()', f'{d}.toordinal()', f'{d} + {td}',
+                f'{d} - {d}', f'{t} - {t}', f'{t} + {td}', f'{t}.replace(tzinfo={tz})', f'{t}.replace(tzinfo={tz}).isoformat()',
+                f'{t}.replace(tzinfo={tz}).utcoffset()', f'{t} < {t}.replace(tzinfo={tz})', f'{t} == {t}.replace(tzinfo={tz})',
+                f'{t}.replace(tzinfo={tz}).astimezone(datetime.timezone.utc)', f'{t}.strftime({self.pick(fmts)!r})',
+                f'{d}.strftime({self.pick(fmts)!r})', f'str({td})', f'repr({td})', f'{td}.total_seconds()', f'{td} * {self.pick(["3", "-2", "0.5", "1.1"])}',
+                f'{td} / {td}', f'{td} // {self.pick(["2", "0", "7"])}', f'{td} % {td}', f'divmod({td}, {td})', f'abs({td})', f'-{td}',
+                f'datetime.date.fromisoformat({self.pick(isos)})', f'datetime.datetime.fromisoformat({self.pick(isos)})',
+                f'datetime.time.fromisoformat({self.pick(isos)})', f'datetime.datetime.strptime("2024-03-04 05:06", "%Y-%m-%d %H:%M")',
+                f'datetime.datetime.strptime({self.pick(isos)}, "%Y-%m-%d")', f'datetime.date.max + {td}', f'datetime.date.min - {td}',
+                f'datetime.datetime.combine({d}, datetime.time(1, 2, 3))', f'datetime.date.fromordinal({self.r.randint(-1, 4000000)})',
+                f'datetime.time({self.r.randint(0, 25)}, {self.r.randint(0, 61)})', f'{t}.timetuple()[:6]', f'{tz}', f'repr({tz})',
+                f'datetime.timedelta(days=999999999) + {td}', f'hash({td}) == hash({td})', f'format({d}, {self.pick(fmts)!r})',
+                f'f"{{{t}:%H}}"', f'{t}.date() == {d}', f'sorted([{t}, {t}.replace(year=1999)])[0].year', f'{t}.ctime()',
+            ])
+        if k == 1:
+            return ['import typing', 'T = typing.TypeVar("T")', 'class Box(typing.Generic[T]):', '    def __init__(self, v):',
+                    '        self.v = v', 'class Pt(typing.NamedTuple):', '    x: int', '    y: int = 0',
+                    'Row = typing.TypedDict("Row", {"id": int, "name": str})', '@typing.runtime_checkable',
+                    'class Sized(typing.Protocol):', '    def __len__(self): ...'] + self.probes([
+                'repr(typing.Optional[int])', 'repr(typing.Union[int, str])', 'repr(typing.Union[int, int])', 'repr(int | None)',
+                'typing.get_origin(typing.List[int])', 'typing.get_args(typing.Dict[str, int])', 'repr(typing.List[int])',
+                'repr(list[int])', 'list[int] == typing.List[int]', 'repr(Box[int])', 'Box[int](3).v', 'Box(1).v',
+                'repr(typing.Literal[1, "a"])', 'typing.get_args(typing.Literal[1, 2])', 'typing.cast(int, "x")',
+                'Pt(1)', 'Pt(1, 2)._replace(y=5)', 'Pt._fields', 'Pt(1) == (1, 0)', 'Pt._make([3, 4])', 'Pt(1)._asdict()',
+                'Pt()', 'Row(id=1, name="a")', 'isinstance([], Sized)', 'isinstance(3, Sized)', 'repr(T)', 'T.__name__',
+                'repr(typing.Callable[[int], str])', 'repr(typing.Tuple[int, ...])', 'typing.get_args(int | str)',
+                'repr(typing.Any)', 'typing.Optional[int] == typing.Union[int, None]', 'repr(typing.Final[int])',
+                'repr(typing.ClassVar[int])', 'Box[int, str]', 'typing.Generic[int]', 'repr(typing.Iterable[str])',
+                'issubclass(list, typing.Iterable)', 'isinstance({}, typing.Mapping)', 'repr(typing.Annotated[int, "m"])',
+                'typing.get_args(typing.Annotated[int, "m"])', 'repr(typing.Never)', 'typing.NewType("UserId", int)(5)',
+                'repr(typing.NewType("UserId", int))', 'typing.assert_never(1)', 'typing.get_origin(int)',
+            ])
+        words = self.pick(['"The quick brown fox jumps over the lazy dog"', '"a  b\\tc\\n\\nd  e"', '"supercalifragilisticexpialidocious and more"',
+                           '"  leading and trailing  "', '"line one\\nline two\\n  indented\\n"', '""', '"x " * 30', '"tab\\there, comma, dash-word"'])
+        width = self.pick(['1', '5', '10', '20', '0', '-1', '80'])
+        return ['import textwrap'] + self.probes([
+            f'textwrap.wrap({words}, {width})', f'textwrap.fill({words}, {width})', f'textwrap.shorten({words}, {width})',
+            f'textwrap.shorten({words}, width={width}, placeholder=" [..]")', f'textwrap.dedent({words})',
+            f'textwrap.indent({words}, "> ")', f'textwrap.indent({words}, "+", lambda l: True)',
+            f'textwrap.wrap({words}, {width}, break_long_words=False)', f'textwrap.wrap({words}, {width}, break_on_hyphens=False)',
+            f'textwrap.wrap({words}, {max(int(width), 6)}, initial_indent="* ", subsequent_indent="  ")', f'textwrap.wrap({words}, {width}, max_lines=2)',
+            f'textwrap.fill({words}, {width}, expand_tabs=False, replace_whitespace=False)', f'textwrap.wrap({words}, {width}, drop_whitespace=False)',
+            f'textwrap.TextWrapper(width={width}, tabsize=4).wrap({words})', f'textwrap.wrap({words}, {width}, fix_sentence_endings=True)',
+            'textwrap.dedent("  a\\n    b\\n  c")', 'textwrap.dedent("\\ta\\n  b")', 'textwrap.dedent("  a\\n\\n  b\\n   ")',
+        ])
+
     def program(self):
         lines = ['import math', T_IDENTITY]
         for _ in range(self.r.randint(8, 22)):
@@ -1582,6 +1706,63 @@ def outcome(args, source):
         return py, mm
     finally:
         os.unlink(path)
+
+
+# What `mm exec --json` reports and every way of running a cell must give
+# alike (docs/spec.md §13): the output, the result, the exception, the exit,
+# the fuel and, with `--digest`, the final state's checksum.
+PARK_KEYS = ('stdout', 'result', 'error', 'exit', 'fuel', 'digest')
+
+
+def mm_json(args, cmd):
+    env = dict(os.environ)
+    env.pop('MM_STEP_MS', None)
+    try:
+        p = subprocess.run(cmd, capture_output=True, timeout=args.timeout * 4, env=env, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return None
+    try:
+        return json.loads(p.stdout)
+    except ValueError:
+        err = p.stderr.decode('utf-8', 'replace').strip().splitlines()
+        return {'crash': p.returncode, 'stderr': err[-1] if err else ''}
+
+
+def parked(args, source, seed):
+    """`--park`: the cell unparked, parked in one process (a snapshot at every
+    stop) and as a chain of snapshots each restored in a new process, with
+    the strides of `cargo xtask durability`'s N:M policy (every N fuel units,
+    or fuel / M for a longer cell). Returns the first difference from the
+    unparked run, as (mode, key, unparked, parked), or None."""
+    with tempfile.NamedTemporaryFile('w', suffix='.py', delete=False, dir=args.tmp) as f:
+        f.write(source)
+        path = f.name
+    snap = tempfile.mkdtemp(dir=args.tmp)
+    try:
+        exe = [args.mm, 'exec', '--json', '--main-module', '--digest']
+        base = mm_json(args, exe + ['--report-fuel', path])
+        if base is None or 'crash' in base:
+            return None
+        every = random.Random(seed).choice((1, 7, 61, 1009))
+        fuel = base['fuel']
+        runs = [('parks', mm_json(args, exe + ['--park-every', str(max(every, -(-fuel // 200))),
+                                               '--snapshot-continue', path]))]
+        chain = mm_json(args, exe + ['--snapshot-every', str(max(every, -(-fuel // 25))), '--snapshot-dir', snap, path])
+        for _ in range(200):
+            if chain is None or 'park' not in chain:
+                break
+            chain = mm_json(args, [args.mm, 'resume', '--json', snap])
+        runs.append(('restore', chain))
+        for mode, got in runs:
+            if got is None:
+                return mode, 'timeout', '', 'timeout'
+            for key in ('crash',) + PARK_KEYS:
+                if base.get(key) != got.get(key):
+                    return mode, key, base.get(key), got.get(key)
+        return None
+    finally:
+        os.unlink(path)
+        shutil.rmtree(snap, ignore_errors=True)
 
 
 def one_ulp(a, b):
@@ -1775,7 +1956,10 @@ def check_seed(job):
     if py is None:
         return seed, 'skip', None
     if py == mm:
-        return seed, 'same', None
+        found = args.park and parked(args, source, seed)
+        if not found:
+            return seed, 'same', None
+        return park_divergence(args, seed, source, found)
     known = known_difference(args, source, py, mm)
     if known:
         return seed, known, None
@@ -1801,6 +1985,26 @@ def check_seed(job):
     return seed, 'diverge', (sig, path)
 
 
+def park_divergence(args, seed, source, found):
+    """A parked run that differs from the unparked one, saved unminimized
+    (the minimizer compares with CPython)."""
+    mode, key, a, b = found
+    norm = lambda t: re.sub(r'\d+', '#', re.sub(r'0x[0-9a-f]+', '#', str(t)))[:100]
+    sig = f'park {mode}: {key}: ' + (norm(b) if key in ('crash', 'timeout') else f'{norm(a)} | {norm(b)}')
+    with args.lock:
+        seen = args.seen.get(sig, 0)
+        args.seen[sig] = seen + 1
+    if seen >= args.per_signature:
+        return seed, 'diverge', (sig, None)
+    head = [f'# difffuzz park divergence, seed {seed}: `{mode}` differs from the unparked run in {key}',
+            '#   unparked: ' + commented(str(a)[:300]), '#   parked:   ' + commented(str(b)[:300]),
+            '# signature: ' + commented(sig)]
+    path = os.path.join(args.out, 'seed-%d.py' % seed)
+    with open(path, 'w') as f:
+        f.write('\n'.join(head) + '\n' + source)
+    return seed, 'diverge', (sig, path)
+
+
 def commented(text):
     """`text` for a `#` comment line: characters that are not printable
     (a null byte, a line break) escaped as in a str literal, so the saved
@@ -1820,6 +2024,8 @@ def main():
     ap.add_argument('--out', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'divergences'))
     ap.add_argument('--show', type=int)
     ap.add_argument('--per-signature', type=int, default=2, help='divergences minimized and saved per signature')
+    ap.add_argument('--park', action='store_true',
+                    help='also compare each agreeing program parked and restored with its unparked run')
     args = ap.parse_args()
     if args.show is not None:
         sys.stdout.write(Gen(args.show).program())
