@@ -79,7 +79,7 @@ const CODE_PRELUDE: u8 = 5;
 ///   set tables;
 /// - what an opcode's operands mean, with the same format;
 /// - how frames, generators or coroutines keep their state.
-pub(crate) const SNAPSHOT_EPOCH: u32 = 20;
+pub(crate) const SNAPSHOT_EPOCH: u32 = 21;
 
 /// This build's engine fingerprint for snapshot build ids: what an image
 /// written by this engine means. The layout epoch; the codecs and every
@@ -3025,6 +3025,40 @@ fn step_ok(vm: &Vm, o: u8, v: &dyn Fn(usize) -> Value, w: &[u64]) -> bool {
             let start =
                 !Vm::is_str(v(0)) || vm.job_data(v(0)).get(at).is_none_or(|&c| c & 0xC0 != 0x80);
             ok && made && start && w(1) <= n(v(0)) && w(5) <= 1 << 40
+        }
+        // A strip (`at, end, ends to go, chars read`): its window and its
+        // cursor in `chars` at char boundaries, and its bitmap (slot 3,
+        // none for no `chars`) of the size the operands give it, neither
+        // operand's own block.
+        op::STR_SCAN if v(2).as_int() == Some(crate::strmeth::sk::STRIP) => {
+            let (s, chars) = (v(0), v(1));
+            let len = n(chars);
+            let boundary = |s, at| {
+                vm.job_data(s)
+                    .get(at as usize)
+                    .is_none_or(|b| b & 0xc0 != 0x80)
+            };
+            let bitmap = || {
+                let b = v(3).as_byte_ref()?;
+                let size = crate::strmeth::strip_bitmap(vm, s, chars).0;
+                let own = [vm.data_block(s), vm.data_block(chars)];
+                (vm.heap.bytes(b).ok()?.len() == size && !own.contains(&Some(b))).then_some(())
+            };
+            Vm::is_str(s)
+                && (chars == Value::NONE || Vm::is_str(chars))
+                && w(0) <= w(1)
+                && w(1) <= n(s)
+                && boundary(s, w(0))
+                && boundary(s, w(1))
+                && w(2) <= 3
+                && w(3) <= len
+                && boundary(chars, w(3))
+                && w(4) == 0
+                && if len == 0 {
+                    v(3) == Value::NONE
+                } else {
+                    bitmap().is_some()
+                }
         }
         // A fold (`kind, stage, totals`): a `sum`'s stage is one of its
         // four (`stage + 1` is the next).

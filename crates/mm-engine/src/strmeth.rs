@@ -637,41 +637,80 @@ fn strip_impl(
     right: bool,
 ) -> Result<Value, Raised> {
     let s = this_value(vm, a, name)?;
-    let set: Option<Vec<char>> = match opt(vm.arg_o(a, 1)) {
-        None => None,
-        Some(c) if Vm::is_str(vm.unbx(c)) => {
-            let c = charged_str_arg(vm, c, "")?;
-            Some(vm.str_ref(c).chars().collect())
-        }
+    let chars = match opt(vm.arg_o(a, 1)).map(|c| vm.unbx(c)) {
+        None => Value::NONE,
+        Some(c) if Vm::is_str(c) => c,
         Some(_) => {
             let msg = format!("{name} arg must be None or str");
             return Err(vm.err(T::TypeError, &msg));
         }
     };
-    if big_text(vm, s, CHAR_UNIT) {
-        let chars = match &set {
-            Some(cs) => vm.new_str(&cs.iter().collect::<String>())?,
-            None => Value::NONE,
-        };
-        let kind = Value::int(sk::STRIP).unwrap_or(Value::NONE);
-        let n = vm.str_bytes(s).len() as u64;
-        let w = [0, n, u64::from(left) | u64::from(right) << 1, 0, 0, 0, 0];
-        return walk(vm, op::STR_SCAN, [s, chars, kind, Value::NONE], w);
-    }
-    let (at, end) = strip_span(
-        vm.str_bytes(s),
-        vm.str_ascii(s),
-        set.as_deref(),
-        left,
-        right,
-    );
     let n = vm.str_bytes(s).len();
-    vm.burn_bytes(n);
-    if let Some(set) = &set {
-        // Each stripped char was looked up in `set`.
-        vm.burn_bytes((n - (end - at)).saturating_mul(set.len()));
+    let nc = vm.str_len(chars);
+    let len = vm.str_bytes(chars).len();
+    if big_text(vm, s, CHAR_UNIT) || len > 32 || n.saturating_mul(nc) > STRIP_SPAN {
+        let bits = if nc == 0 {
+            Value::NONE
+        } else {
+            // The operands read to size the bitmap and its zeroing, a
+            // unit per 64 bytes each.
+            let (size, read) = strip_bitmap(vm, s, chars);
+            vm.burn_bytes(read);
+            vm.burn_bytes(size);
+            block(vm, size)?
+        };
+        if !big_text(vm, s, CHAR_UNIT) {
+            // A short receiver's scan, as the in-place path charges it.
+            vm.burn_bytes(n);
+        }
+        let kind = Value::int(sk::STRIP).unwrap_or(Value::NONE);
+        let w = [
+            0,
+            n as u64,
+            u64::from(left) | u64::from(right) << 1,
+            0,
+            0,
+            0,
+            0,
+        ];
+        return walk(vm, op::STR_SCAN, [s, chars, kind, bits], w);
     }
+    let set = if chars == Value::NONE {
+        Strip::Space
+    } else {
+        Strip::Small(vm.str_ref(chars))
+    };
+    let (at, end) = strip_span(vm.str_bytes(s), vm.str_ascii(s), set, left, right);
+    vm.burn_bytes(n);
+    vm.burn_bytes((n - (end - at)) * nc);
     slice_steps(vm, s, at, end)
+}
+
+/// A strip's membership bitmap, a bit per code point: its bytes, and
+/// the operands' bytes read to size it. ASCII's when either operand is
+/// ASCII, as only a char in both can be stripped; else through the lower
+/// of their highest code points, which their highest lead byte bounds
+/// (UTF-8 orders as code points do). An operand longer than a slice of
+/// `chars` is not read and counts as all of Unicode.
+pub(crate) fn strip_bitmap(vm: &Vm, s: Value, chars: Value) -> (usize, usize) {
+    if vm.str_ascii(s) || vm.str_ascii(chars) {
+        return (16, 0);
+    }
+    let top = |x: Value| {
+        let b = vm.str_bytes(x);
+        if b.len() > STRIP_SPAN {
+            return (0x11_0000, 0);
+        }
+        let lead = usize::from(b.iter().copied().max().unwrap_or(0));
+        let top = match lead {
+            0xf0.. => (lead - 0xef) << 18,
+            0xe0.. => (lead - 0xdf) << 12,
+            _ => lead.saturating_sub(0xbf) << 6,
+        };
+        (top, b.len())
+    };
+    let ((a, ra), (b, rb)) = (top(s), top(chars));
+    (a.min(b).min(0x11_0000) / 8, ra + rb)
 }
 
 /// The char at byte `i` of valid UTF-8 `h` and the byte after it.
@@ -685,16 +724,25 @@ pub(crate) fn char_at(h: &[u8], i: usize) -> Option<(char, usize)> {
     Some((c, e))
 }
 
+/// What a strip removes: whitespace, the chars of a short `chars`
+/// (searched in place), or those a bitmap marks.
+#[derive(Clone, Copy)]
+enum Strip<'a> {
+    Space,
+    Small(&'a str),
+    Bits(&'a [u8]),
+}
+
 /// The bytes `h` keeps once its ends lose the chars in `set` (whitespace
-/// when `None`): `(start, end)`.
-fn strip_span(
-    h: &[u8],
-    ascii: bool,
-    set: Option<&[char]>,
-    left: bool,
-    right: bool,
-) -> (usize, usize) {
-    let strip = |c: char| set.map_or_else(|| is_space(c), |set| set.contains(&c));
+/// for `Space`): `(start, end)`.
+fn strip_span(h: &[u8], ascii: bool, set: Strip<'_>, left: bool, right: bool) -> (usize, usize) {
+    let strip = |c: char| match set {
+        Strip::Space => is_space(c),
+        Strip::Small(s) => s.chars().any(|x| x == c),
+        Strip::Bits(b) => b
+            .get(c as usize / 8)
+            .is_some_and(|x| x & (1 << (c as u32 % 8)) != 0),
+    };
     let (mut at, mut end) = (0, h.len());
     let step = |i: usize| -> Option<(char, usize)> {
         if ascii {
@@ -2358,6 +2406,7 @@ const UNIT: usize = 64;
 /// Bytes a fuel unit pays for when each char is looked at (case maps,
 /// predicates, `translate`, `expandtabs`): about 10 ns of that work.
 const CHAR_UNIT: usize = 8;
+const STRIP_SPAN: usize = STEP_WORK as usize * CHAR_UNIT;
 
 /// The fuel units of work at which an operation goes a step at a time
 /// (about 5 ms); below it, it stays one native call as before.
@@ -2390,7 +2439,7 @@ pub(crate) mod mk {
 
 /// The scan kinds (`op::STR_SCAN`, value slot 2): a count, or a
 /// predicate over every char.
-mod sk {
+pub(crate) mod sk {
     pub const COUNT: i64 = 0;
     pub const DIGIT: i64 = 1;
     pub const DECIMAL: i64 = 2;
@@ -4029,10 +4078,10 @@ fn scan_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
         if k.spent(vm) {
             return Ok(None);
         }
-        let room = k.left(vm);
         if kind == sk::STRIP {
-            return strip_run(vm, k, room);
+            return strip_run(vm, k);
         }
+        let room = k.left(vm);
         let h = text(vm, s);
         // A search's window: the step's work less the pattern, which it
         // reads past the window's end (and the two-way searcher reads in
@@ -4130,44 +4179,111 @@ fn scan_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
     }
 }
 
-/// A step of a long `strip`: `w` is `[start, end, ends to go]`; each end
-/// loses its chars a window at a time, then the rest is one slice copy.
+/// `strip`: slot 3 holds optional membership bits. `w` holds the window
+/// still kept, the ends left to trim and the `chars` UTF-8 cursor. A
+/// step reads one slice of `chars` into the bitmap, then trims windows
+/// from either end until it has examined its budget of bytes; each
+/// window is charged as it is trimmed, so a safepoint comes between two
+/// steps whatever the fuel rate.
 #[cfg_attr(mm_shipped, optimize(size))]
-fn strip_run(vm: &mut Vm, k: &mut Walk, room: usize) -> Result<Option<Value>, Raised> {
-    let [s, chars, _, _] = k.v;
-    let set: Option<Vec<char>> = Vm::is_str(chars).then(|| vm.str_ref(chars).chars().collect());
-    let per = 1 + set.as_ref().map_or(0, Vec::len) / CHAR_UNIT;
+fn strip_run(vm: &mut Vm, k: &mut Walk) -> Result<Option<Value>, Raised> {
+    let [s, chars, _, bits] = k.v;
+    let len = vm.str_bytes(chars).len();
+    let from = k.at(3);
+    if from < len {
+        let Some(b) = bits.as_byte_ref() else {
+            return Err(vm.bad_step());
+        };
+        let to = strip_collect(vm, chars, b, from)?;
+        k.w[3] = to as u64;
+        // A unit per 64 bytes of `chars` read into the bitmap.
+        k.owed += (to / UNIT).saturating_sub(from / UNIT) as u64;
+        if to < len {
+            return Ok(None);
+        }
+    }
+    let long = big_text(vm, s, CHAR_UNIT);
+    // Removed bytes cost a unit per 8, each lookup O(1); a short receiver
+    // with fewer than 8 chars pays a unit per 64 per char, as the in-place
+    // search does.
+    let per = if long {
+        CHAR_UNIT
+    } else {
+        vm.str_len(chars).min(CHAR_UNIT)
+    } as u64;
+    let n = vm.str_bytes(s).len() as u64;
+    let mut budget = k.left(vm) * CHAR_UNIT;
+    while k.w[2] != 0 {
+        if budget < 4 {
+            return Ok(None);
+        }
+        let set = if let Some(b) = bits.as_byte_ref() {
+            Strip::Bits(vm.heap.bytes(b).unwrap_or(&[]))
+        } else if chars == Value::NONE {
+            Strip::Space
+        } else {
+            Strip::Small("")
+        };
+        let gone = n.saturating_sub(k.w[1].saturating_sub(k.w[0]));
+        let h = vm.str_bytes(s);
+        let removed = strip_window(h, vm.str_ascii(s), k, budget, set);
+        let now = gone + removed as u64;
+        k.owed += now * per / UNIT as u64 - gone * per / UNIT as u64 + u64::from(long);
+        budget = budget.saturating_sub(removed + 4);
+    }
+    vm.burn(core::mem::take(&mut k.owed));
+    slice_steps(vm, s, k.at(0), k.at(1)).map(Some)
+}
+
+/// Sets the bits of the chars in `chars` from byte `from` to a slice's
+/// end (a char boundary) in bitmap `b`, skipping those past it: where
+/// the next slice starts.
+fn strip_collect(vm: &mut Vm, chars: Value, b: ByteRef, from: usize) -> Result<usize, Raised> {
+    let to = ceil_char(vm.str_bytes(chars), from + STRIP_SPAN);
+    let mut at = from;
+    let mut chunk = [0; 1027];
+    while at < to {
+        let input = vm.str_bytes(chars);
+        let end = ceil_char(input, (at + 1024).min(to));
+        // A forged bitmap that is `chars`' own block breaks its UTF-8.
+        let (Some(tmp), Some(src)) = (chunk.get_mut(..end - at), input.get(at..end)) else {
+            return Err(vm.bad_step());
+        };
+        tmp.copy_from_slice(src);
+        let (Ok(text), Ok(bits)) = (core::str::from_utf8(tmp), vm.heap.bytes_mut(b)) else {
+            return Err(vm.bad_step());
+        };
+        for c in text.chars() {
+            if let Some(slot) = bits.get_mut(c as usize / 8) {
+                *slot |= 1 << (c as u32 % 8);
+            }
+        }
+        at = end;
+    }
+    Ok(to)
+}
+
+/// Trims one end of the strip's window `w[0]..w[1]` of `h` by up to
+/// `span` bytes, clearing that end's bit in `w[2]` once a kept char
+/// stops it: the bytes removed.
+fn strip_window(h: &[u8], ascii: bool, k: &mut Walk, span: usize, set: Strip<'_>) -> usize {
     let (at, end, sides) = (k.at(0), k.at(1), k.w[2]);
-    let h = text(vm, s);
-    let ascii = vm.str_ascii(s);
-    let span = (room * CHAR_UNIT / per).max(4);
     let (a, e) = if sides & 1 != 0 {
         let lim = ceil_char(h, at.saturating_add(span)).min(end);
         let w = h.get(..lim).unwrap_or(&[]);
-        let (a, _) = strip_span(
-            w.get(at..).unwrap_or(&[]),
-            ascii,
-            set.as_deref(),
-            true,
-            false,
-        );
+        let (a, _) = strip_span(w.get(at..).unwrap_or(&[]), ascii, set, true, false);
         let a = at + a;
         k.w[2] &= if a < lim || lim == end { !1 } else { !0 };
         (a, end)
     } else {
         let lo = floor_char(h, end.saturating_sub(span)).max(at);
         let w = h.get(lo..end).unwrap_or(&[]);
-        let (_, e) = strip_span(w, ascii, set.as_deref(), false, true);
+        let (_, e) = strip_span(w, ascii, set, false, true);
         k.w[2] &= if e > 0 || lo == at { !2 } else { !0 };
         (at, lo + e)
     };
-    k.owed += ((a - at + end - e) * per / CHAR_UNIT) as u64 + 1;
     (k.w[0], k.w[1]) = (a as u64, e as u64);
-    if k.w[2] & 3 != 0 {
-        return Ok(None);
-    }
-    vm.burn(core::mem::take(&mut k.owed));
-    slice_steps(vm, s, a, e).map(Some)
+    (a - at + end).saturating_sub(e)
 }
 
 /// Search kind `kind` (`FIND` or `RFIND`) for `sub` in `s` over bytes

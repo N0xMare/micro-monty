@@ -1261,6 +1261,13 @@ const STEPPED: &[(u8, &str)] = {
              x = (b'a' * 9_000_000 + b' b ').split()\nx = None\n\
              ba = bytearray(9_000_000)\ndel ba[::2]\nba = bytearray(9_000_000)\nba[5:6] = bytes(9_000_000)\n",
         ),
+        // A strip whose bitmap is built over several steps, then a long
+        // receiver trimmed over several.
+        (
+            op::STR_SCAN,
+            "c = 'é𐐷' * 400_000 + 'a'\nx = ('é' * 2_000 + 'x').strip(c)\n\
+             x = ('𐐷' * 1_100_000 + 'x').lstrip('𐐷é')\n",
+        ),
     ]
 };
 
@@ -2767,4 +2774,74 @@ fn a_forged_gather_count_or_notification_is_refused() {
         );
         finish_unchecked(&mut vm);
     }
+}
+
+#[test]
+fn a_forged_strip_state_is_refused() {
+    use crate::nstep::op;
+    let src = STEPPED
+        .iter()
+        .find(|s| s.0 == op::STR_SCAN)
+        .expect("strip")
+        .1;
+    let parked = |vm: &Vm| step_state(vm, op::STR_SCAN).is_some();
+    // The bitmap (slot 3) `chars`' own data block, its cursor back at 0:
+    // the build would OR bits into `chars`, break its UTF-8 and slice past
+    // its buffer (review of 8bd14bc).
+    refuses(src, parked, "native step", |vm| {
+        let r = step_state(vm, op::STR_SCAN).expect("state");
+        let chars = vm.heap.get(r, 1).expect("slot").as_obj().expect("a str");
+        let block = vm.heap.get(chars, 0).expect("its block");
+        vm.heap.set(r, 3, block).expect("slot");
+        set_step_word(vm, op::STR_SCAN, 4, 0);
+    });
+    // A bitmap of another size than its operands give it.
+    refuses(src, parked, "native step", |vm| {
+        let r = step_state(vm, op::STR_SCAN).expect("state");
+        let b = vm.heap.alloc_bytes_zeroed(17).expect("block");
+        vm.heap.set(r, 3, Value::from_byte_ref(b)).expect("slot");
+    });
+    // A charge owed (`w[4]`, which no step writes): it would park through
+    // that much fuel doing no work.
+    refuses(src, parked, "native step", |vm| {
+        set_step_word(vm, op::STR_SCAN, 5, 1 << 33);
+    });
+}
+
+/// A `struct` field's copy is a stride-one stride job (`structmod`'s
+/// `byte_field`), which this crate's tests reach from a bytes slice, the
+/// module being outside their stdlib: the form restores, and its unpack
+/// flag and output position are checked.
+#[cfg(feature = "struct")]
+#[test]
+fn a_forged_struct_field_state_is_refused() {
+    use crate::bytes::{W_A, W_O, job};
+    let src = "b = b'ab' * 9_000_000\nx = b[::2]\n";
+    let parked = |vm: &Vm| job_state(vm, job::STRIDE).is_some();
+    let field = |vm: &mut Vm, unpack: u64| {
+        let (r, n) = job_state(vm, job::STRIDE).expect("a stride");
+        let a = n + 2 + u32::try_from(W_A).expect("small");
+        vm.heap.set_raw(r, a + 1, 1).expect("word");
+        vm.heap.set_raw(r, a + 2, unpack).expect("word");
+        (r, n)
+    };
+    for unpack in [0, 1] {
+        let mut vm = session(src, parked);
+        field(&mut vm, unpack);
+        assert!(restore(&mut vm).is_ok(), "unpack {unpack}");
+    }
+    let mut vm = session(src, parked);
+    field(&mut vm, 2);
+    assert_eq!(
+        restore(&mut vm).err(),
+        Some(SnapError::Corrupt("native step"))
+    );
+    let mut vm = session(src, parked);
+    let (r, n) = field(&mut vm, 1);
+    let o = n + 2 + u32::try_from(W_O).expect("small");
+    vm.heap.set_raw(r, o, 9_000_001).expect("word");
+    assert_eq!(
+        restore(&mut vm).err(),
+        Some(SnapError::Corrupt("native step"))
+    );
 }

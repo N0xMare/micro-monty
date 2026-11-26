@@ -2406,21 +2406,18 @@ fn forged_run(eng: &Engine, img: &[u8]) -> String {
     run.unwrap_or_else(|_| "panicked".to_owned())
 }
 
-/// A forged image cannot crash or hang json's and unicodedata's steps
-/// (`JSON_SCAN`, `JSON_DUMP`, `UNI_NORM`): each step checks every word its
-/// state saved against the data before using it, so a word no step leaves
-/// is the usual `SystemError`, or at worst a different result. Every word
-/// of the state is forged at a few parks inside each kind of step. The
-/// review of eb78933 aborted the process with a `JSON_SCAN` position of
-/// `u64::MAX` (a slice past the input); a fill position inside an escape,
-/// or its end past the input, looped forever in one step.
-#[test]
-fn forged_json_and_unicodedata_step_states_are_errors() {
-    // Setup, statement, and the op with its value slots and raw words (the
-    // op's included), as in `nstep::STEPS`.
+/// The programs `forged_json_and_unicodedata_step_states_are_errors`
+/// forges: setup, statement, and the op with its value slots and raw
+/// words (the op's included), as in `nstep::STEPS`.
+fn forged_step_cases() -> Vec<(&'static str, &'static str, (u8, usize, usize))> {
     const SCAN: (u8, usize, usize) = (15, 5, 16);
-    let eng = engine();
     let mut cases = vec![
+        // A strip building its bitmap over steps (`STR_SCAN`).
+        (
+            "c = 'é𐐷' * 2_000_000 + 'a'\ns = 'é' * 2_000 + 'x'",
+            "x = s.strip(c)",
+            (11, 4, 8),
+        ),
         (
             "import json\ns = json.dumps([list(range(40)), {'a': 1.5, 'b': 'x\\ny'}] * 3_000)",
             "x = json.loads(s)",
@@ -2454,6 +2451,15 @@ fn forged_json_and_unicodedata_step_states_are_errors() {
             (16, 6, 6),
         ),
     ];
+    // A `struct` field copied a stride job at a time (`BYTES`), which the
+    // engine's own tests reach only through a bytes slice.
+    if cfg!(feature = "mod-struct") {
+        cases.push((
+            "import struct\nb = b'ab' * 1_048_576",
+            "x = struct.pack('2097152s', b)\ny = struct.unpack('2097152s', x)",
+            (14, 4, 26),
+        ));
+    }
     if cfg!(feature = "mod-unicodedata") {
         cases.push((
             "import unicodedata\ns = 'e\\u0301\\xe9' * 150_000",
@@ -2461,6 +2467,22 @@ fn forged_json_and_unicodedata_step_states_are_errors() {
             (17, 3, 10),
         ));
     }
+    cases
+}
+
+/// A forged image cannot crash or hang json's and unicodedata's steps
+/// (`JSON_SCAN`, `JSON_DUMP`, `UNI_NORM`), a strip's or a `struct`
+/// field's: each step checks every word its
+/// state saved against the data before using it, so a word no step leaves
+/// is the usual `SystemError`, or at worst a different result. Every word
+/// of the state is forged at a few parks inside each kind of step. The
+/// review of eb78933 aborted the process with a `JSON_SCAN` position of
+/// `u64::MAX` (a slice past the input); a fill position inside an escape,
+/// or its end past the input, looped forever in one step.
+#[test]
+fn forged_json_and_unicodedata_step_states_are_errors() {
+    let eng = engine();
+    let cases = forged_step_cases();
     let mut bad = Vec::new();
     let mut forged = 0;
     for (setup, stmt, (op, vals, raw)) in cases {

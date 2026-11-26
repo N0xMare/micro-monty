@@ -656,9 +656,11 @@ messages; copy wording where behaviour matches.
   place. `bytes.strip` and `translate` mark membership in a byte table
   before packing large sets, so repeated bytes do not serialize writes to
   the same bitset word. `struct.pack` and `unpack` of a format that is one
-  large `s` field copy it through the strided byte job (stride one,
-  zero-padded past its source), a step's budget at a time. The chunked
-  operations:
+  `s` field of 1 MiB or more copy it through the strided byte job (stride
+  one, zero-padded past its source), a step's budget at a time. A format
+  with any other item takes the one-step path, which copies such a field
+  whole: 89 ms for `pack` and 86 ms for `unpack` at 64 MiB [M], the
+  `Open` rows of `tests/steps.rs`. The chunked operations:
 
   - **Tables growing an insert at a time.** Once a full table holds 262,144
     live entries (`set::GROW_STEPS`), the insert that needs room hands the
@@ -848,6 +850,19 @@ messages; copy wording where behaviour matches.
 - **Allocations outside the arena are bounded too.** The compiler's AST and
   bytecode buffers count against the source limits; natives build results in the
   arena, not in unbounded Rust `Vec`s (§11).
+  `str.strip(chars)` searches a `chars` of up to 32 bytes in place; a
+  longer one, a receiver of 4 MiB or more, or over 2^20 byte-char pairs
+  between them build a membership bitmap in the arena, 1 MiB of `chars`
+  a step, then trim the ends a step's budget of bytes at a time. The
+  bitmap runs through the lower of the operands' highest code points,
+  which their highest UTF-8 lead bytes bound, an operand over 1 MiB
+  counting as U+10FFFF: 16 bytes when either is ASCII, 136 KiB at most.
+  Fuel is a unit per 64 bytes of each operand read to size the bitmap,
+  of the bitmap zeroed and of `chars` read into it; a receiver under
+  4 MiB pays a unit per 64 of its bytes, as the in-place search does.
+  Each removed byte then costs a unit per 8, a lookup being O(1), or
+  with fewer than 8 chars a unit per 64 per char, as in place; a long
+  receiver also pays a unit per window.
 - **Generics:** none across crate APIs; inside a crate only when monomorphized
   once or twice. Prefer `&mut dyn Write` and `&dyn Trait` on cold paths.
   The private admitted-buffer `NativeVec<T>` also serves JSON's encoder and

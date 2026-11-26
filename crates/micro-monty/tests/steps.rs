@@ -1712,6 +1712,43 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "b.reverse()\nassert b[:2] == b'\\x00\\x00' and b[-2:] == b'ba' and b[33_554_431] == 98",
         1,
     ),
+    // A str strip's membership bitmap, built a slice at a time from a
+    // long `chars`, then a short receiver trimmed on a miss or late hits
+    // (227 ms a step and 8.4 s a step by a linear search [M]).
+    (
+        Row::Bounded,
+        "d = 'ab' * 33_554_431 + 'c'\ns = 'c' * 200",
+        "assert s.strip(d) == ''",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "d = 'ab' * 33_554_432\ns = 'z' * 200",
+        "assert s.strip(d) == s",
+        1,
+    ),
+    (
+        Row::Bounded,
+        "d = '𐐷éa' * 9_586_980 + '🙂'",
+        "assert '🙂éx𐐷'.strip(d) == 'x'",
+        1,
+    ),
+    // A receiver just under the long-text size trimmed through a bitmap:
+    // its windows are charged as they go, so a step ends at its budget
+    // (24.4 ms in one stretch when the charge was deferred [M]).
+    (
+        Row::Bounded,
+        "s = 'ж' * 2_097_000 + 'x'",
+        "assert s.lstrip('жa') == 'x'",
+        1,
+    ),
+    // A long receiver trimmed through a bitmap of 256 chars.
+    (
+        Row::Bounded,
+        "d = ''.join(map(chr, range(0x400, 0x500)))\ns = 'ж' * 33_554_431 + 'x'",
+        "assert s.lstrip(d) == 'x'",
+        1,
+    ),
     // Preparing the byte set can read a full object even when the data
     // to translate or strip is tiny.
     (
