@@ -16,3 +16,7 @@ v0.0.3 hello +30000 owner, 2026-11-25: 0.0.4's first lanes measure +21,376 B [M]
 v0.0.3 hello.wasm +30000 owner, 2026-11-25: as hello; scheduler A +1,608, exact image stage 1 +18,714 [M]
 v0.0.3 mm_wasm_guest.wasm +30000 owner, 2026-11-25: as hello; scheduler A +1,660, exact image stage 1 +19,750 [M]
 v0.0.3 mm_wasm_guest_bundle.wasm +30000 owner, 2026-11-25: as hello; scheduler A +1,660, exact image stage 1 +19,835 [M]
+v0.0.3 hello +36500 owner, 2026-11-26: struct's step bounds measure +6,336 B here [M] (+5,873 B on the bundle guest), the snapshot reader's F1-F3 fixes about +0.5 KB [E]; struct otherwise ships about 80 ms between safepoints
+v0.0.3 hello.wasm +36500 owner, 2026-11-26: as hello; struct +5,925 B [M]
+v0.0.3 mm_wasm_guest.wasm +36500 owner, 2026-11-26: as hello; struct +5,877 B [M]
+v0.0.3 mm_wasm_guest_bundle.wasm +36500 owner, 2026-11-26: as hello; struct +5,873 B [M], the tightest artifact
