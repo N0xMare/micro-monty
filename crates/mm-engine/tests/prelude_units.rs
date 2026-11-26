@@ -49,3 +49,42 @@ fn a_prelude_edit_moves_the_hash_or_keeps_every_unit_in_place() {
         "a new function moved a unit's record and left the prelude hash"
     );
 }
+
+#[cfg(not(feature = "host-bundle"))]
+#[test]
+fn a_bundled_builtins_module_can_override_a_method_twin() {
+    use mm_compile::{Options, bytecode::Program, compile, pack::pack};
+    use mm_engine::{Exit, StdModule, Vm, VmConfig};
+
+    fn program(src: &str) -> Program {
+        compile(&mm_parse::parse(src).expect("parses"), Options::default()).expect("compiles")
+    }
+
+    let code = pack(&program("def _str_join(args):\n    return 'module twin'\n").encode());
+    let modules = Box::leak(Box::new([StdModule {
+        name: "builtins",
+        code: Box::leak(code.into_boxed_slice()),
+        packing: None,
+    }]));
+    let mut vm = Vm::new(VmConfig {
+        stdlib: modules,
+        ..VmConfig::default()
+    })
+    .expect("vm");
+    let src = "\
+def join():
+    return ','.join(x for x in ('a', 'b'))
+assert join() == 'a,b', 'before import'
+import builtins
+assert join() == 'module twin', 'after import'
+builtins._str_join = lambda args: 'rebound'
+assert join() == 'rebound', 'after rebind'
+";
+    let entry = vm.load(&program(src), "twin.py", src).expect("loads");
+    let exit = vm.run(entry);
+    assert!(
+        matches!(exit, Exit::Complete(_)),
+        "{exit:?}: {:?}",
+        vm.exception_parts(vm.exception())
+    );
+}
