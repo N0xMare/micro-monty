@@ -1235,11 +1235,17 @@ impl Vm {
         }
         for &b in &bases {
             let bm = self.class_of(b);
-            if Vm::is_type(b)
-                && Vm::is_class(bm)
-                && (meta == Value::NONE || self.subclass_of(bm, meta))
-            {
+            if !Vm::is_type(b) || !Vm::is_class(bm) {
+                continue;
+            }
+            if meta == Value::NONE || self.subclass_of(bm, meta) {
                 meta = bm;
+            } else if Vm::is_type(meta) && !self.subclass_of(meta, bm) {
+                // A metaclass that is not a class is called as is.
+                return Err(self.err(
+                    T::TypeError,
+                    "metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases",
+                ));
             }
         }
         if meta != Value::NONE
