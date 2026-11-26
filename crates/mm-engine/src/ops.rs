@@ -3329,6 +3329,12 @@ impl Vm {
         }
         let itv = self.get_iter(v)?;
         if itv == v {
+            self.fresh_consumed();
+            if self.consumed.len() == 4 {
+                // The twin gets the four remembered arguments and reads
+                // this iterator itself. Never drain one we cannot replay.
+                return Err(self.need_py());
+            }
             // A one-shot iterator: what it yields is gone, so an
             // instruction or call failing while or after gathering it does
             // not run again after a collection (`Vm::oom_retry_if`): it
@@ -3376,9 +3382,6 @@ impl Vm {
         }
         self.burn((out.len() % CHUNK) as u64);
         if itv == v {
-            self.fresh_consumed();
-        }
-        if itv == v && self.consumed.len() < 4 {
             // A one-shot iterator: remembered in case the caller hands off
             // to Python code that must see the items again.
             if self.consumed.capacity() < 4 {
