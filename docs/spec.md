@@ -2532,7 +2532,12 @@ dict's index (entry bits, duplicates, slots naming live entries, tags, probe
 reachability, length; in time linear in its table however its probes
 collide, with a scratch bit per entry and per slot),
 continuation targets and registers, shape transitions, class size hints and
-bundled-module entries. A generator's code is its function's in every state;
+bundled-module entries. Each code-table entry is the one the writer makes of
+its code: the trampoline at its index, every code of a loaded bundled
+module's range by that range, every code under a prelude unit's or a host
+program's source by that unit or program, and only other codes stored
+(`Corrupt("code table")`), so the session's next image reads the same
+codes. A generator's code is its function's in every state;
 a frame that runs for a generator or coroutine runs that object's code while
 it is running (`Corrupt("frame owner")`). Each continuation slot is held by
 one frame at most, and the free list names each empty slot once. A dict

@@ -517,6 +517,49 @@ fn stored_code_is_verified_and_runs_in_its_own_globals() {
     );
 }
 
+/// The writer stores a code under a prelude unit's source by reference
+/// (`CODE_PRELUDE`), so a stored code there would come back as the unit's
+/// code, or be refused, from the restored session's own image. The image
+/// is edited in its bytes: the writer never stores such a code.
+#[test]
+fn a_stored_code_is_not_under_a_prelude_units_source() {
+    // A colliding key looks its dict up in the prelude.
+    let src = "class K:\n    def __hash__(self):\n        return 1\n    def __eq__(self, o):\n        return self is o\nd = {K(): 1, K(): 2}\n";
+    let mut vm = session(src, |_| false);
+    let unit = vm.sources.iter().position(|s| s.unit.is_some());
+    let unit = u32::try_from(unit.expect("a prelude unit's source")).expect("fits");
+    // The user code's source field is where moving the code to another
+    // plain source changes the image.
+    vm.sources.push(Source {
+        name: "other.py".into(),
+        text: String::new(),
+        host: None,
+        unit: None,
+        reclaim_index: 0,
+    });
+    let mut image = Vec::new();
+    vm.write_snapshot(&mut image).expect("image");
+    user_code(&mut vm).source = u32::try_from(vm.sources.len() - 1).expect("fits");
+    let mut moved = Vec::new();
+    vm.write_snapshot(&mut moved).expect("image");
+    let at = (0..image.len())
+        .find(|&i| image[i] != moved[i])
+        .expect("the source field");
+    image[at..at + 4].copy_from_slice(&unit.to_le_bytes());
+    let mut no_host_code =
+        |_: &str, _: &HostValue, _: &[String], _: &[u8; 16]| -> Option<Arc<crate::HostProgram>> {
+            None
+        };
+    let read = Vm::read_snapshot(
+        &mut Reader::new(&image),
+        vm.stdlib,
+        None,
+        &mut no_host_code,
+        1 << 40,
+    );
+    assert_eq!(read.err(), Some(SnapError::Corrupt("code table")));
+}
+
 #[test]
 fn a_dict_index_reaches_every_entry() {
     refuses(

@@ -1859,16 +1859,23 @@ impl Vm {
             n as u64 * (size_of::<CodeObj>() + 3 * size_of::<usize>()) as u64,
         )?;
         let mut codes: Vec<Arc<CodeObj>> = Vec::with_capacity(n);
+        // Codes read by reference: a bundled module's, and a prelude
+        // unit's or a host program's (counted once every source is read).
+        let mut std_refs = 0u64;
+        let mut refs = 0usize;
         let mut n_ics = 0u32;
         let mut verify_scratch = 0;
         for i in 0..n {
             let ci = u32::try_from(i).map_err(|_| SnapError::Corrupt("code table"))?;
             let kind = need(r.u8(), "code")?;
+            if (kind == CODE_TRAMPOLINE) != (ci == tramp) {
+                return Err(SnapError::Corrupt("code"));
+            }
             let mut host_at = None;
             let mut unit_at = None;
             let mut std_at = None;
             let code = match kind {
-                CODE_TRAMPOLINE if ci == tramp => {
+                CODE_TRAMPOLINE => {
                     let c = CodeObj::trampoline(ci, 0).code;
                     charge(&mut budget, c.buffer_bytes())?;
                     c
@@ -1924,6 +1931,7 @@ impl Vm {
                         "bundled code",
                     )?;
                     charge(&mut budget, c.buffer_bytes())?;
+                    std_refs += 1;
                     std_at = Some((k, first));
                     c.clone()
                 }
@@ -2039,7 +2047,8 @@ impl Vm {
             if let Some((unit, at)) = unit_at {
                 // A unit's codes sit together, under its own source.
                 let s = sources.get_mut(source as usize);
-                let Some(s) = s.filter(|s| s.unit.is_none_or(|u| u == unit)) else {
+                let Some(s) = s.filter(|s| s.unit.is_none_or(|u| u == unit) && s.host.is_none())
+                else {
                     return Err(SnapError::Corrupt("prelude code"));
                 };
                 if ci.checked_sub(at) != Some(module_base)
@@ -2049,6 +2058,7 @@ impl Vm {
                     return Err(SnapError::Corrupt("prelude code"));
                 }
                 s.unit = Some(unit);
+                refs += 1;
             }
             if let Some((m, at)) = host_at {
                 // A host program's codes sit together, under one source.
@@ -2060,10 +2070,12 @@ impl Vm {
                 // `at` comes from the image and may exceed `ci`.
                 if ci.checked_sub(at) != Some(module_base)
                     || s.host.as_ref().is_some_and(|q| !Arc::ptr_eq(p, q))
+                    || s.unit.is_some()
                 {
                     return Err(SnapError::Corrupt("host code"));
                 }
                 s.host = Some(Arc::clone(p));
+                refs += 1;
             }
             // Keyword-name tuples are read for their length.
             for (k, v) in code.consts.iter().zip(&consts) {
@@ -2109,12 +2121,27 @@ impl Vm {
                 reclaim_index: 0,
             }));
         }
+        // The writer writes every code of a loaded bundled module's range,
+        // of a prelude unit's source and of a host program's source by
+        // reference, so the restored session's own image reads the same
+        // codes: each such code was read so, and the ranges lie in the
+        // table without overlapping (each of their codes read once, by one).
         if std_codes
             .iter()
             .flatten()
-            .any(|&(_, end, _)| end as usize > codes.len())
+            .map(|&(first, end, _)| u64::from(end - first))
+            .sum::<u64>()
+            != std_refs
         {
             return Err(SnapError::Corrupt("bundled modules"));
+        }
+        let flagged = codes.iter().filter(|c| {
+            sources
+                .get(c.source as usize)
+                .is_some_and(|s| s.unit.is_some() || s.host.is_some())
+        });
+        if flagged.count() != refs {
+            return Err(SnapError::Corrupt("code table"));
         }
         if tramp as usize >= codes.len() {
             return Err(SnapError::Corrupt("code table"));
