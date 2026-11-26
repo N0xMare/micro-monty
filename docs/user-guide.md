@@ -1740,7 +1740,9 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
   reads and iteration work as on CPython, and any write raises `TypeError`.
 - **Imports** are limited to bundled and host-defined modules. `sys.path` is
   an empty list that imports never search; there are no packages on disk,
-  no relative imports and no C extensions. `platform` reports fixed values
+  no relative imports and no C extensions. A first import of a native
+  module charges fuel for the entries in its namespace, in addition to
+  normal allocation and loading costs. `platform` reports fixed values
   (`system()` is `'Linux'`, `python_implementation()` `'micro-monty'`).
 - **Surrogates.** A `str` is UTF-8, so it cannot hold a lone surrogate
   (U+D800 to U+DFFF). A surrogate escape in a literal (`'\ud800'`) is a

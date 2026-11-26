@@ -13,6 +13,9 @@ use alloc::{format, string::String, vec::Vec};
 use core::cmp::Ordering;
 use mm_core::Value;
 
+#[path = "module_specs.rs"]
+pub(crate) mod module_specs;
+
 /// The builtin calling convention.
 pub type NativeFn = fn(&mut Vm, CallArgs) -> Result<Value, Raised>;
 
@@ -1874,7 +1877,7 @@ static BUILTIN_FNS: [u16; PACKED.builtin_fns_len] = prefix(&PACKED.builtin_fns);
 pub(crate) static PRELUDE_FNS: [u16; PACKED.prelude_fns_len] = prefix(&PACKED.prelude_fns);
 
 const COUNT: usize = DEFS.len();
-const STR_CAP: usize = str_cap();
+const STR_CAP: usize = str_cap() + module_specs::EXTRA_STR_BYTES;
 const LIST_CAP: usize = list_cap();
 
 #[cfg_attr(mm_shipped, optimize(size))]
@@ -1939,24 +1942,53 @@ struct Packed {
     builtin_fns_len: usize,
     prelude_fns: [u16; COUNT],
     prelude_fns_len: usize,
+    bundled: module_specs::PackedModules,
 }
 
-/// [`NATIVES`]' index of the function `name` of module `module`, found at
-/// compile time (`u32::MAX` if none): [`pack`] puts the functions first,
-/// in [`DEFS`]' order.
-const fn function_index(module: &str, name: &str) -> u32 {
-    let mut k = 0;
-    let mut i = 0;
-    while i < COUNT {
-        let d = &DEFS[i];
-        if d.owner.is_none() || is_unbound(d) {
-            if let Some(m) = d.module
-                && str_eq(m, module)
-                && str_eq(d.name, name)
+/// Functions in declaration order, except that every bundled module's
+/// functions form a contiguous range. Method indices follow these.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "pack checks the table bound"
+)]
+const fn function_order() -> ([u16; COUNT], usize) {
+    let mut order = [0; COUNT];
+    let mut n = 0;
+    let mut group = 0;
+    while group <= module_specs::BUNDLED.len() {
+        let mut i = 0;
+        while i < COUNT {
+            let d = &DEFS[i];
+            if (d.owner.is_none() || is_unbound(d)) && module_specs::native_group(d.module) == group
             {
-                return k;
+                order[n] = i as u16;
+                n += 1;
             }
-            k += 1;
+            i += 1;
+        }
+        group += 1;
+    }
+    (order, n)
+}
+
+const FUNCTION_ORDER: ([u16; COUNT], usize) = function_order();
+
+/// [`NATIVES`]' index of the function `name` of module `module`, found at
+/// compile time (`u32::MAX` if none).
+const fn function_index(module: &str, name: &str) -> u32 {
+    let (order, functions) = &FUNCTION_ORDER;
+    let mut i = 0;
+    while i < *functions {
+        let d = &DEFS[order[i] as usize];
+        if let Some(m) = d.module
+            && str_eq(m, module)
+            && str_eq(d.name, name)
+        {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "pack checks the table bound"
+            )]
+            return i as u32;
         }
         i += 1;
     }
@@ -1982,6 +2014,7 @@ const TWINS: usize = 2;
 
 #[allow(
     clippy::large_const_arrays,
+    long_running_const_eval,
     reason = "compile-time only: the statics above copy out what ships"
 )]
 const PACKED: Packed = pack();
@@ -2213,20 +2246,12 @@ const fn pack() -> Packed {
         builtin_fns_len: 0,
         prelude_fns: [0; COUNT],
         prelude_fns_len: 0,
+        bundled: module_specs::PackedModules::EMPTY,
     };
-    // The order: functions as written, then methods (insertion sort).
-    let mut order = [0u16; COUNT];
-    let mut n = 0;
+    // The functions are already grouped; insertion-sort the methods.
+    let (mut order, functions) = FUNCTION_ORDER;
+    let mut n = functions;
     let mut i = 0;
-    while i < COUNT {
-        if DEFS[i].owner.is_none() || is_unbound(&DEFS[i]) {
-            order[n] = i as u16;
-            n += 1;
-        }
-        i += 1;
-    }
-    let functions = n;
-    i = 0;
     while i < COUNT {
         if DEFS[i].owner.is_some() && !is_unbound(&DEFS[i]) {
             let mut j = n;
@@ -2325,6 +2350,7 @@ const fn pack() -> Packed {
         }
         k += 1;
     }
+    p.bundled = module_specs::pack(&mut p, &order, functions);
     p
 }
 

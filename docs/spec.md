@@ -3303,7 +3303,15 @@ features `asyncio` and `json`): their natives, prelude units and, for
 forwards every `mod-*` feature and its `default` feature is the default set
 (mm-stdlib's own default is empty). `math`, `cmath` and `sys` are engine
 modules, always built, with no feature. Module features are part of the
-build id (§9.3). Each `mod-*` feature turns on every module its modules
+build id (§9.3). Native module namespaces are packed at build time in
+insertion order, with unique keys and a contiguous range for each module's
+native functions. On first import the engine charges one unit of fuel per
+entry, plus ordinary allocation and prelude loading charges. It fills the
+dict at its final capacity using the hashes cached by interning, without
+per-entry lookup or growth. Each namespace remains an ordinary,
+independently mutable module dict after publication.
+
+Each `mod-*` feature turns on every module its modules
 import when they are imported; mm-stdlib's build script reads the bundled
 modules and `Cargo.toml` and fails on a missing one, so every module set the
 manifest allows imports cleanly. Imports inside functions are not part of

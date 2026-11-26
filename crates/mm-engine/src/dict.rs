@@ -504,6 +504,58 @@ impl Vm {
         Ok(Value::from_ref(r, ty::DICT as u8))
     }
 
+    /// Builds a fresh namespace from unique interned keys in insertion
+    /// order. No general dict lookup is needed: only a free index slot.
+    pub(crate) fn dict_from_namespace(&mut self, pairs: &[[Value; 2]]) -> Result<Value, Raised> {
+        let n = pairs.len();
+        let used = u32::try_from(n).unwrap_or(u32::MAX);
+        let counts = [counts(used, used)];
+        let values = pairs.as_flattened();
+        let r = if n <= LINEAR_MAX {
+            let values = if n == 0 {
+                &[Value::UNDEFINED; 2]
+            } else {
+                values
+            };
+            let res = self.heap.alloc_init(ty::DICT, 0, values, &counts);
+            self.hx(res)?
+        } else {
+            let cap = n.next_power_of_two();
+            let (entries, index) = self.dict_tables(cap)?;
+            let res = self.heap.set_values(entries, 0, values);
+            self.hx(res)?;
+            let mut hashes = [0; crate::builtins::module_specs::MAX_ENTRIES];
+            for (hash, &[k, _]) in hashes.iter_mut().zip(pairs) {
+                // Interning filled the hash; no second pass over the text.
+                *hash = self.key_hash(k)?;
+            }
+            let g = Geo::new(u32::try_from(cap).unwrap_or(u32::MAX));
+            let res = self.heap.raw_words_mut(index);
+            let Ok(words) = res else {
+                return Err(self.err(T::SystemError, "malformed namespace index"));
+            };
+            for (e, &h) in hashes[..n].iter().enumerate() {
+                let Some((slot, _)) = free_in(words, g, h) else {
+                    return Err(self.err(T::SystemError, "full namespace index"));
+                };
+                set_islot(words, slot, g.word(h, u32::try_from(e).unwrap_or(u32::MAX)));
+                words[cap + e] = h;
+            }
+            words[2 * cap] = u64::from(used);
+            let res = self.heap.alloc_init(
+                ty::DICT,
+                0,
+                &[
+                    Value::from_ref(entries, ty::BUF as u8),
+                    Value::from_ref(index, ty::RAW as u8),
+                ],
+                &counts,
+            );
+            self.hx(res)?
+        };
+        Ok(Value::from_ref(r, ty::DICT as u8))
+    }
+
     /// A new empty indexed dict of `cap` entries. Globals dicts are indexed:
     /// their inline caches keep an entries buffer and check the version.
     pub(crate) fn new_dict_indexed(&mut self, cap: usize) -> Result<Value, Raised> {

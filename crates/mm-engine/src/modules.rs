@@ -7,11 +7,17 @@
 //! dispatch loop: `import` leaves a call request whose continuation
 //! (`Cont::Import`) registers the module and goes on with the import.
 
+use crate::builtins::{
+    NATIVES,
+    module_specs::{self as spec, Binding},
+};
 use crate::cont::Cont;
 use crate::types::{T, ty};
 use crate::vm::{GSLOT_STD, Raised, Request, Stream, Vm};
 use alloc::{format, string::String, sync::Arc, vec::Vec};
 use mm_core::Value;
+
+pub use spec::BUNDLED;
 
 /// Module slots.
 pub(crate) mod module_slot {
@@ -62,117 +68,12 @@ pub(crate) const ASYNCIO_PRELUDE: [&str; 38] = [
     "wait_for",
 ];
 
-/// `asyncio`'s submodules, each a view of `asyncio`'s own objects.
-#[cfg(feature = "asyncio")]
-const ASYNCIO_SUBMODULES: [(&str, &[&str]); 9] = [
-    (
-        "events",
-        &[
-            "Handle",
-            "TimerHandle",
-            "get_event_loop",
-            "get_running_loop",
-            "new_event_loop",
-            "set_event_loop",
-            "_set_event_loop_policy",
-        ],
-    ),
-    (
-        "exceptions",
-        &[
-            "BrokenBarrierError",
-            "CancelledError",
-            "InvalidStateError",
-            "TimeoutError",
-        ],
-    ),
-    ("futures", &["Future", "isfuture"]),
-    (
-        "locks",
-        &[
-            "Lock",
-            "Event",
-            "Condition",
-            "Semaphore",
-            "BoundedSemaphore",
-            "Barrier",
-        ],
-    ),
-    (
-        "queues",
-        &[
-            "Queue",
-            "PriorityQueue",
-            "LifoQueue",
-            "QueueFull",
-            "QueueEmpty",
-            "QueueShutDown",
-        ],
-    ),
-    ("runners", &["Runner", "run"]),
-    ("taskgroups", &["TaskGroup"]),
-    (
-        "tasks",
-        &[
-            "Task",
-            "create_task",
-            "FIRST_COMPLETED",
-            "FIRST_EXCEPTION",
-            "ALL_COMPLETED",
-            "wait",
-            "wait_for",
-            "as_completed",
-            "sleep",
-            "gather",
-            "shield",
-            "ensure_future",
-            "current_task",
-            "all_tasks",
-        ],
-    ),
-    ("timeouts", &["Timeout", "timeout", "timeout_at"]),
-];
-
-/// A package's submodule: its name and the parent's names it holds.
-type Submodule = (&'static str, &'static [&'static str]);
-
-/// `json`'s submodules and the names each holds, as for asyncio.
-#[cfg(feature = "json")]
-const JSON_SUBMODULES: [(&str, &[&str]); 2] = [
-    ("decoder", &["JSONDecoder", "JSONDecodeError"]),
-    ("encoder", &["JSONEncoder"]),
-];
-
-/// Bundled native modules (`_mm` is the engine's own); `asyncio` and
-/// `json` with their features.
-pub const BUNDLED: &[&str] = &[
-    "_mm",
-    #[cfg(feature = "asyncio")]
-    "asyncio",
-    "cmath",
-    #[cfg(feature = "json")]
-    "json",
-    "math",
-    "sys",
-];
-
 /// Whether `import name` finds an engine module ([`BUNDLED`], or a
 /// submodule of a bundled package) before any host module of that name.
 #[must_use]
 #[cfg_attr(mm_shipped, optimize(size))]
 pub fn is_bundled(name: &str) -> bool {
-    let packages: &[(&str, &[Submodule])] = &[
-        #[cfg(feature = "asyncio")]
-        ("asyncio", &ASYNCIO_SUBMODULES),
-        #[cfg(feature = "json")]
-        ("json", &JSON_SUBMODULES),
-    ];
-    BUNDLED.contains(&name)
-        || packages.iter().any(|(p, subs)| {
-            name.strip_prefix(p)
-                .and_then(|s| s.strip_prefix('.'))
-                .is_some_and(|s| subs.iter().any(|(n, _)| *n == s))
-        })
+    spec::find(name).is_some()
 }
 
 impl Vm {
@@ -185,6 +86,10 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     fn new_module_with(&mut self, name: &str, d: Value) -> Result<Value, Raised> {
         let n = self.intern(name)?;
+        self.alloc_module(n, d)
+    }
+
+    fn alloc_module(&mut self, n: Value, d: Value) -> Result<Value, Raised> {
         let r = {
             let res = self.heap.alloc_init(ty::MODULE, 0, &[n, d], &[]);
             self.hx(res)
@@ -220,21 +125,6 @@ impl Vm {
             Some(v) if v == Value::UNDEFINED => self.module_build(d, name).map(Some),
             v => Ok(v),
         }
-    }
-
-    /// Binds `attrs` in module `m` as lazy prelude units: each value is
-    /// `UNDEFINED` (which no Python code can hold) until the first lookup
-    /// builds the prelude global of the same name. The dict keeps its key
-    /// order, and a snapshot keeps which names are still unbuilt.
-    #[cfg(feature = "asyncio")]
-    #[cfg_attr(mm_shipped, optimize(size))]
-    fn module_set_lazy(&mut self, m: Value, attrs: &[&str]) -> Result<(), Raised> {
-        for attr in attrs {
-            if crate::prelude::has_unit(attr) {
-                self.module_set(m, attr, Value::UNDEFINED)?;
-            }
-        }
-        Ok(())
     }
 
     /// Module dict `d`'s lazy entry `name`, built now and bound.
@@ -297,37 +187,24 @@ impl Vm {
         if let Some(i) = self.stdlib.iter().position(|m| m.name == dotted) {
             return self.start_std(i, whole, top, from_).map(Some);
         }
-        let packages: &[(&str, &[Submodule])] = &[
-            #[cfg(feature = "asyncio")]
-            ("asyncio", &ASYNCIO_SUBMODULES),
-            #[cfg(feature = "json")]
-            ("json", &JSON_SUBMODULES),
-        ];
-        let sub = packages.iter().find_map(|(p, subs)| {
-            let s = dotted.strip_prefix(p)?.strip_prefix('.')?;
-            subs.iter()
-                .find(|(n, _)| *n == s)
-                .map(|(n, a)| (*p, *n, *a))
-        });
-        let m = if BUNDLED.contains(&dotted) {
-            self.build_bundled(dotted)?
-        } else if let Some((pname, sub, names)) = sub {
-            let Some(parent) = self.find_module(pname, Value::NONE, false, true)? else {
-                return Ok(None);
-            };
-            let m = self.new_module(dotted)?;
-            for attr in names {
-                let a = self.intern(attr)?;
-                let v = match self.module_attr(parent, a)? {
-                    Some(v) => Some(v),
-                    None => self.prelude_get(a)?,
+        let mut children = [Value::NONE; spec::CHILD_COUNT];
+        let m = if let Some(s) = spec::find(dotted) {
+            if s.parent == spec::NO_PARENT {
+                self.build_bundled(s, k, &[], Value::NONE, &mut children)?
+            } else {
+                let p = spec::SPECS[usize::from(s.parent)];
+                let pname = p.name();
+                let Some(parent) = self.find_module(pname, Value::NONE, false, true)? else {
+                    return Ok(None);
                 };
-                if let Some(v) = v {
-                    self.module_set(m, attr, v)?;
+                // JSON's children may have appeared while finding the parent.
+                if let Some(m) = self.dict_get_str(self.modules, k) {
+                    return Ok(Some(m));
                 }
+                let m = self.build_bundled(s, k, &[], parent, &mut children)?;
+                self.module_set(parent, &dotted[pname.len() + 1..], m)?;
+                m
             }
-            self.module_set(parent, sub, m)?;
-            m
         } else if let Some(i) = self.host_modules.iter().position(|m| m.name == dotted) {
             self.build_host(i)?
         } else {
@@ -335,137 +212,100 @@ impl Vm {
         };
         let mods = self.modules;
         self.dict_set(mods, k, m)?;
-        // CPython's `json` imports its submodules, so `json.decoder` is an
-        // attribute after `import json` (`except json.decoder.JSONDecodeError`).
-        #[cfg(feature = "json")]
-        if dotted == "json" {
-            for (sub, _) in JSON_SUBMODULES {
-                self.find_module(&format!("json.{sub}"), Value::NONE, false, true)?;
-            }
+        for child in children.into_iter().take_while(|&c| c != Value::NONE) {
+            self.dict_set(mods, self.vslot(child, module_slot::NAME), child)?;
         }
         Ok(Some(m))
     }
 
+    /// Fills an ordinary dict at its final size. A child can only copy an
+    /// already filled entry of its parent; the const table bounds the depth.
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn build_bundled(&mut self, name: &str) -> Result<Value, Raised> {
-        let m = self.new_module(name)?;
-        for (i, n) in crate::builtins::NATIVES.iter().enumerate() {
-            if n.module() == Some(name) {
-                let f = Value::native(u32::try_from(i).unwrap_or(0));
-                self.module_set(m, n.name(), f)?;
-            }
-        }
-        #[cfg(feature = "json")]
-        if name == "json" {
-            // Written in the prelude (docs/spec.md §12).
-            let attrs = [
-                "dumps",
-                "loads",
-                "dump",
-                "load",
-                "JSONDecodeError",
-                "JSONDecoder",
-                "JSONEncoder",
+    fn build_bundled(
+        &mut self,
+        s: spec::Spec,
+        name: Value,
+        parent_entries: &[[Value; 2]],
+        parent: Value,
+        children: &mut [Value],
+    ) -> Result<Value, Raised> {
+        let natives = s.natives();
+        let entries = s.entries();
+        self.burn((natives.len() + entries.len()) as u64);
+        let mut pairs = [[Value::NONE; 2]; spec::MAX_ENTRIES];
+        let mut used = natives.len();
+        for (pair, i) in pairs.iter_mut().zip(natives) {
+            *pair = [
+                self.intern(NATIVES[i].name())?,
+                Value::native(u32::try_from(i).unwrap_or(0)),
             ];
-            for (attr, v) in attrs.iter().zip(self.prelude_get_all(&attrs)?) {
-                if let Some(v) = v {
-                    self.module_set(m, attr, v)?;
-                }
-            }
         }
-        #[cfg(feature = "asyncio")]
-        if name == "asyncio" {
-            // Written in the prelude (docs/spec.md §8.5), built on first use.
-            self.module_set_lazy(m, &ASYNCIO_PRELUDE)?;
-            for t in [
-                T::CancelledError,
-                T::InvalidStateError,
-                T::TimeoutError,
-                T::Task,
-            ] {
-                let v = self.types[t as usize];
-                self.module_set(m, t.name(), v)?;
-            }
+        let mut eager = Vec::new();
+        let mut next_child = 0;
+        for entry in entries {
+            let [k, v] = if let Binding::Copy(i) = entry.binding {
+                parent_entries[usize::from(i)]
+            } else {
+                let k = self.intern(entry.name())?;
+                let v = match entry.binding {
+                    Binding::Lazy => Value::UNDEFINED,
+                    Binding::Eager(i) => {
+                        if i == 0 {
+                            eager = self.prelude_get_all(spec::eager_units(s))?;
+                        }
+                        eager[usize::from(i)].ok_or_else(|| {
+                            self.err(T::SystemError, "micro-monty: the prelude is corrupt")
+                        })?
+                    }
+                    Binding::Type(t) => self.types[t as usize],
+                    Binding::Float(i) => Value::float(crate::math::CONSTANTS[usize::from(i)].1),
+                    Binding::Imaginary(i) => {
+                        self.new_complex(0.0, crate::math::CONSTANTS[usize::from(i)].1)?
+                    }
+                    Binding::Text(i) => self.new_str(spec::text(i))?,
+                    Binding::Int(i) => self.new_int(spec::integer(i))?,
+                    Binding::None => Value::NONE,
+                    Binding::BuiltinNames => {
+                        let mut names = [Value::NONE; BUNDLED.len() - 1];
+                        for (&n, v) in BUNDLED[1..].iter().zip(&mut names) {
+                            *v = self.new_str(n)?;
+                        }
+                        self.alloc_tuple(&names)?
+                    }
+                    Binding::Argv => {
+                        let script = self.new_str("")?;
+                        self.new_list(&[script])?
+                    }
+                    Binding::Path => self.new_list(&[])?,
+                    Binding::Stream(id) => {
+                        let res = self.heap.alloc_init(ty::STREAM, 0, &[], &[u64::from(id)]);
+                        Value::from_ref(self.hx(res)?, ty::STREAM as u8)
+                    }
+                    Binding::Child(i) => {
+                        let child = spec::SPECS[usize::from(i)];
+                        let n = self.intern(child.name())?;
+                        let v =
+                            self.build_bundled(child, n, &pairs[..used], Value::NONE, &mut [])?;
+                        children[next_child] = v;
+                        next_child += 1;
+                        v
+                    }
+                    Binding::Lookup => match self.module_attr(parent, k)? {
+                        Some(v) => v,
+                        None => match self.prelude_get(k)? {
+                            Some(v) => v,
+                            None => continue,
+                        },
+                    },
+                    Binding::Copy(_) => unreachable!(),
+                };
+                [k, v]
+            };
+            pairs[used] = [k, v];
+            used += 1;
         }
-        if name == "cmath" {
-            self.cmath_constants(m)?;
-        }
-        if name == "math" {
-            for (attr, x) in crate::math::CONSTANTS {
-                self.module_set(m, attr, Value::float(x))?;
-            }
-        }
-        if name == "sys" {
-            for (attr, text) in [
-                ("platform", "linux"),
-                ("version", "3.14.7 (micro-monty)"),
-                ("byteorder", "little"),
-                ("float_repr_style", "short"),
-            ] {
-                let v = self.new_str(text)?;
-                self.module_set(m, attr, v)?;
-            }
-            for (attr, i) in [
-                ("maxsize", i64::MAX),
-                ("maxunicode", 0x0010_FFFF),
-                ("hexversion", 0x030E_07F0),
-                ("api_version", 1013),
-            ] {
-                let v = self.new_int(i)?;
-                self.module_set(m, attr, v)?;
-            }
-            let attrs = [
-                "version_info",
-                "float_info",
-                "hash_info",
-                "flags",
-                "int_info",
-                "get_int_max_str_digits",
-                "set_int_max_str_digits",
-                "exit",
-            ];
-            let units = [
-                "_version_info",
-                "_float_info",
-                "_hash_info",
-                "_flags",
-                "_int_info",
-                "get_int_max_str_digits",
-                "set_int_max_str_digits",
-                "exit",
-            ];
-            for (attr, v) in attrs.iter().zip(self.prelude_get_all(&units)?) {
-                if let Some(v) = v {
-                    self.module_set(m, attr, v)?;
-                }
-            }
-            let copyright = self.new_str("Copyright (c) 2001 Python Software Foundation.")?;
-            self.module_set(m, "copyright", copyright)?;
-            self.module_set(m, "pycache_prefix", Value::NONE)?;
-            let mut names = Vec::new();
-            // `_mm` is the bundled modules' own (`Vm::import_checked`).
-            for &n in BUNDLED.iter().filter(|&&n| n != "_mm") {
-                names.push(self.new_str(n)?);
-            }
-            let names = self.alloc_tuple(&names)?;
-            self.module_set(m, "builtin_module_names", names)?;
-            let script = self.new_str("")?;
-            let argv = self.new_list(&[script])?;
-            self.module_set(m, "argv", argv)?;
-            // Imports never search a path (docs/user-guide.md "Known
-            // differences from CPython"): an empty list that code may read
-            // and edit without effect.
-            let path = self.new_list(&[])?;
-            self.module_set(m, "path", path)?;
-            for (attr, id) in [("stdout", 1), ("stderr", 2)] {
-                let r = {
-                    let res = self.heap.alloc_init(ty::STREAM, 0, &[], &[id]);
-                    self.hx(res)
-                }?;
-                self.module_set(m, attr, Value::from_ref(r, ty::STREAM as u8))?;
-            }
-        }
-        Ok(m)
+        let d = self.dict_from_namespace(&pairs[..used])?;
+        self.alloc_module(name, d)
     }
 
     #[cfg_attr(mm_shipped, optimize(size))]
@@ -692,7 +532,7 @@ impl Vm {
         self.dict_set(g, k, n)?;
         // Native parts of the module come first; its Python code may wrap
         // or replace them.
-        for (j, nat) in crate::builtins::NATIVES.iter().enumerate() {
+        for (j, nat) in NATIVES.iter().enumerate() {
             if nat.module() == Some(m.name) {
                 let f = Value::native(u32::try_from(j).unwrap_or(0));
                 self.module_set(module, nat.name(), f)?;

@@ -707,18 +707,3 @@ pub(crate) fn c_isclose(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let ok = diff <= rel * abs_c(y) || diff <= rel * abs_c(x) || diff <= abs;
     Ok(Value::from_bool(ok))
 }
-
-impl Vm {
-    /// The module constants of `cmath`.
-    #[cfg_attr(mm_shipped, optimize(size))]
-    pub(crate) fn cmath_constants(&mut self, m: Value) -> Result<(), Raised> {
-        for (attr, x) in crate::math::CONSTANTS {
-            self.module_set(m, attr, Value::float(x))?;
-        }
-        for (attr, im) in [("infj", f64::INFINITY), ("nanj", f64::NAN)] {
-            let v = self.new_complex(0.0, im)?;
-            self.module_set(m, attr, v)?;
-        }
-        Ok(())
-    }
-}
