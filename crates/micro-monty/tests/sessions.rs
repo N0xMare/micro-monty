@@ -160,6 +160,30 @@ fn globals_is_a_read_only_view_across_cells() {
     assert_eq!(c.value("[answer, 'b' in globals()]"), "[42, False]");
 }
 
+#[cfg(feature = "mod-zoneinfo")]
+#[test]
+fn the_zone_source_does_not_receive_keys_with_nul() {
+    let mut c = Cells::new();
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&calls);
+    c.session.set_zone_source(Some(Box::new(move |key| {
+        seen.lock().expect("calls lock").push(key.to_owned());
+        None
+    })));
+    assert_eq!(
+        c.value(
+            "from zoneinfo import ZoneInfo, ZoneInfoNotFoundError\n\
+             missing = []\n\
+             for key in ('Test/Zone', 'Test/Zone\\0'):\n    \
+                 try: ZoneInfo(key)\n    \
+                 except ZoneInfoNotFoundError: missing.append(key)\n\
+             missing"
+        ),
+        "['Test/Zone', 'Test/Zone\\x00']"
+    );
+    assert_eq!(*calls.lock().expect("calls lock"), ["Test/Zone"]);
+}
+
 #[test]
 fn transient_cells_do_not_accumulate_source_and_code() {
     let mut c = Cells::new();
