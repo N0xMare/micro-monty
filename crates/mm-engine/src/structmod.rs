@@ -511,7 +511,12 @@ pub(crate) fn unpack(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         return Err(vm.not_bytes_like(buf));
     }
     let whole = vm.truthy(vm.arg_o(&a, 3));
-    let mut off = vm.int_of_o(vm.arg_o(&a, 2)).unwrap_or(0);
+    let Some(mut off) = vm.int_of_o(vm.arg_o(&a, 2)) else {
+        return Err(vm.err(
+            T::OverflowError,
+            "Python int too large to convert to C ssize_t",
+        ));
+    };
     let blen = vm.bytes_data(buf).len() as i64;
     let size = f.size as i64;
     if whole {
@@ -531,10 +536,11 @@ pub(crate) fn unpack(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
             off += blen;
         }
         if blen - off < size {
+            // CPython prints the size plus the nonnegative offset as unsigned.
             let m = format!(
                 "unpack_from requires a buffer of at least {} bytes for unpacking {size} bytes \
                  at offset {off} (actual buffer size is {blen})",
-                size.saturating_add(off)
+                f.size + off as u64
             );
             return vm.new_str(&m);
         }
