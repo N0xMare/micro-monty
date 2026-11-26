@@ -187,8 +187,11 @@ impl Vm {
         } else {
             self.dunder(b, names[1])
         };
+        // The subclass goes first only when it overrides the reflected
+        // method (CPython's `method_is_overloaded`), not one it inherits.
+        let ra = fb.and_then(|_| self.dunder(a, names[1]));
         match (fa, fb) {
-            (fa, Some(fb)) if self.subclass_of(cb, ca) && Some(fb) != fa => {
+            (fa, Some(fb)) if self.subclass_of(cb, ca) && Some(fb) != ra => {
                 out.push((fb, b, a));
                 if let Some(fa) = fa {
                     out.push((fa, a, b));
