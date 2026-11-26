@@ -673,12 +673,31 @@ class TypedDict(dict):
         cls.__total__ = total
         cls._is_typeddict = True
         ann = {}
-        for base in reversed(cls.__mro__):
+        required, optional = set(), set()
+        for base in cls.__bases__:
+            if base is TypedDict or not is_typeddict(base):
+                continue
             ann.update(_own_annotations(base))
-        keys = set(ann)
-        if total:
-            cls.__required_keys__ = keys
-            cls.__optional_keys__ = set()
-        else:
-            cls.__required_keys__ = set()
-            cls.__optional_keys__ = keys
+            required |= base.__required_keys__
+            optional -= base.__required_keys__
+            required -= base.__optional_keys__
+            optional |= base.__optional_keys__
+        own = _own_annotations(cls)
+        ann.update(own)
+        for name, field in own.items():
+            req, opt = False, False
+            origin = get_origin(field)
+            while origin in (Annotated, ReadOnly, Required, NotRequired):
+                req |= origin is Required
+                opt |= origin is NotRequired
+                field = get_args(field)[0]
+                origin = get_origin(field)
+            if req or (not opt and total):
+                required.add(name)
+                optional.discard(name)
+            else:
+                optional.add(name)
+                required.discard(name)
+        cls.__annotations__ = ann
+        cls.__required_keys__ = frozenset(required)
+        cls.__optional_keys__ = frozenset(optional)
