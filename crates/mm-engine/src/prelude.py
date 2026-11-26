@@ -1326,7 +1326,8 @@ def _mcall(f, args, kw):
         g = getattr(t, '__bytes__', None) if name == 'bytes' else None
         if g is not None:
             return _call_bytes(g, args[0])
-        if not _has_index(args[0]) and getattr(t, '__iter__', None) is None and getattr(t, '__getitem__', None) is None:
+        if (_class_slot(t, '__index__', None) is None
+                and getattr(t, '__iter__', None) is None and getattr(t, '__getitem__', None) is None):
             raise TypeError("cannot convert '" + _type_name(args[0]) + "' object to " + name)
     # prod and sumprod of user numbers (Fraction, Decimal) run their
     # operators; dist takes what __float__ gives.
