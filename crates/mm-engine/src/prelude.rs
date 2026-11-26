@@ -297,14 +297,19 @@ fn unit(name: &str) -> Option<&'static [u16; 5]> {
 #[allow(clippy::cast_possible_truncation, reason = "checked unit table bound")]
 pub(crate) const fn unit_index(name: &str) -> Option<u16> {
     assert!(UNITS.len() <= u16::MAX as usize);
+    let text = NAMES.as_bytes();
+    let name = name.as_bytes();
     let (mut i, mut start) = (0, 0);
     while i < UNITS.len() {
         let end = UNITS[i][0] as usize;
-        let text = NAMES.as_bytes().split_at(start).1.split_at(end - start).0;
-        if let Ok(text) = core::str::from_utf8(text)
-            && crate::types::str_eq(text, name)
-        {
-            return Some(i as u16);
+        if end - start == name.len() {
+            let mut j = 0;
+            while j < name.len() && text[start + j] == name[j] {
+                j += 1;
+            }
+            if j == name.len() {
+                return Some(i as u16);
+            }
         }
         i += 1;
         start = end;

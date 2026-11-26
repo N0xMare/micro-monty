@@ -1898,6 +1898,18 @@ futures nobody retrieved (`Vm::unretrieved`) are reported when
 scheduler's task, gather, sleep and loop paths); coroutines, `await` and
 host futures are core and stay without it.
 
+Importing `asyncio` also attaches and registers its supported submodules:
+`events`, `exceptions`, `futures`, `locks`, `queues`, `runners`, `taskgroups`,
+`tasks` and `timeouts`. Each has a real module dictionary and a precomputed
+list of supported public exports for `__all__`. The parent and children
+start with the same original native and prelude objects, but changes to one
+namespace do not change the others. Prelude entries carry lazy markers,
+including across snapshots. Reading an entry builds it from the shared
+prelude cache without running Python. Reading `__dict__` builds all its
+entries; `dir()` reads only names. The parent excludes its child module
+attributes from `__all__`. If the namespace allocation is refused, the
+import raises `MemoryError` and does not publish a partial package.
+
 ### 8.6 Safepoints
 
 Backward jumps and calls count one tick each; where the ticks the
@@ -3301,9 +3313,12 @@ conformance and durability.
 features `asyncio` and `json`): their natives, prelude units and, for
 `asyncio`, the scheduler's task, gather, sleep and loop paths. The facade
 forwards every `mod-*` feature and its `default` feature is the default set
-(mm-stdlib's own default is empty). `math`, `cmath` and `sys` are engine
-modules, always built, with no feature. Module features are part of the
-build id (§9.3). Native module namespaces are packed at build time in
+(mm-stdlib's own default is empty). `math`, `cmath`, `sys` and `importlib`
+are engine modules, always built, with no feature. `sys.modules` is a live
+read-only view of the session's import registry, hiding the internal `_mm`
+module. `importlib.import_module` uses the same importer, with no path or
+loader hooks. Module features are part of the build id (§9.3). Native
+module namespaces are packed at build time in
 insertion order, with unique keys and a contiguous range for each module's
 native functions. On first import the engine charges one unit of fuel per
 entry, plus ordinary allocation and prelude loading charges. It fills the

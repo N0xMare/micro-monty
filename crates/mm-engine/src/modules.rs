@@ -118,7 +118,7 @@ impl Vm {
         }
         let d = self.vslot_hot(m, module_slot::DICT);
         if self.str_ref_hot(name) == "__dict__" {
-            self.module_build_all(d)?;
+            self.module_build_all(m, d)?;
             return Ok(Some(d));
         }
         match self.dict_get(d, name)? {
@@ -137,20 +137,27 @@ impl Vm {
         Ok(v)
     }
 
-    /// Builds every lazy entry of module dict `d` (before the dict itself
-    /// is handed out), in one batch.
+    /// Builds all remaining lazy exports in one batch before handing out
+    /// the dict. The recipe bounds the lookup work even after guest writes.
     #[cfg_attr(mm_shipped, optimize(size))]
-    fn module_build_all(&mut self, d: Value) -> Result<(), Raised> {
-        let lazy: Vec<String> = self
-            .dict_items_vec(d)
-            .into_iter()
-            .filter(|&(_, v)| v == Value::UNDEFINED)
-            .map(|(k, _)| String::from(self.str_ref(k)))
-            .collect();
-        if lazy.is_empty() {
+    fn module_build_all(&mut self, m: Value, d: Value) -> Result<(), Raised> {
+        let Some(s) = spec::find(self.str_ref(self.vslot(m, module_slot::NAME))) else {
+            return Ok(());
+        };
+        let mut names = Vec::new();
+        for entry in s.entries() {
+            if matches!(entry.binding, Binding::Lazy | Binding::Copy(_)) {
+                let name = entry.name();
+                if let Some(k) = self.find_interned(name)
+                    && self.dict_get_str(d, k) == Some(Value::UNDEFINED)
+                {
+                    names.push(name);
+                }
+            }
+        }
+        if names.is_empty() {
             return Ok(());
         }
-        let names: Vec<&str> = lazy.iter().map(String::as_str).collect();
         for (n, v) in names.iter().zip(self.prelude_get_all(&names)?) {
             let Some(v) = v else {
                 return Err(self.err(T::SystemError, "micro-monty: the prelude is corrupt"));
@@ -166,6 +173,25 @@ impl Vm {
     pub(crate) fn module_setattr(&mut self, m: Value, name: Value, v: Value) -> Result<(), Raised> {
         let d = self.vslot_hot(m, module_slot::DICT);
         self.dict_set(d, name, v)
+    }
+
+    /// Deletes an attribute, including an unbuilt lazy export.
+    pub(crate) fn module_delattr(&mut self, m: Value, name: Value) -> Result<(), Raised> {
+        let d = self.vslot(m, module_slot::DICT);
+        if self.dict_del(d, name)?.is_none() {
+            return Err(self.module_attr_error(m, name));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn module_attr_error(&mut self, m: Value, name: Value) -> Raised {
+        let module = self.vslot(m, module_slot::NAME);
+        let msg = format!(
+            "module '{}' has no attribute '{}'",
+            self.str_ref(module),
+            self.str_ref(name)
+        );
+        self.err(T::AttributeError, &msg)
     }
 
     /// The module named `dotted` (imported, or built now), if it exists.
@@ -187,34 +213,38 @@ impl Vm {
         if let Some(i) = self.stdlib.iter().position(|m| m.name == dotted) {
             return self.start_std(i, whole, top, from_).map(Some);
         }
-        let mut children = [Value::NONE; spec::CHILD_COUNT];
-        let m = if let Some(s) = spec::find(dotted) {
-            if s.parent == spec::NO_PARENT {
-                self.build_bundled(s, k, &[], Value::NONE, &mut children)?
-            } else {
-                let p = spec::SPECS[usize::from(s.parent)];
-                let pname = p.name();
-                let Some(parent) = self.find_module(pname, Value::NONE, false, true)? else {
-                    return Ok(None);
-                };
-                // JSON's children may have appeared while finding the parent.
-                if let Some(m) = self.dict_get_str(self.modules, k) {
-                    return Ok(Some(m));
-                }
-                let m = self.build_bundled(s, k, &[], parent, &mut children)?;
-                self.module_set(parent, &dotted[pname.len() + 1..], m)?;
-                m
+        let mods = self.modules;
+        if let Some(s) = spec::find(dotted) {
+            // A dotted import visits the parent first; a bundled child
+            // can only be found in the registry, never built here.
+            if dotted.contains('.') {
+                return Ok(None);
             }
-        } else if let Some(i) = self.host_modules.iter().position(|m| m.name == dotted) {
-            self.build_host(i)?
-        } else {
+            let mut children = [Value::NONE; spec::CHILD_COUNT + 1];
+            let m = self.build_bundled(s, k, &[], &mut children)?;
+            // The first empty slot stands for the parent, published last.
+            for (added, &child) in children.iter().enumerate() {
+                let last = child == Value::NONE;
+                let module = if last { m } else { child };
+                let key = self.vslot(module, module_slot::NAME);
+                if let Err(error) = self.dict_set(mods, key, module) {
+                    for &child in &children[..added] {
+                        let key = self.vslot(child, module_slot::NAME);
+                        let _ = self.dict_del(mods, key);
+                    }
+                    return Err(error);
+                }
+                if last {
+                    break;
+                }
+            }
+            return Ok(Some(m));
+        }
+        let Some(i) = self.host_modules.iter().position(|m| m.name == dotted) else {
             return Ok(None);
         };
-        let mods = self.modules;
+        let m = self.build_host(i)?;
         self.dict_set(mods, k, m)?;
-        for child in children.into_iter().take_while(|&c| c != Value::NONE) {
-            self.dict_set(mods, self.vslot(child, module_slot::NAME), child)?;
-        }
         Ok(Some(m))
     }
 
@@ -226,7 +256,6 @@ impl Vm {
         s: spec::Spec,
         name: Value,
         parent_entries: &[[Value; 2]],
-        parent: Value,
         children: &mut [Value],
     ) -> Result<Value, Raised> {
         let natives = s.natives();
@@ -284,19 +313,19 @@ impl Vm {
                     Binding::Child(i) => {
                         let child = spec::SPECS[usize::from(i)];
                         let n = self.intern(child.name())?;
-                        let v =
-                            self.build_bundled(child, n, &pairs[..used], Value::NONE, &mut [])?;
+                        let v = self.build_bundled(child, n, &pairs[..used], &mut [])?;
                         children[next_child] = v;
                         next_child += 1;
                         v
                     }
-                    Binding::Lookup => match self.module_attr(parent, k)? {
-                        Some(v) => v,
-                        None => match self.prelude_get(k)? {
-                            Some(v) => v,
-                            None => continue,
-                        },
-                    },
+                    Binding::All(len) => {
+                        let len = usize::from(len);
+                        let mut names = [Value::NONE; spec::MAX_ENTRIES];
+                        for (name, &[key, _]) in names.iter_mut().zip(&pairs[..len]) {
+                            *name = key;
+                        }
+                        self.alloc_tuple(&names[..len])?
+                    }
                     Binding::Copy(_) => unreachable!(),
                 };
                 [k, v]
@@ -466,12 +495,7 @@ impl Vm {
         self.burn(names.len() as u64);
         for n in names {
             let Some(v) = self.module_attr(m, n)? else {
-                let msg = format!(
-                    "module '{}' has no attribute '{}'",
-                    self.module_name(m),
-                    self.str_ref_hot(n)
-                );
-                return Err(self.err(T::AttributeError, &msg));
+                return Err(self.module_attr_error(m, n));
             };
             self.dict_set(g, n, v)?;
         }

@@ -1349,6 +1349,7 @@ const DEFS: &[Def] = &[
     m!("ast", "_parse", 4, 4, NO, NO, crate::astmod::ast_parse),
     #[cfg(feature = "tokenize")]
     m!("tokenize", "_tokens", 1, 1, NO, NO, crate::tokmod::tokens),
+    m!("_mm", "module_dict", 0, 1, NO, NO, mm_module_dict),
     m!("_mm", "signature", 7, 7, NO, NO, crate::mmmod::mm_signature),
     m!(
         "_mm",
@@ -8187,6 +8188,19 @@ fn bi_import(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
         alloc::vec![name, fromlist, pkg],
         Cont::None,
     )
+}
+
+/// The registry or a module namespace without materializing its exports.
+/// Only the prelude uses this; it exposes reads of names, not the dicts.
+fn mm_module_dict(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    if a.n == 0 {
+        return Ok(vm.modules);
+    }
+    let m = vm.arg_o(&a, 0);
+    if !m.is_obj_kind(ty::MODULE as u8) {
+        return Err(vm.err(T::TypeError, "expected a module"));
+    }
+    Ok(vm.vslot(m, crate::modules::module_slot::DICT))
 }
 
 #[cfg_attr(mm_shipped, optimize(size))]

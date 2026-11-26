@@ -10,6 +10,7 @@ pub const BUNDLED: &[&str] = &[
     #[cfg(feature = "asyncio")]
     "asyncio",
     "cmath",
+    "importlib",
     #[cfg(feature = "json")]
     "json",
     "math",
@@ -198,7 +199,7 @@ pub(crate) enum Binding {
     Stream(u8),
     Child(u8),
     Copy(u8),
-    Lookup,
+    All(u8),
 }
 
 /// The offset and length in the native string blob. With a zero length
@@ -216,6 +217,14 @@ impl Key {
 
     const fn blob(r: Sref) -> Self {
         Self::new(r.off, r.len)
+    }
+
+    const fn pack(native: &mut Packed, name: &str) -> Self {
+        if let Some(i) = crate::prelude::unit_index(name) {
+            Self::new(i, 0)
+        } else {
+            Self::blob(add_str(native, name))
+        }
     }
 
     const fn eq(self, other: Self) -> bool {
@@ -250,14 +259,12 @@ impl Entry {
 #[derive(Clone, Copy)]
 pub(crate) struct Spec {
     name: Sref,
-    pub(crate) parent: u8,
     native_start: u16,
     native_len: u8,
     start: u16,
     len: u8,
 }
 
-pub(crate) const NO_PARENT: u8 = u8::MAX;
 // Bounds of compile-time scratch, not shipped table lengths.
 pub(super) const EXTRA_STR_BYTES: usize = 1024;
 const ROOM: usize = 192;
@@ -267,6 +274,7 @@ pub(super) struct PackedModules {
     specs: [Spec; MODULES],
     entries: [Entry; ROOM],
     entry_len: usize,
+    public_prefix: [u8; MODULES],
     max_entries: usize,
 }
 
@@ -274,7 +282,6 @@ impl PackedModules {
     pub(super) const EMPTY: Self = Self {
         specs: [Spec {
             name: Sref { off: 0, len: 0 },
-            parent: NO_PARENT,
             native_start: 0,
             native_len: 0,
             start: 0,
@@ -285,48 +292,45 @@ impl PackedModules {
             binding: Binding::None,
         }; ROOM],
         entry_len: 0,
+        public_prefix: [0; MODULES],
         max_entries: 0,
     };
 
+    const fn public(&mut self, m: usize, name: &str, at: u8) {
+        if !matches!(name.as_bytes(), [b'_', ..]) {
+            let len = &mut self.public_prefix[m];
+            *len = if *len == at { at + 1 } else { u8::MAX };
+        }
+    }
+
     const fn entry(&mut self, native: &mut Packed, m: usize, name: &str, binding: Binding) {
-        let key = if matches!(binding, Binding::Lazy | Binding::Lookup)
-            && let Some(i) = crate::prelude::unit_index(name)
-        {
-            Key::new(i, 0)
-        } else {
-            assert!(!matches!(binding, Binding::Lazy), "no lazy prelude export");
-            Key::blob(add_str(native, name))
-        };
-        let s = self.specs[m];
-        let mut i = s.native_start as usize;
-        while i < s.native_start as usize + s.native_len as usize {
-            assert!(!str_eq(
-                DEFS[super::FUNCTION_ORDER.0[i] as usize].name,
-                name
-            ));
-            i += 1;
-        }
-        self.push(m, key, binding);
-    }
-
-    const fn push(&mut self, m: usize, key: Key, binding: Binding) {
-        let spec = &mut self.specs[m];
-        let mut i = spec.start as usize;
-        while i < self.entry_len {
-            assert!(
-                !self.entries[i].key.eq(key),
-                "duplicate bundled module entry"
-            );
-            i += 1;
-        }
-        self.entries[i] = Entry { key, binding };
+        let key = Key::pack(native, name);
+        assert!(
+            !matches!(binding, Binding::Lazy) || key.0[2] == 0,
+            "no lazy prelude export"
+        );
+        assert!(
+            self.entry_number(m, name, key).is_none(),
+            "duplicate bundled module entry"
+        );
+        let spec = self.specs[m];
+        self.public(m, name, spec.len + spec.native_len);
+        self.entries[self.entry_len] = Entry { key, binding };
         self.entry_len += 1;
-        spec.len += 1;
+        self.specs[m].len += 1;
     }
 
-    const fn entry_number(&self, m: usize, key: Key) -> Option<u8> {
+    const fn entry_number(&self, m: usize, name: &str, key: Key) -> Option<u8> {
         let spec = self.specs[m];
         let mut i = 0;
+        while i < spec.native_len {
+            let index = spec.native_start as usize + i as usize;
+            if str_eq(DEFS[super::FUNCTION_ORDER.0[index] as usize].name, name) {
+                return Some(i);
+            }
+            i += 1;
+        }
+        i = 0;
         while i < spec.len {
             if self.entries[spec.start as usize + i as usize].key.eq(key) {
                 return Some(spec.native_len + i);
@@ -334,6 +338,17 @@ impl PackedModules {
             i += 1;
         }
         None
+    }
+
+    const fn all(&mut self, native: &mut Packed, m: usize) {
+        // Package recipes list their public exports before private names
+        // and child modules, so a count describes the whole tuple.
+        let len = self.public_prefix[m];
+        assert!(
+            len != u8::MAX,
+            "public exports must come before private names"
+        );
+        self.entry(native, m, "__all__", Binding::All(len));
     }
 }
 
@@ -398,16 +413,13 @@ const fn leaf<'a>(name: &'a str, parent: &str) -> Option<&'a str> {
     clippy::cast_possible_truncation,
     reason = "compile-time module and entry bounds"
 )]
-#[allow(
-    clippy::panic,
-    reason = "rejects an inconsistent recipe at compile time"
-)]
 pub(super) const fn pack(
     native: &mut Packed,
     order: &[u16; COUNT],
     functions: usize,
 ) -> PackedModules {
     let mut out = PackedModules::EMPTY;
+    let mut parents = [usize::MAX; CHILDREN.len()];
     let mut m = 0;
     while m < BUNDLED.len() {
         let name = BUNDLED[m];
@@ -428,19 +440,22 @@ pub(super) const fn pack(
                     assert!(!str_eq(DEFS[order[i] as usize].name, f));
                     i += 1;
                 }
+                let at = s.native_len;
                 s.native_len += 1;
+                out.public(m, f, at);
             }
             n += 1;
         }
         extras(&mut out, native, m, name);
+        if str_eq(name, "asyncio") {
+            out.all(native, m);
+        }
         let mut c = 0;
         while c < CHILDREN.len() {
             if let Some(leaf) = leaf(CHILDREN[c].name, name) {
                 let i = BUNDLED.len() + c;
-                out.specs[i].parent = m as u8;
-                if str_eq(name, "json") {
-                    out.entry(native, m, leaf, Binding::Child(i as u8));
-                }
+                parents[c] = m;
+                out.entry(native, m, leaf, Binding::Child(i as u8));
             }
             c += 1;
         }
@@ -452,21 +467,23 @@ pub(super) const fn pack(
         let child = &CHILDREN[c];
         out.specs[m].name = add_str(native, child.name);
         out.specs[m].start = out.entry_len as u16;
-        let parent = out.specs[m].parent as usize;
+        let parent = parents[c];
+        let asyncio = str_eq(BUNDLED[parent], "asyncio");
         let mut e = 0;
         while e < child.exports.len() {
             let name = child.exports[e];
-            let kind = if str_eq(BUNDLED[parent], "json") {
-                let key = Key::blob(add_str(native, name));
-                let Some(index) = out.entry_number(parent, key) else {
-                    panic!("missing parent export")
-                };
+            let key = Key::pack(native, name);
+            let kind = if let Some(index) = out.entry_number(parent, name, key) {
                 Binding::Copy(index)
             } else {
-                Binding::Lookup
+                assert!(asyncio, "missing parent export");
+                Binding::Lazy
             };
             out.entry(native, m, name, kind);
             e += 1;
+        }
+        if asyncio {
+            out.all(native, m);
         }
         c += 1;
     }
@@ -484,6 +501,9 @@ pub(super) const fn pack(
 
 #[allow(clippy::cast_possible_truncation, reason = "compile-time table bounds")]
 const fn extras(out: &mut PackedModules, native: &mut Packed, m: usize, name: &str) {
+    if str_eq(name, "importlib") {
+        out.entry(native, m, "import_module", Binding::Lazy);
+    }
     #[cfg(feature = "asyncio")]
     if str_eq(name, "asyncio") {
         let mut i = 0;
@@ -564,5 +584,6 @@ const fn extras(out: &mut PackedModules, native: &mut Packed, m: usize, name: &s
         out.entry(native, m, "path", Binding::Path);
         out.entry(native, m, "stdout", Binding::Stream(1));
         out.entry(native, m, "stderr", Binding::Stream(2));
+        out.entry(native, m, "modules", Binding::Lazy);
     }
 }

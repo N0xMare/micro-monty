@@ -3578,12 +3578,7 @@ impl Vm {
                 );
                 return self.next_request(n);
             }
-            let msg = format!(
-                "module '{}' has no attribute '{}'",
-                self.module_name(obj),
-                self.str_ref_hot(name)
-            );
-            let e = self.err(T::AttributeError, &msg);
+            let e = self.module_attr_error(obj, name);
             self.module_attr_hint(obj, name, false);
             return Err(e);
         }
@@ -3903,6 +3898,9 @@ impl Vm {
         }
         if self.str_ref(name) == "__class__" {
             return self.assign_class(obj, Value::UNDEFINED);
+        }
+        if obj.is_obj_kind(ty::MODULE as u8) {
+            return self.module_delattr(obj, name);
         }
         if Vm::is_class(obj) {
             return self.class_delattr(obj, name);

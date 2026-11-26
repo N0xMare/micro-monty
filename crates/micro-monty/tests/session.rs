@@ -5837,8 +5837,8 @@ fn a_cancel_long_by_a_tasks_waiters_is_the_same_parked_and_restored() {
 /// generators to close: 3,550,819 before that.)
 #[test]
 fn the_long_cancels_charge_the_same_fuel_whole_and_sliced() {
-    // Includes construction of asyncio's namespace on first import.
-    const FUEL: u64 = 3_550_830;
+    // Includes eager construction of asyncio's package on first import.
+    const FUEL: u64 = 3_550_919;
     let src = include_str!("../../../conformance/own/579_asyncio_cancel_long.py");
     let run = |slice: u64| {
         let engine = Engine::new(EngineConfig::default());

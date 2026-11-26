@@ -1809,7 +1809,7 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
   `ConnectionError` and its subclasses, `InterruptedError`,
   `ProcessLookupError`, `PythonFinalizationError` and
   `UnicodeTranslateError`; the module `builtins`; `__builtins__`, `__spec__`
-  and a module's `__doc__`; `sys.modules`, `sys.getsizeof`, `sys.intern` and
+  and a module's `__doc__`; `sys.getsizeof`, `sys.intern` and
   `sys.getrefcount`; `function.__globals__` and `__code__`; `traceback`'s
   stack-walking functions; `string.Formatter`; `re.Scanner`;
   `functools.Placeholder`; the dunders of builtin types as type attributes
@@ -1828,6 +1828,10 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
   nothing, and the assignments CPython refuses raise CPython's own
   `TypeError` (a builtin type on either side, user classes with different
   builtin bases, a value that is not a class, `del o.__class__`).
+- **Module registry:** `sys.modules` is live but read-only. It does not
+  expose the engine's internal `_mm` module. `importlib` provides only
+  `import_module` (including relative names with a package), using the
+  session's importer without path or loader hooks.
 
 **asyncio** follows CPython 3.14 for `run`, `gather`, `sleep`,
 `create_task`, `wait_for`, `wait`, `as_completed`, `shield`, `TaskGroup`,
@@ -1837,6 +1841,12 @@ loop's `time()`, `create_future`, `call_soon`, `call_later` and `call_at`,
 `contextvars` contexts per task, cancellation and `ExceptionGroup`s. What
 differs:
 
+- `import asyncio` makes `events`, `exceptions`, `futures`, `locks`,
+  `queues`, `runners`, `taskgroups`, `tasks` and `timeouts` available as
+  attributes and in `sys.modules`. Their supported exports are built on
+  first use (`vars()` builds all of that module's exports; `dir()` does
+  not). `asyncio.Lock` and `asyncio.locks.Lock` start as the same object,
+  but assignment or deletion in one module does not affect the other.
 - Event-loop policies, threads (`to_thread`, `run_in_executor`),
   subprocesses, streams, sockets and eager task factories are not
   available; they raise with the `Processes` or `Network` hint.

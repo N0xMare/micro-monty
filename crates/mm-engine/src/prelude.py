@@ -2001,7 +2001,9 @@ def _type___dir__(args):
 
 
 def _module___dir__(args):
-    d = args[0].__dict__
+    import _mm
+    # Reading the names does not read the values of lazy exports.
+    d = _mm.module_dict(args[0])
     if '__dir__' in d:
         return d['__dir__']()
     return list(d) + ['__name__']
@@ -6369,3 +6371,90 @@ def _seq_scan_rest(s, x, i, stop, kind, c):
             raise ValueError('sequence.index(x): x not in sequence')
         raise ValueError(f'{t}.index(x): x not in {t}')
     raise ValueError('list.remove(x): x not in list')
+
+
+# Keep the lazy registry units away from sys's eager exports, which
+# should not have to decompress the registry's code.
+__name__ = 'sys'
+
+
+class _SysModules:
+    # Live lookups, but no guest writes into the engine's import table.
+    def __init__(self, hidden):
+        self._hidden = hidden
+
+    def __setattr__(self, name, value):
+        # The prelude shares this view across resets, just like _StructSeq.
+        raise AttributeError('the module registry is read-only')
+
+    def __getitem__(self, name):
+        import _mm
+        m = _mm.module_dict()[name]
+        if m is _mm:
+            raise KeyError(name)
+        return m
+
+    def __iter__(self):
+        import _mm
+        for name in _mm.module_dict():
+            if name != self._hidden:
+                yield name
+
+    def __len__(self):
+        import _mm
+        return len(_mm.module_dict()) - 1
+
+    def __contains__(self, name):
+        return self.get(name) is not None
+
+    def get(self, name, *default):
+        if len(default) > 1:
+            raise TypeError('get expected at most 2 arguments')
+        try:
+            return self[name]
+        except KeyError:
+            return default[0] if default else None
+
+    def keys(self):
+        return list(self)
+
+    def items(self):
+        for name in self:
+            yield name, self[name]
+
+    def values(self):
+        for name in self:
+            yield self[name]
+
+    def copy(self):
+        return dict(self.items())
+
+
+modules = _SysModules('_mm')
+
+
+# ------------------------------------------------------------ importlib
+
+__name__ = 'importlib'
+
+
+def import_module(name, package=None):
+    if not isinstance(name, str):
+        raise TypeError('module name must be a string')
+    if name.startswith('.'):
+        if not isinstance(package, str) or not package:
+            raise TypeError('relative imports require a package name')
+        suffix = name.lstrip('.')
+        level = len(name) - len(suffix)
+        parts = package.rsplit('.', level - 1)
+        if len(parts) < level:
+            raise ImportError('attempted relative import beyond top-level package')
+        name = parts[0] + '.' + suffix if suffix else parts[0]
+    __import__(name)
+    # The package attribute can be shadowed or deleted independently.
+    return modules[name]
+
+
+
+
+__name__ = 'builtins'
