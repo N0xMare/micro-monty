@@ -2554,6 +2554,13 @@ fn head_tail_cuts_keep_both_ends_and_containers_keep_their_shape() {
         panic!("{:?}", done.value)
     };
     assert_eq!(rows.len(), 500);
+    // Keep a complete bytes leaf in the shaped prefix, with Python's
+    // quote choice and escapes, when the next leaf does not fit.
+    let Progress::Complete(Some(done)) = c.start(r#"[b"can't\t\x00", b'z' * 300]"#) else {
+        panic!()
+    };
+    assert!(done.repr_truncated);
+    assert_eq!(done.repr, r#"[b"can't\t\x00", ...(+1 item)]"#);
     // Short text is untouched, and the default cut keeps the head only.
     assert_eq!(c.value("[1, 2]"), "[1, 2]");
     c.session.set_text_cut(TextCut::Head);
