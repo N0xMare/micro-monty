@@ -44,12 +44,11 @@ pub struct Native {
     pub max: u8,
     /// 0, or 1 + an index into [`MODULES`].
     module: u8,
-    name: Sref,
-    /// The positional parameter names, then the keyword-only ones, in
-    /// [`LISTS`].
-    args: u16,
-    nparams: u8,
-    nkwonly: u8,
+    // The name's offset and length share the record's alignment with the
+    // signature index; a nested Sref would add padding of its own.
+    name_off: u16,
+    name_len: u8,
+    sig: u8,
     /// The implementation.
     pub f: NativeFn,
 }
@@ -129,7 +128,11 @@ impl Native {
     /// `__name__`.
     #[must_use]
     pub fn name(&self) -> &'static str {
-        self.name.get()
+        Sref {
+            off: self.name_off,
+            len: self.name_len,
+        }
+        .get()
     }
     /// The bundled module it belongs to (not a builtin name), if any.
     #[must_use]
@@ -143,18 +146,20 @@ impl Native {
     #[must_use]
     #[cfg_attr(mm_shipped, optimize(size))]
     pub fn params(&self) -> Names {
+        let sig = SIGNATURES[usize::from(self.sig)];
         Names {
-            start: self.args,
-            len: self.nparams,
+            start: sig.args,
+            len: sig.nparams,
         }
     }
     /// Keyword-only parameters; `"**"` accepts any keyword into a dict.
     #[must_use]
     #[cfg_attr(mm_shipped, optimize(size))]
     pub fn kwonly(&self) -> Names {
+        let sig = SIGNATURES[usize::from(self.sig)];
         Names {
-            start: self.args.wrapping_add(u16::from(self.nparams)),
-            len: self.nkwonly,
+            start: sig.args.wrapping_add(u16::from(sig.nparams)),
+            len: sig.nkwonly,
         }
     }
 }
@@ -1839,6 +1844,9 @@ const BLOB_BYTES: [u8; PACKED.blob_len] = prefix(&PACKED.blob);
 /// The parameter-name runs [`Names`] index.
 static LISTS: [Sref; PACKED.lists_len] = prefix(&PACKED.lists);
 
+/// Shared recipes for splitting a run of parameter names in [`LISTS`].
+static SIGNATURES: [Signature; PACKED.sigs_len] = prefix(&PACKED.sigs);
+
 /// The bundled modules natives belong to.
 static MODULES: [Sref; PACKED.modules_len] = prefix(&PACKED.modules);
 
@@ -1904,12 +1912,21 @@ const fn list_cap() -> usize {
     n
 }
 
+#[derive(Clone, Copy)]
+struct Signature {
+    args: u16,
+    nparams: u8,
+    nkwonly: u8,
+}
+
 struct Packed {
     natives: [Native; COUNT],
     blob: [u8; STR_CAP],
     blob_len: usize,
     lists: [Sref; LIST_CAP],
     lists_len: usize,
+    sigs: [Signature; 256],
+    sigs_len: usize,
     modules: [Sref; 64],
     modules_len: usize,
     strs: [Sref; STR_CAP],
@@ -2099,6 +2116,27 @@ const fn add_list(p: &mut Packed, a: &[&str], b: &[&str]) -> u16 {
     start as u16
 }
 
+#[allow(clippy::cast_possible_truncation, reason = "checked to fit")]
+const fn add_signature(p: &mut Packed, a: &[&str], b: &[&str]) -> u8 {
+    let args = add_list(p, a, b);
+    let mut i = 0;
+    while i < p.sigs_len {
+        let sig = p.sigs[i];
+        if sig.args == args && sig.nparams as usize == a.len() && sig.nkwonly as usize == b.len() {
+            return i as u8;
+        }
+        i += 1;
+    }
+    assert!(i < p.sigs.len());
+    p.sigs[i] = Signature {
+        args,
+        nparams: a.len() as u8,
+        nkwonly: b.len() as u8,
+    };
+    p.sigs_len += 1;
+    i as u8
+}
+
 /// 1 + the index of module `m` in [`MODULES`].
 #[allow(clippy::cast_possible_truncation, reason = "checked to fit")]
 #[cfg_attr(mm_shipped, optimize(size))]
@@ -2134,10 +2172,9 @@ const fn pack() -> Packed {
         min: 0,
         max: 0,
         module: 0,
-        name: none,
-        args: 0,
-        nparams: 0,
-        nkwonly: 0,
+        name_off: 0,
+        name_len: 0,
+        sig: 0,
         f: stub,
     };
     let mut p = Packed {
@@ -2146,6 +2183,12 @@ const fn pack() -> Packed {
         blob_len: 0,
         lists: [none; LIST_CAP],
         lists_len: 0,
+        sigs: [Signature {
+            args: 0,
+            nparams: 0,
+            nkwonly: 0,
+        }; 256],
+        sigs_len: 0,
         modules: [none; 64],
         modules_len: 0,
         strs: [none; STR_CAP],
@@ -2195,16 +2238,14 @@ const fn pack() -> Packed {
             Some(m) => add_module(&mut p, m),
             None => 0,
         };
-        let args = add_list(&mut p, d.params, d.kwonly);
         p.natives[k] = Native {
             owner: d.owner,
             min: d.min,
             max: d.max,
             module,
-            name,
-            args,
-            nparams: d.params.len() as u8,
-            nkwonly: d.kwonly.len() as u8,
+            name_off: name.off,
+            name_len: name.len,
+            sig: add_signature(&mut p, d.params, d.kwonly),
             f: d.f,
         };
         // What a session start binds ([`BUILTIN_FNS`], [`PRELUDE_FNS`]).
@@ -2323,9 +2364,9 @@ pub(crate) fn method_index(owner: T, name: &[u8]) -> Option<u32> {
     let lo = *OWNER_START.get(t)? as usize;
     let hi = *OWNER_START.get(t + 1)? as usize;
     let at = NATIVES.get(lo..hi)?.binary_search_by(|n| {
-        (n.name.len as usize)
+        (n.name_len as usize)
             .cmp(&name.len())
-            .then_with(|| n.name.get().as_bytes().cmp(name))
+            .then_with(|| n.name().as_bytes().cmp(name))
     });
     match at {
         Ok(k) => u32::try_from(lo + k).ok(),
