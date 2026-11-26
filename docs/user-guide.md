@@ -1755,7 +1755,11 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
 - **Evaluated annotations.** An annotation is kept as its source text:
   `C.__annotations__` is `{'x': 'int'}`, functions have no
   `__annotations__`, and `typing.get_type_hints` and
-  `dataclasses.Field.type` give strings.
+  `dataclasses.Field.type` give strings. For `Required`, `NotRequired`, or
+  `ReadOnly` in a `TypedDict` field, use the functional form, such as
+  `TypedDict('Row', {'id': Required[int]})`. Class syntax rejects qualifiers
+  it recognizes by looking in the class and module namespaces; it does not
+  consult function-local bindings.
 - **`bytearray`** works (constructors, item and slice assignment, the
   list-like mutators, the bytes methods, `struct.pack_into`), but not its
   subclasses, `bytearray % args`, bytearray host values, or bytearray

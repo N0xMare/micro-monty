@@ -169,7 +169,10 @@ that makes the corpus usable (on 3.14.7, 645 of 649 non-`monty-specific`
 cases pass; on 3.12.14, 443 [M]), and 3.14's error messages and tracebacks
 are the most helpful to models (§8.4). 3.14 syntax additions are either
 rejected (t-strings) or need no evaluation (annotations are parsed and never
-evaluated, matching deferred annotations).
+evaluated, matching deferred annotations). On class-syntax `TypedDict`
+fields, `Required`, `NotRequired` and `ReadOnly` recognized from the class
+or module namespace raise `TypeError`; use the functional form instead.
+The check does not consult function-local bindings.
 
 - Literals: `int` (arbitrary precision), `float`, `complex`, `str`, `bytes`,
   `bytearray` (§7.4), f-strings, `list`, `tuple`, `dict`, `set`, `None`,

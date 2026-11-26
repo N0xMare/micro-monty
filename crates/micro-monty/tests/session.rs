@@ -37,6 +37,45 @@ fn error_of(p: &Progress) -> &micro_monty::PyException {
 }
 
 #[test]
+fn class_typeddict_rejects_unevaluated_qualifiers() {
+    for (source, qualifier) in [
+        (
+            "class Row(TypedDict):\n    field: Required[int]",
+            "Required",
+        ),
+        (
+            "import typing as t\nclass Row(TypedDict):\n    field: t . NotRequired[int]",
+            "NotRequired",
+        ),
+        (
+            "class Row(TypedDict):\n    field: Annotated[Annotated[typing.ReadOnly[int], 'inner'], 'outer']",
+            "ReadOnly",
+        ),
+        (
+            "Alias = NotRequired\nclass Row(TypedDict):\n    field: Alias[int]",
+            "NotRequired",
+        ),
+        (
+            "class Row(TypedDict):\n    Alias = Annotated[Required[int], 'meta']\n    field: Alias",
+            "Required",
+        ),
+    ] {
+        let (progress, _) = run(&format!(
+            "import typing\nfrom typing import Annotated, NotRequired, Required, TypedDict\n{source}"
+        ));
+        let error = error_of(&progress);
+        assert_eq!(error.type_name, "TypeError", "{source}");
+        assert_eq!(
+            error.message,
+            format!(
+                "micro-monty does not support {qualifier} in class-syntax TypedDict fields; use the functional form"
+            ),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn completes_with_the_last_expression() {
     let (p, out) = run("print('hi', end='')\n[1, 'a', None]");
     assert_eq!(out, "hi");

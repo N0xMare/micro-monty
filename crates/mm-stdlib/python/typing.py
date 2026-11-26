@@ -666,10 +666,10 @@ class TypedDict(dict):
         if cls is TypedDict:
             typename, fields = args[0], (args[1] if len(args) > 1 else {})
             total = kwargs.pop('total', True)
-            return type(typename, (TypedDict,), {'__annotations__': dict(fields)}, total=total)
+            return type(typename, (TypedDict,), {'__annotations__': dict(fields)}, total=total, _functional=True)
         return dict(*args, **kwargs)
 
-    def __init_subclass__(cls, total=True, **kwargs):
+    def __init_subclass__(cls, total=True, *, _functional=False, **kwargs):
         cls.__total__ = total
         cls._is_typeddict = True
         ann = {}
@@ -684,7 +684,30 @@ class TypedDict(dict):
             optional |= base.__optional_keys__
         own = _own_annotations(cls)
         ann.update(own)
+        if own and not _functional:
+            from _mm import caller
+            frame = caller(1, ())
+            namespace = frame[2] if frame else {}
         for name, field in own.items():
+            if not _functional and type(field) is str:
+                # Annotations are source text. Only inspect the leading
+                # name and Annotated's first argument, not its metadata.
+                source = field
+                while source:
+                    prefix, _, source = source.partition('[')
+                    base, dot, attr = prefix.split(',', 1)[0].strip(' \t\r\n\'"()]').partition('.')
+                    base = base.rstrip()
+                    marker = cls.__dict__.get(base, namespace.get(base))
+                    if dot:
+                        marker = vars(marker).get(attr.lstrip()) if type(marker) is type(collections) else None
+                    while type(marker) is _GenericAlias and marker.__origin__ is Annotated:
+                        marker = marker.__args__[0]
+                    if type(marker) is _GenericAlias:
+                        marker = marker.__origin__
+                    if marker is not Annotated:
+                        if type(marker) is _SpecialForm and marker in (Required, NotRequired, ReadOnly):
+                            raise TypeError(f'micro-monty does not support {marker._name} in class-syntax TypedDict fields; use the functional form')
+                        break
             req, opt = False, False
             origin = get_origin(field)
             while origin in (Annotated, ReadOnly, Required, NotRequired):
