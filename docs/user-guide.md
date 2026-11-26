@@ -2200,8 +2200,21 @@ differs:
     `TypeError: '<' not supported between instances of 'slice' and
     'slice'` (CPython compares them as tuples), so a `sorted()` of slices
     raises.
+  - A `typing.Protocol` class and an ABC as bases of one class
+    (`class C(SizedProto, abc.ABC)`, or a `collections.abc` class) raise
+    `TypeError: metaclass conflict: ...`: CPython's protocol metaclass
+    derives from `ABCMeta`, micro-monty's from `type`.
 
-  Four are silent:
+  Five are silent:
+  - `isinstance` against a `@runtime_checkable` protocol tests each
+    member with `hasattr`, where CPython looks it up statically: an
+    object whose `__getattr__` answers every name matches, a member set
+    to `None` counts as present, and a property that raises passes its
+    exception on (CPython: `False`, `False`, `True`). `issubclass`
+    against a protocol is nominal: `issubclass(list, SizedProto)` is
+    `False` (CPython checks a protocol of methods structurally). A class
+    that derives from a protocol with an `abc.abstractmethod` and leaves
+    it abstract can be instantiated (CPython: `TypeError`).
   - `type(C.__hash__)` and `type(C().__init__)` are
     `builtin_function_or_method` (CPython: `wrapper_descriptor` and
     `method-wrapper`).

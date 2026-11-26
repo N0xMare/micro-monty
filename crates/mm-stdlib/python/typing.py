@@ -408,7 +408,18 @@ class Generic:
         return _GenericAlias(cls, _args_tuple(params))
 
 
-class Protocol(Generic):
+class _ProtocolMeta(type):
+    # CPython's runtime check: nominal, else every member present. On
+    # `type`, not ABCMeta, so `import typing` loads no `abc`.
+    def __instancecheck__(cls, obj):
+        if cls is Protocol or not cls._is_protocol:
+            return issubclass(type(obj), cls)
+        if not getattr(cls, '_is_runtime_protocol', False):
+            raise TypeError('Instance and class checks can only be used with @runtime_checkable protocols')
+        return issubclass(type(obj), cls) or all(hasattr(obj, a) for a in cls.__protocol_attrs__)
+
+
+class Protocol(Generic, metaclass=_ProtocolMeta):
     """Base class for protocol classes."""
     _is_protocol = True
 
@@ -416,9 +427,17 @@ class Protocol(Generic):
         super().__init_subclass__(*args, **kwargs)
         if '_is_protocol' not in cls.__dict__:
             cls._is_protocol = any(b is Protocol for b in cls.__bases__)
+        if cls._is_protocol:
+            cls.__protocol_attrs__ = {a for b in cls.__mro__[:-1] if b is not Protocol and b is not Generic
+                                      for a in (*b.__dict__, *b.__dict__.get('__annotations__', ()))
+                                      if a[:5] != '_abc_' and a not in (
+                                          '__abstractmethods__', '__annotations__', '__class_getitem__', '__doc__', '__init__',
+                                          '__match_args__', '__module__', '__new__', '__protocol_attrs__', '__slots__',
+                                          '__subclasshook__', '__type_params__', '_is_protocol', '_is_runtime_protocol')}
 
 
 def runtime_checkable(cls):
+    cls._is_runtime_protocol = True
     return cls
 
 
@@ -429,7 +448,7 @@ def is_protocol(tp):
 def get_protocol_members(tp):
     if not is_protocol(tp):
         raise TypeError(f'{tp!r} is not a Protocol')
-    return set(n for n in tp.__dict__ if not n.startswith('_'))
+    return frozenset(tp.__protocol_attrs__)
 
 
 class ForwardRef:
