@@ -3283,6 +3283,12 @@ fn the_report_is_bounded_by_the_text_limit() {
         both.traceback
             .ends_with("RecursionError: maximum recursion depth exceeded\n")
     );
+    let long_line = c.failure(
+        "<cell 2>",
+        "raise SyntaxError('bad', ('input.py', 1, None, 'é' * 600_000))",
+    );
+    assert!(long_line.truncated && long_line.traceback.len() <= 2_000);
+    assert!(long_line.traceback.ends_with(" ... [more omitted]"));
 }
 
 /// A setup that defines `n` functions the session keeps, each a code
