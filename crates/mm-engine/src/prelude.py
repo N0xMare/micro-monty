@@ -3491,7 +3491,9 @@ def _json_py(o, st, level):
     elif isinstance(o, float):
         out.append(_json_float(o, allow_nan))
     elif isinstance(o, (list, tuple)):
-        if not o:
+        # CPython's `PySequence_Fast`: a subclass as what it iterates.
+        items = o if type(o) is list or type(o) is tuple else list(o)
+        if not items:
             out.append('[]')
             return
         _json_mark(markers, o)
@@ -3501,7 +3503,7 @@ def _json_py(o, st, level):
             level += 1
             sep = isep + '\n' + indent * level
             out.append('\n' + indent * level)
-        for i, v in enumerate(o):
+        for i, v in enumerate(items):
             if i:
                 out.append(sep)
             try:

@@ -1270,6 +1270,10 @@ fn subclass_value(
         // Charged by the conversion: the step checks its work now.
         *work += 1024;
     } else if b.is_obj_kind(ty::LIST as u8) || b.is_obj_kind(ty::TUPLE as u8) {
+        // CPython iterates a subclass with its own `__iter__`.
+        if vm.uflags(v) & crate::class::f::ITER != 0 {
+            return Ok(Step::NeedPython);
+        }
         return seq_value(vm, v, b, out);
     } else if b.is_obj_kind(ty::DICT as u8) && !enc.has(SORT_KEYS) {
         let key = vm.intern("items")?;
