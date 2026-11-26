@@ -1487,9 +1487,10 @@ class Pattern:
         for r in found:
             if func is not None:
                 start, end = r.span()
-                pieces.append(string[last:start])
+                if last != start:
+                    pieces.append(string[last:start])
                 piece = func(r)
-                if piece:
+                if piece is not None:
                     pieces.append(piece)
                 last = end
                 continue
