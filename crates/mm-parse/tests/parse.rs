@@ -1419,6 +1419,15 @@ fn deeply_nested_expressions_raise_recursion_error() {
     // 199 parentheses add no AST depth.
     let parens = format!("x = {}1{}\n", "(".repeat(199), ")".repeat(199));
     assert_eq!(parse_on_small_stack(parens), Ok(()));
+
+    // The statement, call, and operand use three levels before unary ops.
+    let nesting = mm_compile::MAX_NESTING as usize - 3;
+    let source = |n| format!("print({}False)", "not ".repeat(n));
+    assert_eq!(parse_on_small_stack(source(nesting)), Ok(()));
+    assert_eq!(
+        parse_on_small_stack(source(nesting + 1)),
+        Err("RecursionError")
+    );
 }
 
 #[test]
