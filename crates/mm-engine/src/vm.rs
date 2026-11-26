@@ -2192,10 +2192,21 @@ impl Vm {
             // goes on in its frame once entered: a failure at the call
             // ran none. It has no continuation, so no failure after the
             // callee returns is reported here.
-            Some(op::CALL_METHOD | op::CALL_KW | op::CALL_METHOD_KW) => self
+            // A `CALL_METHOD` of a builtin grows the stack past this
+            // frame's registers and 64 slots before the builtin starts
+            // (the dispatch loop's builtin call), so with a stack still
+            // shorter it did not start. Other calls of a builtin grow it
+            // in `Vm::call_value`, which asks for the rerun itself.
+            Some(o @ (op::CALL_METHOD | op::CALL_KW | op::CALL_METHOD_KW)) => self
                 .stack
                 .get(st.base + operand(bc, st.pc, 0))
-                .is_some_and(|&f| self.python_fn_of(f).is_some()),
+                .is_some_and(|&f| {
+                    self.python_fn_of(f).is_some()
+                        || (o == op::CALL_METHOD
+                            && f.as_native().is_some()
+                            && self.stack.len()
+                                < st.base + self.codes[st.ci as usize].code.nregs as usize + 64)
+                }),
             // An `async with` exit (b 2 and 3) of a coroutine function
             // only makes its coroutine, an awaitable its check passes
             // (`check::AEXIT`). A plain exit's frame runs, and a failure
@@ -2309,7 +2320,9 @@ impl Vm {
 
     /// A `CALL_EX` at `pc` of a callee other than a Python function did not
     /// fit its arguments (the stack they are laid out on, or the tuple of
-    /// keyword names): nothing ran and nothing changed, so it runs again
+    /// keyword names), or a `CALL` of a builtin, of a method bound to one
+    /// or of a builtin type did not fit the stack the builtin runs on
+    /// (`Vm::call_value`): nothing ran and nothing changed, so it runs again
     /// once a collection has ended, as [`Vm::oom_retry_fault`] reruns.
     /// When it is not retried (its rerun did not fit either), the refused
     /// size is taken too: the fault exit asks again for a callee that

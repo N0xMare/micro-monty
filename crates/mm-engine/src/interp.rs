@@ -1327,7 +1327,8 @@ impl Vm {
             self.tuple_len(kwnames)
         };
         if let Some(idx) = callee.as_native() {
-            self.ensure_stack(top + npos + nkw + 64)?;
+            self.ensure_stack(top + npos + nkw + 64)
+                .map_err(|_| self.oom_retry_expansion(st, call_pc))?;
             // Only the dispatch loop's `CALL` instructions reach here: the
             // builtin may park before it starts (`Vm::native_short`).
             self.direct_call = true;
@@ -1470,7 +1471,8 @@ impl Vm {
             let recv = self.vslot_hot(callee, 0);
             let f = self.vslot_hot(callee, 1);
             let n = npos + nkw;
-            self.ensure_stack(top + n + 1 + 64)?;
+            self.ensure_stack(top + n + 1 + 64)
+                .map_err(|_| self.oom_retry_expansion(st, call_pc))?;
             for i in (0..n).rev() {
                 self.stack[top + 1 + i] = self.stack[args + i];
             }
@@ -1504,7 +1506,8 @@ impl Vm {
                 return Ok(Some(e));
             }
             if let Some(c) = self.ctor_of(t) {
-                self.ensure_stack(top + npos + nkw + 64)?;
+                self.ensure_stack(top + npos + nkw + 64)
+                    .map_err(|_| self.oom_retry_expansion(st, call_pc))?;
                 let v = self.call_native(
                     c,
                     u32::try_from(args).unwrap_or(0),

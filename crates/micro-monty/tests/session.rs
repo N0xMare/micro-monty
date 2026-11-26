@@ -1295,6 +1295,43 @@ fn a_call_that_ran_user_code_is_not_rerun_after_memory_error() {
     }
 }
 
+/// A builtin runs only once the VM stack holds its call: when growing the
+/// stack does not fit, nothing ran, so the call waits for a collection
+/// and runs again. Each form calls a builtin first in a recursion with
+/// 1 MiB of garbage and a few KiB free at 8 MiB: a builtin function, a
+/// builtin type, a builtin method and a bound one. Before, where the
+/// stack grew at that call, it raised `MemoryError` for 14 of these 37
+/// headrooms of each form [M].
+#[test]
+fn a_builtin_call_whose_stack_does_not_fit_waits_for_a_collection() {
+    for first in [
+        "len(self.s)",
+        "type(self) is C",
+        "self.d.get(n, 0) == 0",
+        "self.get(n, 0) == 0",
+    ] {
+        for free in (2..39).map(|k| k * 1000) {
+            let setup = format!(
+                "import gc\nclass C:\n    def __init__(self):\n        self.s, self.d = 'ab', {{}}\n\
+                 \x20       self.get = self.d.get\n    def r(self, n):\n        assert {first}\n\
+                 \x20       return self.r(n - 1) + 1 if n else 0\nc = C()\n\
+                 def fits(n):\n    try:\n        bytes(n)\n    except MemoryError:\n        return False\n\
+                 \x20   return True\nlo, hi = 1 << 16, 1 << 24\nwhile lo < hi:\n    mid = (lo + hi + 1) // 2\n\
+                 \x20   ok = fits(mid)\n    gc.collect()\n    lo, hi = (mid, hi) if ok else (lo, mid - 1)\n\
+                 pad = bytes(lo - (1 << 20) - {free})\ng = bytes(1 << 20)\n"
+            );
+            let cell = "g = None\ntry:\n    r = c.r(400)\nexcept MemoryError:\n    r = 'ME'\nr\n";
+            let ps = run_cells_at(8, &[&setup, cell]);
+            assert_eq!(ps[0], Progress::Complete(None), "{first}, {free} B free");
+            assert!(
+                matches!(&ps[1], Progress::Complete(Some(c)) if c.repr == "400"),
+                "{first}, {free} B free: {:?}",
+                ps[1]
+            );
+        }
+    }
+}
+
 /// The limit of that: a handler that keeps the data has only the room the
 /// fill left, which may be none. A collection frees nothing, so the
 /// handler's allocation raises `MemoryError` again, uncaught here. The

@@ -2094,7 +2094,13 @@ timer deadlines.
   (`dict(x, **kw)`) or of a builtin that changes nothing before its result
   is allocated (`'{k}'.format(**kw)`), and any `CALL_EX` whose arguments
   did not fit on the stack before its callee started (`max(*a)`,
-  `Vm::oom_retry_expansion`), a call's keyword and `**` spread (`DICT_UPDATE` modes
+  `Vm::oom_retry_expansion`), any `CALL`, `CALL_METHOD`, `CALL_KW` or
+  `CALL_METHOD_KW` of a builtin, a method bound to one or a builtin type
+  whose stack did not grow to hold it before it started (`Vm::call_value`;
+  a `CALL_METHOD` of a builtin in the dispatch loop, read at the fault
+  exit from a stack still short of the frame's registers and 64 slots: a
+  builtin called first in a deep function took that function's stack
+  growth), a call's keyword and `**` spread (`DICT_UPDATE` modes
   2 and 1: a failed insert writes nothing, and a spread first takes out
   the keys it put in, so its rerun refuses none of its own), `SET_ITEM` (stores are
   idempotent, and a list slice builds its new buffer before installing it),
@@ -2127,7 +2133,10 @@ timer deadlines.
   collected. For example: a class with `__init__` or `__new__` and `str`,
   `int` or `float` of any other value (user code's result is checked back
   at the `CALL`, where a failure cannot be told from the first; these run
-  when the callee's own frame reaches a safepoint first), keyword forms
+  when the callee's own frame reaches a safepoint first; `str(e)` of an
+  exception allocates its text, so it can raise `MemoryError` where
+  CPython's returns the argument it holds, and `traceback` then prints
+  `<exception str() failed>`, as CPython's `_safe_string` does), keyword forms
   of these calls, `raise E` of a class not yet instantiated, an exception
   the engine raises itself (a failing `assert` raises `MemoryError`),
   `object()`, `range(5)`, `slice(1, n)`, `import`, attribute access that

@@ -1279,7 +1279,8 @@ allocate again: a list, tuple, set, dict or slice display, a string
 operation or f-string, a lambda or `def`, `str`, `int` or `float` of a
 number, str or bytes, a builtin exception, an instance of a class without
 `__init__` or `__new__`, a call of a Python function (its frame waits
-too), and anything after such a call or a loop iteration, each waiting
+too), the stack a builtin call needs (a builtin called first in a deep
+function), and anything after such a call or a loop iteration, each waiting
 once for a collection, charged as
 below \[M\]. Any other first statement may still raise `MemoryError`
 there, for example an instance of a class with `__init__`, `raise E`
