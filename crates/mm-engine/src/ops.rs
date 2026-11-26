@@ -3902,7 +3902,15 @@ impl Vm {
         if self.user_class(obj).is_some() {
             return self.inst_delattr(obj, name);
         }
-        if Vm::is_class(obj) && self.meta_hook(obj, "__delattr__", f::DELATTR, vec![name])? {
+        if Vm::is_class(obj)
+            && self.meta_hook(
+                obj,
+                "__delattr__",
+                f::DELATTR,
+                vec![name],
+                crate::cont::Cont::Discard,
+            )?
+        {
             return Ok(());
         }
         if self.str_ref(name) == "__class__" {
@@ -3954,7 +3962,15 @@ impl Vm {
         if self.user_class(obj).is_some() {
             return self.inst_setattr(obj, name, v).map(|_| ());
         }
-        if Vm::is_class(obj) && self.meta_hook(obj, "__setattr__", f::SETATTR, vec![name, v])? {
+        if Vm::is_class(obj)
+            && self.meta_hook(
+                obj,
+                "__setattr__",
+                f::SETATTR,
+                vec![name, v],
+                crate::cont::Cont::Discard,
+            )?
+        {
             return Ok(());
         }
         if self.str_ref_hot(name) == "__class__" {

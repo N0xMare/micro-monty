@@ -1937,6 +1937,19 @@ impl Vm {
             },
             ty::CLASS => match self.class_getattr(obj, name)? {
                 Got::Value(v) => v,
+                // A metaclass's own `__getattr__` answers a miss, as
+                // CPython's `slot_tp_getattr_hook` does for the class.
+                Got::Missing
+                    if self.meta_hook(
+                        obj,
+                        "__getattr__",
+                        f::GETATTR,
+                        vec![name],
+                        Cont::None,
+                    )? =>
+                {
+                    Value::UNDEFINED
+                }
                 Got::Missing => return Err(self.attr_error(obj, name)),
             },
             ty::TYPE => {
@@ -2370,14 +2383,15 @@ impl Vm {
     }
 
     /// Calls the Python method `name` (dunder flag `flag`) of class `c`'s
-    /// metaclass with `args`, leaving a call request; false when the
-    /// metaclass has none.
+    /// metaclass with `args`, leaving a call request that goes on with
+    /// `cont`; false when the metaclass has none.
     pub(crate) fn meta_hook(
         &mut self,
         c: Value,
         name: &str,
         flag: u64,
         args: Vec<Value>,
+        cont: Cont,
     ) -> Result<bool, Raised> {
         if self.uflags(c) & flag == 0 {
             return Ok(false);
@@ -2389,7 +2403,7 @@ impl Vm {
         match self.class_lookup(m, key) {
             Some(h) if h.as_native().is_none() => {
                 let b = self.bind_attr(h, c, m)?;
-                self.call_request(b, args, Cont::Discard)?;
+                self.call_request(b, args, cont)?;
                 Ok(true)
             }
             _ => Ok(false),
