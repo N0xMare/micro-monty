@@ -18,9 +18,18 @@ Usage (normally through `cargo xtask difffuzz`):
         [--seeds N] [--start S] [--jobs J] [--timeout T] [--out DIR] [--minutes M]
     python3.14 fuzz/difffuzz/difffuzz.py --show SEED    # print one program
 
+Half the blocks are `EXTRA_BLOCKS`: builtins called with values of every
+type, format specs, bigints, str and bytes methods, struct, collections,
+dict views, sets, builtin subclasses, operator dispatch, class protocols,
+generator send/throw, argument binding, exceptions, itertools, lru_cache,
+dataclasses, json, re and asyncio. Most print one probe a line through
+`_p`, which prints an exception's type and message, or the type's name
+for a result whose repr shows an address.
+
 Programs avoid what is allowed to differ: set iteration order (sets print
 through `sorted`), `hash`/`id` values, object addresses (every class has
-`__repr__`) and `is` on ints and strings.
+`__repr__`; a signature writes a `0x…` address as `#`) and `is` on ints
+and strings.
 
 Libm results may differ by 1 ulp. Generated `math.exp/log/log2/log10/sin/
 atan` calls and float `**` (also `int ** -k`) go through `_T`, the identity.
@@ -79,6 +88,12 @@ INT_FMT = ['', '>8', '<6', '^9', '08', '+', ',', '_', 'x', '#x', 'o', 'b', '#b',
            '.2f', '10.3e', '%', 'n', '+08,', 'c']
 FLOAT_FMT = ['', '.2f', '.0f', '>10.3f', 'e', '.3e', 'g', '.4g', '%', '.1%', '+.2f', ',.2f',
              '08.2f', 'G', 'r', '.10g']
+# Blocks for stdlib modules and object protocols, as likely as the
+# statement blocks above together.
+EXTRA_BLOCKS = ['builtin_errors', 'format_spec', 'floats', 'bigint', 'strings', 'bytes', 'struct',
+                'collections', 'views', 'sets', 'subclass_builtin', 'dispatch', 'class_protocols',
+                'generator_protocol', 'args', 'exceptions', 'iterstd', 'lru', 'records', 'json', 'regex',
+                'asyncio']
 STR_FMT = ['', '>8', '<8', '^8', '*^9', '.2', '10.3', '!r', '!r:>12', '!s', '!a']
 
 # Results of libm functions and float `**` (correctly rounded in neither
@@ -286,6 +301,8 @@ class Gen:
             e = self.expr(ty, d + 1).replace("'", '"') if ty != 'str' else self.var('str') or "'q'"
             if "'" in e or '\\' in e:
                 e = self.var(ty) or {'int': '7', 'float': '2.5', 'str': 'None', 'list': '[1]'}[ty]
+            if e.startswith('{'):
+                e = ' ' + e  # `{{` would be an escaped brace, not a dict display
             spec = {'int': INT_FMT, 'float': FLOAT_FMT, 'str': STR_FMT, 'list': ['', '!r']}[ty]
             sp = self.pick(spec)
             if sp.startswith('!'):
@@ -450,11 +467,10 @@ class Gen:
     # ----------------------------------------------------------- statements
 
     def block(self):
-        k = self.r.randint(0, 20)
-        return getattr(self, 'b_' + ['assign', 'print', 'if', 'for', 'while', 'func', 'closure',
-                                     'gen', 'class', 'try', 'match', 'mutate', 'unpack', 'with',
-                                     'print', 'assign', 'sorting', 'recursion', 'comprehension',
-                                     'exception_class', 'async_cleanup'][k])()
+        return getattr(self, 'b_' + self.pick(['assign', 'print', 'if', 'for', 'while', 'func', 'closure',
+                                                'gen', 'class', 'try', 'match', 'mutate', 'unpack', 'with',
+                                                'print', 'assign', 'sorting', 'recursion', 'comprehension',
+                                                'exception_class', 'async_cleanup'] + EXTRA_BLOCKS))()
 
     def b_assign(self):
         ty = self.pick(['int', 'float', 'str', 'list', 'dict', 'tuple', 'set', 'bool', 'slist'])
@@ -632,7 +648,7 @@ class Gen:
             f'{self.expr("str")} + {self.expr("int")}',
             f'{self.expr("list")} < {self.expr("str")}',
             'undefined_name',
-            f'{self.expr("int")}.nope',
+            f'({self.expr("int")}).nope',
             f'math.sqrt({self.expr("float")})',
             f'chr({self.expr("int")})',
             f'_T({self.expr("int")} ** -{self.r.randint(1, 3)})',
@@ -821,6 +837,717 @@ class Gen:
             [f'print({{q % 3: q for q in {self.expr("list")}}})'],
         ])
 
+    # ------------------------------------------ stdlib and protocol blocks
+
+    def probes(self, exprs, params=''):
+        """Each expression in its own `try`, printing its value (a type name
+        where the repr holds an address) or its exception."""
+        # One call per line, so the minimizer drops probes one at a time.
+        return ['def _p(f):', '    try:', '        v = f()', '        r = repr(v)', '    except Exception as e:',
+                '        print(type(e).__name__, e)', '    else:', "        print(type(v).__name__ if ' at 0x' in r else r)"] + [
+            f'_p(lambda {params}: {e})' for e in exprs]
+
+    def b_builtin_errors(self):
+        vals = ['None', '0', '-3', '2.5', '-0.0', '1e300', "'ab'", "''", "'3'", '[1, 2]', '[]', '(1,)',
+                '{1: 2}', '{1, 2}', "b'xy'", 'True', '1j', '(2 ** 70)', 'range(3)', 'len', 'int', "'\\u00e9'",
+                "{'a': [1]}", 'frozenset()', 'slice(1, 2)', '...', 'NotImplemented', "bytearray(b'q')"]
+        forms = ['len({x})', 'type(hash({x})).__name__', '{x}[0]', "{x}['k']", '{x}[-1:]', '{x}()', '{x} + {y}', '{x} * {y}',
+                 '{x} < {y}', '{x} == {y}', '-{x}', '(0 if {x} is True else ~{x})', 'abs({x})', 'int({x})', 'float({x})', 'str({x})',
+                 'bool({x})', 'list({x})', 'tuple({x})', 'sorted({x})', 'dict({x})', 'set({x})', 'sum({x})',
+                 'max({x})', 'min({x}, default=None)', 'list(reversed({x}))', 'list(zip({x}, {y}, strict=True))',
+                 'round({x})', 'round({x}, {y})', 'divmod({x}, {y})', 'pow({x}, {y})', '{x} % {y}', '{x} // {y}',
+                 '{x} / {y}', '{x} ** {y}', '{x} in {y}', '{x}.count({y})', '{x}.index({y})',
+                 "format({x}, {spec!r})", 'chr({x})', 'ord({x})', 'hex({x})', 'bin({x})', 'oct({x})',
+                 "''.join({x})", '{x}.split({y})', 'range({x})', 'range({x}, {y})', 'isinstance({x}, {y})',
+                 'getattr({x}, {y})', 'getattr({x}, "real", 7)', 'bytes({x})', 'repr({x})', 'ascii({x})',
+                 'any({x})', 'callable({x})', 'type({x})({y})', '{x} & {y}', '{x} << {y}', '{x} >> {y}',
+                 'int({x}, {y})', 'str({x}, "ascii")', 'complex({x})', '{x}.real', 'iter({x}, {y})',
+                 '[*{x}]', '{{**{x}}}', 'enumerate({x}, {y})', 'list(map({x}, {y}))', 'issubclass({x}, {y})',
+                 'max({x}, {y})', 'sorted([{x}, {y}])', 'bytearray({x})', '{x}.__class__.__name__',
+                 'f"{{{x}!r:>{{5}}}}"', 'print({x}, sep={y})', '{x}.bit_length()', 'list({x})[{y}]']
+        specs = ['', 'd', 's', '>4', 'x', '.1f', ',', '=+5', 'c', 'z.1f', '#o', '_b', '^']
+        exprs = []
+        for _ in range(self.r.randint(4, 10)):
+            exprs.append(self.pick(forms).format(x='x', y='y', spec=self.pick(specs)))
+        # Bound as defaults, so no literal meets CPython's compile-time SyntaxWarnings.
+        return self.probes(exprs, f'x=({self.pick(vals)}), y=({self.pick(vals)})')
+
+    def fmt_spec(self):
+        p = ''
+        if self.chance(0.3):
+            p += self.pick(['', '*', '0', '#', ' ', 'x']) + self.pick(['<', '>', '^', '='])
+        elif self.chance(0.3):
+            p += self.pick(['<', '>', '^', '='])
+        if self.chance(0.3):
+            p += self.pick(['+', '-', ' '])
+        if self.chance(0.1):
+            p += 'z'
+        if self.chance(0.2):
+            p += '#'
+        if self.chance(0.2):
+            p += '0'
+        if self.chance(0.4):
+            p += str(self.r.randint(0, 14))
+        if self.chance(0.25):
+            p += self.pick([',', '_'])
+        if self.chance(0.4):
+            p += '.' + str(self.r.randint(0, 12))
+            if self.chance(0.1):
+                p += self.pick([',', '_'])
+        if self.chance(0.7):
+            p += self.pick(list('bcdeEfFgGnosxX%') + [''])
+        return p
+
+    def b_format_spec(self):
+        vals = ['0', '7', '-42', '255', '(10 ** 20 + 3)', '(-(2 ** 65))', 'True', '0.0', '-0.0', '1.5', '2.675',
+                '1e16', '-1234.5678', '1e-07', '123456789.0', '0.1', 'float("inf")', '-float("inf")', "'abc'",
+                "''", "'\\u00e9t\\u00e9'", '2.5', '0.5', '1e22', '9.999999', '5e-324', '(1 << 53) + 1']
+        exprs = []
+        for _ in range(self.r.randint(4, 10)):
+            v, s = self.pick(vals), self.fmt_spec()
+            exprs.append(self.pick([f'format({v}, {s!r})', f"'{{:{s}}}'.format({v})", f"f'{{{v}:{s}}}'"]))
+        pct = ['%d', '%5.2f', '%-8s|', '%+05d', '%x', '%#o', '%e', '%.3g', '%10.4e', '%c', '%r', '%a', '%%',
+               '%i', '%u', '%X', '%#x', '% d', '%.0f', '%*d', '%(k)s', '%-+7.2f', '%G', '%.12g', '%5s']
+        for _ in range(self.r.randint(0, 4)):
+            parts = [self.pick(pct) for _ in range(self.r.randint(1, 2))]
+            spec = ''.join(parts)
+            want = sum(0 if p == '%%' else 2 if '*' in p else 1 for p in parts) + self.pick([0, 0, 0, 1, -1])
+            args = ', '.join(self.pick(vals) for _ in range(max(want, 1)))
+            exprs.append(f"{spec!r} % ({args},)" if '(k)' not in spec else f"{spec!r} % {{'k': {self.pick(vals)}}}")
+        return self.probes(exprs)
+
+    def b_floats(self):
+        """Exact float operations on varied bit patterns: repr, rounding,
+        hex, ratios, conversions (no libm)."""
+        xs = []
+        for _ in range(self.r.randint(2, 5)):
+            k = self.r.randint(0, 4)
+            if k == 0:
+                xs.append(f'float.fromhex({hex(self.r.getrandbits(52) | (1 << 52))[2:]!r}) * 2.0 ** {self.r.randint(-1080, 1020)}')
+            elif k == 1:
+                xs.append(repr(round(self.r.uniform(-1000, 1000), self.r.randint(0, 6))))
+            elif k == 2:
+                xs.append(f'{self.r.randint(-10 ** 6, 10 ** 6)} / {self.r.randint(1, 1000)}')
+            elif k == 3:
+                xs.append(f'{self.r.randint(1, 9)}e{self.r.randint(-330, 310)}')
+            else:
+                xs.append(self.pick(FLOATS))
+        exprs = []
+        for x in xs:
+            for _ in range(self.r.randint(2, 4)):
+                exprs.append(self.pick([
+                    f'repr({x})', f'str({x})', f'({x}).hex()', f'({x}).as_integer_ratio()', f'({x}).is_integer()',
+                    f'int({x})', f'round({x}, {self.r.randint(-5, 20)})', f'round({x})', f'math.floor({x})',
+                    f'divmod({x}, {self.pick(xs)})', f'({x}) % {self.pick(xs)}', f'({x}) // {self.pick(xs)}',
+                    f'math.fmod({x}, {self.pick(xs)})', f'float(repr({x})) == {x}', f'math.ldexp({x}, {self.r.randint(-60, 60)})',
+                    f'math.frexp({x})', f'math.modf({x})', f'math.copysign(1, {x})', f'({x}) * {self.pick(xs)}',
+                    f'({x}) + {self.pick(xs)}', f'({x}) / {self.pick(xs)}', f'math.isclose({x}, {self.pick(xs)})',
+                    f'math.nextafter({x}, 0)', f'math.ulp({x})', f'({x}) == {self.r.randint(-5, 5)}',
+                    f'({x}) < {self.pick(BIGS)}', f'hash({x}) == hash(int({x})) if ({x}).is_integer() else None',
+                    f'math.fsum([{x}, {self.pick(xs)}, -{x}])', f'math.trunc({x})', f'math.ceil({x})',
+                    f"float(format({x}, '.17g')) == {x}", f'fractions.Fraction({x})', f'decimal.Decimal({x})'])
+                )
+        return ['import fractions, decimal'] + self.probes(exprs)
+
+    def bigint(self):
+        k = self.r.randint(0, 3)
+        if k == 0:
+            return str(self.r.choice([-1, 1]) * self.r.getrandbits(self.r.randint(1, 400)))
+        if k == 1:
+            return f'({self.pick(["-", ""])}(1 << {self.r.randint(0, 300)}) {self.pick(["+", "-"])} {self.r.randint(0, 3)})'
+        if k == 2:
+            return f'({self.pick(["-", ""])}10 ** {self.r.randint(0, 120)})'
+        return str(self.r.randint(-300, 300))
+
+    def b_bigint(self):
+        exprs = []
+        for _ in range(self.r.randint(3, 9)):
+            a, b = self.bigint(), self.bigint()
+            exprs.append(self.pick([
+                f'{a} * {b}', f'{a} // {b}', f'{a} % {b}', f'divmod({a}, {b})', f'{a} & {b}', f'{a} | {b}',
+                f'{a} ^ {b}', f'~{a}', f'{a} >> {self.r.randint(0, 200)}', f'{a} << {self.r.randint(0, 100)}',
+                f'pow({a}, {self.r.randint(0, 300)}, {b})', f'pow({a}, -1, {b})', f'math.gcd({a}, {b})',
+                f'math.lcm({a}, {b})', f'math.isqrt(abs({a}))', f'str({a})', f'hex({a})', f'oct({a})',
+                f'bin({a})', f"format({a}, '{self.pick([',', '_', '_x', '#b', '>60', '.3e', 'n'])}')",
+                f'({a}).bit_count()', f'({a}).bit_length()', f'{a} / {b}', f'float({a})', f'{a} == float({a})',
+                f'{a} < float({b})', f'int(str({a}))', f'int(hex({a}), 16)', f'int(bin({a}), 0)',
+                f"({a}).to_bytes(60, '{self.pick(['big', 'little'])}', signed=True)",
+                f"int.from_bytes(({a}).to_bytes(60, 'big', signed=True), 'big', signed={self.pick(['True', 'False'])})",
+                f'{a} ** {self.r.randint(0, 5)}', f'round({a}, {self.r.randint(-30, 2)})', f'math.comb(abs({a}) % 200, {self.r.randint(0, 50)})',
+                f'math.factorial(abs({a}) % 120)', f"int('{'9' * self.r.choice([4299, 4300, 4301])}')", f'str(10 ** {self.r.choice([4299, 4300, 4301])})',
+                f'({a}).as_integer_ratio()', f'{a} // {self.pick(["2.5", "-0.5", "1e10"])}',
+                f'math.prod([{a}, {b}, {self.bigint()}])', f'sum([{a}, {b}], {self.bigint()})']))
+        return self.probes(exprs)
+
+    def b_strings(self):
+        strs = STRS + ["'\\u0130stanbul'", "'stra\\u00dfe'", "'\\ufb01ne'", "'\\u01c5ungla'", "'\\u00bd\\u00b2\\u0663'",
+                       "\"it's o'k\"", "'\\u03a3\\u03b1\\u03c3'", "'a\\r\\nb\\x0bc\\x1cd\\u2028e'", "'  \\t\\n'",
+                       "'\\u1e9e'", "'\\u0149'", "'ABC def_1'", "('x' * 20)", "'a\\tb\\tc'", "'\\u00c5\\u212b'"]
+        s = lambda: self.pick(strs)
+        n = lambda: self.r.randint(-4, 12)
+        exprs = []
+        for _ in range(self.r.randint(4, 10)):
+            exprs.append(self.pick([
+                f'{s()}.split({s()}, {n()})', f'{s()}.rsplit({self.pick(["None", s()])}, {n()})',
+                f'{s()}.splitlines({self.pick(["True", "False"])})', f'{s()}.find({s()}, {n()}, {n()})',
+                f'{s()}.rfind({s()}, {n()})', f'{s()}.count({s()}, {n()}, {n()})', f'{s()}.replace({s()}, {s()}, {n()})',
+                f'{s()}.expandtabs({n()})', f'{s()}.translate(str.maketrans({s()}, {s()}))',
+                f"{s()}.translate({{97: 'AA', 98: None, 99: 120}})", f'{s()}.center({n()}, {s()})',
+                f'{s()}.startswith(({s()}, {s()}), {n()})', f"{s()}.encode({self.pick(['\"utf-8\"', '\"ascii\"', '\"latin-1\"', '\"utf-16-le\"'])}, {self.pick(['\"strict\"', '\"replace\"', '\"ignore\"', '\"xmlcharrefreplace\"', '\"backslashreplace\"'])})",
+                f'{s()}.casefold()', f'{s()}.upper()', f'{s()}.lower()', f'{s()}.title()', f'{s()}.capitalize()',
+                f'{s()}.swapcase()', f'{s()}.isprintable()', f'{s()}.isidentifier()', f'{s()}.isnumeric()',
+                f'{s()}.isdecimal()', f'{s()}.isdigit()', f'{s()}.istitle()', f'{s()}.isspace()',
+                f'{s()}.partition({s()})', f'{s()}.rpartition({s()})', f'{s()} < {s()}', f'sorted({s()})',
+                f'{s()}.ljust({n()}, {s()})', f'{s()}.zfill({n()})', f'{s()}[{n()}:{n()}:{self.pick(["1", "-1", "2", "0"])}]',
+                f'{s()}.format_map({{"a": 1}})', f'{s()}.removeprefix({s()})', f'{s()}.strip({s()})',
+                f'{s()}.index({s()}, {n()})', f'len({s()}.upper())', f'[ord(c) for c in {s()}.lower()]',
+                f'{s()}.endswith({s()}, {n()}, {n()})', f'repr({s()})', f'ascii({s()})', f'{s()} * {n()}',
+                f'{s()}.join([{s()}, {s()}])', f'str.maketrans({s()}, {s()}, {s()})', f'max({s()})',
+                f"'{{0}}{{1!r:^{{2}}}}{{x}}'.format({s()}, {s()}, {n()}, x={s()})", f'{s()}.encode().decode("utf-8")',
+                f'{s()}.rjust({n()})', f'{s()}.rstrip({s()})', f'{s()}.lstrip()']))
+        return self.probes(exprs)
+
+    def b_bytes(self):
+        bs = ["b''", "b'abc'", "b'\\x00\\xff\\x7f'", "b'hello world'", "b'a,b,,c'", 'bytes(range(5))',
+              "'caf\\u00e9'.encode()", "b'  Mixed Case\\t'", "b'\\x80abc'", "bytes(3)", "b'123'"]
+        b = lambda: self.pick(bs)
+        n = lambda: self.r.randint(-3, 9)
+        exprs = []
+        for _ in range(self.r.randint(4, 9)):
+            exprs.append(self.pick([
+                f'{b()}.hex()', f'{b()}.hex({self.pick(["\":\"", "\"-\", 2", "\" \", -1"])})', f"bytes.fromhex({self.pick(['\"0a ff\"', '\"zz\"', '\"abc\"', '\"\"', '\" 01 02 \"'])})",
+                f'{b()}.split({self.pick(["", "b\",\"", "None, 1"])})', f'{b()}.upper()', f'{b()}[{n()}]', f'{b()}[{n()}:{n()}]',
+                f'{b()} + {b()}', f'{b()} * {n()}', f'{b()}.find({b()})', f'{b()}.decode("latin-1")',
+                f'{b()}.decode("utf-8", {self.pick(["\"replace\"", "\"strict\"", "\"ignore\"", "\"backslashreplace\""])})',
+                f'list({b()})', f'{b()}.replace({b()}, {b()})', f'{b()}.strip()', f'{b()}.count({b()})',
+                f'{b()}.center({n()}, b"*")', f'{b()}.isalpha()', f'{b()}.title()', f'{b()}.partition(b" ")',
+                f'{b()} < {b()}', f'{b()} in {b()}', f'{n()} in {b()}', f"b'%d|%s|%r|%x' % ({n()}, {b()}, {b()}, {n()})",
+                f"({self.bigint()}).to_bytes({n()}, '{self.pick(['big', 'little'])}', signed={self.pick(['True', 'False'])})",
+                f"int.from_bytes({b()}, '{self.pick(['big', 'little'])}', signed={self.pick(['True', 'False'])})",
+                f'bytes([{n()}, {self.pick(["255", "256", "-1", "65"])}])', f'{b()}.zfill({n()})', f'bytearray({b()}) + {b()}',
+                f'{b()}.join([{b()}, {b()}])', f'{b()}.splitlines()', f'{b()}.expandtabs()', f'{b()}.rjust({n()})',
+                f'{b()}.startswith({b()})', f'bytes({b()}.decode("latin-1"), "latin-1")', f'{b()}.swapcase()',
+                f'{b()}.translate(bytes.maketrans(b"ab", b"xy"))', f'{b()}.isdigit()', f'{b()}.removeprefix({b()})']))
+        out = self.probes(exprs)
+        ops = self.r.sample([f'ba.extend({b()})', f'ba[{n()}] = {self.pick(["0", "65", "300"])}', f'del ba[{n()}:{n()}]',
+                             f'ba.insert({n()}, 66)', 'print(ba.pop())', 'ba.reverse()', f'ba[1:3] = {b()}',
+                             f'ba += {b()}', 'ba *= 2', f'print(ba.remove(97))', f'ba[::2] = {b()}'], self.r.randint(1, 4))
+        out += [f'ba = bytearray({b()})']
+        for op in ops:
+            out += ['try:', f'    {op}', 'except Exception as e:', '    print(type(e).__name__, e)']
+        return out + ['print(ba, len(ba), bytes(ba))']
+
+    def b_struct(self):
+        codes = {'b': (-130, 130), 'B': (-2, 258), 'h': (-33000, 33000), 'H': (-1, 70000), 'i': (-2 ** 31 - 1, 2 ** 31),
+                 'I': (-1, 2 ** 32), 'q': (-2 ** 63 - 1, 2 ** 63), 'Q': (0, 2 ** 64), 'l': (-5, 5), 'L': (0, 9), 'n': (-9, 9)}
+        order = self.pick(['<', '>', '!', '=', '@', ''])
+        fmt, vals = order, []
+        for _ in range(self.r.randint(1, 4)):
+            c = self.pick(list(codes) + ['e', 'f', 'd', '?', 's', 'p', 'c', 'x'])
+            rep = self.pick(['', '', '', '2', '3', '0'])
+            if c == 'n' and order not in ('@', ''):
+                c = 'q'
+            fmt += rep + c
+            count = int(rep or 1)
+            if c in 'sp':
+                vals.append(self.pick(["b'abc'", "b''", "b'xy'", "b'\\xff\\x00'"]))
+            elif c == 'x':
+                pass
+            else:
+                for _ in range(count):
+                    if c in codes:
+                        lo, hi = codes[c]
+                        vals.append(str(self.pick([lo, hi, 0, 1, -1, self.r.randint(lo, hi)])) if self.chance(0.3)
+                                    else str(self.r.randint(max(lo, 0) if c.isupper() else lo, hi)))
+                    elif c in 'efd':
+                        vals.append(self.pick(['1.5', '-0.0', '65504.0', '65520.0', '1e40', '3.4e38', '0.1', '1e-10',
+                                               'float("inf")', '6e-08', '2.0 ** -24', '1', '123456789.123']))
+                    elif c == '?':
+                        vals.append(self.pick(['True', '0', '[]', '"x"']))
+                    else:
+                        vals.append(self.pick(["b'a'", "b'ab'", "'a'", '65']))
+        pad = self.r.randint(0, 4)
+        off = self.r.randint(0, pad)
+        return [
+            'import struct',
+            f'fmt = {fmt!r}',
+            'print(struct.calcsize(fmt))',
+            f'data = struct.pack(fmt, {", ".join(vals)})',
+            'print(data, len(data), struct.unpack(fmt, data))',
+            f"print(struct.unpack_from(fmt, b'\\x01' * {off} + data + b'\\x00' * {pad - off}, {off}))",
+            'print(list(struct.iter_unpack(fmt, data * 2)) if data else None)',
+            'buf = bytearray(len(data) + 2)',
+            f'struct.pack_into(fmt, buf, {self.r.randint(0, 2)}, {", ".join(vals)})',
+            'print(buf, struct.Struct(fmt).size, struct.Struct(fmt).format)',
+            f'print(struct.unpack(fmt, data[:{self.r.randint(-3, 3)}]))',
+        ]
+
+    def b_collections(self):
+        L, S, SL = (lambda: self.expr('list')), (lambda: self.expr('str')), (lambda: self.expr('slist'))
+        return self.pick([
+            ['import collections', f'c = collections.Counter({S()})', f'd = collections.Counter({L()})',
+             'print(c, d.most_common(2), c.total(), c["zz"])',
+             f'print(d + d, d - collections.Counter({L()}), c | collections.Counter({S()}), c & collections.Counter({S()}))',
+             f'c.subtract({S()})', 'print(c, +c, -c, sorted(d.elements()), c == collections.Counter(dict(c)))',
+             f'c.update({SL()})', 'print(c.most_common(), c <= c + c, list(c)[:3])'],
+            ['import collections', f'q = collections.deque({L()}, maxlen={self.pick(["None", "1", "3", "5"])})',
+             f'q.rotate({self.r.randint(-4, 4)})', f'q.appendleft({self.expr("int")})', f'q.extend({L()})',
+             f'q.extendleft({L()})', 'print(q, q.maxlen, len(q), list(reversed(q)), q[0] if q else None, q[-1] if q else None)',
+             f'print(q.pop() if q else None, q.popleft() if q else None, q.count({self.expr("int")}), q)',
+             f'q.insert({self.r.randint(-2, 3)}, 99) if q.maxlen is None else None', f'q.remove({self.expr("int")})', 'print(q, q * 2, q + q, 3 in q)'],
+            ['import collections', 'dd = collections.defaultdict(list)', f'for w in {SL()}:', '    dd[len(w)].append(w)',
+             'print(dd, dict(dd), dd[99], sorted(dd))', 'ic = collections.defaultdict(int)', f'for ch in {S()}:', '    ic[ch] += 1',
+             'print(ic, ic.default_factory, dd.copy() == dd, len(ic))'],
+            ['import collections', f'od = collections.OrderedDict.fromkeys({S()}, 0)', f'od.move_to_end({S()[:3] or "q"!r}[:1] or "q", last={self.pick(["True", "False"])})',
+             'print(od, list(reversed(od)), od == dict(od), od.popitem(last=False) if od else None)',
+             f'od.update({self.expr("dict")})', 'print(od, od.popitem() if od else None, list(od.items())[:2], od | {"z": 1})'],
+            ['import collections', f'P = collections.namedtuple("P", {self.pick(["\"x y z\"", "[\"x\", \"y\", \"z\"]", "\"x, y, z\""])}, defaults=[{self.r.randint(0, 3)}])',
+             f'p = P({self.expr("int")}, {self.expr("str")})', 'print(p, p._replace(x=5), p._asdict(), P._fields, P._field_defaults)',
+             f'print(p + (1,), p.x, p[1:], P._make([1, 2, 3]), p == (p.x, p.y, p.z), P(*range(3)) < P(0, 1, 3), len(p))',
+             'x, y, z = p', 'print(x, y, z, p.index(p.y), p.count(0), repr(P), P(z=1, y=2, x=3))',
+             'print(P(1, 2, 3, 4))'],
+            ['import collections', f'cm = collections.ChainMap({self.expr("dict")}, {self.expr("dict")})',
+             'print(cm, len(cm), sorted(cm), cm.get("k0"), dict(cm))', 'cm["k1"] = 7', 'cm2 = cm.new_child({"k0": -1})',
+             'print(cm, cm2["k0"], cm2.parents == cm, list(cm2.items()))'],
+        ])
+
+    def b_views(self):
+        D = lambda: self.expr('dict')
+        return [
+            f'd = {D()}', f'e = {D()}', 'k, i, v = d.keys(), d.items(), e.values()',
+            f'print(sorted(k & e.keys()), sorted(k | {self.expr("slist")}), sorted(k - e), sorted(k ^ e.keys()))',
+            "print(k == e.keys(), k <= e.keys(), k < {'k0', 'k1', 'k2', 'k3'}, ('k0', d.get('k0')) in i, len(v), k.isdisjoint(e))",
+            f'print(sorted(i & e.items()), sorted(i - {{("k0", {self.pick(INTS)})}}), sorted(i | {{1}}, key=str), i == e.items())',
+            f"d[{self.expr('str')}] = {self.expr('int')}",
+            'print(list(k), list(reversed(i)), list(reversed(v)), repr(k), repr(v), repr(i))',
+            f'print(dict.fromkeys({self.expr("slist")}, {self.expr("int")}), sorted(d.keys() - e.keys() - {{"k1"}}), {{"k0"}} & k)',
+            f'print(sorted(k - {self.expr("set")}), [*i], max(k, default="-"))',
+            "print(sorted(i ^ e.items()), i <= i | e.items(), {('k0', 1): 2}.keys() & i)",
+            "print(sorted(k) == sorted(set(d)), sorted(k & ['k0', 'zz']), (1, 2) in i)",
+            'it = iter(k)', "d['added'] = 0", 'print(next(it))',
+        ]
+
+    def b_sets(self):
+        S, L = (lambda: self.expr('set')), (lambda: self.expr('list'))
+        ops = [f'a.add({self.expr("int")})', f'a.discard({self.expr("int")})', f'a.remove({self.expr("int")})',
+               f'a.update({L()}, {S()})', f'a.symmetric_difference_update({L()})', f'a.intersection_update({L()}, {S()})',
+               f'a.difference_update({L()})', f'a -= {S()}', f'a |= {S()}', f'a &= {S()}', f'a ^= {S()}', 'a.clear()']
+        out = [f'a = {S()}', f'b = {S()}',
+               f'print(a.issubset(b), a <= b, a < b, a >= b, a > b, a == b, a.isdisjoint({L()}), a.issuperset({L()}))',
+               f'print(sorted(a.symmetric_difference({L()})), sorted(a.union({L()}, b)), sorted(a.intersection(b, {L()})), sorted(a.difference({L()}, b)))',
+               f'print(frozenset(a) == a, sorted(frozenset(a) | b), type(frozenset(a) | b).__name__, type(b | frozenset(a)).__name__, {{frozenset(a): 1}}.get(frozenset(sorted(a))))',
+               f'print(a | {L()})', f'print(a.union())', f'print(sorted(set().union(*[{L()}, {L()}])), a <= frozenset(a), {self.expr("int")} in a)']
+        for op in self.r.sample(ops, self.r.randint(1, 4)):
+            out += ['try:', f'    {op}', 'except Exception as e:', '    print(type(e).__name__, e)', 'print(sorted(a))']
+        return out
+
+    def b_subclass_builtin(self):
+        """Subclasses of builtin containers and scalars that override some
+        dunders, used where CPython reads them and where it does not."""
+        kind = self.pick(['list', 'dict', 'str', 'int', 'tuple', 'float', 'set'])
+        c = self.fresh('Sub')
+        over = {
+            'list': ['__iter__', '__len__', '__getitem__', '__contains__', '__eq__', '__add__', '__repr__', '__bool__', '__lt__'],
+            'dict': ['__getitem__', '__iter__', '__len__', 'keys', '__contains__', '__missing__', 'get', 'items', '__repr__', '__eq__'],
+            'str': ['__str__', '__repr__', '__len__', '__getitem__', '__eq__', '__hash__', '__add__', '__contains__', 'upper', '__iter__', '__format__'],
+            'int': ['__index__', '__int__', '__add__', '__radd__', '__repr__', '__str__', '__eq__', '__hash__', '__bool__', '__lt__', '__float__', '__format__'],
+            'tuple': ['__iter__', '__len__', '__getitem__', '__repr__', '__eq__', '__lt__', '__contains__'],
+            'float': ['__repr__', '__str__', '__float__', '__int__', '__eq__', '__add__', '__round__', '__format__'],
+            'set': ['__iter__', '__len__', '__contains__', '__repr__', '__eq__', '__or__', '__le__'],
+        }[kind]
+        bodies = {
+            '__iter__': 'return iter([7, 8])', '__len__': 'return 1', '__getitem__': 'return "item"',
+            '__contains__': 'return True', '__eq__': 'return True', '__add__': 'return "added"', '__radd__': 'return "radded"',
+            '__repr__': f'return "{c}!"', '__str__': 'return "s!"', '__bool__': 'return False', '__lt__': 'return True',
+            'keys': 'return ["kk"]', '__missing__': 'return "missing"', 'get': 'return "got"', 'items': 'return [("i", 1)]',
+            '__hash__': 'return 1', 'upper': 'return "UP"', '__index__': 'return 3', '__int__': 'return 4',
+            '__float__': 'return 2.5', '__round__': 'return "rounded"', '__or__': 'return "or"', '__le__': 'return "le"',
+            '__format__': 'return "fmt:" + spec',
+        }
+        chosen = self.r.sample(over, self.r.randint(1, 3))
+        out = [f'class {c}({kind}):']
+        for m in chosen:
+            args = '(self, spec)' if m == '__format__' else '(self, *a)'
+            out += [f'    def {m}{args}:', f'        {bodies[m]}']
+        init = {'list': '[1, 2, 3]', 'dict': "{'a': 1, 'b': 2}", 'str': "'abc'", 'int': '5', 'tuple': '(1, 2)',
+                'float': '1.25', 'set': '{1, 2}'}[kind]
+        out.append(f'o = {c}({init})')
+        uses = ['list(o)', 'len(o)', 'bool(o)', 'str(o)', 'repr(o)', '[o]', 'o == o', f'o == {init}', f'{init} == o',
+                'sorted(o)' if kind not in ('int', 'float') else 'abs(o)', 'tuple(o)' if kind not in ('int', 'float') else 'int(o)',
+                '1 in o' if kind not in ('int', 'float', 'str') else "'a' in o" if kind == 'str' else '-o', 'f"{o}"',
+                'f"{o!r:>12}"', 'format(o, "")', '"%s" % (o,)', 'type(o + o).__name__', 'max(o)' if kind not in ('int', 'float') else 'float(o)',
+                'hash(o) == hash(o)', 'o.copy()' if kind in ('list', 'dict', 'set') else 'o * 2', 'isinstance(o, ' + kind + ')',
+                '[*o]' if kind not in ('int', 'float') else 'divmod(o, 2)', 'dict(o)' if kind == 'dict' else 'o.__class__.__name__',
+                '{**o}' if kind == 'dict' else '"x".join(map(str, o))' if kind not in ('int', 'float') else 'range(o)' if kind == 'int' else 'round(o)',
+                'json.dumps(o)', 'o[0]' if kind not in ('int', 'float', 'set') else 'o + 1', 'sorted(set(o))' if kind not in ('int', 'float') else 'o < 1',
+                '", ".join(o)' if kind == 'str' else '[1, 2][o]' if kind == 'int' else 'o.items()' if kind == 'dict' else 'reversed(o)' if kind in ('list', 'tuple') else 'math.floor(o)' if kind == 'float' else 'o | {3}',
+                'str.upper(o)' if kind == 'str' else 'hex(o)' if kind == 'int' else 'list.__len__(o)' if kind == 'list' else 'dict.get(o, "a")' if kind == 'dict' else 'o - {1}' if kind == 'set' else 'o.real',
+                'copy.copy(o)', 'type(copy.deepcopy(o)).__name__', 'o.upper()' if kind == 'str' else 'o.bit_length()' if kind == 'int' else 'o.count(1)' if kind in ('list', 'tuple') else 'o.get("a")' if kind == 'dict' else 'o.is_integer()' if kind == 'float' else 'o.union([5])']
+        return ['import json, copy'] + out + self.probes(self.r.sample(uses, self.r.randint(5, 12)))
+
+    def b_dispatch(self):
+        """Binary operators between two classes whose dunders return a tag
+        or NotImplemented: reflected operands, subclass priority, in-place
+        fallback and comparison mirroring."""
+        ops = [('+', 'add'), ('-', 'sub'), ('*', 'mul'), ('/', 'truediv'), ('//', 'floordiv'), ('%', 'mod'),
+               ('**', 'pow'), ('<<', 'lshift'), ('&', 'and'), ('|', 'or'), ('^', 'xor'), ('@', 'matmul')]
+        cmps = [('<', 'lt'), ('<=', 'le'), ('==', 'eq'), ('!=', 'ne'), ('>', 'gt'), ('>=', 'ge')]
+        picked = self.r.sample(ops, self.r.randint(1, 3))
+        pcmp = self.r.sample(cmps, self.r.randint(1, 3))
+        a, b = self.fresh('A'), self.fresh('B')
+        out = []
+        sub = self.chance(0.5)
+        for cls, base in ((a, None), (b, a if sub else None)):
+            out.append(f'class {cls}({base}):' if base else f'class {cls}:')
+            out += ['    def __repr__(self):', f'        return {cls!r}']
+            for _, name in picked:
+                for pre in ('', 'r', 'i'):
+                    if self.chance(0.5):
+                        ret = 'NotImplemented' if self.chance(0.4) else f'({cls!r} + ".{pre}{name}", type(other).__name__)'
+                        out += [f'    def __{pre}{name}__(self, other):', f'        return {ret}']
+            for _, name in pcmp:
+                if self.chance(0.6):
+                    ret = 'NotImplemented' if self.chance(0.4) else f'{cls!r} + ".{name}"'
+                    out += [f'    def __{name}__(self, other):', f'        return {ret}']
+        out += [f'x, y = {a}(), {b}()']
+        exprs = []
+        for sym, _ in picked:
+            for l, r in [('x', 'y'), ('y', 'x'), ('x', '1'), ('1', 'y'), ('x', 'x')]:
+                exprs.append(f'{l} {sym} {r}')
+            exprs.append(f'(lambda t: (t.__i{dict(ops)[sym]}__(y) if hasattr(t, "__i{dict(ops)[sym]}__") else "no i"))(x)')
+        for sym, _ in pcmp:
+            for l, r in [('x', 'y'), ('y', 'x'), ('x', '0'), ('None', 'y')]:
+                exprs.append(f'{l} {sym} {r}')
+        out += self.probes(exprs)
+        for sym, _ in picked:
+            if sym != '@' or self.chance(0.5):
+                out += ['z = x', 'try:', f'    z {sym}= y', '    print("inplace", z)', 'except Exception as e:',
+                        '    print(type(e).__name__, e)']
+        return out
+
+    def b_class_protocols(self):
+        c = self.fresh('P')
+        feats = self.r.sample(['getattr', 'setattr', 'descriptor', 'getitem_iter', 'call', 'format', 'index', 'bool_len',
+                               'contains_iter', 'property_set', 'class_getitem', 'eq_nohash', 'mro', 'abstract', 'hash_none',
+                               'init_subclass', 'set_name'], self.r.randint(1, 4))
+        out = []
+        uses = []
+        if 'descriptor' in feats or 'set_name' in feats:
+            out += ['class Desc:', '    def __set_name__(self, owner, name):', '        self.name = "_" + name',
+                    '    def __get__(self, obj, objtype=None):', '        return ("get", obj is None) if obj is None else getattr(obj, self.name, "unset")',
+                    '    def __set__(self, obj, value):', '        setattr(obj, self.name, value * 2)']
+        if 'mro' in feats:
+            out += ['class M0:', '    def who(self):', '        return ["M0"]', 'class M1(M0):', '    def who(self):',
+                    '        return ["M1"] + super().who()', 'class M2(M0):', '    def who(self):', '        return ["M2"] + super().who()']
+        bases = 'M1, M2' if 'mro' in feats else ''
+        if 'abstract' in feats:
+            out.insert(0, 'import abc')
+            bases = (bases + ', ' if bases else '') + 'abc.ABC'
+        if 'init_subclass' in feats:
+            out += ['class Reg:', '    seen = []', '    def __init_subclass__(cls):', '        Reg.seen.append(cls.__name__)']
+            bases = (bases + ', ' if bases else '') + 'Reg'
+        out.append(f'class {c}({bases}):' if bases else f'class {c}:')
+        out += ['    def __init__(self, v):', '        self.v = v']
+        if 'getattr' in feats:
+            out += ['    def __getattr__(self, name):', '        if name.startswith("x"):', '            return name * 2',
+                    '        raise AttributeError(name)']
+            uses += ['o.xy', 'o.nope', 'getattr(o, "xz", 0)', 'hasattr(o, "q")', 'o.v']
+        if 'setattr' in feats:
+            out += ['    def __setattr__(self, name, value):', '        object.__setattr__(self, name, (name, value))',
+                    '    def __delattr__(self, name):', '        print("del", name)']
+            uses += ['o.v', '(setattr(o, "w", 3), o.w)[1]', '(delattr(o, "v"), o.v)[1]', 'vars(o)']
+        if 'descriptor' in feats or 'set_name' in feats:
+            out += ['    d = Desc()']
+            uses += ['o.d', f'{c}.d', '(setattr(o, "d", 4), o.d, o._d)', 'vars(o)']
+        if 'getitem_iter' in feats:
+            out += ['    def __getitem__(self, i):', '        if i >= 3:', '            raise IndexError(i)', '        return i * 10']
+            uses += ['list(o)', '20 in o', '5 in o', 'o[1]', 'sorted(o)', '[*o]', 'list(reversed(o))', 'iter(o).__class__.__name__']
+        if 'call' in feats:
+            out += ['    def __call__(self, *a, **k):', '        return (a, sorted(k.items()))']
+            uses += ['o(1, k=2)', 'callable(o)', 'list(map(o, [1, 2]))']
+        if 'format' in feats:
+            out += ['    def __format__(self, spec):', '        return "F[" + spec + "]"']
+            uses += ['f"{o:>5}"', 'format(o)', '"{:x}".format(o)', 'f"{o!s}"' if 'getattr' not in feats else 'f"{o!r}"[:3]']
+        if 'index' in feats:
+            out += ['    def __index__(self):', '        return 2']
+            uses += ['[10, 20, 30][o]', 'hex(o)', 'range(o)', '"abc"[o:]', 'bin(o)', '[1] * o', 'operator.index(o)', 'int(o)', 'o + 1']
+        if 'bool_len' in feats:
+            out += ['    def __len__(self):', f'        return {self.pick(["0", "2", "-1", "2 ** 70", "True"])}']
+            uses += ['bool(o)', 'len(o)', 'not o', '"y" if o else "n"']
+        if 'contains_iter' in feats:
+            out += ['    def __iter__(self):', '        yield from (1, 2, 3)']
+            uses += ['2 in o', '7 in o', 'list(o)', 'sum(o)', 'dict.fromkeys(o)', 'sorted(o, reverse=True)']
+        if 'property_set' in feats:
+            out += ['    @property', '    def p(self):', '        return self.v', '    @p.setter', '    def p(self, value):',
+                    '        self.v = value + 1', '    @p.deleter', '    def p(self):', '        print("deleting")']
+            uses += ['o.p', '(setattr(o, "p", 5), o.p)[1]', '(delattr(o, "p"), 0)[1]', f'type({c}.p).__name__']
+        if 'class_getitem' in feats:
+            out += ['    def __class_getitem__(cls, item):', '        return (cls.__name__, item)']
+            uses += [f'{c}[int]', f'{c}[1, 2]']
+        if 'eq_nohash' in feats:
+            out += ['    def __eq__(self, other):', '        return True']
+            uses += ['hash(o)', '{o}', 'o == 1', 'o != 1', '[o].count(5)', f'{c}.__hash__']
+        if 'hash_none' in feats:
+            out += ['    __hash__ = None']
+            uses += ['hash(o)', '{o: 1}', 'isinstance(o, collections.abc.Hashable)']
+        if 'abstract' in feats:
+            out += ['    @abc.abstractmethod', '    def must(self):', '        ...']
+            uses += [f'{c}(1)', f'type("{c}2", ({c},), {{"must": lambda self: 1}})(1).must()']
+        if 'mro' in feats:
+            uses += ['o.who()', f'[k.__name__ for k in {c}.__mro__]', f'{c}.__bases__']
+        if 'init_subclass' in feats:
+            uses += ['Reg.seen', f'type("Late", ({c},), {{}}).__name__', 'Reg.seen']
+        uses += ['type(o).__name__', f'isinstance(o, {c})', f'{c}.__qualname__', 'o.v']
+        out += ['import operator, collections.abc', 'try:', f'    o = {c}({self.expr("int")})', 'except Exception as e:',
+                '    print(type(e).__name__, e)', f'    o = {c}.__new__({c})', '    object.__setattr__(o, "v", 0)']
+        return out + self.probes(uses)
+
+    def b_generator_protocol(self):
+        g = self.fresh('co')
+        ign = self.chance(0.3)
+        out = [f'def {g}(limit):', '    total = 0', '    try:', '        while True:', '            x = yield total',
+               '            if x is None or total > limit:', '                break', '            total += x',
+               '    except ValueError as e:', '        yield ("caught", str(e))']
+        if ign:
+            out += ['    except GeneratorExit:', '        print("exit")', '        raise']
+        out += ['    finally:', '        print("fin", total)', '    return total']
+        out += [f'def outer{g}():', f'    r = yield from {g}({self.r.randint(0, 20)})', '    yield ("result", r)']
+        steps = []
+        for _ in range(self.r.randint(2, 6)):
+            steps.append(self.pick([f'it.send({self.r.randint(-3, 9)})', 'next(it)', 'it.throw(ValueError("v"))',
+                                    'it.throw(KeyError("k"))', 'it.close()', 'it.send(None)', 'it.throw(ValueError)',
+                                    'it.gi_running']))
+        out.append(f'for it in [{g}({self.r.randint(0, 20)}), outer{g}()]:')
+        out.append('    print(next(it))')
+        # Closed at the end: mm has no finalizers (docs/spec.md §9.2), so a
+        # generator dropped unfinished never runs its `finally`.
+        for s in steps + ['it.close()']:
+            out += ['    try:', f'        print({s!r}, {s})', '    except StopIteration as e:', '        print("stop", e.value)',
+                    '    except Exception as e:', '        print(type(e).__name__, e)']
+        return out
+
+    def b_args(self):
+        f = self.fresh('fn')
+        params = self.pick(['a, b=2, /, c=3, *args, d, e=5, **kw', 'a, /, b, *, c', 'a, b=1, *args', '*, a, b=2',
+                            'a, b, /', 'a=1, /, *args, **kw', 'a, *args, b=0, **kw', 'a, b=[], c=None'])
+        out = [f'def {f}({params}):']
+        names = [p.strip().split('=')[0].lstrip('*') for p in params.split(',') if p.strip() not in ('/', '*')]
+        out.append(f'    return ({", ".join(names)},)')
+        calls = []
+        for _ in range(self.r.randint(3, 8)):
+            pos = [str(self.r.randint(0, 9)) for _ in range(self.r.randint(0, 5))]
+            kws = self.r.sample(['a', 'b', 'c', 'd', 'e', 'z'], self.r.randint(0, 3))
+            parts = pos + [f'{k}={self.r.randint(0, 9)}' for k in kws]
+            if self.chance(0.2):
+                parts.append('*[7, 8]')
+            if self.chance(0.2):
+                parts.append('**{' + ', '.join(f"{k!r}: 1" for k in self.r.sample(['a', 'b', 'c', 'd', 'z'], self.r.randint(0, 2))) + '}')
+            calls.append(f'{f}({", ".join(parts)})')
+        builtins = ['len()', 'len(1, 2)', 'int(x=1)', 'sorted([1], [2])', 'print(sep=1)', 'max()', 'min([])',
+                    'range("a")', 'divmod(1)', 'round(1.5, "x")', '"".join(1)', 'sorted([3, 1], key=1)', 'list(1)',
+                    'dict(1)', 'dict([1])', 'dict([(1, 2, 3)])', 'zip(1)', 'map(len)', 'enumerate()', 'isinstance(1)',
+                    'isinstance(1, 1)', 'getattr(1)', 'sum([1], start="")', 'sum(["a"], "")', 'str(1, 2)',
+                    'int("1", 2, 3)', 'pow(1, 2, 3, 4)', 'abs()', 'iter()', 'next()', '"a".split(x=1)',
+                    '[].sort(1)', '[].sort(reverse=None)', 'sorted([], reverse="x")', 'max([1], key=None, x=1)',
+                    '(lambda: 0)(1)', '(lambda a: 0)()', '(lambda *, a: 0)(1)', 'dict.fromkeys()', '"{}".format()',
+                    '"{0}{1}".format(1)', '"{a}".format(b=1)', '"%s %s" % (1,)', '"%s" % (1, 2)', '"%(a)s" % 1',
+                    'int.from_bytes()', '"x".encode(1)', '[].index()', 'tuple(1, 2)', 'set(1, 2)', 'frozenset([[]])',
+                    'type("X")', 'type("X", 1, {})', 'object(1)', 'super()', 'reversed()', 'slice()', 'filter(None)',
+                    'any()', 'chr()', 'ord("ab")', 'hash([])', 'bytes("x")', 'float("1", 2)', 'complex("1+")',
+                    'bool(1, 2)', 'callable()', 'hex(1.0)', 'format(1, 2)', 'vars(1)', 'dir(1, 2)', 'id()']
+        calls += self.r.sample(builtins, self.r.randint(2, 6))
+        return out + self.probes(calls)
+
+    def b_exceptions(self):
+        excs = ['ValueError(1)', 'TypeError("t")', 'KeyError("k")', 'IndexError()', 'ZeroDivisionError("z")',
+                'OSError(2, "nf")', 'RuntimeError("r", 2)', 'StopIteration(5)', 'ArithmeticError()', 'LookupError("l")',
+                'NotImplementedError("n")', 'AttributeError("a")', 'UnicodeError("u")', 'OverflowError()', 'NameError("x")']
+        k = self.r.randint(0, 3)
+        if k == 0:
+            group = ', '.join(self.r.sample(excs, self.r.randint(1, 4)))
+            if self.chance(0.3):
+                group += f', ExceptionGroup("inner", [{self.pick(excs)}, {self.pick(excs)}])'
+            clauses = self.r.sample(['ValueError', '(TypeError, KeyError)', 'LookupError', 'ArithmeticError', 'OSError',
+                                     'Exception', 'RuntimeError', 'ExceptionGroup'], self.r.randint(1, 3))
+            out = ['try:', '    try:', f'        raise ExceptionGroup("eg", [{group}])']
+            for cl in clauses:
+                out += [f'    except* {cl} as g:', f'        print({cl!r}, repr(g), [repr(e) for e in g.exceptions], g.message)']
+                if self.chance(0.2):
+                    out += ['        raise ValueError("from star")']
+            out += ['except BaseException as e:', '    print("rest", repr(e), type(e).__name__)']
+            out += [f'eg = ExceptionGroup("m", [{group}])', 'print(repr(eg), str(eg), len(eg.exceptions))',
+                    f'print(eg.split({self.pick(clauses[:1] + ["lambda e: isinstance(e, ValueError)"])}), eg.subgroup(lambda e: False))',
+                    f'print(repr(eg.derive([ValueError(9)])), BaseExceptionGroup("b", [ValueError()]).__class__.__name__)']
+            return out
+        if k == 1:
+            return ['def chain():', '    try:', f'        raise {self.pick(excs)}', '    except Exception as e:',
+                    f'        {self.pick(["raise KeyError(\"second\")", "raise KeyError(\"none\") from None", "raise", "raise TypeError(\"cause\") from e", "e.add_note(\"note1\"); raise", "return e"])}',
+                    'try:', '    r = chain()', '    print("returned", repr(r), r.__context__, r.__traceback__ is not None)',
+                    'except Exception as e:', '    print(repr(e), repr(e.__context__), repr(e.__cause__), e.__suppress_context__, getattr(e, "__notes__", None))']
+        if k == 2:
+            exprs = [f'repr({e})' for e in self.r.sample(excs, 3)] + [f'str({e})' for e in self.r.sample(excs, 3)] + \
+                    [f'{e}.args' for e in self.r.sample(excs, 2)] + \
+                    ['str(KeyError())', 'str(KeyError("a", "b"))', 'repr(KeyError(""))', 'OSError(2, "x").errno',
+                     'str(OSError(2, "x", "f"))', 'b"\\xff".decode()', '"\\u00e9".encode("ascii")', 'str(SyntaxError("s"))',
+                     'StopIteration(1, 2).value', 'repr(BaseException())', 'repr(SystemExit(3))', 'SystemExit(3).code',
+                     'Exception("a").with_traceback(None).args', 'str(UnicodeDecodeError("utf-8", b"ab", 0, 1, "bad"))',
+                     'repr(ExceptionGroup("x", [ValueError()]))', 'isinstance(ExceptionGroup("x", [ValueError()]), Exception)',
+                     'ExceptionGroup("x", [])', 'ExceptionGroup("x", [BaseException()])', 'BaseExceptionGroup("x", [ValueError()])',
+                     'issubclass(KeyError, LookupError)', 'ZeroDivisionError.__mro__', 'str(AttributeError("x", name="n", obj=1))',
+                     'AttributeError("x", name="n").name', 'NameError("x", name="y").name', 'repr(ImportError("m", name="n"))',
+                     'ModuleNotFoundError("m").msg', 'str(StopAsyncIteration())', 'repr(Warning("w"))', 'TimeoutError.__mro__[1]',
+                     'repr(FileNotFoundError(2, "No such"))', 'str(FileNotFoundError(2, "No such", "f.txt"))',
+                     'OSError(13, "x").__class__.__name__', 'OSError(99, "x").__class__.__name__']
+            return self.probes(self.r.sample(exprs, self.r.randint(5, 12)))
+        return ['def f(n):', '    try:', '        if n == 0:', f'            raise {self.pick(excs)}', '        return f(n - 1)',
+                '    finally:', f'        {self.pick(["pass", "print(\"unwind\", n)", "n = -1"])}',
+                'for n in range(3):', '    try:', '        print(f(n))', '    except Exception as e:',
+                '        print(type(e).__name__, e)', '    else:', '        print("else", n)', '    finally:', '        print("done", n)',
+                'def ret():', '    try:', '        return "try"', '    finally:', f'        {self.pick(["print(\"fin\")", "pass"])}',
+                'print(ret())', 'try:', '    try:', '        1 / 0', '    finally:', '        print("inner fin")',
+                f'except {self.pick(["ZeroDivisionError", "ArithmeticError", "Exception"])} as e:', '    print("outer", e)',
+                'print("end")']
+
+    def b_iterstd(self):
+        L, S = (lambda: self.expr('list')), (lambda: self.expr('str'))
+        n = lambda: self.r.randint(-1, 5)
+        exprs = [self.pick([
+            f'list(itertools.accumulate({L()}{self.pick(["", ", operator.mul", ", max", ", initial=10"])}))',
+            f'list(itertools.chain({L()}, {S()}))', f'list(itertools.chain.from_iterable([{L()}, {S()}]))',
+            f'list(itertools.islice({L()}, {n()}, {n()}, {self.pick(["1", "2", "None", "0", "-1"])}))',
+            f'list(itertools.product({S()}[:3], repeat={self.r.randint(0, 2)}))', f'list(itertools.permutations({L()}[:4], {n()}))',
+            f'list(itertools.combinations({L()}, {n()}))', f'list(itertools.combinations_with_replacement({S()}[:3], {n()}))',
+            f'[(k, list(g)) for k, g in itertools.groupby({S()})]', f'[(k, list(g)) for k, g in itertools.groupby(sorted({L()}), key=lambda q: q % 3)]',
+            f'list(itertools.zip_longest({L()}, {S()}, fillvalue="-"))', f'list(itertools.starmap(pow, zip({L()}, [2, 3, 0])))',
+            f'list(itertools.takewhile(lambda q: q < 5, {L()}))', f'list(itertools.dropwhile(lambda q: q < 5, {L()}))',
+            f'list(itertools.pairwise({S()}))', f'list(itertools.batched({L()}, {n()}))', f'list(itertools.compress({S()}, {L()}))',
+            f'list(itertools.islice(itertools.count({n()}, {self.pick(["1", "-2", "0.5"])}), 5))', f'list(itertools.islice(itertools.cycle({S()}), 7))',
+            f'list(itertools.repeat({S()}, {n()}))', f'list(itertools.filterfalse(None, {L()}))', f'[list(t) for t in itertools.tee({L()}, 2)]',
+            f'functools.reduce(lambda a, b: a * 2 + b, {L()}{self.pick(["", ", 1"])})', f'functools.partial(pow, 2)({n()})',
+            f'functools.partial(int, base=2)({self.pick(["\"101\"", "\"2\"", "\"0b11\""])})', f'sorted({L()}, key=functools.cmp_to_key(lambda a, b: (a % 3) - (b % 3)))',
+            f'list(map(operator.itemgetter({self.pick(["0", "1, 0", "-1"])}), [{L()}, (1, 2), "abc"]))', f'operator.attrgetter("real", "imag")({self.expr("int")})',
+            f'operator.methodcaller("split", ",")({S()})', f'heapq.nlargest({n()}, {L()})', f'heapq.nsmallest({n()}, {S()}, key=str.lower)',
+            f'list(heapq.merge(sorted({L()}), sorted({L()}), reverse=False))', f'bisect.bisect_left(sorted({L()}), {self.expr("int")})',
+            f'bisect.bisect_right(sorted({L()}), {self.expr("int")}, {n()})', f'(lambda h: (bisect.insort(h, 4), h)[1])(sorted({L()}))',
+            f'(lambda h: (heapq.heapify(h), heapq.heappop(h), heapq.heappushpop(h, 3), h)[1:])({L()})',
+            f'statistics.median({L()})', f'statistics.mode({S()})', f'statistics.mean({L()})', f'statistics.multimode({L()})',
+            f'list(zip(*[{S()}, {S()}], strict=False))', f'list(map(pow, {L()}, {L()}))', f'list(iter([3, 2, 1, 0, 5].pop, 0))',
+            f'sorted({L()}, key=lambda q: -q, reverse=True)', f'copy.deepcopy([{L()}, {{"a": {L()}}}])',
+            f'sum({self.pick(["[0.1] * 10", "[1, 2.5]", "[1e100, 1, -1e100]", "[]", "[True, True]"])})',
+            f'math.prod({L()})', f'math.dist([{n()}, {n()}], [{n()}, {n()}])', f'math.sumprod({L()}, {L()})'])
+            for _ in range(self.r.randint(4, 9))]
+        return ['import itertools, functools, operator, heapq, bisect, statistics, copy'] + self.probes(exprs)
+
+    def b_lru(self):
+        size = self.pick(['None', '2', '0', '128'])
+        n = self.r.randint(0, 60 if size in ('None', '128') else 18)
+        return ['import functools', f'@functools.lru_cache(maxsize={size})',
+                'def fib(n):', '    return n if n < 2 else fib(n - 1) + fib(n - 2)', f'print(fib({n}), fib.cache_info())',
+                'fib.cache_clear()', 'print(fib.cache_info(), fib.__name__, fib.__wrapped__(1))',
+                'def deco(f):', '    @functools.wraps(f)', '    def w(*a):', '        return ("w", f(*a))', '    return w',
+                '@deco', 'def named(x):', '    "doc"', '    return x', 'print(named(3), named.__name__, named.__doc__, named.__wrapped__(1))',
+                '@functools.total_ordering', 'class V:', '    def __init__(self, v):', '        self.v = v',
+                '    def __eq__(self, o):', '        return self.v == o.v', '    def __lt__(self, o):', '        return self.v < o.v',
+                f'print(V(1) >= V(2), V(3) > V(2), V(2) <= V(2), sorted([V(3), V(1)], reverse=True)[0].v)',
+                '@functools.singledispatch', 'def kind(x):', '    return "obj"', '@kind.register(int)', 'def _(x):', '    return "int"',
+                '@kind.register(str)', 'def _(x):', '    return "str"', f'print(kind(1), kind("a"), kind(True), kind([]), kind(2.5))',
+                'print(functools.cache(lambda q: q * 2)(4))']
+
+    def b_records(self):
+        k = self.r.randint(0, 1)
+        if k == 0:
+            order, frozen = self.pick(['True', 'False']), self.pick(['True', 'False'])
+            return ['import dataclasses', f'@dataclasses.dataclass(order={order}, frozen={frozen})', 'class Pt:',
+                    '    x: int', '    y: str = "a"', '    z: list = dataclasses.field(default_factory=list, compare=False)',
+                    '    w: int = dataclasses.field(default=0, repr=False)',
+                    f'p, q = Pt({self.expr("int")}), Pt({self.expr("int")}, {self.expr("str")}, [1])',
+                    'print(p, q, p == q, dataclasses.asdict(q), dataclasses.astuple(p), [f.name for f in dataclasses.fields(Pt)])',
+                    'print(dataclasses.replace(p, x=9), dataclasses.is_dataclass(p), Pt.__match_args__)'] + self.probes(
+                    ['p < q', 'sorted([q, p])', 'hash(p) == hash(Pt(p.x))', '(setattr(p, "x", 5), p)[1]', 'Pt()', 'Pt(1, 2, 3, 4, 5)',
+                     'Pt(1, z=None)', 'dataclasses.replace(p, nope=1)', 'Pt.__eq__(p, 1)'])
+        flag = self.chance(0.5)
+        if flag:
+            return ['import enum', 'class Perm(enum.Flag):', '    R = 4', '    W = 2', '    X = 1', '    RW = 6'] + self.probes(
+                ['Perm.R | Perm.W', 'repr(Perm.R | Perm.X)', 'Perm(7)', 'Perm(0)', 'list(Perm)', 'Perm.RW.name', '~Perm.R',
+                 'Perm.R in Perm.RW', 'Perm(8)', 'str(Perm.W | Perm.X)', 'len(Perm.RW)', 'list(Perm.RW)', 'bool(Perm(0))',
+                 'Perm["R"]', 'format(Perm.R)', 'Perm.R & Perm.W', 'Perm.R ^ Perm.RW', 'repr(Perm(0))'])
+        base = self.pick(['enum.Enum', 'enum.IntEnum', 'enum.StrEnum'])
+        vals = ['enum.auto()', 'enum.auto()', 'enum.auto()'] if base != 'enum.Enum' or self.chance(0.4) else ['1', '"two"', '1']
+        return ['import enum', f'class Color({base}):', f'    RED = {vals[0]}', f'    GREEN = {vals[1]}', f'    BLUE = {vals[2]}',
+                '    def describe(self):', '        return self.name.lower()'] + self.probes(
+            ['Color.RED', 'repr(Color.GREEN)', 'Color(1)', 'Color["BLUE"]', 'list(Color)', 'Color.RED.value', 'Color(99)',
+             'Color.BLUE.describe()', 'Color.RED == 1', 'Color.RED < Color.GREEN', 'f"{Color.RED}"', 'str(Color.RED)', 'len(Color)',
+             'Color.BLUE is Color.RED', 'Color.__members__.keys()', 'hash(Color.RED) == hash(Color.RED)', 'Color.RED + 1',
+             'sorted(Color, key=lambda c: c.name)', 'isinstance(Color.RED, Color)', 'Color("red")', 'Color.RED.name', 'format(Color.GREEN, ">8")'])
+
+    def b_json(self):
+        docs = [self.expr('dict'), self.expr('list'), self.expr('slist'), '{"a": [1, 2.5, None, True], "b": {"c": "\\u00e9"}}',
+                '[1e100, -0.0, 0.1, 10 ** 20, float("inf")]', '{1: "int key", None: 0, True: 1, 2.5: "f"}', '"tab\\there"']
+        texts = ['"[1, 2"', '"{\\"a\\": 1,}"', '"[1, 2] x"', '""', '"nul"', '"{\\"a\\" 1}"', '"[01]"', '"1e400"', '"-0"',
+                 '"\\"\\\\u00e9\\""', '"[1,\\n 2,\\n ]"', '"NaN"', '" {} "', '"{\\"a\\": [true, false, null]}"', '"1.5e3"',
+                 '"\\"\\\\x\\""', '"[\\"a\\"\\n"', '"123abc"', '"{\\"k\\":1, \\"k\\":2}"', '"[1e-400]"', '"\\"\\\\ud83d\\\\ude00\\""']
+        exprs = []
+        for _ in range(self.r.randint(3, 8)):
+            d = self.pick(docs)
+            exprs.append(self.pick([
+                f'json.dumps({d})', f'json.dumps({d}, sort_keys=True, indent={self.pick(["None", "0", "2", "\"\\t\""])})',
+                f'json.dumps({d}, separators=(",", ":"), ensure_ascii={self.pick(["True", "False"])})',
+                f'json.loads(json.dumps({d}))', f'json.loads({self.pick(texts)})', f'json.dumps({d}, allow_nan=False)',
+                f'json.loads({self.pick(texts)}, parse_float=str, parse_int=float)', f'json.dumps({{"k": {{1, 2}}}})',
+                f'json.dumps({d}, default=str, skipkeys=True)', f'json.loads({self.pick(texts)}, object_pairs_hook=list)']))
+        return ['import json'] + self.probes(exprs)
+
+    def b_regex(self):
+        pats = [r'\d+', r'(\w+)@(\w+)\.com', r'[a-z]+', r'^\s*(\w)', r'(a|b)*c', r'(?P<k>\w)=(?P<v>\d)', r'\bh\w*',
+                r'(?i)HELLO', r'x*', r'[^,]+', r'(\d)(?=\d)', r'(.)\1', r'a{2,3}', r'\W', r'[\u00e0-\u00ff]', r'(?:ab)+?',
+                r'(', r'[a-', r'a**', r'(?<=a)b', r'$', r'(?P<n>x)(?P=n)', r'\s+|,', r'[a\]-]', r'.', r'(?s).+', r'\Z']
+        strs = ['"a1b22c333"', '"joe@site.com, ann@web.com"', '"hello world Hello"', '"  x = 1, y = 2"', '"aabbcc"', '"caf\\u00e9"',
+                '""', '"a,b,,c"', '"aaa ab abab"', '"k=1 v=2"', '"x\\ny"']
+        exprs = []
+        for _ in range(self.r.randint(3, 8)):
+            p, s = repr(self.pick(pats)), self.pick(strs)
+            exprs.append(self.pick([
+                f're.findall({p}, {s})', f're.sub({p}, "<\\\\g<0>>", {s})', f're.split({p}, {s}, maxsplit={self.r.randint(0, 3)})',
+                f'(lambda m: m and (m.group(), m.groups(), m.span(), m.groupdict()))(re.search({p}, {s}))',
+                f'bool(re.fullmatch({p}, {s}))', f'[m.span() for m in re.finditer({p}, {s})]', f're.subn({p}, lambda m: m.group().upper(), {s})',
+                f're.compile({p}).pattern', f're.escape({s})', f'(lambda m: m and m.group(0))(re.match({p}, {s}, re.IGNORECASE))',
+                f're.sub({p}, r"\\1", {s})']))
+        return ['import re'] + self.probes(exprs)
+
+    def b_asyncio(self):
+        k = self.r.randint(0, 4)
+        n1, n2 = self.r.randint(0, 4), self.r.randint(0, 4)
+        fail = self.pick(['None', '1', '2'])
+        head = ['import asyncio', 'log = []',
+                'async def worker(name, n, fail=None):', '    for i in range(n):',
+                f'        await asyncio.sleep({self.pick(["0", "0.001 * i"])})', '        log.append((name, i))',
+                '        if i == fail:', '            raise ValueError(name)', '    return name * n']
+        if k == 0:
+            body = ['async def main():', f'    r = await asyncio.gather(worker("a", {n1}), worker("b", {n2}, {fail}), return_exceptions={self.pick(["True", "False"])})',
+                    '    return r']
+        elif k == 1:
+            body = ['async def main():', '    try:', '        async with asyncio.TaskGroup() as tg:',
+                    f'            t1 = tg.create_task(worker("a", {n1}, {self.pick(["None", "0", "1"])}))', f'            t2 = tg.create_task(worker("b", {n2}, {fail}))',
+                    '        return t1.result(), t2.result()', '    except* ValueError as eg:', '        got = ("eg", [str(e) for e in eg.exceptions])',
+                    '    return got']
+        elif k == 2:
+            body = ['async def main():', f'    q = asyncio.Queue(maxsize={self.r.randint(0, 3)})',
+                    '    async def prod():', f'        for i in range({n1 + 2}):', '            await q.put(i)', '            log.append(("put", i))',
+                    '        await q.put(None)', '    async def cons():', '        out = []', '        while (item := await q.get()) is not None:',
+                    '            out.append(item)', '            log.append(("got", item))', '        return out',
+                    '    p = asyncio.create_task(prod())', '    c = asyncio.create_task(cons())', '    await p', '    return await c, q.qsize(), q.empty()']
+        elif k == 3:
+            body = ['async def main():', f'    t = asyncio.create_task(worker("a", {n1 + 2}))', f'    for _ in range({self.r.randint(0, 3)}):',
+                    '        await asyncio.sleep(0)', f'    t.cancel({self.pick(["", "\"msg\""])})', '    try:', '        await t',
+                    '    except asyncio.CancelledError as e:', '        log.append(("cancelled", e.args))',
+                    '    return t.cancelled(), t.done()']
+        else:
+            body = ['async def main():', '    try:', f'        return await asyncio.wait_for(worker("a", {n1 + 1}), timeout={self.pick(["0", "1"])})',
+                    '    except TimeoutError as e:', '        return ("timeout", type(e).__name__)',
+                    '    finally:', '        ev = asyncio.Event()', '        asyncio.get_running_loop().call_soon(ev.set)', '        await ev.wait()',
+                    '        log.append(("event", ev.is_set()))']
+        return head + body + ['print(asyncio.run(main()), log)']
+
     def program(self):
         lines = ['import math', T_IDENTITY]
         for _ in range(self.r.randint(8, 22)):
@@ -876,7 +1603,8 @@ def within_ulp(args, source):
         if py is None or py[0] != mm[0] or py[2] != mm[2]:
             continue
         pyl, mml = py[1].splitlines(), mm[1].splitlines()
-        if not pyl or not mml or pyl[:-1] != mml[:-1]:
+        # Both may stop at the same uncaught exception before the report.
+        if not pyl or not mml or pyl[:-1] != mml[:-1] or not pyl[-1].startswith('_R ') or not mml[-1].startswith('_R '):
             continue
         rp, rm = ast.literal_eval(pyl[-1][3:]), ast.literal_eval(mml[-1][3:])
         if len(rp) == len(rm) and all(map(one_ulp, rp, rm)):
@@ -1034,7 +1762,7 @@ def first_difference(py, mm):
 def signature(py, mm):
     """Groups divergences: the differing lines with numbers blanked."""
     _, a, b = first_difference(py, mm)
-    norm = lambda t: re.sub(r'\d+', '#', t)[:100]
+    norm = lambda t: re.sub(r'\d+', '#', re.sub(r'0x[0-9a-f]+', '#', t))[:100]
     if 'has no attribute' in b or 'is not defined' in b or 'not supported' in b:
         return 'mm: ' + norm(b)
     return 'CPython: ' + norm(a) + ' | mm: ' + norm(b)
