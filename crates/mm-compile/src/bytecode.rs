@@ -25,23 +25,11 @@ macro_rules! opcodes {
             $(t[$n] = $fmt;)*
             t
         };
-        /// Operand layouts by opcode, packed (see [`layout_of`]).
-        static PACKED: [u32; 256] = {
-            let mut t = [0u32; 256];
-            $(t[$n] = pack(layout($fmt));)*
-            t
-        };
         /// By opcode, the bytes its words carry: the first word's (the
         /// opcode and operands) in bits 0..4, the second's in bits 4..8.
         static SPLIT: [u8; 256] = {
             let mut t = [1u8; 256];
             $(t[$n] = split(layout($fmt));)*
-            t
-        };
-        /// Operand kinds and places by opcode (see [`plan`]).
-        static PLANS: [u32; 256] = {
-            let mut t = [0u32; 256];
-            $(t[$n] = plan($fmt);)*
             t
         };
         /// One bit per opcode: set if its instructions are two words long.
@@ -847,9 +835,61 @@ pub fn instr_len(op: u8) -> usize {
     1 + (TWO_WORDS[(op / 32) as usize] >> (op % 32) & 1) as usize
 }
 
+#[derive(Clone, Copy)]
+struct OperandFormat {
+    layout: Layout,
+    plan: u32,
+}
+
+// Opcodes share the same few operand formats. Keep one byte per opcode
+// and one layout and plan per format. Dispatch still uses TWO_WORDS.
+const OPERAND_TABLES: ([u8; 256], [OperandFormat; 256], usize) = operand_tables();
+static FORMAT_IDS: [u8; 256] = OPERAND_TABLES.0;
+static OPERAND_FORMATS: [OperandFormat; OPERAND_TABLES.2] = {
+    let mut formats = [OPERAND_TABLES.1[0]; OPERAND_TABLES.2];
+    let mut i = 1;
+    while i < formats.len() {
+        formats[i] = OPERAND_TABLES.1[i];
+        i += 1;
+    }
+    formats
+};
+
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "at most one format per opcode"
+)]
+const fn operand_tables() -> ([u8; 256], [OperandFormat; 256], usize) {
+    let mut ids = [0; 256];
+    let mut forms = [OperandFormat {
+        layout: layout(""),
+        plan: 0,
+    }; 256];
+    let mut len = 1;
+    let mut op = 0;
+    while op < ids.len() {
+        let fmt = FORMATS[op];
+        let plan = plan(fmt);
+        let mut id = 0;
+        while id < len && forms[id].plan != plan {
+            id += 1;
+        }
+        if id == len {
+            forms[id] = OperandFormat {
+                layout: layout(fmt),
+                plan,
+            };
+            len += 1;
+        }
+        ids[op] = id as u8;
+        op += 1;
+    }
+    (ids, forms, len)
+}
+
 /// Opcode `op`'s operands as [`plan`] lists them.
 pub(crate) fn operand_plan(op: u8) -> u32 {
-    PLANS[op as usize]
+    OPERAND_FORMATS[FORMAT_IDS[op as usize] as usize].plan
 }
 
 /// Format `fmt`'s operands, nine bits each, the first in the low bits:
@@ -878,28 +918,8 @@ const fn plan(fmt: &str) -> u32 {
 /// The operand layout of opcode `op` (see [`layout`]).
 #[must_use]
 #[inline]
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "each packed field is one byte"
-)]
 pub fn layout_of(op: u8) -> Layout {
-    let p = PACKED[op as usize];
-    let mut l = layout("");
-    while l.n < 4 {
-        let b = (p >> (8 * l.n)) as u8;
-        if b == 0 {
-            break;
-        }
-        let word = b >> 2 & 1;
-        l.fields[l.n as usize] = Field {
-            word,
-            shift: b >> 3,
-            width: (b & 3) * 8,
-        };
-        l.words = l.words.max(word + 1);
-        l.n += 1;
-    }
-    l
+    OPERAND_FORMATS[FORMAT_IDS[op as usize] as usize].layout
 }
 
 /// The bytes the words of an instruction with opcode `op` carry, in the
@@ -924,19 +944,6 @@ const fn split(l: Layout) -> u8 {
         i += 1;
     }
     n[0] | n[1] << 4
-}
-
-/// Layout `l` as one byte per field: width in bytes (bits 0..2, nonzero),
-/// word (bit 2), shift (bits 3..8).
-const fn pack(l: Layout) -> u32 {
-    let mut p = 0;
-    let mut i = 0;
-    while i < l.n as usize {
-        let f = l.fields[i];
-        p |= ((f.width / 8) as u32 | (f.word as u32) << 2 | (f.shift as u32) << 3) << (8 * i);
-        i += 1;
-    }
-    p
 }
 
 /// One operand's place: word `word` of the instruction, bits
