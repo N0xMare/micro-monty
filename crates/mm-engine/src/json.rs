@@ -1504,7 +1504,7 @@ fn skip_ws(b: &[u8], mut i: usize) -> usize {
 /// `_steps` ([`Vm::json_scan_step`]).
 pub(crate) fn pl_json_scan(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let sv = vm.arg(&a, 0);
-    let idx = vm.arg(&a, 2).as_int();
+    let idx = vm.arg(&a, 2);
     let mut flags = 0;
     if vm.arg(&a, 1) == Value::TRUE {
         flags |= RAW;
@@ -1512,18 +1512,29 @@ pub(crate) fn pl_json_scan(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if vm.arg(&a, 3) == Value::FALSE {
         flags |= LAX;
     }
-    let start = match idx {
-        // The byte offset of character `i` (the end when past it); no
-        // whitespace is skipped there.
-        Some(i) => {
-            flags |= IDX;
-            let at = vm.str_offset(sv, usize::try_from(i).unwrap_or(0));
-            if vm.str_bytes(sv).get(at).is_none_or(u8::is_ascii_whitespace) {
-                return scan_result(vm, sv, Err(("Expecting value", at)));
-            }
-            at
+    let start = if idx == Value::NONE || idx == Value::UNDEFINED {
+        0
+    } else {
+        let Some(i) = vm.int_of_o(idx) else {
+            return Err(vm.err(
+                T::OverflowError,
+                "Python int too large to convert to C ssize_t",
+            ));
+        };
+        if i < 0 {
+            return Err(vm.err(T::ValueError, "idx cannot be negative"));
         }
-        None => 0,
+        let pos = usize::try_from(i).unwrap_or(usize::MAX);
+        if pos > vm.str_len(sv) {
+            let msg = vm.new_str("Expecting value")?;
+            return vm.alloc_tuple(&[msg, idx]);
+        }
+        flags |= IDX;
+        let at = vm.str_offset(sv, pos);
+        if vm.str_bytes(sv).get(at).is_none_or(u8::is_ascii_whitespace) {
+            return scan_result(vm, sv, Err(("Expecting value", at)));
+        }
+        at
     };
     let mut wd = [0u64; w::N];
     wd[w::I] = start as u64;

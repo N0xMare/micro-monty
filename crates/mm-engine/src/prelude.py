@@ -3292,8 +3292,13 @@ class JSONDecoder:
 
     def raw_decode(self, s, *args, **kwargs):
         idx, = _json_opt('JSONDecoder.raw_decode', args, kwargs, ('idx',), (0,), 1)
-        if idx < 0:
-            raise ValueError('idx cannot be negative')
+        if isinstance(idx, int):
+            if type(idx) is not int:
+                idx = _int_value(idx)
+        elif _has_index(idx):
+            idx = _index(idx)
+        else:
+            raise TypeError(f"'{_type_name(idx)}' object cannot be interpreted as an integer")
         return _json_decode(self, s, idx)
 
 
