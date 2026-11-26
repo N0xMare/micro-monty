@@ -3523,7 +3523,8 @@ def _json_py(o, st, level):
         if markers is not None:
             del markers[id(o)]
     elif isinstance(o, dict):
-        if not o:
+        # CPython reads a subclass's stored size, then its `items()`.
+        if not _bx_value(o):
             out.append('{}')
             return
         _json_mark(markers, o)
