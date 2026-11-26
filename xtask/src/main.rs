@@ -724,6 +724,18 @@ fn check(args: &[String]) -> Result<(), String> {
             .after(&["mm"])
             .run(steps_cargo(&[&steps[..], &["--no-run"]].concat())),
     ];
+    if release_gate
+        && matches!(
+            host.as_str(),
+            "x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu"
+        )
+    {
+        stages.push(Stage::new("glibc-loader").after(&["shipped-mm"]).run({
+            let mut smoke = command(&python(), &["xtask/glibc_loader.py"], None);
+            smoke.arg(&shipped_mm);
+            smoke
+        }));
+    }
     // wasmtime's guest instructions against the base and the floors
     // (its own worktrees and target directories, `shipped::refs_dir`).
     if cfg!(target_os = "linux") {
