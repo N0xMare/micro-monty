@@ -2,6 +2,8 @@
 # uuencode and quoted-printable follow CPython's Modules/binascii.c here,
 # with Argument Clinic's messages (docs/spec.md §12).
 
+from _mm import index as _index
+
 _MISSING = object()
 
 
@@ -91,11 +93,7 @@ def _ascii(data):
 
 def _uint(x):
     # `unsigned_int(bitwise=True)` / `unsigned_long(bitwise=True)`: modulo 2**32.
-    if not isinstance(x, int):
-        if not hasattr(type(x), '__index__'):
-            raise TypeError(f"'{type(x).__name__}' object cannot be interpreted as an integer")
-        x = x.__index__()
-    return int(x) & 0xFFFFFFFF
+    return _index(x) & 0xFFFFFFFF
 
 
 def _check(r):
@@ -122,7 +120,9 @@ def hexlify(*args, **kwargs):
     """Hexadecimal representation of binary data."""
     data, sep, per = _clinic('hexlify', args, kwargs, ('data', 'sep', 'bytes_per_sep'), 3, 1)
     data = _buffer(data)
-    per = 1 if per is _MISSING else _ssize(per)
+    per = 1 if per is _MISSING else _index(per)
+    if not -2147483648 <= per <= 2147483647:
+        raise OverflowError('Python int too large to convert to C int')
     if sep is _MISSING:
         return _hexlify(data)
     if len(sep) != 1:
@@ -152,14 +152,6 @@ def unhexlify(*args, **kwargs):
 def a2b_hex(*args, **kwargs):
     """Binary data of hexadecimal representation."""
     return _check(_unhexlify(_ascii(_meth_o('a2b_hex', args, kwargs))))
-
-
-def _ssize(x):
-    if not isinstance(x, int):
-        if not hasattr(type(x), '__index__'):
-            raise TypeError(f"'{type(x).__name__}' object cannot be interpreted as an integer")
-        x = x.__index__()
-    return int(x)
 
 
 def crc32(*args, **kwargs):

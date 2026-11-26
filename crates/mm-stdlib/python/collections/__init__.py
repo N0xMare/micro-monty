@@ -2,7 +2,7 @@
 # (PSF license, see THIRD_PARTY.md). namedtuple builds its methods without
 # exec; deque is written here (CPython's is C).
 
-from _mm import backing as _backing, nfkc_table as _nfkc_table, signature as _signature
+from _mm import backing as _backing, index as _index_arg, nfkc_table as _nfkc_table, signature as _signature
 
 __all__ = ['ChainMap', 'Counter', 'OrderedDict', 'UserDict', 'UserList',
            'UserString', 'defaultdict', 'deque', 'namedtuple']
@@ -179,15 +179,6 @@ def namedtuple(typename, field_names, *, rename=False, defaults=None, module=Non
 ### deque
 ################################################################################
 
-def _index_arg(x):
-    # PyNumber_AsSsize_t: an int or __index__, clamped messages as CPython.
-    if isinstance(x, int):
-        return int(_backing(x))
-    if hasattr(type(x), '__index__'):
-        return x.__index__()
-    raise TypeError(f"'{type(x).__name__}' object cannot be interpreted as an integer")
-
-
 def _ssize(x):
     n = _index_arg(x)
     if n > 9223372036854775807 or n < -9223372036854775808:
@@ -196,23 +187,19 @@ def _ssize(x):
 
 
 def _seq_index(x):
-    if isinstance(x, int):
-        n = int(_backing(x))
-    elif hasattr(type(x), '__index__'):
-        n = x.__index__()
-    else:
-        raise TypeError(f"sequence index must be integer, not '{type(x).__name__}'")
+    n = _index_arg(x, None)
+    if n is None:
+        raise TypeError(f"sequence index must be integer, not '{_tpname(x)}'")
     if n > 9223372036854775807 or n < -9223372036854775808:
-        raise IndexError("cannot fit 'int' into an index-sized integer")
+        raise IndexError(f"cannot fit '{_tpname(x)}' into an index-sized integer")
     return n
 
 
 def _slice_index(x):
-    if isinstance(x, int):
-        return int(_backing(x))
-    if x is not None and hasattr(type(x), '__index__'):
-        return x.__index__()
-    raise TypeError('slice indices must be integers or have an __index__ method')
+    n = _index_arg(x, None)
+    if n is None:
+        raise TypeError('slice indices must be integers or have an __index__ method')
+    return n
 
 
 def _slice_bound(i, n):
@@ -581,9 +568,6 @@ class deque:
         return d
 
     def _repeat(self, n):
-        n = _index_arg(n)
-        if n > 9223372036854775807 or n < -9223372036854775808:
-            raise OverflowError("cannot fit 'int' into an index-sized integer")
         items = self._list()
         if n <= 0 or not items:
             return []
@@ -598,13 +582,16 @@ class deque:
         return items * n
 
     def __mul__(self, n):
-        if not (isinstance(n, int) or hasattr(type(n), '__index__')):
+        count = _index_arg(n, None)
+        if count is None:
             if (hasattr(type(n), '__rmul__') and type(n).__module__ != 'builtins'
                     and not isinstance(n, (str, bytes, list, tuple, deque))):
                 return NotImplemented
             _repeat_error(n)
+        if count > 9223372036854775807 or count < -9223372036854775808:
+            raise OverflowError(f"cannot fit '{_tpname(n)}' into an index-sized integer")
         d = self.copy()
-        d._set_list(self._repeat(n))
+        d._set_list(self._repeat(count))
         return d
 
     def __rmul__(self, n):
@@ -614,14 +601,17 @@ class deque:
         return self.__mul__(n)
 
     def __imul__(self, n):
-        if not (isinstance(n, int) or hasattr(type(n), '__index__')):
+        count = _index_arg(n, None)
+        if count is None:
             # A count's `__rmul__` runs first, as CPython's number slots
             # do before the sequence's in-place repeat.
             if (hasattr(type(n), '__rmul__') and type(n).__module__ != 'builtins'
                     and not isinstance(n, (str, bytes, list, tuple, deque))):
                 return NotImplemented
             _repeat_error(n)
-        items = self._repeat(n)
+        if count > 9223372036854775807 or count < -9223372036854775808:
+            raise OverflowError(f"cannot fit '{_tpname(n)}' into an index-sized integer")
+        items = self._repeat(count)
         self._state += 1
         self._set_list(items)
         return self
@@ -629,9 +619,12 @@ class deque:
 
 def _repeat_error(n):
     # `sq_repeat`'s error, which names the count's type (`tp_name`).
+    raise TypeError(f"can't multiply sequence by non-int of type '{_tpname(n)}'")
+
+
+def _tpname(n):
     d = getattr(type(n), '__dict__', None)
-    name = type(n).__name__ if d is None else d.get('__mm_tpname__', type(n).__name__)
-    raise TypeError(f"can't multiply sequence by non-int of type '{name}'")
+    return type(n).__name__ if d is None else d.get('__mm_tpname__', type(n).__name__)
 
 
 ################################################################################

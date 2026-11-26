@@ -2642,7 +2642,7 @@ Session::resume(Resume) -> Result<Progress, ResumeError>          // Unexpected 
 Session::cancel() -> bool                                         // drops the cell's frames, tasks, futures; keeps globals
 Session::snapshot(&mut self) / snapshot_with_limit(max_bytes) -> Result<Vec<u8>, SnapshotError>   // output capped at the memory limit by default
 Session::reset() -> Result<(), PyException>                       // keeps loaded bundled code and prelude parts; gives back committed memory
-Session::reset_to(&SessionTemplate) -> Result<(), SnapshotError> // a fresh session plus the template's setup, keeping what reset keeps
+Session::reset_to(&SessionTemplate) -> Result<(), SnapshotError> // takes the template's guest state; keeps host settings and continues counters
 SessionTemplate::capture(&Engine, &mut Session) / instantiate() / image() / from_image(..)
 Engine::with_module_cache(bytes) / with_host_code_in_snapshots(bool)
 
@@ -2655,6 +2655,12 @@ enum Progress {
 }
 enum Resume { Value(HostValue), Error(HostError), Future, Batch(Vec<(u64, Result<HostValue, HostError>)>), Continue }
 ```
+
+For exact fresh-session behavior at the memory limit, capture the template
+from a new session after setup. A template captured after `reset()` keeps
+that arena layout: `reset()` does not move live blocks, so free space can
+be split into fragments too small for a later allocation, even when the
+memory charge matches a fresh session's.
 
 A yield window is a deadline; cancel is `Session::cancel()`. A park request
 stays until the park it causes takes it, across `start` and `cancel`, so a

@@ -921,16 +921,20 @@ the session it already holds, so its output callback, clock, entropy,
 deadline, park handle, limits, fuel total, host arguments and hint
 overrides stay as a reset leaves them, and call ids and `Task-N` names
 continue; the setup's recursion limit and call log are restored with
-the session's call ids. Capture the template from a new session (or one
-just reset) after the setup. The next cell sees a new session after the
-setup: unlike
-`reset`, which keeps the bundled code and prelude parts earlier cells
-loaded (charged to the session, so a re-import costs less fuel), it keeps
-nothing earlier cells loaded. When those cells loaded nothing beyond the
-setup, it is `reset` and the setup in output, host calls, fuel total and
-memory charge; only where the first fuel period's safepoint checks fall
-can differ. A setup that reads the clock or entropy (`import random`,
-`time.time()`) would give every cell the captured values:
+the session's call ids. Unlike `reset`, which keeps the bundled code and
+prelude parts earlier cells loaded (charged to the session, so re-imports
+cost less fuel), `reset_to` keeps none of that code from the session it
+replaces. For an exact match to a new session at the memory limit, capture
+the template after setup in a new session. A template captured after
+`reset()` can leave less usable space even at the same memory charge:
+`reset()` does not move live heap blocks, so a free fragment can be too
+small for the next allocation. In the template fill probe with an 8 MiB
+limit, one fewer 4,008 B buffer fit \[M\]; this is not a general bound.
+When earlier cells loaded nothing beyond the setup, the post-reset
+template matches `reset()` and a rerun of the setup in output, host calls,
+fuel total and memory charge; only where the first fuel period's safepoint
+checks fall can differ. A setup that reads the clock or entropy
+(`import random`, `time.time()`) would give every cell the captured values:
 `Session::outside_reads` tells a host when its setup did. The session must
 have the limits, host definitions and local time zone the template was
 captured with; otherwise `reset_to` returns `SnapshotError::Mismatch`.
@@ -2161,6 +2165,8 @@ differs:
   object's repr; a guest that formats a `NameError`'s name hint through
   `traceback` pays 3 fuel units more than in 0.0.2 for each, for the
   builtins `exit`, `quit` and `input` \[M\].
+- Stdlib index conversion normalizes `__index__` results of type `bool`
+  or a strict `int` subclass without CPython's `DeprecationWarning`.
 
 ### Code size limits
 

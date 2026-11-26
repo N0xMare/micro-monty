@@ -2,6 +2,8 @@
 # CPython's io that needs no filesystem (docs/spec.md §10: files are host
 # functions). Newline translation is not applied.
 
+from _mm import index as _index
+
 __all__ = ['StringIO', 'BytesIO', 'UnsupportedOperation', 'SEEK_SET', 'SEEK_CUR', 'SEEK_END']
 
 SEEK_SET = 0
@@ -179,16 +181,7 @@ class StringIO(_Memory):
 
 def _ssize(x):
     # A seek argument as CPython converts it (`__index__`, C `Py_ssize_t`).
-    if isinstance(x, int):
-        x = int(x)
-    else:
-        try:
-            f = type(x).__index__
-        except AttributeError:
-            raise TypeError(f"'{type(x).__name__}' object cannot be interpreted as an integer") from None
-        x = f(x)
-        if not isinstance(x, int):
-            raise TypeError(f'__index__ returned non-int (type {type(x).__name__})')
+    x = _index(x)
     if not -9223372036854775808 <= x <= 9223372036854775807:
         raise OverflowError('Python int too large to convert to C ssize_t')
     return x
@@ -213,7 +206,9 @@ class BytesIO(_Memory):
         # BytesIO seeks relative to the position or the end too.
         self._check()
         pos = _ssize(pos)
-        whence = _ssize(whence)
+        whence = _index(whence)
+        if not -2147483648 <= whence <= 2147483647:
+            raise OverflowError('Python int too large to convert to C int')
         if whence == 0:
             if pos < 0:
                 raise ValueError(f'negative seek value {pos}')

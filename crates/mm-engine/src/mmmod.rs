@@ -3,9 +3,10 @@
 //! `__new__`, dataclasses' `__init__`) from these, without compiling
 //! source at run time.
 
+use crate::class::Dn;
 use crate::types::{T, ty};
 use crate::vm::{CallArgs, CodeObj, GSLOT_PRELUDE, Raised, Vm};
-use alloc::{format, string::String, sync::Arc, vec::Vec};
+use alloc::{format, string::String, sync::Arc, vec, vec::Vec};
 use mm_compile::bytecode::{Code, ParamSpec, op};
 use mm_core::Value;
 
@@ -213,6 +214,27 @@ impl Vm {
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn mm_backing(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     Ok(vm.unbx(vm.arg_o(&a, 0)))
+}
+
+/// `_mm.index(obj[, absent])`: an exact int, or `absent` only when there
+/// is no slot. An explicit `__index__ = None` still has a slot.
+pub(crate) fn mm_index(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
+    let x = vm.arg_o(&a, 0);
+    let n = vm.int_unbx(x);
+    if Vm::is_intlike(n) {
+        return Ok(if n == Value::TRUE || n == Value::FALSE {
+            Value::int(i64::from(n == Value::TRUE)).unwrap_or(Value::NONE)
+        } else {
+            n
+        });
+    }
+    if a.n > 1 {
+        let slot = vm.dn(Dn::Index)?;
+        if vm.class_lookup(vm.class_of(x), slot).is_none() {
+            return Ok(vm.arg_o(&a, 1));
+        }
+    }
+    vm.prelude_request("_index_exact", vec![x], crate::cont::Cont::None)
 }
 
 /// `types.MethodType(func, obj)` (`type(obj.method)` called): `func` bound

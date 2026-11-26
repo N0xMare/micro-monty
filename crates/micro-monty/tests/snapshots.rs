@@ -3529,11 +3529,14 @@ fn reset_to_a_template_is_a_fresh_session_and_its_setup() {
         let expected = fill(&mut fresh, &out);
         let mut s = session(&out);
         setup(&mut s, &out);
+        // The earlier template was captured after a reset, which keeps
+        // the arena's layout. Compare a fresh setup to a fresh capture.
+        let fresh_template = SessionTemplate::capture(&engine, &mut s).expect("captures");
         run_cell(&mut s, &engine, &out, LOADING, run);
-        s.reset_to(&template).expect("resets to the template");
+        s.reset_to(&fresh_template).expect("resets to the template");
         assert_eq!(fill(&mut s, &out), expected, "{run:?}");
         // Where a reset keeps what the cells loaded.
-        s.reset_to(&template).expect("resets to the template");
+        s.reset_to(&fresh_template).expect("resets to the template");
         run_cell(&mut s, &engine, &out, LOADING, run);
         s.reset().expect("resets");
         setup(&mut s, &out);

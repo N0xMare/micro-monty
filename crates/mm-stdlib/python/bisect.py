@@ -1,6 +1,8 @@
 """Bisection algorithms (adapted from CPython 3.14's Lib/bisect.py, with the
 argument handling of its C accelerator _bisect)."""
 
+from _mm import index as _index
+
 _MAXSIZE = 9223372036854775807
 
 
@@ -16,26 +18,14 @@ def _tpname(obj):
     return _own(cls, '__mm_tpname__') or cls.__name__
 
 
-def _index(x):
-    if isinstance(x, int):
-        return int(x)
-    method = getattr(type(x), '__index__', None)
-    if method is None:
-        raise TypeError(f"'{_tpname(x)}' object cannot be interpreted as an integer")
-    v = method(x)
-    if not isinstance(v, int):
-        raise TypeError(f'__index__ returned non-int (type {_tpname(v)})')
-    return int(v)
-
-
 def _bounds(a, lo, hi):
     lo = _index(lo)
     if lo > _MAXSIZE or lo < -_MAXSIZE - 1:
         raise OverflowError('Python int too large to convert to C ssize_t')
     if hi is not None:
-        if not isinstance(hi, int) and getattr(type(hi), '__index__', None) is None:
+        n = _index(hi, None)
+        if n is None:
             raise TypeError(f"argument should be integer or None, not '{_tpname(hi)}'")
-        n = _index(hi)
         if n > _MAXSIZE or n < -_MAXSIZE - 1:
             raise OverflowError(f"cannot fit '{_tpname(hi)}' into an index-sized integer")
         hi = n

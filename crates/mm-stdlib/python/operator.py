@@ -13,6 +13,8 @@ for convenience.
 This is the pure Python implementation of the module.
 """
 
+from _mm import index as _index
+
 __all__ = ['abs', 'add', 'and_', 'attrgetter', 'call', 'concat', 'contains', 'countOf',
            'delitem', 'eq', 'floordiv', 'ge', 'getitem', 'gt', 'iadd', 'iand',
            'iconcat', 'ifloordiv', 'ilshift', 'imatmul', 'imod', 'imul',
@@ -97,15 +99,7 @@ def floordiv(a, b):
 
 def index(a):
     "Same as a.__index__()."
-    if isinstance(a, int):
-        # The value as an exact int, as CPython's PyNumber_Index:
-        # enumerate's start is read natively, at any size; `int(a)` would
-        # call a subclass's `__int__`.
-        return next(enumerate((0,), a))[0]
-    method = getattr(type(a), '__index__', None)
-    if method is None:
-        raise TypeError(f"'{type(a).__name__}' object cannot be interpreted as an integer")
-    return method(a)
+    return _index(a)
 
 def inv(a):
     "Same as ~a."

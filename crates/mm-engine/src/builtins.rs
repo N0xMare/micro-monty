@@ -1357,6 +1357,7 @@ const DEFS: &[Def] = &[
         crate::mmmod::mm_nfkc_table
     ),
     m!("_mm", "backing", 1, 1, NO, NO, crate::mmmod::mm_backing),
+    m!("_mm", "index", 1, 2, NO, NO, crate::mmmod::mm_index),
     // Also `method`'s constructor (see `ctor`).
     m!("_mm", "method", 2, 2, NO, NO, crate::mmmod::mm_method),
     m!("_mm", "clock", 0, 0, NO, NO, crate::mmmod::mm_clock),

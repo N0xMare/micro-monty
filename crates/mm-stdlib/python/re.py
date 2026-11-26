@@ -8,6 +8,8 @@
 # parse tree to the program the native matcher (`_exec`, mm-engine's re.rs)
 # runs, in slices, so that every loop iteration below is a safepoint.
 
+from _mm import index as _index
+
 _MAXSIZE = 9223372036854775807
 MAXREPEAT = 4294967295
 MAXGROUPS = 524287
@@ -1307,14 +1309,6 @@ def _codegen(p, text):
 # ------------------------------------------------------------------ objects
 
 
-def _index(x):
-    if type(x) is int:
-        return x
-    if isinstance(x, int):
-        return int(x)
-    return range(x).stop
-
-
 def _type_name(x):
     return type(x).__name__
 
@@ -1584,9 +1578,8 @@ def _match_py(code, p, string, pos, endpos, mode, st):
 # group indices that may define `__index__`, and for `expand`.
 
 def _gindex(m, g):
-    if hasattr(type(g), '__index__'):
-        i = type(g).__index__(g)
-    else:
+    i = _index(g, None)
+    if i is None:
         i = m.re.groupindex.get(g, -1)
     if 0 <= i <= m.re.groups:
         return i

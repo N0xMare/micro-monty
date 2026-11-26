@@ -3,7 +3,7 @@
 # (PSF license, see THIRD_PARTY.md). Every iterator is lazy and pausable;
 # argument errors use CPython's messages.
 
-from _mm import backing as _backing
+from _mm import backing as _backing, index as _index
 
 _MAXSIZE = 9223372036854775807
 _MISSING = object()
@@ -81,14 +81,7 @@ def _unpack(name, args, lo, hi):
 
 
 def _ssize(x):
-    # An int subclass's value (`_backing`), never its own `__int__` or
-    # `__index__`, as CPython's `PyNumber_AsSsize_t`.
-    if isinstance(x, int):
-        n = int(_backing(x))
-    elif hasattr(type(x), '__index__'):
-        n = x.__index__()
-    else:
-        raise TypeError(f"'{type(x).__name__}' object cannot be interpreted as an integer")
+    n = _index(x)
     if n > _MAXSIZE or n < -_MAXSIZE - 1:
         raise OverflowError('Python int too large to convert to C ssize_t')
     return n
@@ -389,7 +382,6 @@ class islice:
     def __init__(self, *args, **kwargs):
         _no_kwargs('islice', kwargs)
         _unpack('islice', args, 2, 4)
-        self._it = iter(args[0])
         start, stop, step = 0, None, 1
         if len(args) == 2:
             stop = args[1]
@@ -404,6 +396,7 @@ class islice:
                 step = self._bound(args[3], 'Step for islice() must be a positive integer or None.')
                 if step == 0:
                     raise ValueError('Step for islice() must be a positive integer or None.')
+        self._it = iter(args[0])
         self._next = start
         self._stop = stop
         self._step = step
@@ -411,14 +404,13 @@ class islice:
 
     @staticmethod
     def _bound(x, msg):
-        if isinstance(x, int) or hasattr(type(x), '__index__'):
-            # An int's value as PyNumber_Index reads it: enumerate's start
-            # is read natively, where `int(x)` would call a subclass's
-            # `__int__`.
-            n = x.__index__() if not isinstance(x, int) else next(enumerate((0,), x))[0]
-            if n < 0 or n > _MAXSIZE:
-                raise ValueError(msg)
-            return n
+        try:
+            n = _index(x)
+        except BaseException:
+            pass
+        else:
+            if 0 <= n <= _MAXSIZE:
+                return n
         raise ValueError(msg)
 
     def __iter__(self):

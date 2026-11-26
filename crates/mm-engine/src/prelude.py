@@ -439,6 +439,11 @@ def _index(x):
     return r
 
 
+def _index_exact(x):
+    r = _index(x)
+    return int(r) if type(r) is bool else r
+
+
 def _index_other(x):
     t = type(x)
     f = _class_slot(t, '__index__', _MISSING)
