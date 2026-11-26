@@ -14,6 +14,12 @@ use alloc::boxed::Box;
 /// One bundled module, `bundled`, of a few codes.
 fn bundled() -> &'static [StdModule] {
     let src = "def f():\n    return 1\ndef g():\n    return 2\nx = f() + g()\n";
+    #[cfg(feature = "datetime")]
+    let src = alloc::format!(
+        "{src}def strptime(s, f):\n    from _mm import dt_strptime\n    return dt_strptime(s, f)\n"
+    );
+    #[cfg(feature = "datetime")]
+    let src = src.as_str();
     let program = mm_compile::compile(
         &mm_parse::parse(src).expect("parses"),
         mm_compile::Options::default(),
@@ -2844,4 +2850,39 @@ fn a_forged_struct_field_state_is_refused() {
         restore(&mut vm).err(),
         Some(SnapError::Corrupt("native step"))
     );
+}
+
+#[cfg(feature = "datetime")]
+#[test]
+fn strptime_restores_both_scans_and_refuses_a_forged_index() {
+    use crate::nstep::op::STRPTIME;
+    let src = "from bundled import strptime\n\
+               pad = ' \\t\\v\\x1c' * 70_000\n\
+               assert strptime(pad + '2024', pad + '%Y')[0][0] == 2024\n";
+    let parks = restores_where(src, 1, |vm, _| step_state(vm, STRPTIME).is_some());
+    assert!(parks >= 4, "index scans parked {parks} times");
+    let parked = |vm: &Vm| step_state(vm, STRPTIME).is_some();
+    refuses(src, parked, "native step", |vm| {
+        set_step_word(vm, STRPTIME, 1, u64::MAX);
+    });
+    // A same-sized byte block is not a valid index if it backs an operand.
+    let alias = "from bundled import strptime\n\
+                 assert strptime(' ' * 280_000 + '2024', ' ' * 8750 + '%Y')[0][0] == 2024\n";
+    refuses(alias, parked, "native step", |vm| {
+        let r = step_state(vm, STRPTIME).expect("state");
+        let fmt = vm
+            .data_block(vm.heap.get(r, 1).expect("format"))
+            .expect("block");
+        let index = vm
+            .heap
+            .get(r, 2)
+            .expect("index")
+            .as_byte_ref()
+            .expect("block");
+        assert_eq!(
+            vm.heap.bytes(fmt).expect("bytes").len(),
+            vm.heap.bytes(index).expect("bytes").len()
+        );
+        vm.heap.set(r, 2, Value::from_byte_ref(fmt)).expect("index");
+    });
 }

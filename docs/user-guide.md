@@ -1248,7 +1248,10 @@ most 2^21 + 2^17 units, and a park request or deadline waits at most about
 50 ms at the default limits on every measured row \[M\]
 (`crates/micro-monty/tests/steps.rs`).
 The membership table for `str.strip(chars)` is built in steps and counts
-against the same session memory limit as its inputs.
+against the same session memory limit as its inputs. So does the whitespace
+index built by `strptime`'s ASCII native fast path for long data and formats.
+The `strptime` rows do not cover the Python regex fallback for unsupported
+formats, non-ASCII input, or parse errors.
 Outside that bound are full garbage collections over a large heap, about
 0.4 ms per MiB live natively and 1.3–1.6 times that on wasm \[M\]. So
 is a greedy `re` repeat over an alternation with a group, such as

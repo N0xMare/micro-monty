@@ -7,9 +7,10 @@
 //! for anything else and `datetime/_strptime.py` (CPython's Python
 //! `_strptime`) takes over, so it must give exactly what that would.
 
+use crate::nstep::{Step as NativeStep, op};
 use crate::vm::{CallArgs, Raised, Vm};
 use alloc::vec::Vec;
-use mm_core::Value;
+use mm_core::{ByteRef, Value};
 
 #[inline(never)]
 fn int(v: i64) -> Value {
@@ -471,6 +472,42 @@ fn is_ws(c: u8) -> bool {
     matches!(c, b' ' | b'\t'..=b'\r' | 0x1c..=0x1f)
 }
 
+// One u32 per block, at most 4 MiB for two maximum-sized operands. With
+// MAX_STEPS, the replay inspects less than 1 MiB of whitespace even if
+// every alternative starts a new local scan.
+const WS_BLOCK: usize = 128;
+const WS_SHORT: usize = 1 << 16;
+
+/// Long strings index the first non-whitespace byte at or after each
+/// block boundary. This lets the original matcher replay any alternative
+/// in at most one local block, even if it starts inside a long run.
+fn ws_words(len: usize) -> usize {
+    if len > WS_SHORT {
+        len.div_ceil(WS_BLOCK)
+    } else {
+        0
+    }
+}
+
+fn ws_end(b: &[u8], p: usize, index: &[[u8; 4]], read: &mut u32) -> usize {
+    let lim = if index.is_empty() {
+        b.len()
+    } else {
+        b.len().min((p / WS_BLOCK + 1) * WS_BLOCK)
+    };
+    let end = p + b[p..lim].iter().take_while(|&&c| is_ws(c)).count();
+    if index.is_empty() {
+        return end;
+    }
+    *read += (end - p + usize::from(end < lim)) as u32;
+    if end == lim
+        && let Some(&w) = index.get(lim / WS_BLOCK)
+    {
+        return (u32::from_le_bytes(w) as usize).clamp(lim, b.len());
+    }
+    end
+}
+
 #[cfg_attr(mm_shipped, optimize(size))]
 fn has(s: &[u8], i: usize, lo: u8, hi: u8) -> bool {
     s.get(i).is_some_and(|&x| (lo..=hi).contains(&x))
@@ -542,22 +579,29 @@ fn step(hit: bool, end: usize) -> Step {
     if hit { Step::Hit(end) } else { Step::Miss }
 }
 
-/// `t`'s `k`-th alternative at `p`. A whitespace run counts a step per
-/// 16 bytes it scans toward [`MAX_STEPS`] (each alternative rescans it).
+/// `t`'s `k`-th alternative at `p`. Without an index, whitespace scans
+/// also count toward [`MAX_STEPS`] so repeated scans stay bounded.
 #[inline(never)]
 #[cfg_attr(mm_shipped, optimize(size))]
-fn alt_end(t: Tok, s: &[u8], p: usize, k: usize, steps: &mut u32) -> Step {
+fn alt_end(
+    t: Tok,
+    s: &[u8],
+    p: usize,
+    k: usize,
+    steps: &mut u32,
+    ws: &[[u8; 4]],
+    read: &mut u32,
+) -> Step {
     match t {
         Tok::Lit(_) if k > 0 => Step::Out,
         Tok::Lit(l) => step(s.get(p).is_some_and(|x| x.eq_ignore_ascii_case(&l)), p + 1),
         Tok::Ws => {
-            let run = s[p.min(s.len())..]
-                .iter()
-                .take_while(|&&x| is_ws(x))
-                .count();
-            *steps = steps.saturating_add(u32::try_from(run / 16).unwrap_or(u32::MAX));
-            if k < run {
-                Step::Hit(p + run - k)
+            let end = ws_end(s, p, ws, read);
+            if ws.is_empty() {
+                *steps += ((end - p) / 16) as u32;
+            }
+            if k < end - p {
+                Step::Hit(end - k)
             } else {
                 Step::Out
             }
@@ -605,7 +649,7 @@ fn alt_end(t: Tok, s: &[u8], p: usize, k: usize, steps: &mut u32) -> Step {
 /// warning).
 #[inline(never)]
 #[cfg_attr(mm_shipped, optimize(size))]
-fn tokens(f: &[u8]) -> Option<Vec<Tok>> {
+fn tokens(f: &[u8], ws: &[[u8; 4]], read: &mut u32) -> Option<Vec<Tok>> {
     // Each token takes a matching step: a format with more than
     // `MAX_STEPS` goes to the Python path whatever the input.
     let mut out = Vec::with_capacity(f.len().min(MAX_STEPS as usize));
@@ -617,9 +661,7 @@ fn tokens(f: &[u8]) -> Option<Vec<Tok>> {
         }
         let ch = f[i];
         if is_ws(ch) {
-            while i < f.len() && is_ws(f[i]) {
-                i += 1;
-            }
+            i = ws_end(f, i, ws, read);
             out.push(Tok::Ws);
             continue;
         }
@@ -674,8 +716,14 @@ fn index_of(d: u8, s: &[u8]) -> i64 {
 /// weekday, julian, -1, None, gmtoff)`, `fraction`, `gmtoff_fraction`.
 #[inline(never)]
 #[cfg_attr(mm_shipped, optimize(size))]
-fn strptime(s: &[u8], f: &[u8], steps: &mut u32) -> Option<[Option<i64>; 13]> {
-    let toks = tokens(f)?;
+fn strptime(
+    s: &[u8],
+    f: &[u8],
+    ws: [&[[u8; 4]]; 2],
+    steps: &mut u32,
+    read: &mut u32,
+) -> Option<[Option<i64>; 13]> {
+    let toks = tokens(f, ws[1], read)?;
     // The `re.match`: the first way through in the regex's order.
     let mut stack: Vec<(usize, usize, usize)> = Vec::with_capacity(toks.len());
     let (mut pos, mut k) = (0, 0);
@@ -685,7 +733,7 @@ fn strptime(s: &[u8], f: &[u8], steps: &mut u32) -> Option<[Option<i64>; 13]> {
             return None;
         }
         let t = toks[stack.len()];
-        match alt_end(t, s, pos, k, steps) {
+        match alt_end(t, s, pos, k, steps, ws[0], read) {
             Step::Hit(end) => {
                 stack.push((pos, k + 1, end));
                 (pos, k) = (end, 0);
@@ -815,17 +863,41 @@ pub(crate) fn dt_strptime(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     if !Vm::is_str(s) || !Vm::is_str(f) {
         return Ok(Value::NONE);
     }
-    let len = vm.str_ref(s).len() + vm.str_ref(f).len();
+    let (ns, nf) = (vm.str_bytes(s).len(), vm.str_bytes(f).len());
+    if !vm.str_ascii(s) || !vm.str_ascii(f) {
+        vm.burn(1 + ((ns + nf).min(2 * WS_SHORT) / 8) as u64);
+        return Ok(Value::NONE);
+    }
+    let n = ws_words(ns) + ws_words(nf);
+    if n == 0 {
+        return strptime_value(vm, s, f, None);
+    }
+    vm.burn_bytes(n * 4);
+    let res = vm.heap.alloc_bytes_zeroed(n * 4);
+    let index = Value::from_byte_ref(vm.hx(res)?);
+    vm.chunk_rest(op::STRPTIME, &[s, f, index], &[n as u64])
+}
+
+fn strptime_value(
+    vm: &mut Vm,
+    s: Value,
+    f: Value,
+    index: Option<ByteRef>,
+) -> Result<Value, Raised> {
     let mut steps = 0;
-    let r = {
-        let (s, f) = (vm.str_ref(s).as_bytes(), vm.str_ref(f).as_bytes());
-        if s.is_ascii() && f.is_ascii() {
-            strptime(s, f, &mut steps)
-        } else {
-            None
-        }
+    let mut read = 0;
+    let (s, f) = (vm.str_bytes(s), vm.str_bytes(f));
+    let (si, fi) = if let Some(index) = index {
+        let Ok(b) = vm.heap.bytes(index) else {
+            return Err(vm.bad_step());
+        };
+        b.as_chunks::<4>().0.split_at(ws_words(s.len()))
+    } else {
+        (&[][..], &[][..])
     };
-    vm.burn(1 + len as u64 / 8 + u64::from(steps) / 8);
+    let r = strptime(s, f, [si, fi], &mut steps, &mut read);
+    let short = if si.is_empty() { s.len() } else { 0 } + if fi.is_empty() { f.len() } else { 0 };
+    vm.burn(1 + (short as u64 + u64::from(read)) / 8 + u64::from(steps) / 8);
     let Some(r) = r else {
         return Ok(Value::NONE);
     };
@@ -835,6 +907,72 @@ pub(crate) fn dt_strptime(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     }
     let tt = vm.alloc_tuple(&v[..11])?;
     vm.alloc_tuple(&[tt, v[11], v[12]])
+}
+
+/// State slots are data, format and the joined index tables. The raw
+/// cursor counts unwritten entries, which are filled from right to left.
+pub(crate) fn strptime_state(vm: &Vm, [s, f, index]: [Value; 3], left: u64) -> bool {
+    let n = ws_words(vm.str_bytes(s).len()) + ws_words(vm.str_bytes(f).len());
+    Vm::is_str(s)
+        && Vm::is_str(f)
+        && vm.str_ascii(s)
+        && vm.str_ascii(f)
+        && n != 0
+        && left <= n as u64
+        && index.as_byte_ref().is_some_and(|b| {
+            ![vm.data_block(s), vm.data_block(f)].contains(&Some(b))
+                && vm.heap.bytes(b).is_ok_and(|b| b.len() == n * 4)
+        })
+}
+
+pub(crate) fn strptime_step(vm: &mut Vm, st: Value) -> Result<NativeStep, Raised> {
+    let Some((v @ [s, f, index], [_, left])) = vm.nstate_get::<3, 2>(op::STRPTIME, st) else {
+        return Err(vm.bad_step());
+    };
+    if !strptime_state(vm, v, left) {
+        return Err(vm.bad_step());
+    }
+    let index = index.as_byte_ref().ok_or_else(|| vm.bad_step())?;
+    if left == 0 {
+        return strptime_value(vm, s, f, Some(index)).map(NativeStep::Done);
+    }
+    let ns = ws_words(vm.str_bytes(s).len());
+    let left = left as usize;
+    let (base, bytes) = if left > ns {
+        (ns, vm.str_bytes(f))
+    } else {
+        (0, vm.str_bytes(s))
+    };
+    // A window of 256 KiB, even when every byte is whitespace. Use a
+    // fixed buffer so the index's write never aliases the text's read.
+    let mut buf = [[0; 4]; 2048];
+    let n = (left - base).min(buf.len());
+    let first = left - n;
+    let to = ((left - base) * WS_BLOCK).min(bytes.len());
+    let mut end = bytes.len();
+    // A complete block of whitespace inherits the next block's run end.
+    if to < end {
+        let Ok(b) = vm.heap.bytes(index) else {
+            return Err(vm.bad_step());
+        };
+        end = u32::from_le_bytes(b.as_chunks::<4>().0[left]) as usize;
+    }
+    for (i, out) in buf[..n].iter_mut().enumerate().rev() {
+        let at = (first - base + i) * WS_BLOCK;
+        let block = &bytes[at..(at + WS_BLOCK).min(bytes.len())];
+        if let Some(k) = block.iter().position(|&c| !is_ws(c)) {
+            end = at + k;
+        }
+        *out = (end as u32).to_le_bytes();
+    }
+    let read = to - (first - base) * WS_BLOCK;
+    let Ok(b) = vm.heap.bytes_mut(index) else {
+        return Err(vm.bad_step());
+    };
+    b[first * 4..left * 4].copy_from_slice(buf[..n].as_flattened());
+    vm.burn((read / 8) as u64);
+    vm.nstate_set_raw(st, 1, first as u64);
+    Ok(NativeStep::More)
 }
 
 // ------------------------------------------------------- ordinal math
@@ -866,35 +1004,27 @@ pub(crate) fn dt_ymd(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 
 #[cfg(test)]
 mod tests {
-    extern crate std;
-    use super::strptime;
-    use alloc::string::String;
-    use std::time::{Duration, Instant};
+    use super::{MAX_STEPS, WS_BLOCK, strptime};
+    use alloc::vec;
 
-    /// Each alternative once rescanned a whitespace run: a run of 2M
-    /// spaces before a failing `%Y` must cost about what 2,000 do. The
-    /// facade's parking test held this bound through `_mm`, which is now
-    /// the bundled modules' own.
     #[test]
-    fn a_long_whitespace_run_is_scanned_once() {
-        let time = |n: usize| {
-            let mut s = String::from(" ").repeat(n);
-            s.push('x');
-            let t = Instant::now();
-            assert!(strptime(s.as_bytes(), b" %Y", &mut 0).is_none());
-            t.elapsed()
-        };
-        let (mut slow, mut control) = (time(2_000_000), time(2_000));
-        for _ in 0..2 {
-            if slow < control * 4 + Duration::from_millis(500) {
-                break;
-            }
-            slow = slow.min(time(2_000_000));
-            control = control.min(time(2_000));
-        }
-        assert!(
-            slow < control * 4 + Duration::from_millis(500),
-            "{slow:?} against {control:?}"
+    fn strptime_whitespace_alternatives_only_rescan_one_block_each() {
+        let n = 2_000_000u32;
+        let mut s = vec![b' '; n as usize];
+        let ws = vec![n.to_le_bytes(); s.len().div_ceil(WS_BLOCK)];
+        s.extend_from_slice(b"x");
+        let (mut steps, mut read) = (0, 0);
+        assert!(strptime(&s, b" %Y", [&ws, &[]], &mut steps, &mut read).is_none());
+        assert!(read <= MAX_STEPS * WS_BLOCK as u32);
+
+        // The same run before adjacent directives whose first alternative
+        // fails must succeed in their original backtracking order.
+        s.pop();
+        s.extend_from_slice(b"1112024");
+        let r = strptime(&s, b" %m%d%Y", [&ws, &[]], &mut 0, &mut 0);
+        assert_eq!(
+            r.map(|r| [r[0], r[1], r[2]]),
+            Some([Some(2024), Some(11), Some(1)])
         );
     }
 }

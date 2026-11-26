@@ -940,11 +940,9 @@ subject = 'a' * 100_000
 fn long_lines_and_tracebacks_stay_linear() {
     // Fuel-audit sweep: one native step was quadratic in its input. A
     // column on a non-ASCII line counted from the line start (`ast.parse`
-    // and `tokenize` of one long line: over 80 s), each traceback frame
-    // split the whole source, and each `strptime` alternative rescanned a
-    // whitespace run (now mm-engine's `a_long_whitespace_run_is_scanned_once`:
-    // its native is the bundled modules' own). Each slow case must stay
-    // within a small factor of its control.
+    // and `tokenize` of one long line: over 80 s), and each traceback frame
+    // split the whole source. Each slow case must stay within a small
+    // factor of its control.
     let engine = Engine::new(EngineConfig::default());
     let time = |src: &str| {
         let out = Arc::new(Mutex::new(String::new()));

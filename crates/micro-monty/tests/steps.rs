@@ -1763,6 +1763,22 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "assert b'azb'.strip(d) == b'z'",
         1,
     ),
+    // `strptime`'s ASCII native fast path, not the regex fallback for
+    // unsupported formats. Both input and format can have a long run.
+    #[cfg(all(feature = "mod-time", feature = "mod-datetime"))]
+    (
+        Row::Bounded,
+        "from time import strptime\nstrptime('2024', '%Y')\ns = ' \\t\\v\\x1c' * 16_777_215 + '2024'",
+        "assert strptime(s, ' %Y').tm_year == 2024",
+        1,
+    ),
+    #[cfg(all(feature = "mod-time", feature = "mod-datetime"))]
+    (
+        Row::Bounded,
+        "from time import strptime\nstrptime('2024', '%Y')\nf = ' \\t\\v\\x1c' * 16_777_215 + '%Y'",
+        "assert strptime(' 2024', f).tm_year == 2024",
+        1,
+    ),
     // A single large struct field must not debit its entire byte cost
     // before the next safepoint.
     #[cfg(feature = "mod-struct")]

@@ -3078,6 +3078,8 @@ fn step_ok(vm: &Vm, o: u8, v: &dyn Fn(usize) -> Value, w: &[u64]) -> bool {
                 && small(&[2])
         }
         op::NUM_TEXT => w(0) == 0 || (w(3) <= 1 << 40 && w(4) <= w(3) && w(7) <= w(3)),
+        #[cfg(feature = "datetime")]
+        op::STRPTIME => crate::datetimemod::strptime_state(vm, [v(0), v(1), v(2)], w(0)),
         op::BYTES => {
             // Any byte job (its kind, then its words): a pass starts at or
             // before its position and its end, the output's bytes counted

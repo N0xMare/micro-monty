@@ -841,10 +841,11 @@ messages; copy wording where behaviour matches.
   once (version stamps, not a `seen` list), a single-base class takes its
   base's dunder flags and its own, the C3 merge counts tail occurrences, a
   column on a non-ASCII line counts at most 256 bytes from a checkpoint
-  (`Lines`), a traceback splits each source once, and `strptime` counts the
-  whitespace it rescans as steps. Work counted as one step is counted as
-  what it reads: a `re` set a step per 16 words, clearing the group
-  registers a step per 16, a shape's transitions a unit per 8. A container
+  (`Lines`), a traceback splits each source once, and `strptime`'s native
+  path indexes long whitespace runs in steps before trying alternatives.
+  Work counted as one step is counted as what it reads: a `re` set a step
+  per 16 words, clearing the group registers a step per 16, a shape's
+  transitions a unit per 8. A container
   `repr` walks at most `REPR_SLICE` (2^17) visits natively, with or
   without a fuel limit, before the twin goes on.
 - **Allocations outside the arena are bounded too.** The compiler's AST and
@@ -3314,11 +3315,19 @@ facade that opts out of `asyncio` and `json` and into `ast`.
   errors are CPython's; `strptime` takes the common directives (`%Y %m %d
   %H %M %S %f %z %y %b %B %a %A %p %I %j %%`) and returns `None` for
   anything else or any error, and the Python `_strptime` (CPython's own
-  Python code) takes over. Python still raises and builds the objects,
-  skipping the constructors' checks for fields the parser checked. Both
-  charge fuel per input byte, run between safepoints and add no snapshot
-  state. Cost: +4,668 B (`fromisoformat`) and +9,153 B (`strptime`) of
-  `hello.wasm` [M]. Aware arithmetic and comparison add only `_mm.dt_ord`
+  Python code) takes over on the original operands. This fallback is not
+  covered by the native step bound. Python still raises and builds the
+  objects, skipping the constructors' checks for fields the parser checked.
+  The ASCII native `strptime` path reads the arena's ASCII flags. For a
+  format or data string over 64 KiB, it builds an index of whitespace run
+  ends in 256 KiB windows, charging fuel for the windows, and keeps the
+  index in the arena across parks (four bytes per 128 input bytes).
+  Matching tries the same alternatives over the original bytes, reading
+  at most 128 bytes per indexed whitespace lookup and charging that work
+  too. `fromisoformat` charges per input
+  byte, without snapshot state. The initial native ports added +4,668 B
+  (`fromisoformat`) and +9,153 B (`strptime`) of `hello.wasm` [M].
+  Aware arithmetic and comparison add only `_mm.dt_ord`
   and `_mm.dt_ymd`, the ordinal of a valid `(y, m, d)` and its inverse,
   constant-time on ints and `None` for anything else; the aware paths
   themselves stay Python, rewritten after CPython's C, so `tzinfo`
