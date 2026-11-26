@@ -1805,6 +1805,31 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "assert not s.endswith(t)",
         1,
     ),
+    // A compact repeat still has one conversion per scalar. Pass the
+    // prepared tuple directly to the pack native to isolate struct work
+    // from expansion of a multi-million-argument Python call. A long run
+    // of redundant digits must also step even though it packs one item.
+    #[cfg(feature = "mod-struct")]
+    (
+        Row::Bounded,
+        "from struct import _pack\na = (3,) * 4_000_000",
+        "b = _pack('<4000000I', a)\nassert len(b) == 16_000_000 and b[-4:] == b'\\x03\\x00\\x00\\x00'",
+        1,
+    ),
+    #[cfg(feature = "mod-struct")]
+    (
+        Row::Bounded,
+        "import struct\nb = b'\\x03\\x00\\x00\\x00' * 4_000_000",
+        "a = struct.unpack('<4000000I', b)\nassert len(a) == 4_000_000 and a[-1] == 3",
+        1,
+    ),
+    #[cfg(feature = "mod-struct")]
+    (
+        Row::Bounded,
+        "import struct\nf = b'0' * 33_554_432 + b'1B'",
+        "assert struct.pack(f, 3) == b'\\x03'",
+        1,
+    ),
     // A single large struct field must not debit its entire byte cost
     // before the next safepoint.
     #[cfg(feature = "mod-struct")]
@@ -1821,8 +1846,8 @@ const SITES: &[(Row, &str, &str, usize)] = &[
         "(out,) = struct.unpack('67108864s', b)\nassert out[:2] == b'ab' and out[-2:] == b'ab' and len(out) == len(b)",
         1,
     ),
-    // A second item in the format takes the one-step path, which copies
-    // the field whole (44 to 86 ms at 32 MiB [M]).
+    // A second item in the format still leaves the field copy in one
+    // step (44 to 86 ms at 32 MiB on the previous path [M]).
     #[cfg(feature = "mod-struct")]
     (
         Row::Open,

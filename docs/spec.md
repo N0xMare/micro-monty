@@ -661,10 +661,17 @@ messages; copy wording where behaviour matches.
   before packing large sets, so repeated bytes do not serialize writes to
   the same bitset word. `struct.pack` and `unpack` of a format that is one
   `s` field of 1 MiB or more copy it through the strided byte job (stride
-  one, zero-padded past its source), a step's budget at a time. A format
-  with any other item takes the one-step path, which copies such a field
-  whole: 89 ms for `pack` and 86 ms for `unpack` at 64 MiB [M], the
-  `Open` rows of `tests/steps.rs`. The chunked operations:
+  one, zero-padded past its source), a step's budget at a time. In a mixed
+  format, each byte field is still copied whole in one step (the `Open`
+  rows of `tests/steps.rs`). Public `struct` size and arity queries still
+  scan the format in one step. The chunked operations:
+
+  - **`struct` scalar fields.** Pack and unpack preflight the immutable
+    format in byte windows, checking layout before converting any values.
+    They reread it to fill one arena bytes block or tuple in steps, even
+    for one item with many repeats. A Python conversion resumes at its
+    field using a private single-use ticket; it does not repack previous
+    fields, which could read a bytearray the conversion has since edited.
 
   - **Tables growing an insert at a time.** Once a full table holds 262,144
     live entries (`set::GROW_STEPS`), the insert that needs room hands the
@@ -3147,7 +3154,7 @@ borrows (§5).
 - **Guest-sized buffers elsewhere** are admitted or bounded by a constant:
   `re` matches waiting for the arena (a call ends its slice after 2^16 span
   words) and the backtrack stack (12 bytes a word past 2^16); `str.join`
-  over str subclasses; `struct` format items; split ranges; `strptime`'s
+  over str subclasses; split ranges; `strptime`'s
   fast path (formats past 4,096 tokens go to Python); `ast.parse` (512
   bytes per source byte, at most 32 KiB of source) and `tokenize` (64; at
   most 64 KiB); `unicodedata.normalize` (16 bytes per decomposed char);

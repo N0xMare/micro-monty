@@ -39,12 +39,10 @@ _CONVERT = ((_index, 'required argument is not an integer'),
 
 
 def _pack_args(fmt, args):
-    while True:
-        r = _pack(fmt, args)
-        if type(r) is not tuple:
-            return _check(r)
-        # A user object: convert it here (it may run Python), then retry.
-        i, kind = r
+    r = _pack(fmt, args)
+    while type(r) is tuple:
+        # Convert here (it may run Python), then finish the same field.
+        ticket, i, kind = r
         conv, msg = _CONVERT[kind]
         try:
             v = conv(args[i])
@@ -52,7 +50,8 @@ def _pack_args(fmt, args):
             if msg is None:
                 raise
             raise error(msg) from None
-        args = args[:i] + (v,) + args[i + 1:]
+        r = _pack(ticket, v)
+    return _check(r)
 
 
 def pack(*args):

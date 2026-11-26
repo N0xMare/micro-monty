@@ -40,6 +40,15 @@ fn session(src: &str, stop: impl Fn(&Vm) -> bool) -> Vm {
 
 /// [`session`] in fuel slices of `slice` units.
 fn session_in(src: &str, slice: u64, stop: impl Fn(&Vm) -> bool) -> Vm {
+    session_with(src, slice, stop, bundled())
+}
+
+fn session_with(
+    src: &str,
+    slice: u64,
+    stop: impl Fn(&Vm) -> bool,
+    stdlib: &'static [StdModule],
+) -> Vm {
     let module = mm_parse::parse(src).expect("parses");
     let prog = mm_compile::compile(
         &module,
@@ -49,7 +58,7 @@ fn session_in(src: &str, slice: u64, stop: impl Fn(&Vm) -> bool) -> Vm {
     )
     .expect("compiles");
     let mut vm = Vm::new(VmConfig {
-        stdlib: bundled(),
+        stdlib,
         ..VmConfig::default()
     })
     .expect("vm");
@@ -2919,4 +2928,83 @@ fn an_affix_comparison_cannot_resume_past_its_candidate() {
         restore(&mut vm).err(),
         Some(SnapError::Corrupt("native step"))
     );
+}
+
+#[cfg(feature = "struct")]
+#[test]
+fn a_forged_struct_scalar_job_is_refused() {
+    use crate::bytes::{JOB_WORDS, W_CH, W_END, W_I, W_I0, W_O, W_PASS, W_RES, job};
+    use crate::structmod::{AT, BASE, CODE, COUNT, LEN, MODE, REPEAT, SINGLE, SIZE};
+    let program = mm_compile::compile(
+        &mm_parse::parse("pass\n").expect("parses"),
+        mm_compile::Options::default(),
+    )
+    .expect("compiles");
+    let stdlib: &'static [StdModule] = Box::leak(Box::new([StdModule {
+        name: "struct",
+        code: Box::leak(mm_compile::pack::pack(&program.encode()).into_boxed_slice()),
+        packing: None,
+    }]));
+    let scan = "import struct\nv = struct._pack(b'<' + b'0' * 131072 + b'2I', (2, 3))\nassert v == b'\\x02\\x00\\x00\\x00\\x03\\x00\\x00\\x00'\n";
+    let emit = "import struct\nv = struct._unpack('<100000I', bytearray(400004), 4, False)\nassert len(v) == 100000 and v[-1] == 0\n";
+    let ticket = "import struct\nclass K: pass\nt, i, k = struct._pack('<I', (K(),))\nfor n in range(2000): pass\nassert struct._pack(t, 3) == b'\\x03\\x00\\x00\\x00'\n";
+    let state = |vm: &Vm| job_state(vm, job::STRUCT);
+    let parked = |src| session_with(src, 1361, |vm| state(vm).is_some(), stdlib);
+    for src in [scan, emit, ticket] {
+        let mut vm = parked(src);
+        assert!(state(&vm).is_some(), "{src}");
+        let mut restored = restore(&mut vm).expect("genuine state restores");
+        restored.set_fuel(None);
+        assert!(matches!(restored.resume(), Exit::Complete(_)), "{src}");
+    }
+    for (src, word, bad) in [
+        (scan, W_I, u64::MAX),
+        (scan, W_END, 1),
+        (scan, W_I0, 0),
+        (scan, W_CH, 1),
+        (scan, W_PASS, 3),
+        (scan, W_RES, 1),
+        (scan, MODE, 3),
+        (scan, COUNT, 2),
+        (scan, SINGLE, 3),
+        (emit, W_O, 100_001),
+        (emit, BASE, u64::MAX),
+        (emit, SIZE, 1),
+        (emit, LEN, 100_001),
+        (emit, AT, 400_001),
+        (emit, CODE, u64::MAX),
+        (emit, REPEAT, 100_001),
+        (ticket, REPEAT, 0),
+    ]
+    .into_iter()
+    .chain((REPEAT + 1..JOB_WORDS).map(|i| (emit, i, 1)))
+    {
+        let mut vm = parked(src);
+        let (r, n) = state(&vm).expect("struct job");
+        vm.heap.set_raw(r, n + 2 + word as u32, bad).expect("word");
+        assert_eq!(
+            restore(&mut vm).err(),
+            Some(SnapError::Corrupt("native step")),
+            "word {word} = {bad}"
+        );
+    }
+    for (src, slot, bad) in [
+        (scan, 0, Value::NONE),
+        (scan, 1, Value::NONE),
+        (scan, 2, Value::TRUE),
+        (scan, 3, Value::TRUE),
+        (emit, 1, Value::NONE),
+        (emit, 2, Value::NONE),
+        (ticket, 2, Value::NONE),
+        (ticket, 3, Value::TRUE),
+    ] {
+        let mut vm = parked(src);
+        let (r, _) = state(&vm).expect("struct job");
+        vm.heap.set(r, slot, bad).expect("value slot");
+        assert_eq!(
+            restore(&mut vm).err(),
+            Some(SnapError::Corrupt("native step")),
+            "slot {slot}"
+        );
+    }
 }

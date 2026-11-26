@@ -1779,6 +1779,11 @@ These follow from the sandbox and the snapshot contract (spec §1, §4).
   fuel for the incoming bytes and any tail moved in place, not for the
   untouched portion of the bytearray. `remove` also charges for the bytes
   it inspects, even when the value is absent.
+- **`struct`** can pause while scanning a pack or unpack format or
+  processing repeated scalar fields. A pack conversion such as
+  `__index__` does not rerun earlier conversions or reread earlier byte
+  fields. The public buffer API is unchanged; a large byte field in a
+  mixed format still copies in one step.
 - **Parts of bundled modules:** `logging.handlers`, `logging.config` and
   file handlers; `difflib.HtmlDiff`; `zlib` beyond `crc32` and `adler32` (no
   deflate; `gzip` and `zipfile` do not exist); `calendar` locales other than

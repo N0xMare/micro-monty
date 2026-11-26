@@ -3153,6 +3153,8 @@ fn byte_job_ok(vm: &Vm, v: &dyn Fn(usize) -> Value, w: &dyn Fn(usize) -> u64) ->
                 && (done == 0 || done < len(p) && done <= hi.saturating_sub(lo))
         }
         #[cfg(feature = "struct")]
+        job::STRUCT => crate::structmod::job_ok(vm, v, &w),
+        #[cfg(feature = "struct")]
         job::STRIDE if w(W_A + 1) == 1 => {
             use crate::bytes::{R_BYTES, W_O, W_RES};
             Vm::is_bytes_like(v(0))

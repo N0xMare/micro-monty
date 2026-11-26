@@ -2114,6 +2114,9 @@ pub(crate) mod job {
     pub const DECODE_ERR: u8 = 28;
     /// Tuple affixes: pattern `W_C`, `W_O` of its bytes compared so far.
     pub const AFFIX: u8 = 29;
+    /// A `struct` format preflight and its scalar result.
+    #[cfg(feature = "struct")]
+    pub const STRUCT: u8 = 30;
 }
 
 /// Input position, end and start (where each pass starts).
@@ -2649,6 +2652,8 @@ impl Vm {
             job::PAD => self.job_pad(j, start),
             job::DECODE_ERR => self.job_decode_err(j, start),
             job::AFFIX => self.job_affix(j, start),
+            #[cfg(feature = "struct")]
+            job::STRUCT => self.struct_job(j, start),
             _ => Err(self.bad_step()),
         }
     }
