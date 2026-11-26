@@ -997,8 +997,10 @@ are the rules above. Where the code falls short, the clause says so under
    estimate first (`Vm::native_short`, `Vm::fuel_short`). The bound is
    checked on every `Bounded` row, and by hand over every public native
    in 64-unit slices (`fuzz/src/bin/fuel_sweep.rs`, fuzz/README.md):
-   `struct.pack` and `struct.unpack` on 32 MiB inputs overdraw one slice
-   by about 4.72M units [M].
+   `struct.pack` and `struct.unpack` of a single 32 MiB `s` field overdraw
+   by at most 655,304 and 655,303 units, respectively [M]. The sweep does
+   not exercise large `s` fields in multi-item formats such as `Nsx`,
+   which still copy the field in one step.
 4. **Results do not depend on how the host slices the run.** Output,
    exceptions, the values left and the fuel spent are the same, with the
    exceptions under Today, whether the cell runs unparked, in fuel slices
