@@ -563,6 +563,50 @@ fn a_forged_intern_table_is_refused_and_unchecked_prunes_and_grows_to_its_live_e
     }
 }
 
+/// The smallest intern table a restore takes, checked or not, has two
+/// slots, and interning grows it; a table of one slot is refused.
+#[test]
+fn a_two_slot_intern_table_restores_and_a_one_slot_table_is_refused() {
+    for (slots, restores) in [(1, false), (2, true)] {
+        let mut heap = Heap::new(HeapConfig {
+            memory_limit: 64 << 20,
+            ..HeapConfig::default()
+        });
+        // An object of the table's shape (its count, then free slots),
+        // which its image turns into the heap's intern table.
+        let t = heap.alloc(T, 0, slots + 1, 0).unwrap();
+        heap.set(t, 0, Value::int(0).unwrap()).unwrap();
+        let roots = [Value::from_ref(t, 0)];
+        heap.collect(&mut |tr| tr.values(&roots));
+        let mut bytes = image(&heap);
+        assert_eq!(bytes[68..72], [0; 4], "no intern table yet");
+        bytes[68..72].copy_from_slice(&t.raw().to_le_bytes());
+        let header = word_at(&bytes, t.raw())(0);
+        bytes[header..header + 2].copy_from_slice(&types::INTERN_TABLE.to_le_bytes());
+        for trusted in [false, true] {
+            let mut reader = Reader::new(&bytes);
+            let read = if trusted {
+                Heap::read_snapshot_trusted(&mut reader, u64::MAX)
+            } else {
+                Heap::read_snapshot(&mut reader, u64::MAX)
+            };
+            assert_eq!(
+                read.as_ref().err(),
+                (!restores).then_some(&Error::BadSnapshot),
+                "{slots} slots, trusted {trusted}"
+            );
+            if let Ok(mut copy) = read {
+                let names: Vec<String> = (0..300).map(|i| format!("name{i}")).collect();
+                let refs: Vec<Ref> = names.iter().map(|n| copy.intern(n).unwrap()).collect();
+                for (name, &r) in names.iter().zip(&refs) {
+                    assert_eq!(copy.find_interned(name), Some(r), "{name}");
+                }
+                assert_eq!(copy.interned_count(), 300);
+            }
+        }
+    }
+}
+
 /// A checked restore refuses an entry more than `INTERN_WALK_CAP` slots
 /// after its hash's, even over occupied slots, and one behind a free
 /// slot; it takes a table with entries at the cap.
