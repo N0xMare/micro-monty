@@ -2234,7 +2234,9 @@ pub(crate) fn format(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
                 auto += 1;
                 v
             } else if let Ok(k) = name.parse::<u32>() {
-                vm.arg(&a, k + 1)
+                // Saturating: `{4294967295}` is past any argument count,
+                // so it is out of range, not argument 0 (the receiver).
+                vm.arg(&a, k.saturating_add(1))
             } else {
                 let key = vm.new_str(name)?;
                 if kw == Value::UNDEFINED {
