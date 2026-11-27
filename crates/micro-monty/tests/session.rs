@@ -1783,8 +1783,10 @@ fn vm_bytecode_deref_of_a_non_cell_does_not_panic() {
 /// object that verifies with a live table `check_live` refuses (pc 10
 /// reads register 1, dead there). A collection cleared the register, and
 /// in a build with debug assertions the dispatch loop's read of the poison
-/// panicked; a shipped build reads `UNDEFINED` and raises `TypeError`. The
-/// target now drops such a table where the poison is on.
+/// panicked; a shipped build reads `UNDEFINED` and raises `TypeError`. A
+/// debug build now clears the registers of a code whose table `check_live`
+/// refuses to `UNDEFINED` too (mm-engine `dead_fill`), and the target runs
+/// such a table as it is.
 #[test]
 fn vm_bytecode_wrong_live_table_does_not_panic() {
     let path = format!(

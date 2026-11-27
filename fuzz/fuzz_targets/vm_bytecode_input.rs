@@ -5,7 +5,7 @@
 
 use mm_compile::bytecode::Program;
 use mm_engine::{Exit, Vm, VmConfig};
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 const PROGRAMS: [&str; 6] = [
     "x = [i * i for i in range(20) if i % 3]\nd = {str(i): i for i in x}\nprint(sum(d.values()), sorted(d)[:3])\n",
@@ -52,23 +52,11 @@ pub fn run(data: &[u8]) {
             bytes[at] ^= ed[2];
         }
     }
-    let Some(mut program) = Program::decode(&bytes) else {
+    let Some(program) = Program::decode(&bytes) else {
         return;
     };
     if program.codes.is_empty() || !program.codes.iter().all(|c| c.verify()) {
         return;
-    }
-    // A live table `check_live` refuses clears registers the code still
-    // reads. A shipped build reads them back as `UNDEFINED`, which every
-    // instruction handles (mm-compile `live.rs`), but a build with debug
-    // assertions clears them to a poison that the dispatch loop asserts it
-    // never reads. There the table is dropped, so nothing is cleared.
-    if cfg!(debug_assertions) {
-        for c in &mut program.codes {
-            if c.check_live().is_err() {
-                Arc::make_mut(c).live.clear();
-            }
-        }
     }
     let config = VmConfig {
         heap: mm_core::HeapConfig {
