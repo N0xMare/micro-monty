@@ -1636,8 +1636,12 @@ template restore replace the heap, and the table with it.
   on every path, run or not (no instruction reads a dead register, and a
   register becomes live only by a store); the compiler's fuzz target and a
   test over the conformance cases, the prelude and the bundled modules run
-  it, and nothing a session runs does. One kind of frame keeps more than it
-  reads: a frame of the prelude or of a bundled module, whose code carries
+  it. A session runs it only when built with debug assertions, once per
+  code it clears: there a cleared register holds a poison the dispatch
+  loop asserts it never reads, except in a code whose table the check
+  refuses (edited bytecode, a forged image), cleared to `UNDEFINED` as in a
+  shipped build, which every instruction handles. One kind of frame keeps
+  more than it reads: a frame of the prelude or of a bundled module, whose code carries
   no table (it is stripped with the positions), keeps every register, those
   a returned callee's frame overlaid included, until it returns. A running
   generator's or coroutine's copy holds nothing at a collection that takes

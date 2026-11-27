@@ -1263,8 +1263,10 @@ pub struct Vm {
     /// emptied once `reclaim_code` has renumbered the codes (after its own
     /// collection, whose pass fills it under the old numbers); no other
     /// change gives an index to another code. Not in an image;
-    /// nothing a guest sees depends on it. Made at its first use: inline,
-    /// its 1,280 bytes were copied at each move of a `Vm` (+2,625
+    /// nothing a guest sees depends on it. In a debug build, the entries
+    /// past the first `DEAD_CACHE` hold each code's `check_live` verdict,
+    /// by code index (`crate::interp::dead_fill`). Made at its first use:
+    /// inline, its 1,280 bytes were copied at each move of a `Vm` (+2,625
     /// instructions in `Session::new_with`, native startup +3,104 [M]).
     pub(crate) dead_cache: Vec<crate::generator::DeadMemo>,
     /// Every bundled module name, enabled in this build or not

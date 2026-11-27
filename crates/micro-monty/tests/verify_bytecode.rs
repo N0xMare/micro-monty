@@ -466,6 +466,106 @@ fn verified_bytecode_rejects_wrong_container_types() {
     }
 }
 
+/// A live table `Code::check_live` refuses (edited bytecode, a forged
+/// image) has a collection clear a register its code still reads. A
+/// shipped build clears it to `UNDEFINED`, and the read raises
+/// `TypeError`; a debug build cleared it to the poison its dispatch loop
+/// asserts it never reads, and panicked. It now runs such code as a
+/// shipped build does, to the same report and fuel, also when the run is
+/// parked and restored, which does not carry the verdict.
+#[test]
+fn a_refused_live_table_runs_as_in_a_shipped_build() {
+    use mm_engine::{Exit, ParkReason, Vm, VmConfig};
+    use std::sync::Arc;
+    const FUEL: u64 = 1 << 30;
+    // Within `g`'s loop, after collections: the whole run takes 40,087.
+    const PARK: u64 = 30_000;
+
+    // `y` waits in a register of `f` across the call to `g`, whose lists
+    // collect; the edited table calls every register of `f` dead, so a
+    // collection clears `y` before `f` reads it again.
+    let src = concat!(
+        "def g():\n",
+        "    t = 0\n",
+        "    for i in range(20000):\n",
+        "        a = [i, i, i]\n",
+        "        t += len(a)\n",
+        "    return t\n",
+        "def f():\n",
+        "    y = 6\n",
+        "    g()\n",
+        "    return y * 7\n",
+        "f()\n",
+    );
+    let module = mm_parse::parse(src).expect("parses");
+    let mut program = mm_compile::compile(
+        &module,
+        mm_compile::Options {
+            last_expr_value: false,
+        },
+    )
+    .expect("compiles");
+    let f = program
+        .codes
+        .iter_mut()
+        .find(|c| &*c.qualname == "f")
+        .expect("f");
+    let f = Arc::make_mut(f);
+    assert!(f.check_live().is_ok());
+    for e in &mut f.live {
+        e.top = 0;
+    }
+    assert!(f.check_live().is_err());
+    let start = |fuel| {
+        let mut vm = Vm::new(VmConfig {
+            fuel: Some(fuel),
+            heap: mm_core::HeapConfig {
+                gc_min_bytes: 16 << 10,
+                ..mm_core::HeapConfig::default()
+            },
+            stdlib: mm_stdlib::MODULES,
+            ..VmConfig::default()
+        })
+        .expect("vm");
+        let entry = vm.load(&program, "dead.py", "").expect("loads");
+        (vm, entry)
+    };
+    let outcome = |vm: &mut Vm, exit: Exit| {
+        assert_eq!(exit, Exit::Error);
+        (vm.fuel_account(), vm.render_exception(vm.exception()))
+    };
+    let (mut vm, entry) = start(FUEL);
+    let exit = vm.run(entry);
+    let whole = outcome(&mut vm, exit);
+    assert!(
+        whole
+            .1
+            .ends_with("TypeError: unsupported operand type(s) for *: 'object' and 'int'\n"),
+        "{}",
+        whole.1
+    );
+
+    let (mut vm, entry) = start(PARK);
+    assert_eq!(vm.run(entry), Exit::Parked(ParkReason::Fuel));
+    let mut image = Vec::new();
+    vm.write_snapshot(&mut image).expect("parked");
+    let mut restored = Vm::read_snapshot(
+        &mut mm_core::Reader::new(&image),
+        mm_stdlib::MODULES,
+        None,
+        &mut |_, _, _, _| None,
+        1 << 30,
+    )
+    .expect("restores");
+    let finish = |vm: &mut Vm| {
+        vm.set_fuel(Some(FUEL - PARK));
+        let exit = vm.resume();
+        outcome(vm, exit)
+    };
+    assert_eq!(finish(&mut vm), whole);
+    assert_eq!(finish(&mut restored), whole);
+}
+
 #[test]
 fn fused_opcodes_verify_only_before_their_partner() {
     use mm_compile::bytecode::{Code, FUSED, op};

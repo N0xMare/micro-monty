@@ -937,7 +937,15 @@ impl Vm {
             let code = &self.codes[st.ci as usize].code;
             let nregs = code.nregs as usize;
             let pcs = crate::generator::suspend_pcs(code, at as u64);
-            crate::interp::clear_frame(&mut self.stack, code, st.base, st.base + nregs, &pcs);
+            crate::interp::clear_frame(
+                &mut self.stack,
+                code,
+                st.base,
+                st.base + nregs,
+                &pcs,
+                #[cfg(debug_assertions)]
+                crate::interp::dead_fill(&mut self.dead_cache, &self.codes, st.ci),
+            );
             // Reserved above.
             let buf = self.vslot_hot(c, coro::ARGS);
             let Some(r) = c.as_obj() else {

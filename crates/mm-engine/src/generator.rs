@@ -592,10 +592,11 @@ impl Vm {
                 dead
             }
         };
-        let looked = self
-            .heap
-            .fill_bits(b, dead, crate::interp::DEAD)
-            .unwrap_or(0);
+        #[cfg(debug_assertions)]
+        let fill = crate::interp::dead_fill(&mut self.dead_cache, &self.codes, ci);
+        #[cfg(not(debug_assertions))]
+        let fill = crate::interp::DEAD;
+        let looked = self.heap.fill_bits(b, dead, fill).unwrap_or(0);
         let _ = self.heap.set_raw(r, g::YPC, ypc | g::CLEARED);
         2 * looked
     }

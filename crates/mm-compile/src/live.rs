@@ -6,9 +6,13 @@
 //! instruction and every way on from it, whether a test ever runs that
 //! path or not.
 //!
-//! Nothing a session runs calls it: the compiler's tests and fuzz target
-//! do. A restored image's table is not checked (a wrong entry there makes
-//! registers read back as `UNDEFINED`, which every instruction handles).
+//! A session calls it only in a build with debug assertions, once for each
+//! code whose registers it clears, to clear a refused table's registers to
+//! `UNDEFINED` rather than the poison its reads assert they never see
+//! (mm-engine `interp.rs`, `dead_fill`); the compiler's tests and fuzz
+//! target call it too. Otherwise a restored image's table is not checked (a
+//! wrong entry there makes registers read back as `UNDEFINED`, which every
+//! instruction handles).
 
 use crate::bytecode::{Code, FORMATS, instr_len, op, opcode, operand, unfused};
 use core::fmt;

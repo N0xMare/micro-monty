@@ -140,12 +140,48 @@ pub(crate) fn walk_frames(
 /// What a cleared dead register holds: `UNDEFINED`, or in debug builds a
 /// poison no program makes (a native function no table has, which is not
 /// a reference and reads back from an image as it is), which the dispatch
-/// loop's operand reads assert they never see (`rd!`).
+/// loop's operand reads assert they never see (`rd!`). The registers of a
+/// code whose live table `Code::check_live` refuses are cleared to
+/// `UNDEFINED` in a debug build too, as in a shipped build ([`dead_fill`]).
 pub(crate) const DEAD: Value = if cfg!(debug_assertions) {
     Value::native(u32::MAX)
 } else {
     Value::UNDEFINED
 };
+
+/// What a debug build clears the dead registers of code `ci` to: [`DEAD`]
+/// when `Code::check_live` accepts its live table, so a read of a register
+/// the engine cleared still trips `rd!`, and `UNDEFINED` when it refuses
+/// it (edited bytecode, a forged image), which every instruction handles,
+/// so such code runs as in a shipped build. The verdict is a function of
+/// the code alone, kept by code index in `cache` (`Vm::dead_cache`) past
+/// its first `DEAD_CACHE` entries, as `(index + 1, refused, _)`: not in an
+/// image, empty after a restore, and emptied by `Vm::reclaim_code` when it
+/// renumbers the codes. The check is charged neither fuel nor a pass's
+/// work units, which count registers, not what is cached.
+#[cfg(debug_assertions)]
+pub(crate) fn dead_fill(
+    cache: &mut Vec<crate::generator::DeadMemo>,
+    codes: &[Arc<CodeObj>],
+    ci: u32,
+) -> Value {
+    let Some(code) = codes.get(ci as usize) else {
+        return DEAD;
+    };
+    let at = crate::generator::DEAD_CACHE + ci as usize;
+    if cache.len() <= at {
+        cache.resize(at + 1, (0, 0, [0; 4]));
+    }
+    let refused = match cache[at] {
+        (key, refused, _) if key == ci + 1 => refused,
+        _ => {
+            let refused = u32::from(code.code.check_live().is_err());
+            cache[at] = (ci + 1, refused, [0; 4]);
+            refused
+        }
+    };
+    if refused == 0 { DEAD } else { Value::UNDEFINED }
+}
 
 /// Clears the dead registers of the frames on `stack`, the running one
 /// (`st`, `depth` frames above the bottom) and its callers, each up to the
@@ -161,13 +197,22 @@ fn clear_dead(
     codes: &[Arc<CodeObj>],
     st: &State,
     depth: u32,
+    #[cfg(debug_assertions)] verdicts: &mut Vec<crate::generator::DeadMemo>,
 ) {
     let Some(code) = codes.get(st.ci as usize) else {
         return;
     };
     let pc = u32::try_from(st.pc).unwrap_or(u32::MAX);
     let dead = code.code.dead_at(pc);
-    clear_bits(stack, &code.code, st.base, stack.len(), dead);
+    clear_bits(
+        stack,
+        &code.code,
+        st.base,
+        stack.len(),
+        dead,
+        #[cfg(debug_assertions)]
+        dead_fill(verdicts, codes, st.ci),
+    );
     let (mut base, mut sp) = (st.base, specials.len());
     for _ in 0..depth {
         let f = match header(stack, codes, base) {
@@ -200,22 +245,55 @@ fn clear_dead(
             }
             dead
         };
-        clear_bits(stack, c, f.base as usize, base.saturating_sub(HDR), dead);
+        clear_bits(
+            stack,
+            c,
+            f.base as usize,
+            base.saturating_sub(HDR),
+            dead,
+            #[cfg(debug_assertions)]
+            dead_fill(verdicts, codes, f.code),
+        );
         base = f.base as usize;
     }
 }
 
 /// Clears the registers of the frame at `base` (of `code`, its registers
 /// ending before `end` at the latest) that are dead at each of `pcs`
-/// (`Code::dead_at`).
-pub(crate) fn clear_frame(stack: &mut [Value], code: &Code, base: usize, end: usize, pcs: &[u32]) {
-    clear_bits(stack, code, base, end, dead_where(code, pcs));
+/// (`Code::dead_at`); to `fill` in a debug build ([`dead_fill`]).
+pub(crate) fn clear_frame(
+    stack: &mut [Value],
+    code: &Code,
+    base: usize,
+    end: usize,
+    pcs: &[u32],
+    #[cfg(debug_assertions)] fill: Value,
+) {
+    clear_bits(
+        stack,
+        code,
+        base,
+        end,
+        dead_where(code, pcs),
+        #[cfg(debug_assertions)]
+        fill,
+    );
 }
 
 /// Clears the registers of the frame at `base` set in `dead` (as
 /// `Code::dead_at`'s bits), its registers ending before `end` at the
-/// latest: a store per dead register, none for the others.
-fn clear_bits(stack: &mut [Value], code: &Code, base: usize, end: usize, dead: [u64; 4]) {
+/// latest: a store per dead register, none for the others. To [`DEAD`],
+/// or to `fill` in a debug build ([`dead_fill`]).
+fn clear_bits(
+    stack: &mut [Value],
+    code: &Code,
+    base: usize,
+    end: usize,
+    dead: [u64; 4],
+    #[cfg(debug_assertions)] fill: Value,
+) {
+    #[cfg(not(debug_assertions))]
+    let fill = DEAD;
     let end = (base + code.nregs as usize).min(end).min(stack.len());
     let regs = stack.get_mut(base..end).unwrap_or_default();
     for (w, mut bits) in dead.into_iter().enumerate() {
@@ -225,7 +303,7 @@ fn clear_bits(stack: &mut [Value], code: &Code, base: usize, end: usize, dead: [
             let Some(v) = regs.get_mut(r) else {
                 return;
             };
-            *v = DEAD;
+            *v = fill;
         }
     }
 }
@@ -960,14 +1038,30 @@ impl Vm {
         let mut roots = |t: &mut mm_core::Tracer<'_>| {
             // Only a step that takes roots clears: a lazy-sweep slice and a
             // mark step between root scans read no register.
-            clear_dead(&mut self.stack, &self.specials, &self.codes, st, depth);
+            clear_dead(
+                &mut self.stack,
+                &self.specials,
+                &self.codes,
+                st,
+                depth,
+                #[cfg(debug_assertions)]
+                &mut self.dead_cache,
+            );
             // A task that has not run since it was last cleared has
             // nothing new to clear: its walk is skipped (most tasks of a
             // program with many are blocked at any collection).
             for task in self.tasks.iter_mut().flatten() {
                 if task.saved && !task.cleared {
                     let s = &task.st;
-                    clear_dead(&mut task.stack, &task.specials, &self.codes, s, task.depth);
+                    clear_dead(
+                        &mut task.stack,
+                        &task.specials,
+                        &self.codes,
+                        s,
+                        task.depth,
+                        #[cfg(debug_assertions)]
+                        &mut self.dead_cache,
+                    );
                     task.cleared = true;
                 }
             }
@@ -2124,8 +2218,16 @@ impl Vm {
             Cont::StoreReg(r) => (usize::from(r), 1),
             _ => (0, 0),
         };
+        #[cfg(debug_assertions)]
+        let fill = if n == 0 {
+            DEAD
+        } else {
+            dead_fill(&mut self.dead_cache, &self.codes, st.ci)
+        };
+        #[cfg(not(debug_assertions))]
+        let fill = DEAD;
         if let Some(regs) = self.stack.get_mut(st.base + r..st.base + r + n) {
-            regs.fill(DEAD);
+            regs.fill(fill);
         }
         match self.request.take() {
             Some(Request::Host(call)) => {
