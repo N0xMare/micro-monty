@@ -271,7 +271,9 @@ impl Vm {
             return Ok(false);
         };
         let state = w[g::STATE as usize];
-        if state != g::SUSPENDED && state != g::CREATED {
+        if state != g::SUSPENDED
+            && (state != g::CREATED || matches!(cont, Cont::Send(_)) && st.acc != Value::NONE)
+        {
             return Ok(false);
         }
         let (Some(func), Some(regs), Some(handled)) = (

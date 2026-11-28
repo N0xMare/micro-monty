@@ -5196,11 +5196,13 @@ impl Vm {
                 let cont = Cont::Send(exit);
                 sync!();
                 if it.is_obj_kind(ty::GEN as u8) {
-                    resumed!(
-                        self.gen_resume(st, it, acc, cont, pc, pc + ilen!()),
-                        pc + ilen!(),
-                        cont
-                    );
+                    let ret = pc + ilen!();
+                    let r = if tri!(self.gen_enter_fast(st, it, cont, pc, ret)) {
+                        Ok(Resumed::Frame)
+                    } else {
+                        self.gen_resume(st, it, acc, cont, pc, ret)
+                    };
+                    resumed!(r, ret, cont);
                 }
                 if Vm::is_native_iter(it) && acc == Value::NONE {
                     if let Some(v) = tri!(self.iter_next(it)) {
