@@ -6994,11 +6994,14 @@ fn bi_dir(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 fn object_init_subclass(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
     let kw = vm.kwarg(&a, 0);
     if kw != Value::UNDEFINED && kw != Value::NONE && vm.dict_len(kw) > 0 {
+        // CPython names the class by its `__qualname__`.
         let c = vm.arg_o(&a, 0);
-        let msg = format!(
-            "{}.__init_subclass__() takes no keyword arguments",
-            String::from(vm.class_name(c))
-        );
+        let name = if Vm::is_class(c) {
+            vm.str_ref(vm.vslot(c, crate::class::cls::QUALNAME))
+        } else {
+            vm.class_name(c)
+        };
+        let msg = format!("{name}.__init_subclass__() takes no keyword arguments");
         return Err(vm.err(T::TypeError, &msg));
     }
     Ok(Value::NONE)
