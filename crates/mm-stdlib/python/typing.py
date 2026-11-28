@@ -35,8 +35,6 @@ TYPE_CHECKING = False
 
 
 def _type_repr(obj):
-    if obj is type(None) or obj is None:
-        return 'None'
     if isinstance(obj, type):
         if obj.__module__ == 'builtins':
             return obj.__qualname__
@@ -66,9 +64,15 @@ class _GenericAlias:
         self.__origin__ = origin
         self.__args__ = args
         self._name = name
-        self.__parameters__ = tuple(a for a in args if isinstance(a, TypeVar))
+        params = tuple(a for a in args if isinstance(a, TypeVar))
+        # Each once, in order (`Callable[[T], T]` holds T twice).
+        self.__parameters__ = tuple(dict.fromkeys(params)) if len(params) > 1 else params
 
     def __repr__(self):
+        if _callable_list(self):
+            a = self.__args__
+            return ('typing.Callable[[' + ', '.join([_type_repr(x) for x in a[:-1]])
+                    + '], ' + _type_repr(a[-1]) + ']')
         if self._name is not None:
             head = 'typing.' + self._name
         else:
@@ -136,7 +140,8 @@ def _alias_origin(form):
         where = _ORIGIN_ELSEWHERE.get(form._name)
         if where is None:
             import collections.abc
-            o = getattr(collections.abc, form._name, None)
+            name = 'Set' if form._name == 'AbstractSet' else form._name
+            o = getattr(collections.abc, name, None)
         elif where[0] == 're':
             import re
             o = getattr(re, where[1], None)
@@ -164,10 +169,12 @@ def _alias_entries(alias, origin, bases):
 class _SpecialForm:
     """A typing marker (`Any`, `Optional`, `ClassVar`, `List`, ...)."""
 
-    def __init__(self, name, origin=None, getitem=None):
+    def __init__(self, name, origin=None, getitem=None, alias=False):
         self._name = name
         self.__origin__ = origin
         self._getitem = getitem
+        # An alias of a class (`List`, `Mapping`, `Callable`), not a marker.
+        self._is_alias = alias
 
     def __repr__(self):
         return 'typing.' + self._name
@@ -227,6 +234,32 @@ class _SpecialForm:
         return _GenericAlias(origin, _args_tuple(parameters), self._name)
 
 
+def _callable(self, parameters):
+    # CPython's `_CallableType.__getitem__`: a parameter list is spread into
+    # `__args__` before the result (`Callable[[int], str]` holds
+    # `(int, str)`); `...`, a ParamSpec or any other first item stays one.
+    if type(parameters) is not tuple or len(parameters) != 2:
+        raise TypeError('Callable must be used as Callable[[arg, ...], result].')
+    args, result = parameters
+    if isinstance(args, list):
+        parameters = (*args, result)
+    return _GenericAlias(self, _args_tuple(parameters), 'Callable')
+
+
+def _callable_list(alias):
+    # Whether a `Callable` alias's `__args__` are a parameter list and the
+    # result, which its repr and `get_args` gather back into a list
+    # (CPython's `_should_unflatten_callable_args`).
+    if alias._name != 'Callable' or not alias.__args__:
+        return False
+    a = alias.__args__
+    if len(a) != 2:
+        return True
+    first = a[0]
+    return not (first is ... or isinstance(first, ParamSpec)
+                or isinstance(first, _GenericAlias) and first._name == 'Concatenate')
+
+
 def _optional(self, parameters):
     if type(parameters) is tuple:
         raise TypeError(f'typing.Optional requires a single type. Got {parameters!r}.')
@@ -234,7 +267,7 @@ def _optional(self, parameters):
 
 
 def _alias(name, origin):
-    return _SpecialForm(name, origin)
+    return _SpecialForm(name, origin, None, True)
 
 
 # `int | str` is a `typing.Union` (as in CPython 3.14, `types.UnionType` is
@@ -262,7 +295,7 @@ Required = _SpecialForm('Required')
 NotRequired = _SpecialForm('NotRequired')
 ReadOnly = _SpecialForm('ReadOnly')
 Unpack = _SpecialForm('Unpack')
-Callable = _SpecialForm('Callable')
+Callable = _SpecialForm('Callable', None, _callable, True)
 
 List = _alias('List', list)
 Dict = _alias('Dict', dict)
@@ -593,7 +626,17 @@ def dataclass_transform(*, eq_default=True, order_default=False,
 
 def get_origin(tp):
     """Get the unsubscripted version of a type."""
-    if isinstance(tp, (_GenericAlias, _TypesAlias, Union)):
+    # An alias such as `Callable` or `Mapping` keeps its typing form as
+    # `__origin__` (collections.abc is imported only when it is needed);
+    # CPython's origin is the class it stands for. A marker has none.
+    if isinstance(tp, _SpecialForm):
+        return _alias_origin(tp) if tp._is_alias else None
+    if isinstance(tp, _GenericAlias):
+        o = tp.__origin__
+        if isinstance(o, _SpecialForm) and o._is_alias:
+            return _alias_origin(o) or o
+        return o
+    if isinstance(tp, (_TypesAlias, Union)):
         return tp.__origin__
     if tp is Generic:
         return Generic
@@ -602,6 +645,8 @@ def get_origin(tp):
 
 def get_args(tp):
     """Get type arguments with all substitutions performed."""
+    if isinstance(tp, _GenericAlias) and _callable_list(tp):
+        return (list(tp.__args__[:-1]), tp.__args__[-1])
     if isinstance(tp, (_GenericAlias, _TypesAlias, Union)):
         return tp.__args__
     return ()
