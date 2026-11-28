@@ -2954,7 +2954,7 @@ fn a_start_held_for_its_collection_restores_in_a_new_process() {
         assert_eq!(plain.0, want);
 
         // Parked every 997 units; the park inside the hold is the first
-        // after `armed` whose slice paid a collection (`collect_for_retry`).
+        // after `armed` whose slice paid a collection (`guest_collection`).
         let mut s = Session::new(&e).expect("session");
         let out = with_sink(&mut s);
         s.set_fuel_total(Some(HELD_TOTAL));

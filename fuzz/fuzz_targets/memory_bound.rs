@@ -3,6 +3,12 @@
 //! high-water within `K × limit + C`, and compiling it within
 //! `COMPILE_K` bytes per source byte (`memory_meter.rs`). A failure is a
 //! native allocation the guest can size that the limit does not admit.
+//! Fuel bounds the collections the cell runs too: at most
+//! `4 + fuel / 4096`, so a guest cannot have full collections run for
+//! next to no fuel (a raise at the wall that caught its `MemoryError` ran
+//! one per unit, 2.4 ms each at this limit [M]); every collection the
+//! guest causes is charged a unit per 64 bytes of the limit, and the
+//! heap's own trigger follows allocation, which is charged.
 //!
 //! The input is the `parse` target's (`parse_input::source`), with
 //! `M = 8388608` defined first; seed it with `fuzz/memory_probes/*.py`
@@ -33,6 +39,12 @@ fn check(src: String) {
             let m = memory_meter::measure(&src, LIMIT, 8);
             if let Some(v) = m.violation(LIMIT, src.len()) {
                 panic!("{v}\nsource: {src:?}");
+            }
+            if m.collections > 4 + m.fuel / 4096 {
+                panic!(
+                    "{} collections for {} fuel ({})\nsource: {src:?}",
+                    m.collections, m.fuel, m.outcome
+                );
             }
         })
         .expect("spawn")

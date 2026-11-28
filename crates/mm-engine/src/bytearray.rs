@@ -132,7 +132,9 @@ impl Vm {
                 }
                 // A failed shrink keeps the larger block (`n < cap / 4`), and
                 // its length changes in place as below, a growth's gap too.
-                Err(_) if shrink => {}
+                Err(_) if shrink => {
+                    self.heap.take_refused();
+                }
                 Err(e) => return self.hx_hot(Err(e)),
             }
         }

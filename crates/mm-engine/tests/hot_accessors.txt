@@ -126,7 +126,7 @@ interp.rs::dispatch
 interp.rs::dispatch_rare
 interp.rs::enter_frame
 interp.rs::exc_matches_short
-interp.rs::execute
+interp.rs::execute_steps
 interp.rs::hint_locals
 interp.rs::load_global_slow
 interp.rs::load_name_slow

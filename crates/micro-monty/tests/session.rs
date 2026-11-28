@@ -4042,11 +4042,13 @@ for i in range({n}):
 }
 
 /// A retry after `MemoryError` waits for a full collection, and charges
-/// the failing operation for it (`Vm::collect_for_retry`), so a guest that
+/// the failing operation for it (`Vm::guest_collection`), so a guest that
 /// catches `MemoryError` in a loop cannot have collections run for free:
 /// each failing `*` beside 225 MB live costs at least 2^20 units more than
-/// raising `MemoryError` itself. A request past the largest object raises
-/// at once, uncharged.
+/// raising `MemoryError` itself, and at most one charge: a rerun that
+/// fails after its collection raises without another. A request past the
+/// limit or past the largest object (64 MiB, under this 256 MiB limit)
+/// raises at once, uncharged.
 #[test]
 fn a_retry_charges_its_collection() {
     let spent = |body: &str| {
@@ -4066,13 +4068,70 @@ fn a_retry_charges_its_collection() {
         (1 << 40) - s.fuel_total().expect("a total")
     };
     let failed = spent("b'x' * 60_000_000");
-    let too_big = spent("b'x' * 300_000_000");
     let raised = spent("raise MemoryError");
-    assert!(too_big < raised + (1 << 20), "{too_big} against {raised}");
+    for big in [
+        "b'x' * 300_000_000",
+        "b'x' * 100_000_000",
+        "list(range(10 << 20))",
+    ] {
+        let too_big = spent(big);
+        assert!(
+            too_big < raised + (1 << 20),
+            "{big}: {too_big} against {raised}"
+        );
+    }
     assert!(
-        failed >= raised + 10 * (1 << 20),
+        (raised + 10 * (1 << 20)..raised + 11 * (1 << 20)).contains(&failed),
         "{failed} against {raised}"
     );
+}
+
+/// An exception with no room to be made raises the shared `MemoryError`,
+/// which asks for a collection (`Vm::raise_no_memory`) and pays for it as
+/// a retry does: at the wall, a loop that catches the failing raise ran a
+/// full collection per unit of fuel (the `memory_bound` fuzz target's
+/// timeout). `gc.collect()` pays the same. A request past the limit asks
+/// for none: no collection can make room for it.
+#[test]
+fn a_raise_without_room_charges_its_collection() {
+    let run = |body: &str, n: u32| {
+        let engine =
+            Engine::new(EngineConfig::new().with_limits(Limits::new().with_memory(8 << 20)));
+        let code = engine
+            .compile(
+                &format!(
+                    "keep = []\ntry:\n    while True:\n        keep.append([0])\nexcept MemoryError:\n    pass\nfor _ in range({n}):\n    try:\n        {body}\n    except BaseException:\n        pass\n"
+                ),
+                "test.py",
+            )
+            .expect("compiles");
+        let mut s = Session::new(&engine).expect("session");
+        s.set_fuel_total(Some(1 << 40));
+        let p = s.start(&code);
+        assert_eq!(p, Progress::Complete(None), "{body}");
+        (
+            (1 << 40) - s.fuel_total().expect("a total"),
+            s.gc_collections(),
+        )
+    };
+    for body in [
+        "raise ValueError",
+        "undefined_name",
+        "__import__('gc').collect()",
+    ] {
+        let (fuel0, gcs0) = run(body, 0);
+        let (fuel, gcs) = run(body, 50);
+        assert!(gcs >= gcs0 + 25, "{body}: {gcs} collections against {gcs0}");
+        assert!(
+            fuel - fuel0 >= (gcs - gcs0) * ((8 << 20) / 64),
+            "{body}: {fuel} against {fuel0}, {} collections",
+            gcs - gcs0
+        );
+    }
+    let (fuel0, gcs0) = run("bytearray(10**12)", 0);
+    let (fuel, gcs) = run("bytearray(10**12)", 50);
+    assert_eq!(gcs, gcs0, "a request past the limit collected");
+    assert!(fuel - fuel0 < 50 * 64, "{fuel} against {fuel0}");
 }
 
 /// Runs `setup`, then `src` on fuel slices of `slice` units with a

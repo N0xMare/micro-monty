@@ -3219,12 +3219,19 @@ impl Vm {
     /// `j` ran out of memory making its result: drops what it made and
     /// becomes a [`job::FAILED`] job, whose `MemoryError` comes a step
     /// later, once the safepoint between collected that (a handler then
-    /// starts with the memory free, as it would after one failed block).
+    /// starts with the memory free, as it would after one failed block),
+    /// charged as a raise's is (`Vm::guest_collection`).
     #[cfg_attr(mm_shipped, optimize(size))]
     fn job_failed(&mut self, j: &mut Job) -> Option<Value> {
         j.v = [Value::NONE; 4];
         j.kind = job::FAILED;
-        self.request_gc();
+        debug_assert!(
+            self.heap.peek_refused() != 0,
+            "a failed job without a refusal"
+        );
+        let room = self.room_may_help();
+        self.heap.take_refused();
+        self.guest_collection(crate::vm::GuestGc::Refused(room));
         None
     }
 

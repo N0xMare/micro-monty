@@ -603,7 +603,7 @@ impl Interned {
 pub(crate) const HDR: usize = 2;
 
 /// The most fuel a retry after `MemoryError` charges for its collection
-/// (`Vm::collect_for_retry`): 64 MiB of a limit's worth at a unit per 64
+/// (`Vm::guest_collection`): 64 MiB of a limit's worth at a unit per 64
 /// bytes. A step that also topped up a result's charge
 /// (`Vm::collect_for_result`) pays both, at most twice this (docs/spec.md
 /// §5).
@@ -878,6 +878,24 @@ pub(crate) enum Request {
         exc: Value,
         cont: crate::cont::Cont,
     },
+}
+
+/// Why guest code asks for a collection out of the heap's own trigger
+/// ([`Vm::guest_collection`]).
+#[derive(Clone, Copy)]
+pub(crate) enum GuestGc {
+    /// A raise or a byte job that found no room: a full collection at the
+    /// next safepoint if the refusal is one a collection may make room for
+    /// (`Vm::room_may_help`), charged unless one is asked for already.
+    Refused(bool),
+    /// A retry after `MemoryError`: a fresh collection it waits for,
+    /// always charged (it restarts any collection in progress).
+    Retry,
+    /// A result of 64 KiB or more near the wall, which paid this much for
+    /// itself: its charge is topped up to a collection's.
+    Result(u64),
+    /// `gc.collect()`.
+    Collect,
 }
 
 /// Work left after a cell's main task stopped, done by prelude code in the
@@ -1896,8 +1914,9 @@ impl Vm {
         regular
     }
 
-    /// Asks for a collection at the next safepoint.
-    pub(crate) fn request_gc(&mut self) {
+    /// Asks for a collection at the next safepoint. Private: guest code
+    /// asks through [`Vm::guest_collection`], which charges for it.
+    fn request_gc(&mut self) {
         if !self.gc_pending {
             self.gc_pending = true;
             self.tick_spare = self.ticks;
@@ -1911,7 +1930,7 @@ impl Vm {
     /// `CALL` that runs again after a park keeps the wait it began
     /// (`fresh` false), so parks cannot push its end back; `gc.collect`
     /// always waits for one that starts after it (`fresh`).
-    pub(crate) fn collect_in_steps(&mut self, fresh: bool) {
+    fn collect_in_steps(&mut self, fresh: bool) {
         let n = self.heap.stats().collections;
         if fresh || self.gc_wait <= n {
             self.gc_wait = n + 1 + u64::from(self.heap.marking());
@@ -2348,7 +2367,7 @@ impl Vm {
     #[inline(never)]
     pub(crate) fn oom_retry_expansion(&mut self, st: &State, pc: usize) -> Raised {
         if st.ci != self.tramp && !self.oom_retry_if(true, (u64::from(st.ci) << 32) | pc as u64) {
-            let _ = self.heap.take_refused();
+            let _ = self.heap.refuse(u64::MAX);
         }
         Raised
     }
@@ -2372,7 +2391,7 @@ impl Vm {
             return false;
         }
         self.exc = Value::NONE;
-        self.collect_for_retry();
+        self.guest_collection(GuestGc::Retry);
         self.oom_defer_at = self.gc_wait;
         true
     }
@@ -2383,7 +2402,7 @@ impl Vm {
     /// asked (`list(range(10**9))`), raises at once, without a collection
     /// or its charge.
     pub(crate) fn room_may_help(&self) -> bool {
-        let refused = self.heap.take_refused();
+        let refused = self.heap.peek_refused();
         refused != 0 && refused <= self.heap.memory_limit()
     }
 
@@ -2400,31 +2419,54 @@ impl Vm {
     }
 
     /// What an operation pays for a full collection it asks for out of
-    /// turn ([`Vm::collect_for_retry`], `Vm::collect_for_result`): a unit
+    /// turn ([`Vm::guest_collection`]): a unit
     /// per 64 bytes of the memory limit, at most [`RETRY_CHARGE`].
     pub(crate) fn collection_charge(&self) -> u64 {
         (self.heap.memory_limit() / 64).min(RETRY_CHARGE)
     }
 
-    /// Asks for the collection a retry after `MemoryError` waits for: a
-    /// fresh one, a mark in progress dropped (`Heap::restart_collection`),
-    /// held as `gc.collect`'s is. Garbage is made by dropping references,
-    /// which allocates nothing, and a value dropped during a mark survives
-    /// it, so no count says a collection cannot help. The failing operation
-    /// is charged for it instead, at once: a unit per 64 bytes of the
-    /// memory limit (what one collection can mark at most), at most
-    /// [`RETRY_CHARGE`] units, so a guest that catches `MemoryError` in a
-    /// loop pays for each collection in fuel. Every retry pays, whatever the
-    /// collector had asked for or done before it: the charge is a function
-    /// of the failure, not of whether a mark or a result's collection was
-    /// in progress, which the GC mode and the slices decide. A result's
-    /// collection asked for before (`Vm::collect_for_result`, which tops
-    /// its result's charge up) is restarted here, so the retry pays for the
-    /// fresh one it waits for.
-    pub(crate) fn collect_for_retry(&mut self) {
-        self.burn(self.collection_charge());
-        self.heap.restart_collection();
-        self.collect_in_steps(false);
+    /// The one way guest code causes a collection out of the heap's own
+    /// trigger: [`Vm::request_gc`] and [`Vm::collect_in_steps`] are private
+    /// to this module, so no other path can ask for one uncharged. Each
+    /// collection it starts is charged [`Vm::collection_charge`] at once,
+    /// in the instruction that asks (deterministic across parks, snapshots
+    /// and restores: `gc_pending` and `gc_wait` are in the image); a
+    /// request that joins one already asked for pays nothing. A retry after
+    /// `MemoryError` restarts any collection in progress (garbage is made by
+    /// dropping references, which allocates nothing, so no count says a
+    /// collection cannot help) and always pays. A large result's charge is
+    /// topped up, not added, and only by the request that starts a wait.
+    /// The engine's own collections (a cell's start at the wall, a cell's
+    /// end, code reclamation, a compile refused for room, a snapshot's)
+    /// call the heap directly and are not charged.
+    pub(crate) fn guest_collection(&mut self, why: GuestGc) {
+        match why {
+            GuestGc::Refused(false) => {}
+            GuestGc::Refused(true) => {
+                if !self.gc_pending {
+                    self.burn(self.collection_charge());
+                }
+                self.request_gc();
+            }
+            GuestGc::Retry => {
+                self.heap.take_refused();
+                self.burn(self.collection_charge());
+                self.heap.restart_collection();
+                self.collect_in_steps(false);
+            }
+            GuestGc::Result(paid) => {
+                if self.gc_wait <= self.heap.stats().collections
+                    && self.heap.allocated_since_own_gc() < self.heap.memory_limit() / 64
+                {
+                    self.burn(self.collection_charge().saturating_sub(paid));
+                }
+                self.collect_in_steps(false);
+            }
+            GuestGc::Collect => {
+                self.burn(self.collection_charge());
+                self.collect_in_steps(true);
+            }
+        }
     }
 
     fn oom_retry_if(&mut self, pure: bool, at: u64) -> bool {
@@ -2443,9 +2485,13 @@ impl Vm {
             && self.consumed.is_empty()
             && self.partial.is_none();
         if retry {
-            self.collect_for_retry();
+            self.guest_collection(GuestGc::Retry);
             self.oom_wait = true;
             self.oom_rerun_at = at;
+        } else if rerun && self.exc_type(self.exc) == T::MemoryError {
+            // The rerun after its collection failed too: final, so its raise
+            // asks for no second collection (as an expansion's, a start's).
+            let _ = self.heap.refuse(u64::MAX);
         }
         retry
     }
@@ -2625,6 +2671,9 @@ impl Vm {
         &mut self,
         mut step: impl FnMut(&mut Vm) -> Result<R, Raised>,
     ) -> Result<R, Raised> {
+        // A host-side refusal before the cell (a define, a compile) raised
+        // nothing in it: it does not reach the step's retry or raise.
+        self.heap.take_refused();
         // Read before the step: what a refused step allocates is what a
         // rerun would allocate again, so only garbage from before it counts.
         let idle = self.heap.idle();
@@ -2636,6 +2685,7 @@ impl Vm {
                     && self.exc_type(self.exc) == T::MemoryError
                     && self.room_may_help() =>
             {
+                self.heap.take_refused();
                 self.collect_now();
                 step(self)
             }

@@ -256,7 +256,7 @@ pub(crate) fn mm_method(vm: &mut Vm, a: CallArgs) -> Result<Value, Raised> {
 #[allow(clippy::unnecessary_wraps, reason = "the one builtin signature")]
 #[cfg_attr(mm_shipped, optimize(size))]
 pub(crate) fn mm_gc_collect(vm: &mut Vm, _a: CallArgs) -> Result<Value, Raised> {
-    vm.collect_in_steps(true);
+    vm.guest_collection(crate::vm::GuestGc::Collect);
     Ok(Value::NONE)
 }
 

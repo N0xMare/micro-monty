@@ -1031,7 +1031,19 @@ impl Heap {
             (n, &[][..])
         };
         let avail = self.available_bytes();
-        self.bytes.append_large(b.0, data, reserve, avail)?;
+        // Recorded as what was asked: a collection may make room for it.
+        if let Err(e) = self.bytes.append_large(b.0, data, reserve, avail) {
+            return Err(if e == Error::OutOfMemory {
+                let want = (len + data.len()).max(reserve) as u64;
+                self.refuse(if want > MAX_OBJECT_BYTES {
+                    u64::MAX
+                } else {
+                    want
+                })
+            } else {
+                e
+            });
+        }
         self.stats.allocated_since_gc += data.len() as u64;
         Ok(b)
     }
@@ -1207,7 +1219,13 @@ impl Heap {
     #[inline(never)]
     fn refuse_if(&self, e: Error, bytes: u64) -> Error {
         if e == Error::OutOfMemory {
-            self.refuse(bytes);
+            // Past the object size cap no collection makes room: recorded
+            // as past the limit, which at limits above the cap it is not.
+            self.refuse(if bytes > MAX_OBJECT_BYTES + 8 {
+                u64::MAX
+            } else {
+                bytes
+            });
         }
         e
     }
@@ -1216,7 +1234,7 @@ impl Heap {
     /// [`Heap::take_refused`] gives.
     #[cold]
     #[inline(never)]
-    pub(crate) fn refuse(&self, bytes: u64) -> Error {
+    pub fn refuse(&self, bytes: u64) -> Error {
         self.refused.store(bytes.max(1), Ordering::Relaxed);
         Error::OutOfMemory
     }
@@ -1238,6 +1256,12 @@ impl Heap {
     /// a cap refused before asking the heap).
     pub fn take_refused(&self) -> u64 {
         self.refused.swap(0, Ordering::Relaxed)
+    }
+
+    /// [`Heap::take_refused`] without taking it.
+    #[must_use]
+    pub fn peek_refused(&self) -> u64 {
+        self.refused.load(Ordering::Relaxed)
     }
 
     /// Unreserved budget after arena, collector and external allocations.
@@ -1297,7 +1321,12 @@ impl Heap {
     pub fn would_fit(&self, bytes: u64) -> bool {
         let fits = self.fits(bytes);
         if !fits {
-            self.refuse(bytes);
+            // Past the object size cap no collection makes room.
+            self.refuse(if bytes > MAX_OBJECT_BYTES {
+                u64::MAX
+            } else {
+                bytes
+            });
         }
         fits
     }

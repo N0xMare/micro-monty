@@ -513,7 +513,10 @@ impl Vm {
                     false,
                 )
                 .map_err(|e| match e {
-                    mm_compile::DecodeError::TooLarge => self.err(T::MemoryError, ""),
+                    mm_compile::DecodeError::TooLarge => {
+                        let _ = self.heap.refuse(self.heap.memory_limit());
+                        self.err(T::MemoryError, "")
+                    }
                     mm_compile::DecodeError::Invalid => {
                         self.err(T::SystemError, "micro-monty: a bundled module is corrupt")
                     }

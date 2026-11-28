@@ -823,11 +823,14 @@ impl Vm {
             if matches!(
                 v.obj_kind().map(u16::from),
                 Some(ty::LIST | ty::TUPLE | ty::DICT | ty::SET | ty::METHOD | ty::EXC)
-            ) && match seen.insert(&mut self.heap, v) {
-                Ok(inserted) => inserted,
+            ) && if let Ok(inserted) = seen.insert(&mut self.heap, v) {
+                inserted
+            } else {
                 // As at the depth/visit threshold, use budgeted Python
-                // rendering when native preflight cannot finish cheaply.
-                Err(_) => return true,
+                // rendering when native preflight cannot finish cheaply;
+                // the refusal raised nothing.
+                self.heap.take_refused();
+                return true;
             } {
                 let t = self.type_of(v);
                 let parts = match t {

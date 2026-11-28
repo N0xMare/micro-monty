@@ -119,6 +119,10 @@ pub struct Measured {
     pub restore: usize,
     /// How the cell ended (or the compile error).
     pub outcome: String,
+    /// The fuel the cell spent.
+    pub fuel: u64,
+    /// The collections that ran while it did (`Session::gc_collections`).
+    pub collections: u64,
 }
 
 impl Measured {
@@ -190,11 +194,13 @@ pub fn measure(src: &str, limit: u64, slices: usize) -> Measured {
                 image: 0,
                 restore: 0,
                 outcome: format!("compile {}: {}", e.type_name, e.message),
+                fuel: 0,
+                collections: 0,
             };
         }
     };
     let base = mark();
-    let (outcome, run, snapshot, image) = {
+    let (outcome, run, snapshot, image, fuel, collections) = {
         let mut s = match Session::new(&engine) {
             Ok(s) => s,
             Err(e) => panic!("a new session: {e:?}"),
@@ -203,11 +209,14 @@ pub fn measure(src: &str, limit: u64, slices: usize) -> Measured {
         if let Err(e) = s.define(&HostModule::untyped("h", &["sink", "mark"])) {
             panic!("define: {e:?}");
         }
+        let gcs = s.gc_collections();
+        let mut fuel = 0;
         s.set_fuel(Some(SLICE));
         let mut p = s.start(&code);
         for _ in 0..slices {
             let next = match &p {
                 Progress::Parked { .. } => {
+                    fuel += SLICE - s.fuel().unwrap_or(0);
                     s.set_fuel(Some(SLICE));
                     Resume::Continue
                 }
@@ -219,6 +228,10 @@ pub fn measure(src: &str, limit: u64, slices: usize) -> Measured {
                 Err(e) => panic!("resume: {e:?}"),
             };
         }
+        if !matches!(p, Progress::Parked { .. }) {
+            fuel += SLICE - s.fuel().unwrap_or(0);
+        }
+        let collections = s.gc_collections() - gcs;
         let outcome = match p {
             Progress::Complete(_) => "complete".to_owned(),
             Progress::Error(e) => e.type_name,
@@ -228,7 +241,7 @@ pub fn measure(src: &str, limit: u64, slices: usize) -> Measured {
         mark();
         let image = s.snapshot().unwrap_or_default();
         let snapshot = PEAK.load(Relaxed).saturating_sub(base);
-        (outcome, run, snapshot, image)
+        (outcome, run, snapshot, image, fuel, collections)
     };
     mark();
     let restored = (!image.is_empty()).then(|| engine.restore(&image));
@@ -241,5 +254,7 @@ pub fn measure(src: &str, limit: u64, slices: usize) -> Measured {
         image: image.len(),
         restore,
         outcome,
+        fuel,
+        collections,
     }
 }

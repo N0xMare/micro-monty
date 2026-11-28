@@ -480,6 +480,8 @@ impl Vm {
 
     /// Continues after a park.
     pub fn resume(&mut self) -> Exit {
+        // What the host did while the cell was stopped raised nothing in it.
+        self.heap.take_refused();
         // Parked between tasks: the scheduler waited for a collection, or
         // skipped a cancelled handle.
         if self.loop_flags & (crate::vm::LOOP_START_WAIT | crate::vm::LOOP_SKIP_PARK) != 0
@@ -585,8 +587,28 @@ impl Vm {
 
     /// Runs `st` (raising the pending exception at `st.pc` first if
     /// `fault`) and then the other tasks, until the cell completes, raises
-    /// out of the main task or stops for the host.
-    pub(crate) fn execute(&mut self, mut st: State, mut fault: bool) -> Exit {
+    /// out of the main task or stops for the host. A refusal left at the
+    /// exit is dropped: a host-side one (a value conversion, a compile)
+    /// reaches the host as an error, and no reader needs one across an exit
+    /// (a retry, a failed job and `Vm::unwind` take theirs within the step),
+    /// so the record is the same after a snapshot and restore, which
+    /// starts without it. One left at a fuel park is an engine leak. One
+    /// at entry belongs to the raise `fault` starts with, or else to the
+    /// host (a completion's preflight that fell back to rendering here).
+    pub(crate) fn execute(&mut self, st: State, fault: bool) -> Exit {
+        if !fault {
+            self.heap.take_refused();
+        }
+        let exit = self.execute_steps(st, fault);
+        debug_assert!(
+            !matches!(exit, Exit::Parked(ParkReason::Fuel)) || self.heap.peek_refused() == 0,
+            "a refusal outlived its raise at a park"
+        );
+        self.heap.take_refused();
+        exit
+    }
+
+    fn execute_steps(&mut self, mut st: State, mut fault: bool) -> Exit {
         self.fuel_wanted = 0;
         // Code runs and may drop data, whether the cell starts here or
         // resumes: the next start at the wall must collect again.
@@ -799,12 +821,15 @@ impl Vm {
         if self.partial.is_some() {
             self.drop_partial();
         }
-        self.drop_refusal();
         'raise: loop {
             if !reraise {
                 let exc = self.exc;
                 let pc = u32::try_from(st.pc).unwrap_or(0);
-                self.attach_context(exc, st.ci, pc);
+                // The refusal behind this raise, taken at each raise (a
+                // continuation's `finish` may raise a new one), so it does
+                // not reach a later request or a park.
+                let refused = self.heap.take_refused();
+                self.attach_context(exc, st.ci, pc, refused);
                 // A fresh `MemoryError` may stand in for the shared one.
                 let exc = self.exc;
                 self.add_tb(exc, st.ci, pc);
@@ -890,6 +915,12 @@ impl Vm {
     #[cold]
     #[inline(never)]
     pub(crate) fn safepoint(&mut self, st: &State) -> Option<ParkReason> {
+        // A refusal is taken by the raise it caused or dropped where it
+        // raised nothing, so none is left between instructions.
+        debug_assert!(
+            self.heap.peek_refused() == 0,
+            "a refusal outlived its instruction"
+        );
         let regular = self.regular_check();
         self.charge_ticks();
         self.afford = false;

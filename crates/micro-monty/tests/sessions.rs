@@ -669,6 +669,58 @@ fn fill_with(item: &str) -> String {
     )
 }
 
+/// A refusal is dropped by the raise it caused or at the exit of its cell,
+/// so a later cell pays the same whether a snapshot and restore came
+/// between (a restore starts without one): a load that fit when rerun
+/// after its collection, and a `bytearray` shrink that kept its block, left
+/// theirs, and a request past the limit two cells on collected and paid
+/// on the straight run only.
+#[test]
+fn a_refusal_does_not_reach_a_later_cell() {
+    let shrink = "b = bytearray(16 << 20)\nm = 2 << 20\nkeep = []\ntry:\n    while len(keep) < 4096:\n        keep.append(bytearray(1 << 16))\nexcept MemoryError:\n    pass\nkeep.pop(); keep.pop()\ndel b[m:]";
+    let cases: [(u64, Vec<String>); 2] = [
+        (
+            6,
+            vec![
+                fill_with("(len(xs), None)"),
+                "for i in range(0, len(xs), 2):\n    xs[i] = None".to_owned(),
+                "pad = 'z' * 50_000".to_owned(),
+                "p = 'a' * 50_000\nq = 'b' * 60_000".to_owned(),
+                "r = 'c' * 60_000".to_owned(),
+            ],
+        ),
+        (32, vec![shrink.to_owned()]),
+    ];
+    for (mib, cells) in cases {
+        let paid = |restore: bool| {
+            let engine = wall_engine(mib);
+            let mut session = Session::new(&engine).expect("session");
+            for cell in &cells {
+                wall_cell(&engine, &mut session, cell);
+            }
+            if restore {
+                let image = session.snapshot().expect("a snapshot");
+                session = engine.restore(&image).expect("restore");
+            }
+            session.set_fuel_total(Some(1 << 40));
+            let gcs = session.gc_collections();
+            let out = wall_cell(
+                &engine,
+                &mut session,
+                "try:\n    bytearray(10**12)\nexcept MemoryError:\n    pass",
+            );
+            assert_eq!(out, "ok");
+            (
+                (1 << 40) - session.fuel_total().expect("a total"),
+                session.gc_collections() - gcs,
+            )
+        };
+        let straight = paid(false);
+        assert_eq!(straight, paid(true), "{mib} MiB");
+        assert!(straight.0 < 1 << 10, "{mib} MiB: {straight:?}");
+    }
+}
+
 /// A `define` before each start at the wall: its bindings are garbage the
 /// next start collects, and `del xs`, whose load allocates nothing, runs.
 #[test]

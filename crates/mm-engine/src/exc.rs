@@ -215,8 +215,8 @@ impl Vm {
     /// `_PyErr_SetObject`), breaking any cycle that would create, as `exc`
     /// is raised at `(ci, pc)`; the heap's shared `MemoryError` is raised
     /// as [`Vm::raise_no_memory`] says.
-    pub(crate) fn attach_context(&mut self, exc: Value, ci: u32, pc: u32) {
-        if exc == self.memory_error && self.raise_no_memory(ci, pc) {
+    pub(crate) fn attach_context(&mut self, exc: Value, ci: u32, pc: u32, refused: u64) {
+        if exc == self.memory_error && self.raise_no_memory(ci, pc, refused) {
             return;
         }
         let h = self.handled;
@@ -268,11 +268,14 @@ impl Vm {
     /// and raised again by `raise e`, it stays itself and takes its context
     /// (false). A full arena may be mostly garbage that no successful
     /// allocation would ever schedule a collection for, so one is asked
-    /// for. Out of line: `attach_context` is inlined into `Vm::unwind`.
+    /// for, charged, when the refusal behind the raise is one a collection
+    /// may make room for (`room`, [`Vm::room_may_help`]). Out of line:
+    /// `attach_context` is inlined into `Vm::unwind`.
     #[cold]
     #[inline(never)]
-    fn raise_no_memory(&mut self, ci: u32, pc: u32) -> bool {
-        self.request_gc();
+    fn raise_no_memory(&mut self, ci: u32, pc: u32, refused: u64) -> bool {
+        let room = refused != 0 && refused <= self.heap.memory_limit();
+        self.guest_collection(crate::vm::GuestGc::Refused(room));
         let by_raise = ci != self.tramp
             && self.codes.get(ci as usize).is_some_and(|c| {
                 c.code
@@ -1027,9 +1030,15 @@ impl Vm {
             Some(PENDING_MODULE) => self.module_attr_hint_text(data, name),
             _ => None,
         };
-        let v = text
-            .and_then(|t| self.new_str(&t).ok())
-            .unwrap_or(Value::NONE);
+        let v = match text.map(|t| self.new_str(&t)) {
+            Some(Ok(v)) => v,
+            // A hint that does not fit is left out: its refusal raised nothing.
+            Some(Err(Raised)) => {
+                self.heap.take_refused();
+                Value::NONE
+            }
+            None => Value::NONE,
+        };
         self.exc = saved;
         v
     }

@@ -981,8 +981,8 @@ are the rules above. Where the code falls short, the clause says so under
    resumes, so one gap never holds both a native's step and a collection
    step (§9.2). Full collections over a large heap stay outside this bound
    (0.40 ms per MiB of live heap native, 1.3–1.6 times that on wasm [M]):
-   one a native or the engine requests (`Vm::request_gc`: after a
-   `MemoryError` is raised, after a byte job fails for memory), a
+   one a guest operation asks for (`Vm::guest_collection`: a raise or a
+   byte job refused room a collection may make, charged as a retry's), a
    snapshot's, code reclamation's, `Session::compile`'s for a cell that
    does not fit, and the one a cell start runs on a heap at its wall
    (`Vm::prepare_cell`, §9.2). The one a large result requests
@@ -2062,7 +2062,7 @@ timer deadlines.
   limit live [M]). The failing operation is charged for the collection
   instead, at once: a unit per 64 bytes of the memory limit, the most one
   collection marks, capped at `RETRY_CHARGE` (2^20 units;
-  `Vm::collect_for_retry`), so a guest that catches `MemoryError` in a
+  `Vm::guest_collection`), so a guest that catches `MemoryError` in a
   loop pays for each collection in fuel. The charge per collection is a
   constant of the session (a charge by the live bytes the collection left
   differed by 4 units after a restore [M]). Every retry pays, also while a collection is
@@ -2194,9 +2194,38 @@ timer deadlines.
   fit is. A refusal no retry took dies with its `MemoryError`
   (`Vm::unwind`), and a builtin that goes on another way when a request
   fails, raising nothing, drops the refusal it made, so a refusal does not
-  reach a later request or a park. Each of these raises a fresh `MemoryError()` with empty args and
+  reach a later request or a park: a debug build asserts none is left at
+  a safepoint, and every exit of `Vm::execute` drops one left by the
+  host's side (a value conversion, a compile), so a restored session,
+  which starts without one, goes on as the one that took the image. A
+  refusal a collection may help is recorded with what it asked: a heap
+  placement or `Heap::would_fit` with its bytes, a block's growth
+  (`Heap::append_bytes`), an allowance for the prelude or a bundled
+  module with the limit. A request past the object size cap and a rerun
+  that failed after its collection are recorded as past the limit; a cap
+  or an overflow checked before the heap is asked leaves none. Either
+  way the raise asks for no collection. The retry checks only read the
+  record; a retry and `Vm::unwind`, at each raise, take it. Each of these raises a fresh `MemoryError()` with empty args and
   no `__context__`, as CPython's (`Vm::raise_no_memory`); the shared one
   is raised only when there is no room for a new one.
+- **One charged entry.** Every collection guest code causes out of the
+  heap's own trigger goes through `Vm::guest_collection`, and the
+  requests it makes (`Vm::request_gc`, `Vm::collect_in_steps`) are
+  private to it, so no other path can ask for one uncharged: a retry
+  after `MemoryError` (always charged, as it restarts any collection in
+  progress), a large result's (its charge topped up), `gc.collect`
+  (charged as a retry, below), and the collection asked for when an exception finds
+  no room to be made (the shared `MemoryError` is raised) or a byte job
+  fails for memory. Those two ask only when the refusal behind them is
+  one a collection may make room for (`Vm::room_may_help`), and pay as a
+  retry does unless a collection is already asked for, which they join:
+  an exception that no longer fit, caught in a loop at the wall, ran a
+  full collection per unit of fuel (2.4 ms each at 8 MiB, 79 ms at
+  256 MiB [M]). The charge is made in the instruction that asks, so it
+  is the same in every drive mode (`gc_pending` and `gc_wait` are in the
+  image). The engine's own collections (a cell's start at the wall, a
+  cell's end, code reclamation, a compile refused for room) call the
+  heap directly and are not charged.
 - **Large blocks that grow.** A byte block written over several steps
   (`json.dumps`, §5) that grows by moving to a new block holds both blocks
   until the move ends; the old one is then garbage, and a collection is
@@ -2301,8 +2330,8 @@ timer deadlines.
   the step bound.
 - **Also unbounded:** every collection under 32 MiB live (30 ms native
   at worst) runs in full, as do code reclamation's, and one
-  a native or the engine requests (`Vm::request_gc`): after a
-  `MemoryError` is raised and after a byte job fails for memory.
+  a guest operation asks for (`Vm::guest_collection`): after a raise or
+  a byte job is refused room a collection may make.
 - **At the wall between cells.** A cell that fills the heap and drops its
   data leaves garbage that no safepoint collects: none runs between
   cells, and the trigger counts allocation, which a drop does not make.
@@ -2355,9 +2384,10 @@ timer deadlines.
   runs the same way (`Vm::collect_in_steps`), so its garbage goes before
   guest code or the next growth allocates (`json.dumps` of 1M small dicts:
   worst step 7.2–10.9 ms [M]).
-  The collection is not charged to fuel, so fuel alone does not bound a
-  cell's CPU time: 4,000 calls with 100,000 live lists took 5 s for
-  120,076 units [M]; a deadline does.
+  `gc.collect()` pays `collection_charge()` as a retry does (a unit per
+  64 bytes of the limit, at most 2^20), so a loop of calls cannot run
+  full collections for next to no fuel; the `memory_bound` fuzz target
+  checks that a cell's collections stay within `4 + fuel / 4096`.
 
 ### 9.3 Snapshots
 

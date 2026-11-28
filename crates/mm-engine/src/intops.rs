@@ -417,7 +417,7 @@ impl Vm {
     /// slice [M, reviewer]. So a result and its top-up together charge no
     /// more than a 64 MiB result's own 2^20 units. A retry after
     /// `MemoryError` in the same step pays its own charge on top
-    /// (`Vm::collect_for_retry`, whatever was asked for before it), so one
+    /// (`Vm::guest_collection`, whatever was asked for before it), so one
     /// step can pay for two collections, 2^21 units at limits of 64 MiB
     /// and more. The steps oracle has no row for that case; at the 64 MiB
     /// cap, ten operations building a result near the wall (2,400 heaps,
@@ -427,12 +427,7 @@ impl Vm {
         if bytes >= 1 << 16
             && self.heap.stats().allocated_since_gc >= self.heap.available_bytes() / 2
         {
-            if self.gc_wait <= self.heap.stats().collections
-                && self.heap.allocated_since_own_gc() < self.heap.memory_limit() / 64
-            {
-                self.burn(self.collection_charge().saturating_sub(bytes as u64 / 64));
-            }
-            self.collect_in_steps(false);
+            self.guest_collection(crate::vm::GuestGc::Result(bytes as u64 / 64));
         }
     }
 

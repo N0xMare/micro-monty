@@ -2669,6 +2669,10 @@ impl Session {
             self.stop.shrink_to_fit();
         }
         self.stop_charge = self.vm.heap.reserve_scratch(self.stop.len()).ok();
+        if self.stop_charge.is_none() {
+            // Refused, the stop is kept uncharged: nothing is raised for it.
+            self.vm.heap.take_refused();
+        }
         p
     }
 

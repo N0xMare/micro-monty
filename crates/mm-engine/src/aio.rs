@@ -4062,9 +4062,12 @@ impl Vm {
         if !waited && self.exc_type(self.exc) == T::MemoryError && self.room_may_help() {
             self.exc = Value::NONE;
             self.loop_flags |= crate::vm::LOOP_START_WAIT;
-            self.collect_for_retry();
+            self.guest_collection(crate::vm::GuestGc::Retry);
             return self.hold_for_start().map(|(r, st)| Next::Park(r, st));
         }
+        // Raised in the main task, maybe after a park (`escape`): no
+        // record, so its raise asks for no collection (one ran already, or
+        // none could help).
         self.heap.take_refused();
         let e = self.exc;
         self.raise_at_main(e, true)

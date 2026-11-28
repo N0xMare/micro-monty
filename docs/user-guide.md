@@ -187,9 +187,9 @@ native steps bound latency: a native operation charges fuel in proportion
 to its work, and one whose work a guest can make large runs in steps of at
 most 2^17 units, parking between them (spec §5.1). Large int operations and
 long sorts park before starting when the fuel left cannot pay their
-estimate. A forced `gc.collect()` is not charged to fuel, so fuel alone
-does not bound CPU time (4,000 calls with 100,000 live lists: 5 s for
-120,076 units \[M\]); set a deadline too.
+estimate. A forced `gc.collect()` is charged as a collection a retry
+after `MemoryError` waits for: a unit per 64 bytes of the memory limit, at
+most 2^20 units.
 
 Set lookups compare colliding keys in probe order, even when the exact object
 is already in the set. When a comparison deletes a slot the insertion probe

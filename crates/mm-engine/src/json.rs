@@ -504,6 +504,8 @@ fn put(
     }
     let mut res = vm.heap.append_bytes(b, data, room);
     if res.is_err() && room > need {
+        // The spare room is dropped instead: the refusal raised nothing.
+        vm.heap.take_refused();
         room = need;
         res = vm.heap.append_bytes(b, data, room);
     }

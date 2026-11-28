@@ -548,11 +548,13 @@ impl Vm {
     fn unpack_chunk_with(&mut self, chunk: u16, extra: u64) -> Result<Arc<PreludeChunk>, Raised> {
         let allowance = self.heap.available_bytes().saturating_add(self.std_scratch);
         let Some(mut remaining) = allowance.checked_sub(extra) else {
+            let _ = self.heap.refuse(self.heap.memory_limit());
             return Err(self.err(T::MemoryError, ""));
         };
         let cache = self.module_cache.clone();
         let c = if let Some(c) = cache.as_deref().and_then(|c| c.prelude_chunk(chunk.into())) {
             let Some(left) = remaining.checked_sub(c.workspace) else {
+                let _ = self.heap.refuse(self.heap.memory_limit());
                 return Err(self.err(T::MemoryError, ""));
             };
             remaining = left;
@@ -590,7 +592,10 @@ impl Vm {
     #[cfg_attr(mm_shipped, optimize(size))]
     fn decode_error(&mut self, e: DecodeError) -> Raised {
         match e {
-            DecodeError::TooLarge => self.err(T::MemoryError, ""),
+            DecodeError::TooLarge => {
+                let _ = self.heap.refuse(self.heap.memory_limit());
+                self.err(T::MemoryError, "")
+            }
             DecodeError::Invalid => self.err(T::SystemError, "micro-monty: the prelude is corrupt"),
         }
     }
