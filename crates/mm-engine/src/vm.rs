@@ -634,6 +634,11 @@ pub(crate) const SPECIAL_LINK: Value = match Value::int(0) {
     None => Value::NONE,
 };
 
+/// Frame continuation words with bit 31 set carry an inline iterator
+/// continuation: bit 30 selects `SEND` and the remaining bits are the exit.
+pub(crate) const ITER_LINK: u32 = 1 << 31;
+pub(crate) const SEND_LINK: u32 = 1 << 30;
+
 /// A link's `(ret_pc, caller code, offset)`; offset 0 for a special frame.
 /// Meaningless unless `v` is a `SmallInt`.
 #[inline]
@@ -658,8 +663,7 @@ pub(crate) struct Frame {
     /// The coroutine or generator object this frame runs, or `None`.
     pub coro: Value,
     /// What to do with the callee's result when it returns into this
-    /// frame: 0, or 1 + its index in [`Vm::conts`] (kept out of the frame
-    /// so that plain calls push and pop small frames).
+    /// frame: 0, [`ITER_LINK`], or 1 + its index in [`Vm::conts`].
     pub cont: u32,
 }
 

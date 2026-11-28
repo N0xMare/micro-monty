@@ -79,7 +79,7 @@ const CODE_PRELUDE: u8 = 5;
 ///   set tables;
 /// - what an opcode's operands mean, with the same format;
 /// - how frames, generators or coroutines keep their state.
-pub(crate) const SNAPSHOT_EPOCH: u32 = 21;
+pub(crate) const SNAPSHOT_EPOCH: u32 = 22;
 
 /// This build's engine fingerprint for snapshot build ids: what an image
 /// written by this engine means. The layout epoch; the codecs and every
@@ -1599,6 +1599,7 @@ fn check_frames(
         return Err(SnapError::Corrupt("frame owner"));
     }
     let mut callee = base;
+    let mut owner = st.map_or(Value::NONE, |s| s.coro);
     for f in &frames {
         bundled.load(codes, f.code)?;
         let code = need(codes.get(f.code as usize), "frame code")?;
@@ -1612,25 +1613,39 @@ fn check_frames(
             && low.is_some_and(|l| l <= callee)
             && high.is_some_and(|h| callee <= h);
         callee = f.base as usize;
-        let cont_ok = f.cont == 0
-            || match conts.get(f.cont as usize - 1) {
-                Some(Some(c)) => match *c {
-                    Cont::Truth { target, .. } => at(target),
-                    Cont::ForIter(e) | Cont::Send(e) => at(e),
-                    Cont::Delegate { exit, at: a } => at(exit) && at(a),
-                    Cont::CallIter { exit, .. } | Cont::CallIterEq { exit, .. } => {
-                        exit == u32::MAX || at(exit)
+        let direct = f.cont >= crate::vm::ITER_LINK;
+        let cont_ok = if direct {
+            owner.is_obj_kind(ty::GEN as u8)
+                && f.call_pc.checked_add(2) == Some(f.ret_pc)
+                && match crate::cont::iter_link_cont(&code.code.bytecode, f.call_pc) {
+                    Some(c @ (Cont::ForIter(e) | Cont::Send(e))) => {
+                        at(e) && crate::cont::decode_iter_link(f.cont) == c
                     }
-                    // Registers of the frame the result lands in.
-                    Cont::StoreReg(r) => (r as usize) < nregs,
-                    Cont::Unpack { r, n } => r as usize + n as usize <= nregs,
-                    _ => true,
-                },
-                _ => false,
-            };
+                    _ => false,
+                }
+        } else {
+            f.cont == 0
+                || match conts.get(f.cont as usize - 1) {
+                    Some(Some(c)) => match *c {
+                        Cont::Truth { target, .. } => at(target),
+                        Cont::ForIter(e) | Cont::Send(e) => at(e),
+                        Cont::Delegate { exit, at: a } => at(exit) && at(a),
+                        Cont::CallIter { exit, .. } | Cont::CallIterEq { exit, .. } => {
+                            exit == u32::MAX || at(exit)
+                        }
+                        // Registers of the frame the result lands in.
+                        Cont::StoreReg(r) => (r as usize) < nregs,
+                        Cont::Unpack { r, n } => r as usize + n as usize <= nregs,
+                        _ => true,
+                    },
+                    _ => false,
+                }
+        };
+        owner = f.coro;
         // A continuation goes to the frame that takes it: two frames on
         // different stacks sharing one would each finish with the other's.
         let once = f.cont == 0
+            || direct
             || held
                 .get_mut(f.cont as usize - 1)
                 .is_some_and(|h| !core::mem::replace(h, true));

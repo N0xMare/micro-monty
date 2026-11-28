@@ -11,8 +11,9 @@
 
 use crate::class::Dn;
 use crate::types::{T, ty};
-use crate::vm::{Raised, Vm, exc_slot};
+use crate::vm::{Frame, ITER_LINK, Raised, SEND_LINK, Vm, exc_slot};
 use alloc::{format, string::String, vec, vec::Vec};
+use mm_compile::bytecode::op;
 use mm_core::{Tracer, Value};
 
 /// Result checks for dunders whose result type is fixed.
@@ -151,7 +152,37 @@ pub(crate) enum Cont {
     },
 }
 
+/// Non-yield outcomes of a generator linked directly to its caller.
+pub(crate) fn iter_link_cont(bc: &[u32], pc: u32) -> Option<Cont> {
+    let &[w, exit] = bc.get(pc as usize..)?.first_chunk::<2>()?;
+    match crate::interp::op_of(w) {
+        op::FOR_ITER | op::FOR_ITER_STAR | op::FOR_RANGE | op::FOR_RANGE_STAR => {
+            Some(Cont::ForIter(exit))
+        }
+        op::SEND => Some(Cont::Send(exit)),
+        _ => None,
+    }
+}
+
+pub(crate) fn decode_iter_link(word: u32) -> Cont {
+    let exit = word & (SEND_LINK - 1);
+    if word & SEND_LINK == 0 {
+        Cont::ForIter(exit)
+    } else {
+        Cont::Send(exit)
+    }
+}
+
 impl Vm {
+    /// Takes the continuation at return or unwind; a direct link has no slot.
+    #[inline]
+    pub(crate) fn take_frame_cont(&mut self, f: Frame) -> Cont {
+        if f.cont < ITER_LINK {
+            return self.cont_take(f.cont);
+        }
+        decode_iter_link(f.cont)
+    }
+
     /// Stores a frame's continuation; the [`crate::vm::Frame::cont`] value.
     #[inline]
     pub(crate) fn cont_put(&mut self, c: Cont) -> Result<u32, Raised> {
@@ -174,6 +205,9 @@ impl Vm {
     #[cold]
     fn grow_conts(&mut self) -> Result<(), Raised> {
         let new = self.conts.len() + self.conts.len().max(4);
+        if new >= ITER_LINK as usize {
+            return Err(self.err(T::MemoryError, "continuation table overflow"));
+        }
         // Unwinding must never need an allocation to return a continuation.
         self.reserve_execution(
             ((new - self.conts.capacity()) * size_of::<Option<Cont>>()

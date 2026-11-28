@@ -11,7 +11,7 @@
 use crate::cont::{Cont, Outcome};
 use crate::interp::op_of;
 use crate::types::{T, ty};
-use crate::vm::{HDR, Raised, State, Vm, exc_slot, fn_slot};
+use crate::vm::{HDR, ITER_LINK, Raised, SEND_LINK, State, Vm, exc_slot, fn_slot};
 use alloc::{format, string::String};
 use mm_compile::bytecode::{instr_len, op, operand};
 use mm_core::Value;
@@ -319,7 +319,11 @@ impl Vm {
         {
             return Ok(false);
         }
-        let cont = self.cont_put(cont)?;
+        let cont = match cont {
+            Cont::ForIter(exit) if exit < SEND_LINK => ITER_LINK | exit,
+            Cont::Send(exit) if exit < SEND_LINK => ITER_LINK | SEND_LINK | exit,
+            _ => self.cont_put(cont)?,
+        };
         self.specials.push(crate::vm::Frame {
             code: st.ci,
             func: st.func,

@@ -827,7 +827,7 @@ impl Vm {
                 let Some(f) = self.pop_frame(st) else {
                     return Unwound::Uncaught;
                 };
-                let fc = self.cont_take(f.cont);
+                let fc = self.take_frame_cont(f);
                 if matches!(fc, Cont::CoroSend) {
                     self.coro_left(coro);
                 }
@@ -2192,7 +2192,9 @@ impl Vm {
     pub(crate) fn pop_tramps(&mut self, st: &mut State, depth: u32) {
         while self.depth > depth {
             let Some(f) = self.pop_frame(st) else { break };
-            self.cont_take(f.cont);
+            if f.cont < crate::vm::ITER_LINK {
+                self.cont_take(f.cont);
+            }
         }
     }
 
@@ -4873,7 +4875,7 @@ impl Vm {
                         return Ok(Rare::Frames);
                     }
                 }
-                let fc = self.cont_take(fr.cont);
+                let fc = self.take_frame_cont(fr);
                 if matches!(fc, Cont::CoroSend) {
                     self.coro_left(coro);
                 }
@@ -5173,7 +5175,11 @@ impl Vm {
                 pc = fr.call_pc as usize;
                 sync!();
                 let (cp, rp) = (fr.call_pc as usize, fr.ret_pc as usize);
-                let fc = self.cont_take(fr.cont);
+                let fc = if fr.cont < crate::vm::ITER_LINK {
+                    self.cont_take(fr.cont)
+                } else {
+                    Cont::None
+                };
                 // A value yielded to `for`, `next()` or `send()` lands
                 // directly, as `finish` + `drive` would land it.
                 if matches!(
