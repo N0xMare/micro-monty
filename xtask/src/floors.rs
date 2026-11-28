@@ -30,9 +30,9 @@
 //! count where it is lower ([`lower`]), so the drop is no headroom for
 //! other counts. `--write-floors` writes that file. Against a
 //! `v*` tag as the base (`just pretag`), the head's floors are checked
-//! against the tag's counts instead: none above the tag's count without a
-//! line since the tag. There `--write-floors` seeds the file
-//! from the tag ([`seed`]): each floor is the tag's count with the tag's
+//! against the tag's counts instead: none above the tag's count, past the
+//! band, without a line since the tag. There `--write-floors` seeds the
+//! file from the tag ([`seed`]): each floor is the tag's count with the tag's
 //! build, or the head's where the head counts less, whatever the file held
 //! before, so a release starts its floors at its own counts (`just
 //! seed-floors`, the first commit after a tag).
@@ -578,10 +578,10 @@ pub(crate) fn judge(
 ///   a release the floors must be seeded from it (`just seed-floors`).
 /// - A line on the tag's build holds the tag's count and one on the head's
 ///   build the head's, so a floor cannot be lowered or relabelled by hand.
-/// - No floor is above the tag's count without an accept line since the
-///   tag; and a rise past the limit that a line accepts has raised its
-///   floor to the head's count, as a landing does. A floor above the
-///   head's count passes, as in a landing.
+/// - No floor is above the tag's count, past the band, without an accept
+///   line since the tag; and a rise past the limit that a line accepts has
+///   raised its floor to the head's count, as a landing does. A floor
+///   above the head's count passes, as in a landing.
 pub(crate) fn pre_tag(
     root: &Path,
     gate: &str,
@@ -641,9 +641,11 @@ pub(crate) fn pre_tag(
             }
         }
         // Authorization for the stored floor is separate from whether the
-        // current head needs to raise it again below.
+        // current head needs to raise it again below. A racing count's
+        // floor within the band above this read of the tag is the tag's
+        // count, as the seed read it.
         if let Some(t) = t
-            && f > t
+            && rules.lowers(name, t, f)
             && !floor_swept(name)
             && !(rules.accepted)(name, ratio(f, t))
         {
@@ -1027,6 +1029,33 @@ mod tests {
             };
             let (_, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
             assert_eq!(!errors.is_empty(), moves, "{h}: {errors:?}");
+        }
+        fs::remove_dir_all(&dir).unwrap();
+        // At a tag: a floor seeded from one read of the tag holds on a
+        // later read within the band below it, which is not a raise.
+        let (dir, sha) = repo("band-tag", &Floors::new());
+        git(&dir, &["tag", "v0.0.9"]).unwrap();
+        let tb = build_id(&dir, Some(&sha)).unwrap();
+        write(
+            &dir,
+            "native-ir",
+            &Floors::from([("s".to_owned(), floor(10_000, &tb))]),
+        )
+        .unwrap();
+        for (t, moves) in [(9_990, false), (9_989, true)] {
+            let tag = counts(&[("s", t)]);
+            let sides = Sides {
+                base: &sha,
+                tag: true,
+                head: &tag,
+                base_counts: &tag,
+                keys: &keys,
+                head_build: "b-2",
+                recounted: &none,
+            };
+            let (_, errors) = judge(&dir, "native-ir", &sides, &rules, false).unwrap();
+            let above = errors.iter().any(|e| e.contains("above the tag's count"));
+            assert_eq!(above, moves, "{t}: {errors:?}");
         }
         fs::remove_dir_all(&dir).unwrap();
     }
