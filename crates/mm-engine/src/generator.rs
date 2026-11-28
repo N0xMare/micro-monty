@@ -262,31 +262,26 @@ impl Vm {
         let Some(r) = gn.as_obj() else {
             return Ok(false);
         };
-        let Ok(w) = self.heap.slot_words(r) else {
+        let Some(w) = self
+            .heap
+            .slot_words(r)
+            .ok()
+            .and_then(|w| w.first_chunk::<{ g::CODE as usize + 1 }>())
+        else {
             return Ok(false);
         };
-        let field = |i: u32| w.get(i as usize).copied();
-        let (Some(fw), Some(rw), Some(hw), Some(state), Some(ypc), Some(cw)) = (
-            field(g::FUNC),
-            field(g::REGS),
-            field(g::HANDLED),
-            field(g::STATE),
-            field(g::YPC).map(|y| y & !g::CLEARED),
-            field(g::CODE),
-        ) else {
-            return Ok(false);
-        };
+        let state = w[g::STATE as usize];
         if state != g::SUSPENDED && state != g::CREATED {
             return Ok(false);
         }
         let (Some(func), Some(regs), Some(handled)) = (
-            Value::from_bits(fw),
-            Value::from_bits(rw),
-            Value::from_bits(hw),
+            Value::from_bits(w[g::FUNC as usize]),
+            Value::from_bits(w[g::REGS as usize]),
+            Value::from_bits(w[g::HANDLED as usize]),
         ) else {
             return Ok(false);
         };
-        let cidx = u32::try_from(cw).unwrap_or(u32::MAX);
+        let cidx = u32::try_from(w[g::CODE as usize]).unwrap_or(u32::MAX);
         let Some(code) = self.codes.get(cidx as usize) else {
             return Ok(false);
         };
@@ -304,13 +299,11 @@ impl Vm {
         let resume_pc = if state == g::CREATED {
             0
         } else {
-            ypc as usize
-                + instr_len(
-                    code.code
-                        .bytecode
-                        .get(ypc as usize)
-                        .map_or(op::YIELD, |&x| op_of(x)),
-                )
+            // A suspended generator (including one restored from an image)
+            // points at YIELD or YIELD_FROM, both one word.
+            let at = (w[g::YPC as usize] & !g::CLEARED) as usize;
+            debug_assert_eq!(instr_len(op_of(code.code.bytecode[at])), 1);
+            at + 1
         };
         let Some(b) = regs.as_obj() else {
             return Ok(false);

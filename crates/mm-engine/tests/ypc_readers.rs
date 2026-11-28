@@ -16,7 +16,7 @@ const USES: &[(&str, &str, &str)] = &[
         "word(w.get(g::YPC as usize))",
         "read, gen_enter",
     ),
-    ("generator.rs", "field(g::YPC)", "read, gen_enter_fast"),
+    ("generator.rs", "w[g::YPC as usize]", "read, gen_enter_fast"),
     (
         "generator.rs",
         "set_raw_guarded(r, g::YPC, pc as u64)",
