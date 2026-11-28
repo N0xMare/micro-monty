@@ -1907,10 +1907,6 @@ impl Vm {
                             let f = self.big_to_f64(&i)?;
                             self.format_float(f, &s)
                         }
-                        _ if s.zflag && s.precision.is_none() => Err(self.err(
-                            T::ValueError,
-                            "Negative zero coercion (z) not allowed in integer format specifier",
-                        )),
                         _ => self.format_int(&i, &s),
                     }
                 }
@@ -1982,6 +1978,12 @@ impl Vm {
             return Err(self.err(
                 T::ValueError,
                 "Precision not allowed in integer format specifier",
+            ));
+        }
+        if s.zflag {
+            return Err(self.err(
+                T::ValueError,
+                "Negative zero coercion (z) not allowed in integer format specifier",
             ));
         }
         // Grouping copies the digits once more, a third larger.

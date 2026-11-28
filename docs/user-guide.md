@@ -2176,10 +2176,10 @@ differs:
     required positional argument: 'iterable'` (CPython: `filter expected
     2 arguments, got 1`), and `reversed()` `reversed() takes exactly one
     argument (0 given)` (CPython: `reversed expected 1 argument, got 0`).
-  - `format(True, 's')` and `format(True, 'zs')` name `'int'`, and the
-    second says `Negative zero coercion (z) not allowed in integer format
-    specifier` (CPython: `Unknown format code 's' for object of type
-    'bool'` for both). A str spec with grouping and a precision, such as
+  - An unknown format code for a `bool` or an `int` subclass names
+    `'int'`: `format(True, 's')` raises `Unknown format code 's' for
+    object of type 'int'` (CPython: `'bool'`, or the subclass's name). A
+    str spec with grouping and a precision, such as
     `'{:.8_n}'.format('')`, raises `Unknown format code 'n' for object of
     type 'str'` (CPython: `Cannot specify '_' with 'n'.`).
   - `heapq.heappop([])` raises `IndexError: pop from empty list`
